@@ -1,4 +1,4 @@
-**easl** · [easl.sh](https://easl.sh)
+<a href="https://easl.sh"><img src=".github/social-card.png" alt="easl. the board your agents build on. mac app for coding agents. easl.sh · github.com/twaldin/easl" width="100%" /></a>
 
 # the board your agents build on.
 
