@@ -18,6 +18,8 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     /// The draft as last shown or synced, to tell what an edit changed.
     private(set) var shown = ComposerDraft()
     private var answering: String?
+    /// The text's undo history (`undoManager(for:)`).
+    private let undo = UndoManager()
 
     /// The user changed the text (typing, deleting, ⌘Z, a paste): the draft before it.
     var onEdit: ((ComposerDraft) -> Void)?
@@ -140,8 +142,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         }
         text.textStorage?.setAttributedString(attributed)
         text.typingAttributes = Self.attributes
-        text.undoManager?.removeAllActions(withTarget: text.textStorage as Any)
-        text.undoManager?.removeAllActions()
+        undo.removeAllActions()
         let length = (draft.text as NSString).length
         text.setSelectedRange(NSRange(location: min(caret ?? length, length), length: 0))
         shown = draft
@@ -199,6 +200,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
 
     /// The composer takes the keyboard.
     func focus() {
+        text.rememberPrevious()
         window?.makeFirstResponder(text)
     }
 
@@ -281,6 +283,12 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
 
     // MARK: NSTextViewDelegate
 
+    /// The composer's own undo history, never the window's (a note being edited keeps its own):
+    /// replacing the draft from outside clears only this.
+    func undoManager(for view: NSTextView) -> UndoManager? {
+        undo
+    }
+
     func textDidChange(_ notification: Notification) {
         let previous = shown
         shown = draft
@@ -345,17 +353,36 @@ final class ComposerTextView: NSTextView {
         if onRecall?(false) != true { super.moveDown(sender) }
     }
 
-    /// Esc: the keyboard goes back to the terminal, tile or board that had it.
+    /// Esc: the keyboard goes back to the terminal, tile or board that had it. A note whose edit
+    /// ended as the composer took the keyboard (its hidden editor) is entered again through its
+    /// own keyboard path; anything else no longer shown leaves the keyboard with the board.
     func leave() {
         guard let window else { return }
-        if let previous, previous !== self, (previous as? NSView)?.window === window, window.makeFirstResponder(previous) { return }
-        window.makeFirstResponder((window.windowController as? CanvasWindowController)?.canvas)
+        let before = previous === self ? nil : previous
+        if let view = before as? NSView, view.window === window, view.isHiddenOrHasHiddenAncestor {
+            var ancestor: NSView? = view
+            while let current = ancestor {
+                if let note = current as? NoteTile, note.enterKeyboard() { return }
+                ancestor = current.superview
+            }
+        }
+        CanvasView.returnKeyboard(to: before, in: window)
+    }
+
+    /// Remembers what has the keyboard, before the composer takes it (⌘I, a click): by the time
+    /// `becomeFirstResponder` runs, the window no longer says.
+    func rememberPrevious() {
+        guard let current = window?.firstResponder, current !== self, current !== window else { return }
+        previous = current
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        rememberPrevious()
+        super.mouseDown(with: event)
     }
 
     override func becomeFirstResponder() -> Bool {
-        let before = window?.firstResponder
         guard super.becomeFirstResponder() else { return false }
-        if before !== self { previous = before }
         DispatchQueue.main.async { [weak self] in self?.onFocusChange?() }
         return true
     }

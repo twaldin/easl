@@ -102,6 +102,9 @@ public final class Board {
     /// Mentions agents attached to their `agent.prompt` for each terminal, waiting for its next
     /// drained prompt (Handoff.swift); in memory only.
     public internal(set) var handoffs: [ObjectID: [Handoff]] = [:]
+    /// The composer's prompts to each terminal, oldest first, each waiting for the drain of the
+    /// prompt it typed (`queueComposerPrompt`, Composer.swift); in memory only.
+    public internal(set) var composerPrompts: [ObjectID: [ComposerPrompt]] = [:]
     /// Each terminal's last answer: the final assistant message of its agent's last finished
     /// turn, as its integration reported it with `idle` (`agent.read` `final`). A new turn clears
     /// it; saved with the board.
@@ -392,6 +395,7 @@ public final class Board {
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
         forgetHandoffs(of: id)
+        forgetComposerPrompts(of: id)
         let marked = attention.removeValue(forKey: id) != nil
         onChange?()
         onEvent?(.objectDeleted(id))
@@ -769,10 +773,15 @@ public final class Board {
     /// `peek` leaves the tray intact for a later `commit` of exactly these ids. `caller` is the
     /// terminal the context goes to: mentions of it say so, other terminals are named. The
     /// mentions other agents handed to `caller` (`handOff`) follow the tray's, one block per
-    /// sender; `tray` false leaves the tray out (it shows another terminal).
+    /// sender; `tray` false leaves the tray out (it shows another terminal). When the composer
+    /// sent `caller` a prompt that hasn't drained yet (`queueComposerPrompt`), this drain is that
+    /// prompt's: it takes that prompt's own mentions, numbered from 1, instead of the tray (an
+    /// answer to a question takes none), so a retarget, a new mention or a second prompt meanwhile
+    /// never changes what its `[n]` mean.
     /// Old-side and pinned code excerpts are read from git, hence async.
     public func drain(peek: Bool = false, caller: ObjectID? = nil, tray includeTray: Bool = true) async -> (mentions: [MentionContext.Resolved], context: String) {
-        let staged = includeTray ? tray : []
+        let sent = caller.flatMap { nextComposerPrompt(for: $0) }
+        let staged = sent?.mentions ?? (includeTray ? tray : [])
         var resolved = await resolve(staged, caller: caller)
         var blocks = resolved.isEmpty ? [] : [MentionContext.render(resolved, board: self, targets: staged.map(\.target))]
         if let caller {
@@ -819,12 +828,24 @@ public final class Board {
     /// prompt's drain is the agent's delivery, never undone.
     public func commit(_ ids: [MentionID], pastedInto terminal: ObjectID? = nil) {
         commitHandoffs(ids)
+        delivered += commitComposerPrompts(ids)
         let removed = tray.enumerated().filter { ids.contains($0.element.id) }.map { PlacedMention(index: $0.offset, mention: $0.element) }
         guard !removed.isEmpty else { return }
         tray.removeAll { ids.contains($0.id) }
         delivered += removed.count
         if let terminal { history.record(.unstaged(removed, pastedInto: terminal)) }
         trayChanged()
+    }
+
+    /// The composer took these mentions out of the tray to send them (`ComposerController`): no
+    /// undo step, and not delivered yet. Returns them in tray order.
+    @discardableResult
+    public func withdraw(_ ids: [MentionID]) -> [Mention] {
+        let taken = tray.filter { ids.contains($0.id) }
+        guard !taken.isEmpty else { return [] }
+        tray.removeAll { ids.contains($0.id) }
+        trayChanged()
+        return taken
     }
 
     /// Undo of a step that took these mentions out of the tray: each goes back to its place

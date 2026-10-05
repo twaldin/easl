@@ -230,9 +230,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = controllers[board.id] ?? CanvasWindowController(board: board, registry: registry)
         controllers[board.id] = controller
         let router = router
-        controller.sendPrompt = { [weak board] text, terminal, mentions, answering in
+        controller.sendPrompt = { [weak board] text, terminal, mentions, answer in
             guard let board else { return }
-            try await router.composerPrompt(text, to: terminal, on: board, mentions: mentions, answering: answering)
+            try await router.composerPrompt(text, to: terminal, on: board, mentions: mentions, answer: answer)
         }
         controller.showWorktree(openedAt: root)
         controller.onClose = { [weak self, weak controller] in self?.saveOpenBoards(closing: controller?.window) }

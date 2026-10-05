@@ -35,7 +35,7 @@ Server-side features (the all-agents overview, supervision stats, review passes,
 
 Shipped on the Swift app (docs/design.md, Composer). Still open:
 
-- **On easld**: the composer sends in process (`ApiRouter.composerPrompt`, `Board.handOff` with `byUser`, `Board.arrangeTray`), and no schema method exposes that. Once the Mac app is easld's client it needs it over the API: `agent.prompt` from the user (answering a blocked target past the blocked check alone, mentions given as the staged `MentionTarget`s and handed off as the user's, numbered first) and a way to set the tray's order to the tokens'. Drafts, sent prompts and extra targets stay with the client (`composer/<boardId>.json` in the easl home).
+- **On easld**: the composer sends in process (`ApiRouter.composerPrompt`, `Board.queueComposerPrompt`, `Board.withdraw`, `Board.arrangeTray`), and no schema method exposes that. Once the Mac app is easld's client it needs it over the API: `agent.prompt` from the user (answering a blocked target past the blocked check alone; the prompt's own mentions given as staged `MentionTarget`s and queued for that prompt's drain, numbered from 1, ahead of the tray), a way to take mentions out of the tray without an undo step, and a way to set the tray's order to the tokens'. easld's `tray.drain` must keep the composer-prompt drain semantics (docs/contracts.md, Agent prompts and replies). Drafts, sent prompts and extra targets stay with the client (`composer/<boardId>.json` in the easl home).
 
 ## Links
 

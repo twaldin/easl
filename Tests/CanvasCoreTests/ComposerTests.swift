@@ -18,10 +18,6 @@ struct ComposerTests {
         board.create(type: .code, props: .object(["path": .string(path)]), frame: Frame(x: x, y: 0, w: 640, h: 446))
     }
 
-    func terminal(on board: Board, x: Double) -> CanvasObject {
-        board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]), frame: Frame(x: x, y: 600, w: 800, h: 500))
-    }
-
     func line(_ tile: CanvasObject, _ path: String) -> MentionTarget {
         .code(object: tile.id, path: path, lines: LineRange(start: 1, end: 1))
     }
@@ -122,22 +118,21 @@ struct ComposerTests {
         #expect(tokensOnly.isEmpty && tokensOnly.text.isEmpty)
     }
 
-    @Test func anotherTargetGetsTheSameNumbersAheadOfWhatAgentsHandedIt() async throws {
+    @Test func aDamagedSavedDraftKeepsItsWordsAndNeverTrapsTheBoardOpening() throws {
         let board = makeBoard()
-        let a = code("a.py", on: board, x: 0), b = code("b.py", on: board, x: 700), c = code("c.py", on: board, x: 1400)
-        let other = terminal(on: board, x: 0), sender = terminal(on: board, x: 900)
-        try board.handOff([line(c, "c.py")], to: other.id, from: sender.id, fromName: "omp")
-        var draft = ComposerDraft()
-        try board.stage(line(b, "b.py"))
+        let a = code("a.py", on: board, x: 0)
         try board.stage(line(a, "a.py"))
-        _ = ComposerSync.trayChanged(&draft, caret: nil, on: board)
-        draft.text = "\(mark) first \(mark) second"
+        // A valid file whose draft has a mark but no token, and a target listed twice.
+        let saved = #"{"draft":{"text":"\#(mark) fix this","tokens":[]},"history":[{"text":"\#(mark)\#(mark)","tokens":[]}],"alsoTo":["obj_B","obj_B","obj_C"]}"#
+        let state = try JSONDecoder().decode(ComposerState.self, from: Data(saved.utf8)).repaired
+        #expect(state.draft == ComposerDraft(text: " fix this"), "the words stay; the orphan mark goes")
+        #expect(state.history.allSatisfy { $0.tokens.isEmpty && !$0.text.contains(mark) })
+        #expect(state.alsoTo == ["obj_B", "obj_C"], "each target once, so a send never types into one twice")
 
-        try board.handOff(draft.tokens.map(\.target), to: other.id, from: nil, fromName: nil, byUser: true)
-        let context = await board.drain(peek: true, caller: other.id, tray: false).context
-        #expect(numbered(context) == ["[1] b.py", "[2] a.py", "[3] c.py"], "the user's tokens keep their numbers; an agent's hand-off follows")
-        #expect(numbered(await board.drain(peek: true).context) == ["[1] b.py", "[2] a.py"], "the tray's target reads the same numbers")
-        #expect(draft.prompt == "[1] first [2] second")
+        var draft = state.draft
+        _ = ComposerSync.trayChanged(&draft, caret: nil, on: board)
+        #expect(draft.prompt == "fix this [1]", "the staged mention gets its token")
+        #expect(board.tray.map(\.id) == draft.tokens.map(\.id))
     }
 
     @Test func aRecalledPromptStagesItsTokensAgainWithItsNumbers() async throws {

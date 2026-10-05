@@ -233,7 +233,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     /// The composer's terminals (`ComposerController.send`): `agent.prompt` from the user, set by
     /// the app with its router.
-    var sendPrompt: ((_ text: String, _ terminal: ObjectID, _ mentions: [MentionTarget], _ answering: Bool) async throws -> Void)? {
+    var sendPrompt: ((_ text: String, _ terminal: ObjectID, _ mentions: [Mention], _ answer: Bool) async throws -> Void)? {
         get { composer.send }
         set { composer.send = newValue }
     }
