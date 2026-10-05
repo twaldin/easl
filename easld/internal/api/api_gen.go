@@ -124,7 +124,7 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"id"},
 	},
 	"tray.drain": {
-		Accepted: []string{"board", "caller", "peek"},
+		Accepted: []string{"board", "caller", "peek", "prompt"},
 		Required: nil,
 	},
 	"tray.commit": {
