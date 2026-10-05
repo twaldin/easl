@@ -289,6 +289,8 @@ final class ComposerSendTests {
         board.expireComposerPrompts(now: Date().addingTimeInterval(60))
         #expect(board.composerPrompts[claude]?.count == 1, "still blocked: the answer waits")
         try agent(claude, "claude", .working)
+        board.expireComposerPrompts(now: Date().addingTimeInterval(ComposerPrompt.answerGrace / 2))
+        #expect(board.composerPrompts[claude]?.count == 1, "a drain right after the agent's report could still be the answer's")
         board.expireComposerPrompts(now: Date().addingTimeInterval(ComposerPrompt.answerGrace + 1))
         #expect(board.composerPrompts[claude] == nil)
         try board.stage(line(b, "b.py"))
@@ -303,10 +305,11 @@ final class ComposerSendTests {
         try board.stage(line(a, "a.py"))
         try await send(draft(["blue"]), to: [codex])
         #expect(board.composerPrompts[codex]?.map(\.answer) == [true] && board.tray.map(\.label) == ["a.py:1"])
-        // Codex's answer arrives as a prompt: its hook reports working, then drains.
-        try agent(codex, "codex", .working)
+        // Codex's answer arrives as a prompt, whose hook drains right after reporting working
+        // (within `answerGrace` of that report, as the dialog test checks): the drain takes nothing.
         #expect(try await drain(codex, "blue [1]").isEmpty, "the answer's drain takes nothing")
-        #expect(board.tray.map(\.label) == ["a.py:1"])
+        try agent(codex, "codex", .working)
+        #expect(board.tray.map(\.label) == ["a.py:1"] && board.composerPrompts[codex] == nil)
 
         // The composer prompt after it, queued mid-turn: its drain takes its own mention.
         try await send(draft(["use it"]), to: [codex])
