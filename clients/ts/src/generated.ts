@@ -1148,6 +1148,8 @@ export type TrayDrainParams = {
   board?: Id;
   caller?: Id;
   peek?: boolean;
+  /** the prompt text being submitted, compared with what easl's composer typed into the caller (whitespace runs as one space, ends trimmed) */
+  prompt?: string;
 };
 export type TrayDrainResult = {
   mentions: ResolvedMention[];
@@ -1438,7 +1440,7 @@ export interface CanvasApi {
     stage(params: TrayStageParams): Promise<TrayStageResult>;
     /** Remove one staged mention. */
     unstage(params: TrayUnstageParams): Promise<TrayUnstageResult>;
-    /** Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets none of them, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. A `caller` also gets the mentions other agents attached for it with `agent.prompt` `mentions` (never shown in the tray), after the tray's, in a block per sending terminal (`<canvas-mentions … from="obj_…">` and a line naming it); `tray.commit` of their ids removes them too. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title). */
+    /** Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets none of them, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. A `caller` also gets the mentions other agents attached for it with `agent.prompt` `mentions` (never shown in the tray), after the tray's, in a block per sending terminal (`<canvas-mentions … from="obj_…">` and a line naming it); `tray.commit` of their ids removes them too. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title). `prompt` is the text the caller's agent integration is about to submit: when the user sent that text to the caller from easl's composer, the drain is that prompt's and takes the mentions it carried (numbered from 1) instead of the tray, or nothing for a prompt without mentions (`tray.commit` of their ids ends the wait; one without mentions is taken at once). A drain without `prompt`, or whose text the composer didn't send there, takes the tray as described. */
     drain(params?: TrayDrainParams): Promise<TrayDrainResult>;
     /** Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored. */
     commit(params: TrayCommitParams): Promise<TrayCommitResult>;

@@ -544,11 +544,12 @@ public final class ApiRouter {
 
     /// The composer's send to one terminal (docs/design.md, Composer): `agent.prompt` from the
     /// user, with every check it makes. For a terminal whose integration drains, the prompt is
-    /// queued with its own copies of `mentions` (`Board.queueComposerPrompt`): that prompt's
-    /// drain takes them, numbered from 1, and never the tray. `answer`: the agent is blocked on a
-    /// question or approval and the text is the user's answer, which only the user gives: it
-    /// passes the blocked check alone, unlike `force`, carries no mentions, and keeps the tray out
-    /// of a drain the answer causes.
+    /// queued by its text with its own copies of `mentions` (`Board.queueComposerPrompt`): the
+    /// drain of that text takes them, numbered from 1, and never the tray. A text the
+    /// integration doesn't drain for (`/…`, `!…`: `PromptTarget.skipsDrain`) queues nothing and
+    /// takes no mentions. `answer`: the agent is blocked on a question or approval and the text
+    /// is the user's answer, which only the user gives: it passes the blocked check alone,
+    /// unlike `force`, and carries no mentions.
     public func composerPrompt(_ text: String, to terminal: ObjectID, on board: Board, mentions: [Mention], answer: Bool) async throws {
         guard let tile = board.objects[terminal], tile.type == .terminal else { throw Failure("not_found", "terminal \(terminal) was closed") }
         _ = try await submitPrompt(text, to: tile, on: board, attached: .composer(answer ? [] : mentions, answer: answer), caller: nil, force: false)
@@ -589,6 +590,9 @@ public final class ApiRouter {
         if !mentions.isEmpty, !PromptTarget.drains(terminal) {
             throw Failure("unavailable", "\(terminal.id) runs no agent with an easl integration, so nothing there would take the mentions; name the objects in the text instead")
         }
+        if case .composer(let given, _) = attached, !given.isEmpty, PromptTarget.skipsDrain(text, in: terminal) {
+            throw Failure("invalid_params", "a slash command or shell escape takes no mentions: its agent drains nothing for it")
+        }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
         // Queued before the text goes in: the target's integration drains them with this prompt.
@@ -598,11 +602,9 @@ public final class ApiRouter {
         case .agent:
             let senderName = sender.flatMap { try? agentTile($0) }.map { PromptTarget.label($0.1, shownTitle: terminalStatus?($0.0, $0.1.id).title) }
             handed = try board.handOff(mentions, to: terminal.id, from: sender, fromName: senderName)
-        case .composer(let given, let answer):
-            // The hooks don't drain a slash command or a shell escape (`/…`, `!…`).
-            let drained = !text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/") && !text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!")
-            if PromptTarget.drains(current), drained || !given.isEmpty {
-                queued = board.queueComposerPrompt(to: terminal.id, mentions: given, answer: answer)
+        case .composer(let given, _):
+            if PromptTarget.drains(current), !PromptTarget.skipsDrain(text, in: current) {
+                queued = board.queueComposerPrompt(text, to: terminal.id, mentions: given)
             }
         }
         guard await submitToTerminal(board, terminal.id, text) else {
@@ -652,13 +654,14 @@ public final class ApiRouter {
     /// `tray.drain`: the tray's mentions go to the terminal the tray shows (the board's prompt
     /// target), so a caller tile gets them only when it is that terminal; any other caller gets
     /// only what agents handed to it (`agent.prompt` `mentions`), and the tray stays as it is.
-    /// Without a caller (a script) or a window, anyone drains the tray.
+    /// Without a caller (a script) or a window, anyone drains the tray. A caller's `prompt` that
+    /// the composer typed there takes that prompt's own mentions instead (`Board.drain`).
     private func drain(_ p: JSONValue) async throws -> JSONValue {
         let board = try board(p)
         let caller = p["caller"]?.string
         let state = caller == nil ? nil : viewState?(board)
         let showsTray = state.map { $0.promptTarget == caller } ?? true
-        let drained = await board.drain(peek: p["peek"]?.bool ?? false, caller: caller, tray: showsTray)
+        let drained = await board.drain(peek: p["peek"]?.bool ?? false, caller: caller, prompt: p["prompt"]?.string, tray: showsTray)
         var result: [String: JSONValue] = ["mentions": try JSONValue.encode(drained.mentions), "context": .string(drained.context)]
         if !showsTray {
             result["held"] = .number(Double(board.tray.count))

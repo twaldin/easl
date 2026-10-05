@@ -80,6 +80,14 @@ public enum PromptTarget {
         runsAgent(terminal) && !NotifyingAgent.reports(terminal)
     }
 
+    /// `text` isn't a prompt to `terminal`'s integration, which drains nothing when it is
+    /// submitted: a slash command or a shell escape (`/…`, `!…`, and omp's `$…`), as the hooks
+    /// (extensions/agent-hooks/hook.ts) and omp's extension skip them.
+    public static func skipsDrain(_ text: String, in terminal: CanvasObject) -> Bool {
+        guard let first = text.trimmingCharacters(in: .whitespacesAndNewlines).first else { return true }
+        return first == "/" || first == "!" || (first == "$" && terminal.props["agent"]?["kind"]?.string == "omp")
+    }
+
     /// Where Hyper-V (Paste Mentions into Terminal) pastes: the terminal holding the keyboard,
     /// where the user is typing; else the tray's target.
     public static func pasteTarget(keyboard: ObjectID?, target: ObjectID?, objects: [ObjectID: CanvasObject]) -> ObjectID? {

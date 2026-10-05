@@ -103,8 +103,11 @@ public final class Board {
     /// drained prompt (Handoff.swift); in memory only.
     public internal(set) var handoffs: [ObjectID: [Handoff]] = [:]
     /// The composer's prompts to each terminal, oldest first, each waiting for the drain of the
-    /// prompt it typed (`queueComposerPrompt`, Composer.swift); in memory only.
+    /// text it typed (`queueComposerPrompt`, Composer.swift); in memory only.
     public internal(set) var composerPrompts: [ObjectID: [ComposerPrompt]] = [:]
+    /// Mentions the composer sent to a terminal that never took them (its agent went, the
+    /// prompt expired) are staged again: the terminal, and the tray's mentions for them.
+    public var onComposerMentionsReturned: ((ObjectID, [Mention]) -> Void)?
     /// Each terminal's last answer: the final assistant message of its agent's last finished
     /// turn, as its integration reported it with `idle` (`agent.read` `final`). A new turn clears
     /// it; saved with the board.
@@ -773,14 +776,15 @@ public final class Board {
     /// `peek` leaves the tray intact for a later `commit` of exactly these ids. `caller` is the
     /// terminal the context goes to: mentions of it say so, other terminals are named. The
     /// mentions other agents handed to `caller` (`handOff`) follow the tray's, one block per
-    /// sender; `tray` false leaves the tray out (it shows another terminal). When the composer
-    /// sent `caller` a prompt that hasn't drained yet (`queueComposerPrompt`), this drain is that
-    /// prompt's: it takes that prompt's own mentions, numbered from 1, instead of the tray (an
-    /// answer to a question takes none), so a retarget, a new mention or a second prompt meanwhile
-    /// never changes what its `[n]` mean.
+    /// sender; `tray` false leaves the tray out (it shows another terminal). `prompt` is the text
+    /// the caller's integration is about to submit: when the composer typed that text into
+    /// `caller` (`queueComposerPrompt`), this drain is that prompt's and takes its own mentions,
+    /// numbered from 1, instead of the tray (none for an answer or a prompt without tokens), so
+    /// a retarget, a new mention or a second prompt meanwhile never changes what its `[n]` mean.
+    /// Any other drain (no `prompt`, another text) takes the tray as always.
     /// Old-side and pinned code excerpts are read from git, hence async.
-    public func drain(peek: Bool = false, caller: ObjectID? = nil, tray includeTray: Bool = true) async -> (mentions: [MentionContext.Resolved], context: String) {
-        let sent = caller.flatMap { nextComposerPrompt(for: $0) }
+    public func drain(peek: Bool = false, caller: ObjectID? = nil, prompt: String? = nil, tray includeTray: Bool = true) async -> (mentions: [MentionContext.Resolved], context: String) {
+        let sent = caller.flatMap { caller in prompt.flatMap { takeComposerPrompt(for: caller, prompt: $0) } }
         let staged = sent?.mentions ?? (includeTray ? tray : [])
         var resolved = await resolve(staged, caller: caller)
         var blocks = resolved.isEmpty ? [] : [MentionContext.render(resolved, board: self, targets: staged.map(\.target))]
@@ -1028,11 +1032,13 @@ public final class Board {
     }
 
     /// The agent exited (`agent.release`): the tile is a plain shell again. Its lifecycle and the
-    /// recorded session go, so a reboot restores a shell instead of resuming a session the user quit.
+    /// recorded session go, so a reboot restores a shell instead of resuming a session the user quit,
+    /// and the composer's prompts it never drained return their mentions to the tray.
     public func releaseAgent(tile: ObjectID) throws {
         _ = try object(tile)
         pendingApprovals[tile] = nil
         try update(tile, props: .object(["lifecycle": .null, "agent": .null]), caller: tile)
+        dropComposerPrompts(of: tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
     }
 

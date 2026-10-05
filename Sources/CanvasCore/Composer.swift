@@ -107,27 +107,39 @@ public struct ComposerDraft: Codable, Equatable, Sendable {
 }
 
 /// What the composer keeps for one board, for this user only: the draft, the prompts sent from
-/// it (newest last) and the terminals it also sends to besides the tray's target. Saved by the app
-/// beside the boards, never in the board file: a board will soon have several clients, and one
-/// person's half-written prompt and history aren't the board's.
+/// it (newest last), the terminals it also sends to besides the tray's target, and the drafts
+/// on their way out. Saved by the app beside the boards, never in the board file: a board will
+/// soon have several clients, and one person's half-written prompt and history aren't the board's.
 public struct ComposerState: Codable, Equatable, Sendable {
     public var draft: ComposerDraft
     public var history: [ComposerDraft]
     /// Terminals picked in the target menu besides the tray's target (`PromptTarget`), each once.
     public var alsoTo: [ObjectID]
+    /// Drafts sent with ⌘↩ that no terminal has taken yet (`sending`, `reached`): kept so
+    /// quitting meanwhile loses nothing (`recoverOutgoing`).
+    public var outgoing: [ComposerDraft]
 
     public static let historyLimit = 100
 
-    public init(draft: ComposerDraft = ComposerDraft(), history: [ComposerDraft] = [], alsoTo: [ObjectID] = []) {
+    public init(draft: ComposerDraft = ComposerDraft(), history: [ComposerDraft] = [], alsoTo: [ObjectID] = [], outgoing: [ComposerDraft] = []) {
         self.draft = draft
         self.history = history
         self.alsoTo = alsoTo
+        self.outgoing = outgoing
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        draft = try container.decodeIfPresent(ComposerDraft.self, forKey: .draft) ?? ComposerDraft()
+        history = try container.decodeIfPresent([ComposerDraft].self, forKey: .history) ?? []
+        alsoTo = try container.decodeIfPresent([ObjectID].self, forKey: .alsoTo) ?? []
+        outgoing = try container.decodeIfPresent([ComposerDraft].self, forKey: .outgoing) ?? []
     }
 
     /// As read from disk: drafts whose marks and tokens don't match lose their tokens
     /// (`ComposerDraft.repaired`), and each extra target is kept once.
     public var repaired: ComposerState {
-        ComposerState(draft: draft.repaired, history: history.map(\.repaired), alsoTo: Self.unique(alsoTo))
+        ComposerState(draft: draft.repaired, history: history.map(\.repaired), alsoTo: Self.unique(alsoTo), outgoing: outgoing.map(\.repaired))
     }
 
     /// `ids` in order, each once.
@@ -142,61 +154,98 @@ public struct ComposerState: Codable, Equatable, Sendable {
         history.append(sent)
         if history.count > Self.historyLimit { history.removeFirst(history.count - Self.historyLimit) }
     }
+
+    /// `sent` left the composer and its text is going in.
+    public mutating func sending(_ sent: ComposerDraft) {
+        outgoing.append(sent)
+    }
+
+    /// `sent`'s text went into a terminal: it is in the history now, no longer on its way.
+    public mutating func reached(_ sent: ComposerDraft) {
+        guard let index = outgoing.firstIndex(of: sent) else { return }
+        outgoing.remove(at: index)
+        record(sent)
+    }
+
+    /// `sent` went nowhere (its text reached no terminal): no longer on its way.
+    public mutating func returned(_ sent: ComposerDraft) {
+        if let index = outgoing.firstIndex(of: sent) { outgoing.remove(at: index) }
+    }
+
+    /// Drafts still on their way when the app last quit never reached a terminal: they come
+    /// back ahead of the draft, their tokens staged again.
+    @MainActor
+    public mutating func recoverOutgoing(on board: Board) {
+        guard !outgoing.isEmpty else { return }
+        var restored = outgoing.reduce(ComposerDraft()) { $0.followed(by: $1) }.followed(by: draft)
+        var caret: Int?
+        ComposerSync.edited(&restored, previous: draft, caret: &caret, on: board)
+        draft = restored
+        outgoing = []
+    }
 }
 
-/// A prompt the composer sent to one terminal, waiting for the drain of the prompt it typed:
-/// that drain takes `mentions` (numbered from 1) instead of the tray, whatever the tray, the
-/// prompt target or the composer's later prompts are by then. An answer to a question the agent
-/// was blocked on has none, and keeps the tray out of the drain its answer may cause (Codex's
-/// queued questions are answered by a prompt).
+/// A prompt the composer typed into one terminal whose integration drains, waiting for that
+/// prompt's drain: the drain from that terminal whose `prompt` is this text takes `mentions`
+/// (numbered from 1) instead of the tray, whatever the tray, the prompt target or the composer's
+/// later prompts are by then. A drain without a `prompt` (Hyper-V, a script, an older hook) or
+/// with another text never takes it. A prompt without mentions (an answer to a question, a
+/// prompt with no tokens) keeps the tray out of its own drain.
 public struct ComposerPrompt: Equatable, Sendable {
     public var id: String
+    /// The text as typed, as `key` compares it.
+    public var prompt: String
     public var mentions: [Mention]
-    public var answer: Bool
     public var queuedAt: Date
 
-    /// How long an answer waits for a drain: an answer typed into a dialog causes none (Claude
-    /// Code's questions, approvals), and the prompt after it must take the tray again.
-    public static let answerLifetime: TimeInterval = 10
+    /// How long a prompt waits for its drain: an answer typed into a dialog never drains (Claude
+    /// Code's questions, approvals), nor does a prompt its agent never read.
+    public static let lifetime: TimeInterval = 600
+
+    /// `text` as a drain's `prompt` is compared with what the composer typed: whitespace runs
+    /// (the newlines and indents a terminal or agent may change) as one space, none at the ends.
+    public static func key(_ text: String) -> String {
+        text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
 }
 
 extension Board {
-    /// Queues the composer's prompt to `terminal` before its text goes in: copies of `mentions`
-    /// (ids of their own, so each terminal's delivery is its own), or an answer. A prompt drops
-    /// the answers waiting before it (they caused no drain). Returns its id, to withdraw it if
-    /// the text can't be typed.
+    /// Queues the composer's prompt `text` to `terminal` before the text goes in, with copies of
+    /// `mentions` (ids of their own, so each terminal's delivery is its own). Returns its id, to
+    /// withdraw it if the text can't be typed.
     @discardableResult
-    public func queueComposerPrompt(to terminal: ObjectID, mentions: [Mention], answer: Bool = false, now: Date = Date()) -> String {
-        let copies = answer ? [] : mentions.map { Mention(id: IDs.make("men"), target: $0.target, label: $0.label, stagedAt: $0.stagedAt, edited: $0.edited) }
-        let prompt = ComposerPrompt(id: IDs.make("cmp"), mentions: copies, answer: answer, queuedAt: now)
-        var queue = composerPrompts[terminal] ?? []
-        if !answer { queue.removeAll(where: \.answer) }
-        queue.append(prompt)
-        composerPrompts[terminal] = queue
+    public func queueComposerPrompt(_ text: String, to terminal: ObjectID, mentions: [Mention], now: Date = Date()) -> String {
+        expireComposerPrompts(now: now)
+        let copies = mentions.map { Mention(id: IDs.make("men"), target: $0.target, label: $0.label, stagedAt: $0.stagedAt, edited: $0.edited) }
+        let prompt = ComposerPrompt(id: IDs.make("cmp"), prompt: ComposerPrompt.key(text), mentions: copies, queuedAt: now)
+        composerPrompts[terminal, default: []].append(prompt)
         return prompt.id
     }
 
-    /// The text never reached the terminal: its queued prompt goes.
+    /// The text never reached the terminal: its queued prompt goes (the composer restores it).
     public func withdrawComposerPrompt(_ id: String) {
-        for (terminal, queue) in composerPrompts {
+        for (terminal, queue) in composerPrompts where queue.contains(where: { $0.id == id }) {
             let left = queue.filter { $0.id != id }
             composerPrompts[terminal] = left.isEmpty ? nil : left
         }
     }
 
-    /// The composer's prompt `caller`'s drain belongs to, oldest first: an answer past its
-    /// lifetime is dropped; one without mentions is taken now (nothing to commit), one with
-    /// mentions stays until they are committed, so a peeking drain that is cancelled loses nothing.
-    func nextComposerPrompt(for caller: ObjectID, now: Date = Date()) -> ComposerPrompt? {
-        var queue = composerPrompts[caller] ?? []
-        queue.removeAll { $0.answer && now.timeIntervalSince($0.queuedAt) > ComposerPrompt.answerLifetime }
-        let first = queue.first
-        if first?.mentions.isEmpty == true { queue.removeFirst() }
-        composerPrompts[caller] = queue.isEmpty ? nil : queue
-        return first
+    /// The composer's prompt that `caller`'s drain of `prompt` belongs to: the oldest queued
+    /// with that text. One without mentions is taken now (nothing to deliver or commit); one with
+    /// mentions stays until they are committed (`tray.commit`), so a peek loses nothing.
+    func takeComposerPrompt(for caller: ObjectID, prompt: String, now: Date = Date()) -> ComposerPrompt? {
+        expireComposerPrompts(now: now)
+        let key = ComposerPrompt.key(prompt)
+        guard var queue = composerPrompts[caller], let index = queue.firstIndex(where: { $0.prompt == key }) else { return nil }
+        let found = queue[index]
+        if found.mentions.isEmpty {
+            queue.remove(at: index)
+            composerPrompts[caller] = queue.isEmpty ? nil : queue
+        }
+        return found
     }
 
-    /// Drops delivered mentions from the composer's prompts, and each prompt left with none.
+    /// Drops delivered mentions from the composer's prompts, and each prompt they leave empty.
     /// Returns how many were delivered.
     func commitComposerPrompts(_ ids: [MentionID]) -> Int {
         var count = 0
@@ -213,9 +262,29 @@ extension Board {
         return count
     }
 
-    /// A deleted terminal takes its queue with it; a deleted object its mentions in every queue.
+    /// `terminal`'s agent is gone (released, exited to the shell) or the terminal is: its
+    /// prompts will never drain, and their mentions go back to the tray
+    /// (`onComposerMentionsReturned`).
+    public func dropComposerPrompts(of terminal: ObjectID) {
+        guard let queue = composerPrompts.removeValue(forKey: terminal) else { return }
+        returnUndelivered(queue, from: terminal)
+    }
+
+    /// Prompts older than `ComposerPrompt.lifetime` never drained: their mentions go back to
+    /// the tray. The app calls this now and then; queueing and draining call it too.
+    public func expireComposerPrompts(now: Date = Date()) {
+        for (terminal, queue) in composerPrompts {
+            let expired = queue.filter { now.timeIntervalSince($0.queuedAt) > ComposerPrompt.lifetime }
+            guard !expired.isEmpty else { continue }
+            let left = queue.filter { now.timeIntervalSince($0.queuedAt) <= ComposerPrompt.lifetime }
+            composerPrompts[terminal] = left.isEmpty ? nil : left
+            returnUndelivered(expired, from: terminal)
+        }
+    }
+
+    /// A deleted object leaves every queued prompt's mentions; a deleted terminal's own prompts
+    /// return their mentions to the tray.
     func forgetComposerPrompts(of id: ObjectID) {
-        composerPrompts[id] = nil
         for (terminal, queue) in composerPrompts {
             composerPrompts[terminal] = queue.map { prompt in
                 var prompt = prompt
@@ -223,6 +292,15 @@ extension Board {
                 return prompt
             }
         }
+        dropComposerPrompts(of: id)
+    }
+
+    /// Stages the undelivered mentions of `prompts` again (each target once, those still on the
+    /// board) and says so.
+    private func returnUndelivered(_ prompts: [ComposerPrompt], from terminal: ObjectID) {
+        let mentions = prompts.flatMap(\.mentions)
+        let returned = mentions.compactMap { try? stage($0.target) }
+        if !returned.isEmpty { onComposerMentionsReturned?(terminal, returned) }
     }
 }
 
@@ -287,19 +365,24 @@ public struct ComposerSend {
         public var mentions: [Mention]
         /// A terminal without an integration: the mentions' context is pasted ahead of the text.
         public var pastesContext: Bool
+
+        /// The tokens' mentions go with it.
+        public var carriesMentions: Bool { !mentions.isEmpty || pastesContext }
     }
 
     /// The draft as submitted, its tokens the mentions they stood for.
     public let draft: ComposerDraft
     public let deliveries: [Delivery]
 
-    /// Every target was blocked: the text answers them all and the tokens stay staged.
-    public var answersOnly: Bool { deliveries.allSatisfy(\.answer) }
+    /// Some target takes the tokens' mentions, so they left the tray. Not when every target only
+    /// gets an answer, or the text is a slash command or shell escape (`PromptTarget.skipsDrain`):
+    /// the tokens stay staged.
+    public var takesMentions: Bool { deliveries.contains(where: \.carriesMentions) }
 
     /// Starts sending `draft` to `targets` (the tray's target first): the tokens' mentions leave
-    /// the tray (`Board.withdraw`), unless every target only gets an answer, and the composer is
-    /// left with `remaining` (empty, or the tokens alone after an answer). Nil when there is
-    /// nothing to send or nowhere to send it.
+    /// the tray (`Board.withdraw`) when a target takes them, and the composer is left with
+    /// `remaining` (empty, or the tokens alone when none does). Nil when there is nothing to
+    /// send or nowhere to send it.
     public static func begin(_ draft: ComposerDraft, targets: [ObjectID], on board: Board) -> (send: ComposerSend, remaining: ComposerDraft)? {
         guard !draft.isEmpty, !targets.isEmpty else { return nil }
         let mentions = draft.tokens.map { token in board.tray.first { $0.id == token.id } ?? token }
@@ -307,15 +390,16 @@ public struct ComposerSend {
             guard let terminal = board.objects[id], terminal.type == .terminal else { return nil }
             let answer = terminal.props["lifecycle"]?["state"]?.string == LifecycleState.blocked.rawValue
             let drains = PromptTarget.drains(terminal)
-            return Delivery(terminal: id, answer: answer, mentions: answer || !drains ? [] : mentions, pastesContext: !answer && !drains && !mentions.isEmpty)
+            let takes = !answer && drains && !PromptTarget.skipsDrain(draft.prompt, in: terminal)
+            return Delivery(terminal: id, answer: answer, mentions: takes ? mentions : [], pastesContext: !answer && !drains && !mentions.isEmpty)
         }
         guard !deliveries.isEmpty else { return nil }
         let send = ComposerSend(draft: ComposerDraft(text: draft.text, tokens: mentions), deliveries: deliveries)
         var remaining = ComposerDraft()
-        if send.answersOnly {
-            for mention in mentions { remaining.insert(mention, at: nil) }
-        } else {
+        if send.takesMentions {
             board.withdraw(mentions.map(\.id))
+        } else {
+            for mention in mentions { remaining.insert(mention, at: nil) }
         }
         return (send, remaining)
     }
@@ -328,12 +412,24 @@ public struct ComposerSend {
         return await board.context(for: draft.tokens, caller: delivery.terminal) + "\n" + draft.prompt
     }
 
-    /// Nothing went in anywhere: the submitted draft comes back ahead of what the user typed
-    /// since (`current`), its tokens staged again.
-    public func restore(into current: ComposerDraft, on board: Board) -> ComposerDraft {
-        var restored = draft.followed(by: current)
+    /// Every delivery is done and the text went into `reached`. The composer then shows `draft`,
+    /// from `current` (what the user wrote meanwhile): when the text reached no terminal, the
+    /// submitted draft comes back ahead of it; when it reached terminals but none that took the
+    /// mentions (only a blocked one's answer went in), the tokens come back ahead of it. Their
+    /// mentions are staged again. `sent`: the text went in somewhere (it joins the history).
+    /// `mentionsReturned`: the second case.
+    public func settle(reached: Set<ObjectID>, into current: ComposerDraft, on board: Board) -> (draft: ComposerDraft, sent: Bool, mentionsReturned: Bool) {
+        let back: ComposerDraft
+        if reached.isEmpty {
+            back = draft
+        } else if takesMentions, !draft.tokens.isEmpty, !deliveries.contains(where: { $0.carriesMentions && reached.contains($0.terminal) }) {
+            back = draft.tokens.reduce(into: ComposerDraft()) { $0.insert($1, at: nil) }
+        } else {
+            return (current, true, false)
+        }
+        var restored = back.followed(by: current)
         var caret: Int?
         ComposerSync.edited(&restored, previous: current, caret: &caret, on: board)
-        return restored
+        return (restored, !reached.isEmpty, !reached.isEmpty)
     }
 }

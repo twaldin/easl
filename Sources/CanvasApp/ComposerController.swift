@@ -40,10 +40,23 @@ final class ComposerController {
         var draft = state.draft
         syncing = true
         _ = ComposerSync.trayChanged(&draft, caret: nil, on: board)
-        syncing = false
         state.draft = draft
-        bar.show(draft, board: board)
+        // Sent as the app quit, before any terminal took it.
+        let recovering = !state.outgoing.isEmpty
+        state.recoverOutgoing(on: board)
+        syncing = false
+        bar.show(state.draft, board: board)
+        if recovering { scheduleSave() }
         bar.onEdit = { [weak self] previous in self?.edited(previous: previous) }
+        // Prompts their agent never drained come back after a while (`Board.expireComposerPrompts`),
+        // checked every minute while the window is open.
+        Task { @MainActor [weak self] in
+            while true {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self else { return }
+                self.board.expireComposerPrompts()
+            }
+        }
         bar.onSend = { [weak self] in self?.sendDraft() }
         bar.onRecall = { [weak self] older in self?.recall(older: older) ?? false }
     }
@@ -154,11 +167,11 @@ final class ComposerController {
     // MARK: Sending
 
     /// ⌘↩: the prompt to every target (`ComposerSend`). The submitted draft leaves the composer
-    /// at once, its mentions leave the tray, and each target that drains gets them queued with
+    /// at once and its mentions leave the tray; each target that drains gets them queued with
     /// its own prompt, numbered from 1; a terminal without an integration gets their context
     /// pasted ahead of the text; a blocked target takes the text as its answer, alone. What the
-    /// user types or stages while it goes in is the next draft. When no target took it, it comes
-    /// back ahead of that.
+    /// user types or stages while it goes in is the next draft. When no target took the text it
+    /// comes back ahead of that, and when none took the mentions, the tokens do.
     func sendDraft() {
         guard let send else { return }
         let targets = self.targets
@@ -177,39 +190,52 @@ final class ComposerController {
         board.arrangeTray(remaining.tokens.map(\.id))
         syncing = false
         state.draft = remaining
+        state.sending(outgoing.draft)
         recall = nil
-        scheduleSave()
+        save()
+        if !outgoing.takesMentions, !outgoing.draft.tokens.isEmpty, !outgoing.deliveries.allSatisfy(\.answer) {
+            notice("Mentions stay staged: a slash command or shell escape doesn't take them")
+        }
         let board = self.board
         Task { @MainActor [weak self] in
             var failures: [String] = []
-            var sent = false
+            var reached: Set<ObjectID> = []
             for delivery in outgoing.deliveries {
                 let text = await outgoing.text(for: delivery, on: board)
                 do {
                     try await send(text, delivery.terminal, delivery.mentions, delivery.answer)
-                    sent = true
+                    if reached.isEmpty {
+                        self?.state.reached(outgoing.draft)
+                        self?.scheduleSave()
+                    }
+                    reached.insert(delivery.terminal)
                 } catch {
                     let message = (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
                     failures.append("\(self?.name(delivery.terminal) ?? delivery.terminal): \(message)")
                 }
             }
-            self?.finished(outgoing, sent: sent, failures: failures)
+            self?.finished(outgoing, reached: reached, failures: failures)
         }
     }
 
-    private func finished(_ outgoing: ComposerSend, sent: Bool, failures: [String]) {
-        if !failures.isEmpty { notice((sent ? "Not sent to " : "Nothing sent: ") + failures.joined(separator: "; ")) }
-        if sent {
-            state.record(outgoing.draft)
-        } else {
-            syncing = true
-            let current = bar.draft
-            let restored = outgoing.restore(into: current, on: board)
-            bar.show(restored, board: board)
-            syncing = false
-            state.draft = restored
+    private func finished(_ outgoing: ComposerSend, reached: Set<ObjectID>, failures: [String]) {
+        syncing = true
+        let current = bar.draft
+        let settled = outgoing.settle(reached: reached, into: current, on: board)
+        if settled.draft != current { bar.show(settled.draft, board: board) }
+        syncing = false
+        state.draft = settled.draft
+        if !settled.sent { state.returned(outgoing.draft) }
+        if !failures.isEmpty {
+            notice((settled.sent ? "Not sent to " : "Nothing sent: ") + failures.joined(separator: "; ") + (settled.mentionsReturned ? ". The mentions stay staged" : ""))
         }
         scheduleSave()
+    }
+
+    /// Mentions a terminal never took (its agent went, the prompt waited too long) are staged
+    /// again (`Board.onComposerMentionsReturned`); their tokens come with the tray change.
+    func mentionsReturned(from terminal: ObjectID, count: Int) {
+        notice("\(count == 1 ? "A mention" : "\(count) mentions") sent to \(name(terminal)) came back: its agent never took \(count == 1 ? "it" : "them")")
     }
 
     // MARK: Saving

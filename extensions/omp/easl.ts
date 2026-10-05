@@ -157,7 +157,7 @@ export default function canvas(pi: ExtensionAPI): void {
     const text = event.text.trim();
     if (!text || /^[/!$]/.test(text)) return; // slash commands and shell escapes aren't prompts
     try {
-      const drained = await client.api.tray.drain({ peek: true });
+      const drained = await client.api.tray.drain({ peek: true, prompt: text });
       staged = drained.context ? { prompt: text, ids: drained.mentions.map((m) => m.id), context: drained.context, delivered: false } : undefined;
     } catch {
       staged = undefined; // app not running: prompt proceeds untouched

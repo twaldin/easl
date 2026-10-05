@@ -111,11 +111,13 @@ export const CanvasPlugin = async ({ directory }: Input) => {
     },
 
     // The user's prompt: this session is the tile's (resume), and the tray rides along as a
-    // synthetic part, which the model reads and the TUI doesn't show.
+    // synthetic part, which the model reads and the TUI doesn't show. The prompt's text lets a
+    // prompt sent from easl's composer take its own mentions.
     "chat.message": async (input: { sessionID: string }, output: { message: { id: string }; parts: Json[] }) => {
       if (children.has(input.sessionID)) return;
       void quietly(client.api.agent.report_session({ tile: tile!, kind: "opencode", sessionId: input.sessionID }));
-      const drained = await client.api.tray.drain({ peek: true }).catch(() => undefined);
+      const prompt = output.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => String(part.text ?? "")).join("\n");
+      const drained = await client.api.tray.drain({ peek: true, prompt }).catch(() => undefined);
       if (!drained?.context) return;
       output.parts.push({ id: partID(), sessionID: input.sessionID, messageID: output.message.id, type: "text", text: drained.context, synthetic: true });
       await quietly(client.api.tray.commit({ ids: drained.mentions.map((m) => m.id) }));

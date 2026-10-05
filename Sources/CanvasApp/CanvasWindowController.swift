@@ -187,6 +187,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         composer.notice = { [weak self] text in self?.canvas.showNotice(text) }
         composer.name = { [weak self] id in self?.terminalName(id) ?? id }
         composer.onTargetsChange = { [weak self] in self?.refreshTray() }
+        board.onComposerMentionsReturned = { [weak self] terminal, mentions in self?.composer.mentionsReturned(from: terminal, count: mentions.count) }
         canvas.onPromptTargetChange = { [weak self] in self?.refreshTray() }
         canvas.onPromptTargetTitle = { [weak self] in self?.scheduleTrayTitle() }
         responderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
