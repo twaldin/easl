@@ -171,6 +171,10 @@ var Methods = map[string]ParamSpec{
 		Accepted: []string{"board"},
 		Required: nil,
 	},
+	"view.open_url": {
+		Accepted: []string{"url", "board", "caller"},
+		Required: []string{"url"},
+	},
 	"view.render": {
 		Accepted: []string{"board", "target", "scale", "full", "exclude", "padding", "out", "format", "timeoutMs"},
 		Required: []string{"target"},
