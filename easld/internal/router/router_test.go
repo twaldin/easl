@@ -361,3 +361,44 @@ func TestHistoryKindsAndCursors(t *testing.T) {
 		t.Fatalf("%v", restarted)
 	}
 }
+
+// Ported from ApiRouterTests.openingAUrlShowsItBesideTheCallerAndReusesTheTile (easld has no
+// window to show the tile in).
+func TestOpeningAUrlShowsItBesideTheCallerAndReusesTheTile(t *testing.T) {
+	f := newFixture(t)
+	caller := idOf(f.result("object.create", map[string]any{"type": "terminal", "props": map[string]any{}, "frame": map[string]any{"x": 0.0, "y": 0.0, "w": 600.0, "h": 400.0}}))
+	browsers := func() int {
+		n := 0
+		for _, o := range f.board.Objects() {
+			if o.Type == model.Browser {
+				n++
+			}
+		}
+		return n
+	}
+
+	first := f.result("view.open_url", map[string]any{"url": "http://127.0.0.1:8000/x.html", "caller": caller})
+	tile := idOf(first)
+	o := f.board.Objects()[tile]
+	if first["existing"] != false || o.Type != model.Browser || o.Props["url"] != "http://127.0.0.1:8000/x.html" {
+		t.Fatalf("first: %v", first)
+	}
+	if o.CreatedBy != model.ActorFor(caller) {
+		t.Errorf("created by %v, want the caller", o.CreatedBy)
+	}
+
+	again := f.result("view.open_url", map[string]any{"url": "HTTP://127.0.0.1:8000/x.html", "caller": caller})
+	if idOf(again) != tile || again["existing"] != true || browsers() != 1 {
+		t.Fatalf("again: %v (%d browser tiles)", again, browsers())
+	}
+
+	for _, refused := range []string{"file:///etc/hosts", "mailto:a@b.c", "example.com", "/tmp/x.html"} {
+		code, message := errorOf(f.call("view.open_url", map[string]any{"url": refused, "caller": caller}))
+		if code != "invalid_params" || message != "view.open_url opens http and https addresses, not "+refused {
+			t.Errorf("%s: %s %s", refused, code, message)
+		}
+	}
+	if browsers() != 1 {
+		t.Errorf("%d browser tiles after refusals, want 1", browsers())
+	}
+}

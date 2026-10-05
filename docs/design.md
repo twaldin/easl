@@ -36,10 +36,11 @@ flowchart TB
 
 - `model`: objects and mentions;
 - `store`: board files, repository ids and worktrees;
-- `board`: revisions, events, keys, groups, placement, layout, tray, lifecycle, attention, follow and the activity log;
+- `board`: revisions, events, keys, groups, placement, layout, tray, lifecycle, attention, follow, opened web links and the activity log;
 - `route` and `check`: arrow routing and layout.check, bit-identical to ConnectorRouter;
 - `mention`: tray labels and the drain context;
 - `measure`: code and image sizes;
+- `weblink`: which text is an http(s) address and when two are the same page, read as Foundation's URL and URLComponents read them (percent-encoding, IDNA hosts);
 - `router`: the methods;
 - `server`: the socket framing;
 - `swiftjson`: JSON as JSONEncoder writes it (numbers as Swift formats a Double), for board files, replies and events;
