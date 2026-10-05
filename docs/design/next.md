@@ -57,16 +57,10 @@ Shipped (docs/design.md, Browser): popups with `window.opener`, downloads, uploa
 
 ## Performance and monitoring
 
-Measured on a real 339-object board (112 HTML tiles, 84 labelled `avoid` arrows, 32 groups): idle costs 2.7% CPU. The cost is bursts of API writes. Each frame-changing write re-routes every arrow on the main thread (`ShapeLayer.settleRouting`, mostly label placement), so 139 writes sent one at a time cost 34 s of CPU and kept the main thread busy for 45 s. A hidden window makes the same work 4–6× slower. Smaller costs:
+The benchmark (`scripts/perf-loop.py`, docs/testing.md), burst-coalesced off-main routing, the API activity hold, direct `board.get` JSON, parked HTML pages and the monitoring (`app.metrics`, `easl metrics`, the HUD, signposts, the 250 ms log line) shipped; docs/design.md "Performance" has them. Still open, against the targets (139-write burst under 3 s of CPU, no main-thread stretch over 100 ms, at most 2 board routings per burst, idle poll hitch under 16 ms, hidden within 2× of visible), measured on the sanitized replica of the real board:
 
-- `board.get` encodes and then decodes its result, 15–35 ms per call;
-- HTML tiles reload their web views on every pan and zoom;
-- a terminal's display link is recreated after every idle gap.
-
-- **A repeatable benchmark**: a generated board with the same shape (and a variant with a real board's geometry, every string replaced), a replay of the write pattern, and pass/fail targets. A 139-write burst stays under 3 s of CPU and never blocks the main thread for more than 100 ms. A burst routes the board at most twice. An idle poll causes no hitch over 16 ms. Hidden stays within 2× of visible.
-- **The fixes it drives**: route only the arrows a write affects, off the main thread; coalesce routing per burst; don't throttle while API work is pending; encode `board.get` straight to bytes; keep HTML tiles from reloading on navigation; reuse the terminal's display link.
-- **Monitoring**:
-  - `app.metrics` and `easl metrics --watch`: main-thread busy time and hitches, per-method API cost, events, writes per actor, routings, saves, live tiles per kind, process CPU, memory and wakeups;
-  - a debug HUD;
-  - signposts for Instruments;
-  - a log line for every main-thread stretch over 250 ms that names its cause.
+- **Burst CPU**: 15.0 → 5.1 s for the serial burst; what's left is `object.measure`, which builds a WKWebView per page (76 measures ≈ 22 s of measuring wall time, ~4 s of the app's CPU). Reusing a pool of measuring web views is the next step. The batch burst stays at 4.2 s for the same reason.
+- **Stretches**: the serial burst's longest main-thread stretch is 70–105 ms (median 85); the batch's 160–281 ms, in the batch's own turn (its 101 writes, events and refits) plus measure teardown.
+- **Hidden vs visible**: a minimized dev instance ran as fast as a shown one before the fixes too (ratio 1.00), so the 4–6× slowdown seen on Tim's machine didn't reproduce here; the activity hold is in place regardless.
+- **Label placement** is still global per board routing (now twice per burst, off the main thread, ~150–190 ms each); incremental placement for only the affected arrows isn't done.
+- **A terminal's display link** is still released after 30 idle frames and recreated (a new CVDisplayLink thread per output gap). The fix is a vendor patch: a paused `NSView.displayLink` per terminal view instead of MSDisplayLink's shared CVDisplayLink.
