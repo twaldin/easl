@@ -8,6 +8,8 @@ What easl does, feature by feature. Install, first steps and uninstall are in th
 
 Hyper-click a line of code, a DOM element, a note paragraph, a command's output, a shape or a group's title (the whole group, with the arrows between its members) to stage a mention in the tray at the bottom of the window. It goes with the next prompt you submit to the terminal the tray targets (`→ name ▾`); a mention from another worktree targets the agent working there. ⇧⌘M mentions whatever the keyboard is on. For an agent without an integration, Hyper-V (⌃⌥⇧⌘V) pastes the mentions into the terminal you're typing in, without pressing Return.
 
+The tray is also a prompt box, the composer, so you never pan back to a terminal to type. ⌘I gives it the keyboard from anywhere and ⌘↩ sends; Esc goes back to where you were. Each mention is a token in the text, put where you're typing, and the words after it are your note about it: `[1] make this green [2] drop this row`. Delete a token to unstage it. Check several terminals in the `→` menu to send the same prompt and mentions to each; a terminal without an integration gets the mentions pasted ahead of your text. When an agent you're sending to is waiting on a question or an approval, the question shows above the text and what you send answers it. ↑ in an empty composer brings back what you sent on this board, tokens and all, and an unsent draft is still there after switching boards or restarting easl.
+
 Hyper means all four modifiers, ⌃⌥⇧⌘. Hold them and click, or give yourself one key that sends all four: Caps Lock mapped to Hyper with [Karabiner-Elements](https://karabiner-elements.pqrs.org) is the usual setup, and any remapper that sends ⌃⌥⇧⌘ works.
 
 ## Quit the app. Your agents keep working.

@@ -1,12 +1,13 @@
 import AppKit
 import CanvasCore
 
-/// One window per board: the canvas scene plus the selection tray.
+/// One window per board: the canvas scene plus the composer (the tray bar).
 @MainActor
 final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     let board: Board
     let canvas: CanvasView
-    private let tray = TrayBar(frame: .zero)
+    private let tray: ComposerBar
+    private let composer: ComposerController
     private let navigator = NavigatorPanel()
     private let nothingHere = NothingHerePill(frame: .zero)
     private let emptyHint = EmptyBoardHint()
@@ -17,8 +18,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let registry: BoardRegistry
     private var responderObservation: NSKeyValueObservation?
     private var drawing: ShapeLayer?
-    /// The tray is `ChromeText.scaled(34)` tall: its text scales with the chrome text size.
-    private var trayHeight: NSLayoutConstraint?
 
     /// The board in front: the frontmost visible board window, with tabs its selected tab (the
     /// others are ordered out). What menu commands and ⌘Z act on, also while a panel such as
@@ -50,6 +49,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         self.board = board
         self.registry = registry
         canvas = CanvasView(board: board)
+        let bar = ComposerBar(frame: .zero)
+        tray = bar
+        composer = ComposerController(board: board, bar: bar, file: AppPaths.composer(of: board.id))
         let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = board.root.lastPathComponent
         window.subtitle = board.root.path
@@ -68,8 +70,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         tray.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(canvas)
         container.addSubview(tray)
-        let trayHeight = tray.heightAnchor.constraint(equalToConstant: ChromeText.scaled(34))
-        self.trayHeight = trayHeight
         NSLayoutConstraint.activate([
             canvas.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             canvas.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -77,10 +77,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             canvas.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             tray.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             tray.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
-            trayHeight,
-            // Its natural width (`TrayBar.intrinsicContentSize`, at least `TrayLayout.minimumWidth`)
-            // up to the window's: staging never widens the window.
+            // A prompt box's width up to the window's; its height is its own (one line, a few
+            // while it has the keyboard: `ComposerBar.intrinsicContentSize`).
             tray.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
+            {
+                let width = tray.widthAnchor.constraint(equalToConstant: 760)
+                width.priority = NSLayoutConstraint.Priority(480)
+                return width
+            }(),
         ])
         window.contentView = container
         emptyHint.translatesAutoresizingMaskIntoConstraints = false
@@ -175,10 +179,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.closePanel = { [weak self] in self?.getStarted.close() }
         canvas.onContentInViewChange = { [weak self] inView in self?.nothingHere.isHidden = inView }
 
-        tray.onUnstage = { [weak self] id in try? self?.board.unstage(id) }
         tray.onReveal = { [weak self] mention in self?.canvas.revealMention(mention.target) }
         tray.targetMenu = { [weak self] in self?.targetMenu() }
         NotificationCenter.default.addObserver(self, selector: #selector(chromeTextChanged), name: ChromeText.didChange, object: nil)
+        tray.onFocusChange = { [weak self] in self?.refreshTray() }
+        composer.promptTarget = { [weak self] in self?.canvas.promptTarget }
+        composer.notice = { [weak self] text in self?.canvas.showNotice(text) }
+        composer.name = { [weak self] id in self?.terminalName(id) ?? id }
+        composer.onTargetsChange = { [weak self] in self?.refreshTray() }
         canvas.onPromptTargetChange = { [weak self] in self?.refreshTray() }
         canvas.onPromptTargetTitle = { [weak self] in self?.scheduleTrayTitle() }
         responderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
@@ -193,8 +201,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
+    /// The chrome text size changed: the composer redraws its text and tokens at it and takes
+    /// its new height (`ComposerBar.intrinsicContentSize`).
     @objc private func chromeTextChanged() {
-        trayHeight?.constant = ChromeText.scaled(34)
+        tray.chromeTextChanged()
         refreshTray()
     }
 
@@ -204,19 +214,45 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         switch event {
         case .trayChanged(let tray):
             retargetByWorktree(tray)
+            composer.trayChanged()
             refreshTray()
         case .objectCreated, .objectDeleted:
             settlePromptTarget()
+            composer.objectsChanged()
             refreshTray()
             refreshTab()
             refreshEmptyHint()
         case .objectUpdated(let object) where object.type == .terminal:
             // An agent starting or exiting in a terminal can move the target.
             settlePromptTarget()
-            if object.id == canvas.promptTarget { refreshTray() }
+            if composer.targets.contains(object.id) { refreshTray() }
             refreshTab()
         default: break
         }
+    }
+
+    /// The composer's terminals (`ComposerController.send`): `agent.prompt` from the user, set by
+    /// the app with its router.
+    var sendPrompt: ((_ text: String, _ terminal: ObjectID, _ mentions: [MentionTarget], _ answering: Bool) async throws -> Void)? {
+        get { composer.send }
+        set { composer.send = newValue }
+    }
+
+    /// ⌘I (Edit ▸ Write Prompt): the composer takes the keyboard, from anywhere on the board.
+    @objc func focusComposer(_ sender: Any?) {
+        if tray.isHidden { toggleCanvasChrome(nil) }
+        tray.focus()
+    }
+
+    /// The composer's draft, history and targets are written now (window closing, app quitting).
+    func saveComposer() {
+        composer.save()
+    }
+
+    /// How the target menu and the composer name a terminal: as its header does.
+    private func terminalName(_ id: ObjectID) -> String {
+        guard let terminal = board.objects[id] else { return id }
+        return board.terminalLabel?(id) ?? PromptTarget.label(terminal, shownTitle: canvas.tiles[id]?.title)
     }
 
     private func refreshTray() {
@@ -230,8 +266,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         if let affinity, affinity.target == target?.id { targetName?.name += " · works in \(affinity.checkout)" }
         trayKeyboard = canvas.focusedTerminal
         let title = KeyboardFocus.trayTarget(targetName, keyboard: trayKeyboard.flatMap { board.objects[$0] }.map(named))
-        tray.show(board.tray, targetTitle: title, targetDrains: target.map(PromptTarget.drains) ?? false,
-                  hasTerminal: board.objects.values.contains { $0.type == .terminal }, board: board)
+        let extra = composer.targets.dropFirst().map(terminalName)
+        tray.showTarget(title: title, extra: Array(extra), hasTerminal: board.objects.values.contains { $0.type == .terminal })
+        composer.refreshQuestion()
         refreshGetStarted(target: target)
     }
 
@@ -285,17 +322,42 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         if affinity?.target != target { affinity = nil }
     }
 
-    /// The tray's target menu: the user picks the terminal mentions go to without leaving the
-    /// page they're on; it stays the target until another terminal takes the keyboard.
+    /// The tray's target: the user picks the terminal mentions go to without leaving the page
+    /// they're on; it stays the target until another terminal takes the keyboard.
     private func chooseTarget(_ id: ObjectID) {
         guard board.objects[id]?.type == .terminal else { return }
         board.promptTarget.choose(id)
         settlePromptTarget()
     }
 
+    /// A click in the target menu checks or unchecks a terminal: the composer sends to every
+    /// checked one. The first is the tray's target (its integration drains the tray); unchecking
+    /// it makes the next one the target; the last one stays checked.
+    private func toggleTarget(_ id: ObjectID) {
+        let targets = composer.targets
+        let extra = Array(targets.dropFirst())
+        if id == targets.first {
+            guard let next = extra.first else { return }
+            composer.setAlsoTo(Array(extra.dropFirst()))
+            chooseTarget(next)
+        } else if extra.contains(id) {
+            composer.setAlsoTo(extra.filter { $0 != id })
+        } else if targets.isEmpty {
+            chooseTarget(id)
+        } else {
+            composer.setAlsoTo(extra + [id])
+        }
+    }
+
+    /// ⌥-click in the target menu: that terminal alone.
+    private func onlyTarget(_ id: ObjectID) {
+        composer.setAlsoTo([])
+        chooseTarget(id)
+    }
+
     /// The board's terminals, those running an agent first, each named as its header names it;
-    /// the current target is checked. The tray's "→ name ▾" opens it; Edit ▸ Send Mentions To
-    /// is the same list for the keyboard (`fillTargetMenu`).
+    /// the composer's targets are checked. The tray's "→ name ▾" opens it; Edit ▸ Send Mentions
+    /// To is the same list for the keyboard (`fillTargetMenu`).
     private func targetMenu() -> NSMenu? {
         let menu = NSMenu(title: "Send Mentions To")
         fillTargetMenu(menu)
@@ -306,15 +368,21 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         menu.removeAllItems()
         menu.autoenablesItems = false
         var agents = true
+        let targets = composer.targets
         for terminal in PromptTarget.menuOrder(board.objects) {
             let isAgent = PromptTarget.runsAgent(terminal)
             if agents, !isAgent, menu.numberOfItems > 0 { menu.addItem(.separator()) }
             agents = isAgent
-            let name = board.terminalLabel?(terminal.id) ?? PromptTarget.label(terminal, shownTitle: canvas.tiles[terminal.id]?.title)
+            let name = terminalName(terminal.id)
             let id = terminal.id
-            let item = MenuAction.item(name) { [weak self] in self?.chooseTarget(id) }
-            item.state = terminal.id == canvas.promptTarget ? .on : .off
+            let item = MenuAction.item(name) { [weak self] in self?.toggleTarget(id) }
+            item.state = targets.contains(id) ? .on : .off
             menu.addItem(item)
+            let only = MenuAction.item("Only \(name)") { [weak self] in self?.onlyTarget(id) }
+            only.keyEquivalentModifierMask = .option
+            only.isAlternate = true
+            only.state = targets == [id] ? .on : .off
+            menu.addItem(only)
         }
     }
 
@@ -426,6 +494,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         canvas.saveViewport()
+        composer.save()
         onClose?()
     }
 
@@ -1120,6 +1189,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             case "w": if canvas.closeSelectionOrFocused() { return true }
             case "f": if canvas.findInCodeTile() { return true }
             case "l": if canvas.focusBrowserAddress() { return true }
+            // ⌘I (Write Prompt) ahead of the focused view: a page's editor would take it for
+            // italics, and the composer is reached from anywhere.
+            case "i":
+                focusComposer(nil)
+                return true
             default: break
             }
         }

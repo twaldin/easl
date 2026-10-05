@@ -531,19 +531,36 @@ public final class ApiRouter {
     private func prompt(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"))
         let text = try string(p, "text")
-        if Self.state(of: terminal) == LifecycleState.blocked.rawValue, p["force"]?.bool != true {
+        let mentions = p["mentions"]?.array ?? []
+        return try await submitPrompt(text, to: terminal, on: board, mentions: { try mentions.map { try HandoffMention(json: $0).target(on: board) } },
+                                      caller: p["caller"]?.string, force: p["force"]?.bool == true, answering: false, byUser: false)
+    }
+
+    /// The composer's send to one terminal (docs/design.md, Composer): `agent.prompt` from the
+    /// user, with every check it makes. `mentions` wait for that terminal's next drained prompt
+    /// (`Board.handOff`, numbered from 1), for a terminal that isn't the tray's target.
+    /// `answering`: the agent is blocked on a question or approval and the text is the user's
+    /// answer, which only the user gives: it passes the blocked check alone, unlike `force`.
+    public func composerPrompt(_ text: String, to terminal: ObjectID, on board: Board, mentions: [MentionTarget], answering: Bool) async throws {
+        guard let tile = board.objects[terminal], tile.type == .terminal else { throw Failure("not_found", "terminal \(terminal) was closed") }
+        _ = try await submitPrompt(text, to: tile, on: board, mentions: { mentions }, caller: nil, force: false, answering: answering, byUser: true)
+    }
+
+    private func submitPrompt(_ text: String, to terminal: CanvasObject, on board: Board, mentions parse: () throws -> [MentionTarget], caller sender: ObjectID?,
+                              force: Bool, answering: Bool, byUser: Bool) async throws -> JSONValue {
+        if Self.state(of: terminal) == LifecycleState.blocked.rawValue, !force, !answering {
             let blocker = terminal.props["lifecycle"]?["message"]?.string.map { " (“\($0)”)" } ?? ""
             throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Leave it to the user. force: true types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow), so never force an answer to an approval")
         }
         // `working` saved before easl last closed, with no report since (an agent whose
         // integration predates the spool, or that ended meanwhile): it may be sitting in a
         // question or approval now, which the text and Return would answer.
-        if Self.state(of: terminal) == LifecycleState.working.rawValue, terminal.props["lifecycle"]?["restored"]?.bool == true, p["force"]?.bool != true {
+        if Self.state(of: terminal) == LifecycleState.working.rawValue, terminal.props["lifecycle"]?["restored"]?.bool == true, !force {
             throw Failure("conflict", "\(terminal.id) was working when easl last closed and its agent hasn't reported since, so it may now wait on a question or approval that the prompt would answer. Read its screen (agent.read) first; force: true sends anyway")
         }
         // An agent reporting from inside tmux (or an editor it started) isn't what the typing
         // reaches, unless it runs in tmux's active pane.
-        if PromptTarget.runsAgent(terminal), p["force"]?.bool != true {
+        if PromptTarget.runsAgent(terminal), !force {
             let kind = terminal.props["agent"]?["kind"]?.string
             if let program = PromptTarget.foreignProgram(kind: kind, program: terminalStatus?(board, terminal.id).program) {
                 let pane = await tmuxPane?(board, terminal.id)
@@ -555,16 +572,15 @@ public final class ApiRouter {
             }
         }
         guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
-        let mentions = try (p["mentions"]?.array ?? []).map { try HandoffMention(json: $0).target(on: board) }
+        let mentions = try parse()
         if !mentions.isEmpty, !PromptTarget.drains(terminal) {
             throw Failure("unavailable", "\(terminal.id) runs no agent with an easl integration, so nothing there would take the mentions; name the objects in the text instead")
         }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
         // Queued before the text goes in: the target's integration drains them with this prompt.
-        let sender = p["caller"]?.string
         let senderName = sender.flatMap { try? agentTile($0) }.map { PromptTarget.label($0.1, shownTitle: terminalStatus?($0.0, $0.1.id).title) }
-        let handed = try board.handOff(mentions, to: terminal.id, from: sender, fromName: senderName)
+        let handed = try board.handOff(mentions, to: terminal.id, from: sender, fromName: senderName, byUser: byUser)
         guard await submitToTerminal(board, terminal.id, text) else {
             board.commit(handed.map { $0.id })
             throw Failure("unavailable", "terminal \(terminal.id) has no attached surface")

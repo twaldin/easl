@@ -1,9 +1,9 @@
 import CoreGraphics
 import Foundation
 
-/// What the tray's chips say: each chip's number, which is the `[n]` its mention gets in the
-/// context the tray drains into (`Board.drain` numbers the tray from 1 in staging order), so
-/// "[2]" in a prompt means the second chip; unstaging one renumbers the chips after it, as the
+/// What the composer's tokens say: each token's number, which is the `[n]` its mention gets in
+/// the context the tray drains into (`Board.drain` numbers the tray from 1 in token order), so
+/// "[2]" in a prompt means the second token; unstaging one renumbers the tokens after it, as the
 /// context would.
 public enum TrayChips {
     public static func numbered(_ tray: [Mention]) -> [(number: Int, mention: Mention)] {
@@ -50,76 +50,6 @@ public enum TrayChips {
     /// it out, which the chip leaving alone doesn't make plain.
     public static func unstagedNotice(_ mention: Mention) -> String {
         "Removed \(mention.label) from the tray: it was already there"
-    }
-}
-
-/// How the tray fits its chips and its `→ target` label into the width the window gives it.
-/// The label keeps its whole width, since it says where the prompt goes; the chips shrink
-/// instead, widest first, down to `minimumChip`, and past that their strip scrolls sideways.
-/// The tray never asks for more than `available`, so staging never widens the window, and what
-/// it asks for depends only on what it shows now, so unstaging gives the width back.
-public struct TrayLayout: Equatable, Sendable {
-    /// The tray's width.
-    public var width: CGFloat
-    /// The target label's width: its natural width unless the tray can't show one shrunk chip
-    /// beside it (a very narrow window).
-    public var target: CGFloat
-    /// Each chip's width, in order.
-    public var chips: [CGFloat]
-    /// The width the chip strip shows; the chips scroll when `content` is wider.
-    public var strip: CGFloat
-    /// The chips laid end to end with `spacing` between them.
-    public var content: CGFloat
-
-    public static let leading: CGFloat = 10
-    public static let trailing: CGFloat = 12
-    /// Between the chip strip and the target label.
-    public static let gap: CGFloat = 12
-    /// Between chips.
-    public static let spacing: CGFloat = 6
-    /// The narrowest a chip shrinks: its number, the start of its label, and ✕.
-    public static let minimumChip: CGFloat = 128
-    /// The narrowest the tray gets while the window has room for it.
-    public static let minimumWidth: CGFloat = 420
-
-    /// A chip's widths: its whole label (`natural`), and the least it shrinks to (`minimum`,
-    /// never more than `natural`): `minimumChip` plus what it can't cut, such as "· page changed".
-    public struct Chip: Equatable, Sendable {
-        public var natural: CGFloat
-        public var minimum: CGFloat
-
-        public init(natural: CGFloat, minimum: CGFloat = TrayLayout.minimumChip) {
-            self.natural = natural
-            self.minimum = min(natural, minimum)
-        }
-    }
-
-    /// `chips`: each chip's widths (the hint's, with nothing staged); `target`: the label's
-    /// natural width.
-    public static func fit(chips natural: [Chip], target: CGFloat, available: CGFloat) -> TrayLayout {
-        let chrome = leading + gap + trailing
-        let spaces = spacing * CGFloat(max(0, natural.count - 1))
-        let wanted = chrome + natural.reduce(0) { $0 + $1.natural } + spaces + target
-        let width = max(0, min(available, max(minimumWidth, wanted)))
-        let label = max(0, min(target, width - chrome - (natural.first?.minimum ?? 0)))
-        let strip = max(0, width - chrome - label)
-        let chips = shrink(natural, into: strip - spaces)
-        return TrayLayout(width: width, target: label, chips: chips, strip: strip, content: chips.reduce(0, +) + spaces)
-    }
-
-    /// The widest chips cut down to one common width, none below its minimum, so their sum
-    /// fits `room` when it can.
-    private static func shrink(_ chips: [Chip], into room: CGFloat) -> [CGFloat] {
-        func widths(cappedAt cap: CGFloat) -> [CGFloat] { chips.map { max(min($0.natural, cap), $0.minimum) } }
-        guard chips.reduce(0, { $0 + $1.natural }) > room else { return chips.map(\.natural) }
-        guard chips.reduce(0, { $0 + $1.minimum }) < room else { return chips.map(\.minimum) }
-        // The cap c with Σ max(min(naturalᵢ, c), minimumᵢ) = room; the sum only grows with c.
-        var low: CGFloat = 0, high = chips.map(\.natural).max() ?? 0
-        for _ in 0..<40 {
-            let mid = (low + high) / 2
-            if widths(cappedAt: mid).reduce(0, +) > room { high = mid } else { low = mid }
-        }
-        return widths(cappedAt: low).map { $0.rounded(.down) }
     }
 }
 

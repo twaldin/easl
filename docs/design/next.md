@@ -33,14 +33,9 @@ Server-side features (the all-agents overview, supervision stats, review passes,
 
 ## The composer
 
-A prompt box outside the terminal. It sends to an agent from anywhere on the board, so pointing at things no longer means panning back to the terminal to type.
+Shipped on the Swift app (docs/design.md, Composer). Still open:
 
-- **It lives in the tray bar**, which grows to several lines while focused. A shortcut focuses it from anywhere, and ⌘↩ sends. The target is the tray's "→ terminal" menu, which becomes multi-select: one prompt and its mentions go to every chosen terminal.
-- **Mentions are inline tokens.** A Hyper-click drops its `[n]` at the cursor (or at the end, when the composer isn't focused), and the text after a token is that item's note: `[1] make this green [2] drop this row`. A prompt with no tokens is just a prompt. Deleting a token unstages its mention.
-- **Sending reuses `agent.prompt`**: the text and Return go into the terminal, and the agent's integration drains the tray with that prompt. A terminal without an easl integration gets the text, with the tokens' context pasted the way Hyper-V pastes it.
-- **↑** in an empty composer recalls the board's earlier prompts with their tokens, which also answers "what did I send".
-- **A blocked target** (a question or approval) shows its question in the composer, and the text answers it.
-- **Drafts**, tokens included, are kept per board across board switches and restarts.
+- **On easld**: the composer sends in process (`ApiRouter.composerPrompt`, `Board.handOff` with `byUser`, `Board.arrangeTray`), and no schema method exposes that. Once the Mac app is easld's client it needs it over the API: `agent.prompt` from the user (answering a blocked target past the blocked check alone, mentions given as the staged `MentionTarget`s and handed off as the user's, numbered first) and a way to set the tray's order to the tokens'. Drafts, sent prompts and extra targets stay with the client (`composer/<boardId>.json` in the easl home).
 
 ## Links
 

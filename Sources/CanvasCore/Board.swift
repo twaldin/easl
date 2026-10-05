@@ -772,11 +772,8 @@ public final class Board {
     /// sender; `tray` false leaves the tray out (it shows another terminal).
     /// Old-side and pinned code excerpts are read from git, hence async.
     public func drain(peek: Bool = false, caller: ObjectID? = nil, tray includeTray: Bool = true) async -> (mentions: [MentionContext.Resolved], context: String) {
-        var resolved: [MentionContext.Resolved] = []
         let staged = includeTray ? tray : []
-        for (index, mention) in staged.enumerated() {
-            resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self, caller: caller))
-        }
+        var resolved = await resolve(staged, caller: caller)
         var blocks = resolved.isEmpty ? [] : [MentionContext.render(resolved, board: self, targets: staged.map(\.target))]
         if let caller {
             let handed = await resolveHandoffs(for: caller, from: resolved.count + 1)
@@ -785,6 +782,35 @@ public final class Board {
         }
         if !peek { commit(resolved.map(\.id)) }
         return (resolved, blocks.joined(separator: "\n"))
+    }
+
+    /// The context block for `mentions`, numbered from 1 as a drain numbers the tray: what the
+    /// composer pastes ahead of its prompt into a terminal without an agent integration, as
+    /// Hyper-V would. Leaves the tray as it is.
+    public func context(for mentions: [Mention], caller: ObjectID?) async -> String {
+        let resolved = await resolve(mentions, caller: caller)
+        return resolved.isEmpty ? "" : MentionContext.render(resolved, board: self, targets: mentions.map(\.target))
+    }
+
+    private func resolve(_ mentions: [Mention], caller: ObjectID?) async -> [MentionContext.Resolved] {
+        var resolved: [MentionContext.Resolved] = []
+        for (index, mention) in mentions.enumerated() {
+            resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self, caller: caller))
+        }
+        return resolved
+    }
+
+    /// Puts the tray in `order` (the composer's tokens), so the n-th token's mention is the one a
+    /// drain numbers `[n]`; mentions `order` doesn't name keep their order after the rest. Not an
+    /// undo step.
+    public func arrangeTray(_ order: [MentionID]) {
+        let rank = Dictionary(order.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        let arranged = tray.enumerated().sorted { a, b in
+            (rank[a.element.id] ?? order.count + a.offset) < (rank[b.element.id] ?? order.count + b.offset)
+        }.map(\.element)
+        guard arranged != tray else { return }
+        tray = arranged
+        trayChanged()
     }
 
     /// Remove exactly these mentions (the ones whose context was delivered), from the tray and
