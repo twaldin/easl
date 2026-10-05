@@ -30,7 +30,7 @@ final class TrayBar: NSVisualEffectView {
         wantsLayer = true
         layer?.cornerRadius = 10
         hint.textColor = .secondaryLabelColor
-        hint.font = .systemFont(ofSize: 12)
+        hint.font = ChromeText.font(.systemFont(ofSize: 12))
         hint.lineBreakMode = .byTruncatingTail
         target.isBordered = false
         target.setButtonType(.momentaryChange)
@@ -71,12 +71,13 @@ final class TrayBar: NSVisualEffectView {
             chip.onReveal = { [weak self] mention in self?.onReveal?(mention) }
             return chip
         }
+        hint.font = ChromeText.font(.systemFont(ofSize: 12))
         if chipViews.isEmpty { chips.addSubview(hint) }
         chipViews.forEach(chips.addSubview)
         scrollToEnd = added
         let title = targetTitle.map { mentions.isEmpty || targetDrains ? "→ \($0) ▾" : "→ \($0) ▾ · ⌃⌥⇧⌘V pastes" } ?? (hasTerminal ? "→ choose a terminal ▾" : "→ no terminal yet (⌘T)")
         target.attributedTitle = NSAttributedString(string: title, attributes: [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .font: ChromeText.font(.systemFont(ofSize: 12, weight: .medium)),
             .foregroundColor: NSColor.secondaryLabelColor,
         ])
         target.isEnabled = hasTerminal
@@ -151,7 +152,7 @@ private final class FlippedView: NSView {
 /// a word when its target changed, and ✕. A click anywhere but ✕ reveals it.
 @MainActor
 private final class TrayChip: NSView {
-    static let height: CGFloat = 22
+    static var height: CGFloat { ChromeText.scaled(22) }
     private static let insets = (left: CGFloat(8), right: CGFloat(4))
     private static let gap: CGFloat = 4
     /// Past this a label truncates even with room to spare.
@@ -176,16 +177,17 @@ private final class TrayChip: NSView {
         wantsLayer = true
         layer?.cornerRadius = 7
         layer?.backgroundColor = NSColor.systemPurple.withAlphaComponent(0.22).cgColor
-        number.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        number.font = ChromeText.font(.monospacedDigitSystemFont(ofSize: 12, weight: .semibold))
         number.textColor = .secondaryLabelColor
-        label.font = .systemFont(ofSize: 12)
+        label.font = ChromeText.font(.systemFont(ofSize: 12))
         // DOM labels lead with what a person recognizes and end with the CSS path; code
         // locations keep both the file name's start and its line.
         // What doesn't fit is cut by `TrayChips.fittedLabel` (code locations) or at the tail:
         // DOM labels lead with what a person recognizes, notes with their title.
         label.lineBreakMode = .byTruncatingTail
         labelWidth = label.drawnWidth
-        changed?.font = .systemFont(ofSize: 12)
+        changed?.font = ChromeText.font(.systemFont(ofSize: 12))
+        remove.font = .systemFont(ofSize: ChromeText.size(NSFont.systemFontSize))
         changed?.textColor = .secondaryLabelColor
         remove.isBordered = false
         remove.target = self
@@ -227,7 +229,7 @@ private final class TrayChip: NSView {
         let numberWidth = number.drawnWidth
         place(number, x: Self.insets.left, width: numberWidth)
         place(label, x: number.frame.maxX + Self.gap, width: right - number.frame.maxX - Self.gap)
-        let font = label.font ?? .systemFont(ofSize: 12)
+        let font = label.font ?? ChromeText.font(.systemFont(ofSize: 12))
         let padding = label.drawnWidth - ceil(NSAttributedString(string: label.stringValue, attributes: [.font: font]).size().width)
         label.stringValue = TrayChips.fittedLabel(mention, width: label.frame.width) { text in
             ceil(NSAttributedString(string: text, attributes: [.font: font]).size().width) + padding
