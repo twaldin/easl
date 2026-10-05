@@ -1,0 +1,335 @@
+{
+  "description": "object.batch: `$n` references to earlier creates, mixed ops in one revision, a failing op rolls everything back (and names the op), bad references.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "anchor"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 280,
+          "h": 120
+        }
+      },
+      "save": "a"
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": [
+          {
+            "method": "object.create",
+            "params": {
+              "type": "note",
+              "props": {
+                "markdown": "one"
+              },
+              "frame": {
+                "x": 0,
+                "y": 200,
+                "w": 200,
+                "h": 100
+              }
+            }
+          },
+          {
+            "method": "object.create",
+            "params": {
+              "type": "note",
+              "props": {
+                "markdown": "two"
+              },
+              "frame": {
+                "x": 300,
+                "y": 200,
+                "w": 200,
+                "h": 100
+              }
+            }
+          },
+          {
+            "method": "object.create",
+            "params": {
+              "type": "arrow",
+              "props": {
+                "from": {
+                  "object": "$0"
+                },
+                "to": {
+                  "object": "$1"
+                },
+                "label": "next"
+              },
+              "frame": {
+                "x": 0,
+                "y": 0,
+                "w": 0,
+                "h": 0
+              }
+            }
+          },
+          {
+            "method": "object.update",
+            "params": {
+              "id": "$0",
+              "props": {
+                "markdown": "one, edited"
+              }
+            }
+          },
+          {
+            "method": "object.create",
+            "params": {
+              "type": "group",
+              "props": {
+                "members": [
+                  "$0",
+                  "$1"
+                ],
+                "title": "pair"
+              },
+              "frame": {
+                "x": 0,
+                "y": 0,
+                "w": 0,
+                "h": 0
+              }
+            }
+          },
+          {
+            "method": "layout.translate",
+            "params": {
+              "ids": [
+                "$4"
+              ],
+              "dx": 100,
+              "dy": 0
+            }
+          }
+        ]
+      },
+      "save": "b1"
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": [
+          {
+            "method": "object.create",
+            "params": {
+              "type": "note",
+              "props": {
+                "markdown": "doomed"
+              },
+              "frame": {
+                "x": 0,
+                "y": 600,
+                "w": 200,
+                "h": 100
+              }
+            }
+          },
+          {
+            "method": "object.update",
+            "params": {
+              "id": "{{a.object.id}}",
+              "props": {
+                "markdown": "doomed edit"
+              }
+            }
+          },
+          {
+            "method": "object.update",
+            "params": {
+              "id": "obj_missing",
+              "props": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": [
+          {
+            "method": "object.update",
+            "params": {
+              "id": "$1",
+              "props": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": [
+          {
+            "method": "board.get",
+            "params": {}
+          }
+        ]
+      }
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": []
+      }
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": [
+          {
+            "method": "object.upsert",
+            "params": {
+              "key": "k/1",
+              "type": "note",
+              "props": {
+                "markdown": "keyed"
+              },
+              "frame": {
+                "x": 0,
+                "y": 800,
+                "w": 200,
+                "h": 100
+              }
+            }
+          },
+          {
+            "method": "object.upsert",
+            "params": {
+              "key": "k/1",
+              "type": "note",
+              "props": {
+                "markdown": "keyed again"
+              }
+            }
+          },
+          {
+            "method": "object.update",
+            "params": {
+              "id": "$0",
+              "props": {
+                "title": "t"
+              }
+            }
+          },
+          {
+            "method": "object.delete",
+            "params": {
+              "id": "$0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": [
+          {
+            "method": "object.create",
+            "params": {
+              "type": "shape",
+              "props": {
+                "kind": "rect"
+              },
+              "frame": {
+                "x": 0,
+                "y": 1000,
+                "w": 100,
+                "h": 100
+              }
+            }
+          },
+          {
+            "method": "object.create",
+            "params": {
+              "type": "shape",
+              "props": {
+                "kind": "rect"
+              },
+              "frame": {
+                "x": 0,
+                "y": 1200,
+                "w": 100,
+                "h": 100
+              }
+            }
+          },
+          {
+            "method": "layout.stack",
+            "params": {
+              "ids": [
+                "$0",
+                "$1"
+              ],
+              "direction": "row",
+              "gap": 20
+            }
+          },
+          {
+            "method": "layout.place",
+            "params": {
+              "id": "$1",
+              "near": "$0",
+              "side": "below",
+              "gap": 10
+            }
+          },
+          {
+            "method": "layout.grid",
+            "params": {
+              "cells": [
+                {
+                  "id": "$0",
+                  "row": 0,
+                  "col": 0
+                },
+                {
+                  "id": "$1",
+                  "row": 0,
+                  "col": 1
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}"
+      }
+    }
+  ]
+}

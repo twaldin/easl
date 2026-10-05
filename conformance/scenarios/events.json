@@ -1,0 +1,102 @@
+{
+  "description": "events.subscribe with a board filter and an event-name filter on other connections; every event kind's payload.",
+  "steps": [
+    {
+      "call": "events.subscribe",
+      "params": {
+        "board": "{{board}}",
+        "events": [
+          "tray.changed",
+          "object.deleted"
+        ]
+      },
+      "conn": "filtered"
+    },
+    {
+      "call": "events.subscribe",
+      "params": {
+        "board": "brd_other_board_000000"
+      },
+      "conn": "elsewhere"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "terminal",
+        "props": {
+          "cwd": "{{root}}",
+          "command": [
+            "/bin/cat"
+          ]
+        },
+        "frame": {
+          "x": 50000,
+          "y": 50000,
+          "w": 600,
+          "h": 400
+        }
+      },
+      "save": "t"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "hello"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 280,
+          "h": 120
+        }
+      },
+      "save": "n"
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{n.object.id}}",
+        "props": {
+          "markdown": "hello again"
+        }
+      }
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": {
+          "kind": "object",
+          "object": "{{n.object.id}}"
+        }
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "working",
+        "seq": 1
+      }
+    },
+    {
+      "call": "view.attention",
+      "params": {
+        "id": "{{n.object.id}}",
+        "message": "see",
+        "caller": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "object.delete",
+      "params": {
+        "id": "{{n.object.id}}"
+      }
+    }
+  ]
+}

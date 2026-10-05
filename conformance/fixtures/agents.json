@@ -1,0 +1,1381 @@
+{
+  "scenario": "agents",
+  "description": "Agent lifecycle on terminal tiles: reports with seq and source (stale ones ignored), blocked tool calls, final answers, sessions, release, agent.list, agent.wait (answered, already there, timeout), lifecycle events.",
+  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>",
+          "name": "worker"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50700,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.list",
+      "method": "agent.list",
+      "request": {},
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "agents": [
+            {
+              "board": "<board>",
+              "kind": "unknown",
+              "lifecycle": {
+                "state": "unknown"
+              },
+              "name": "worker",
+              "root": "<root>",
+              "tile": "<obj:1>"
+            },
+            {
+              "board": "<board>",
+              "kind": "unknown",
+              "lifecycle": {
+                "state": "unknown"
+              },
+              "root": "<root>",
+              "tile": "<obj:2>"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "omp",
+        "seq": 1,
+        "source": "main",
+        "state": "working",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "omp",
+        "seq": 0,
+        "source": "main",
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "call": "c1",
+        "kind": "omp",
+        "message": "Allow rm?",
+        "seq": 2,
+        "source": "main",
+        "state": "blocked",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "message": "Allow rm?",
+                "seen": false,
+                "state": "blocked"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:3>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "message": "Allow rm?",
+              "seen": false,
+              "state": "blocked"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "call": "c2",
+        "kind": "omp",
+        "message": "Allow push?",
+        "seq": 3,
+        "source": "main",
+        "state": "blocked",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "message": "Allow rm?",
+                "seen": false,
+                "state": "blocked"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "message": "Allow rm?",
+              "seen": false,
+              "state": "blocked"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "message": "Allow rm?",
+                "seen": false,
+                "state": "blocked"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "call": "c1",
+        "kind": "omp",
+        "seq": 4,
+        "source": "main",
+        "state": "working",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "message": "Allow push?",
+                "seen": false,
+                "state": "blocked"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:5>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "message": "Allow push?",
+              "seen": false,
+              "state": "blocked"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "message": "Allow push?",
+                "seen": false,
+                "state": "blocked"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:5>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "call": "c2",
+        "kind": "omp",
+        "seq": 5,
+        "source": "main",
+        "state": "working",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:6>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report_session",
+      "method": "agent.report_session",
+      "request": {
+        "kind": "omp",
+        "sessionId": "sess-1",
+        "sessionPath": "/tmp/sess-1.jsonl",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp",
+                "sessionId": "sess-1",
+                "sessionPath": "/tmp/sess-1.jsonl"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:7>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.wait",
+      "method": "agent.wait",
+      "conn": "waiter",
+      "request": {
+        "target": "worker",
+        "timeoutMs": 5000,
+        "until": [
+          "done"
+        ]
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "sleep",
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "final": "All done.",
+        "kind": "omp",
+        "seq": 6,
+        "source": "main",
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp",
+                "sessionId": "sess-1",
+                "sessionPath": "/tmp/sess-1.jsonl"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "done"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:8>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "done"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "await w1",
+      "conn": "waiter",
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "agent": {
+            "board": "<board>",
+            "kind": "omp",
+            "lifecycle": {
+              "seen": false,
+              "state": "done"
+            },
+            "name": "worker",
+            "root": "<root>",
+            "sessionId": "sess-1",
+            "tile": "<obj:1>"
+          }
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.wait",
+      "method": "agent.wait",
+      "request": {
+        "target": "<obj:1>",
+        "until": [
+          "idle",
+          "done"
+        ]
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "agent": {
+            "board": "<board>",
+            "kind": "omp",
+            "lifecycle": {
+              "seen": false,
+              "state": "done"
+            },
+            "name": "worker",
+            "root": "<root>",
+            "sessionId": "sess-1",
+            "tile": "<obj:1>"
+          }
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.wait",
+      "method": "agent.wait",
+      "request": {
+        "target": "<obj:1>",
+        "timeoutMs": 300,
+        "until": [
+          "working"
+        ]
+      },
+      "response": {
+        "error": {
+          "code": "timeout",
+          "message": "<obj:1> did not reach working in time"
+        },
+        "id": "r17",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.wait",
+      "method": "agent.wait",
+      "request": {
+        "target": "<obj:1>",
+        "until": [
+          "sleeping"
+        ]
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown state string(\"sleeping\") in until; one of blocked, done, idle, unknown, working"
+        },
+        "id": "r18",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.wait",
+      "method": "agent.wait",
+      "request": {
+        "target": "<obj:2>",
+        "timeoutMs": 300
+      },
+      "response": {
+        "error": {
+          "code": "timeout",
+          "message": "<obj:2> did not reach blocked|done|idle in time"
+        },
+        "id": "r19",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.wait",
+      "method": "agent.wait",
+      "request": {
+        "target": "nobody"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "no terminal tile named or with id nobody"
+        },
+        "id": "r20",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.list",
+      "method": "agent.list",
+      "request": {},
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {
+          "agents": [
+            {
+              "board": "<board>",
+              "kind": "omp",
+              "lifecycle": {
+                "seen": false,
+                "state": "done"
+              },
+              "name": "worker",
+              "root": "<root>",
+              "sessionId": "sess-1",
+              "tile": "<obj:1>"
+            },
+            {
+              "board": "<board>",
+              "kind": "unknown",
+              "lifecycle": {
+                "state": "unknown"
+              },
+              "root": "<root>",
+              "tile": "<obj:2>"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "omp",
+        "state": "exploded",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown state"
+        },
+        "id": "r22",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "omp",
+        "state": "idle",
+        "tile": "obj_missing"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object obj_missing"
+        },
+        "id": "r23",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.release",
+      "method": "agent.release",
+      "request": {
+        "kind": "omp",
+        "source": "main",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r24",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:9>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": null,
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r25",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:9>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.list",
+      "method": "agent.list",
+      "request": {},
+      "response": {
+        "id": "r26",
+        "ok": true,
+        "result": {
+          "agents": [
+            {
+              "board": "<board>",
+              "kind": "unknown",
+              "lifecycle": {
+                "state": "unknown"
+              },
+              "name": "worker",
+              "root": "<root>",
+              "tile": "<obj:1>"
+            },
+            {
+              "board": "<board>",
+              "kind": "unknown",
+              "lifecycle": {
+                "state": "unknown"
+              },
+              "root": "<root>",
+              "tile": "<obj:2>"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    }
+  ]
+}

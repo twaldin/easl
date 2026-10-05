@@ -1,0 +1,8 @@
+{
+  "view.get": "what the user is looking at (viewport, selection, focus, window visibility, appearance) exists only in a connected Mac client",
+  "view.render": "drawn by a connected Mac client so it matches what the user sees (docs/design/next.md); output is pixels",
+  "view.snapshot": "the board's window as the user sees it: needs the client's window",
+  "agent.prompt": "types into the terminal through the client's live terminal surface (bracketed paste, Return after the paste lands)",
+  "agent.read": "reads the terminal through the client's terminal tile (zmx scrollback joined by the live surface's soft-wrap flags; `block` from Ghostty prompt marks); easld takes it over together with zmx sessions",
+  "object.reload": "reloads a browser tile's page in the client's WebKit view, or recomputes a diagram through language servers"
+}

@@ -1,0 +1,220 @@
+{
+  "description": "layout.check on a board with overlapping tiles, arrows crossing objects and each other, scoped by ids and by rect, and a clean board region.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect",
+          "fill": "solid"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 200,
+          "h": 200
+        }
+      },
+      "save": "a"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect",
+          "fill": "solid"
+        },
+        "frame": {
+          "x": 150,
+          "y": 150,
+          "w": 200,
+          "h": 200
+        }
+      },
+      "save": "b"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect",
+          "fill": "solid"
+        },
+        "frame": {
+          "x": 600,
+          "y": 0,
+          "w": 100,
+          "h": 100
+        }
+      },
+      "save": "c"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect",
+          "fill": "solid"
+        },
+        "frame": {
+          "x": 600,
+          "y": 400,
+          "w": 100,
+          "h": 100
+        }
+      },
+      "save": "d"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect",
+          "fill": "solid"
+        },
+        "frame": {
+          "x": 620,
+          "y": 200,
+          "w": 60,
+          "h": 60
+        }
+      },
+      "save": "mid"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "note"
+        },
+        "frame": {
+          "x": 1200,
+          "y": 0,
+          "w": 280,
+          "h": 120
+        }
+      },
+      "save": "n"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "arrow",
+        "props": {
+          "from": {
+            "object": "{{c.object.id}}"
+          },
+          "to": {
+            "object": "{{d.object.id}}"
+          },
+          "label": "through"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0
+        }
+      },
+      "save": "cd"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "arrow",
+        "props": {
+          "from": {
+            "point": [
+              500,
+              250
+            ]
+          },
+          "to": {
+            "point": [
+              800,
+              250
+            ]
+          }
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0
+        }
+      },
+      "save": "x"
+    },
+    {
+      "call": "layout.check",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "layout.check",
+      "params": {
+        "board": "{{board}}",
+        "ids": [
+          "{{a.object.id}}"
+        ]
+      }
+    },
+    {
+      "call": "layout.check",
+      "params": {
+        "board": "{{board}}",
+        "ids": [
+          "{{n.object.id}}"
+        ]
+      }
+    },
+    {
+      "call": "layout.check",
+      "params": {
+        "board": "{{board}}",
+        "rect": {
+          "x": 1100,
+          "y": -100,
+          "w": 500,
+          "h": 500
+        }
+      }
+    },
+    {
+      "call": "layout.check",
+      "params": {
+        "board": "{{board}}",
+        "ids": [
+          "obj_missing"
+        ]
+      }
+    },
+    {
+      "call": "layout.check",
+      "params": {
+        "board": "{{board}}",
+        "rect": {
+          "x": 0
+        }
+      },
+      "ignore": {
+        "response.error.message": "Swift's JSONDecoder error text (DecodingError description); the code is what matters"
+      }
+    }
+  ]
+}

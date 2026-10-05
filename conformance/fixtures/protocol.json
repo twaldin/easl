@@ -1,0 +1,235 @@
+{
+  "scenario": "protocol",
+  "description": "Framing and request validation: ping, malformed lines, missing method, unknown methods and params, pipelined requests answered in order.",
+  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "system.ping",
+      "method": "system.ping",
+      "request": {},
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "app": "easl",
+          "version": 1
+        }
+      }
+    },
+    {
+      "step": "raw line",
+      "request": "this is not json",
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "malformed JSON line"
+        },
+        "ok": false
+      }
+    },
+    {
+      "step": "raw line",
+      "request": "{\"id\":\"x1\",\"params\":{}}",
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "missing method"
+        },
+        "id": "x1",
+        "ok": false
+      }
+    },
+    {
+      "step": "raw line",
+      "request": "{\"id\":\"x2\",\"method\":\"system.ping\"}",
+      "response": {
+        "id": "x2",
+        "ok": true,
+        "result": {
+          "app": "easl",
+          "version": 1
+        }
+      }
+    },
+    {
+      "step": "raw line",
+      "request": "{\"id\":7,\"method\":\"system.ping\",\"params\":{}}",
+      "response": {
+        "id": 7,
+        "ok": true,
+        "result": {
+          "app": "easl",
+          "version": 1
+        }
+      }
+    },
+    {
+      "step": "no.such.method",
+      "method": "no.such.method",
+      "request": {},
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown method no.such.method"
+        },
+        "id": "r3",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {},
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "missing id; object.get takes id (required), as, since"
+        },
+        "id": "r4",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "bogus": 1,
+        "id": "obj_X",
+        "other": 2
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown params bogus, other; object.get takes id (required), as, since"
+        },
+        "id": "r5",
+        "ok": false
+      }
+    },
+    {
+      "step": "layout.translate",
+      "method": "layout.translate",
+      "request": {
+        "delta": {
+          "x": 1
+        },
+        "ids": [
+          "obj_X"
+        ]
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown param delta; missing dx, dy; layout.translate takes ids (required), dx (required), dy (required), caller"
+        },
+        "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "brd_doesnotexist"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "board brd_doesnotexist"
+        },
+        "id": "r7",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "obj_doesnotexist"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object obj_doesnotexist"
+        },
+        "id": "r8",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "obj_doesnotexist",
+        "props": {}
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object obj_doesnotexist"
+        },
+        "id": "r9",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "obj_doesnotexist"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object obj_doesnotexist"
+        },
+        "id": "r10",
+        "ok": false
+      }
+    },
+    {
+      "step": "system.ping",
+      "method": "system.ping",
+      "request": {
+        "unexpected": true
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown param unexpected; system.ping takes no params"
+        },
+        "id": "r11",
+        "ok": false
+      }
+    }
+  ]
+}

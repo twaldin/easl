@@ -1,0 +1,106 @@
+{
+  "git": true,
+  "files": {
+    "src/app.ts": "export function greet(name: string): string {\n  return `hello ${name}`;\n}\n\nexport function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport const answer = 42;\n",
+    "README.md": "# Sample\n\nA repository for the conformance suite.\n\n## Usage\n\nRun it.\n",
+    "notes/plan.md": "# Plan\n\n- step one\n- step two\n"
+  },
+  "description": "board.open (git repository, errors), board.list (this board), board.export to the default and a given path, read back.",
+  "steps": [
+    {
+      "call": "board.open",
+      "params": {
+        "root": "{{root}}"
+      }
+    },
+    {
+      "call": "board.open",
+      "params": {
+        "root": "{{root}}/src"
+      }
+    },
+    {
+      "call": "board.open",
+      "params": {
+        "root": "relative/path"
+      }
+    },
+    {
+      "call": "board.open",
+      "params": {
+        "root": "{{root}}/no-such-dir"
+      }
+    },
+    {
+      "call": "board.open",
+      "params": {
+        "root": ""
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "exported"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 280,
+          "h": 120
+        }
+      },
+      "save": "n"
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": {
+          "kind": "object",
+          "object": "{{n.object.id}}"
+        }
+      }
+    },
+    {
+      "call": "board.list",
+      "params": {},
+      "keep": {
+        "result.boards": {
+          "board": "{{board}}"
+        }
+      },
+      "ignore": {
+        "response.result.boards.*.updatedAt": "save time of the board file (debounced write)"
+      }
+    },
+    {
+      "call": "board.export",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "readFile": ".easl/board.json"
+    },
+    {
+      "call": "board.export",
+      "params": {
+        "board": "{{board}}",
+        "path": "out/snap.json"
+      }
+    },
+    {
+      "readFile": "out/snap.json"
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "{{board}}",
+        "branch": "main"
+      }
+    }
+  ]
+}

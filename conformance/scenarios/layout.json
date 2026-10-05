@@ -1,0 +1,289 @@
+{
+  "description": "layout.place, layout.stack (rows, columns, wrapAt, align, origin), layout.translate and layout.grid with their defaults and errors.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 100
+        }
+      },
+      "save": "a"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 200,
+          "h": 50
+        }
+      },
+      "save": "b"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 150
+        }
+      },
+      "save": "c"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 1000,
+          "y": 1000,
+          "w": 120,
+          "h": 80
+        }
+      },
+      "save": "d"
+    },
+    {
+      "call": "layout.place",
+      "params": {
+        "id": "{{b.object.id}}",
+        "near": "{{a.object.id}}"
+      }
+    },
+    {
+      "call": "layout.place",
+      "params": {
+        "id": "{{c.object.id}}",
+        "near": "{{a.object.id}}",
+        "side": "below",
+        "gap": 10,
+        "align": "center"
+      }
+    },
+    {
+      "call": "layout.place",
+      "params": {
+        "id": "{{c.object.id}}",
+        "near": "{{a.object.id}}",
+        "side": "left",
+        "align": "end"
+      }
+    },
+    {
+      "call": "layout.place",
+      "params": {
+        "id": "{{c.object.id}}",
+        "near": "{{a.object.id}}",
+        "side": "above"
+      }
+    },
+    {
+      "call": "layout.place",
+      "params": {
+        "id": "{{c.object.id}}",
+        "near": "obj_missing"
+      }
+    },
+    {
+      "call": "layout.place",
+      "params": {
+        "id": "{{c.object.id}}",
+        "near": "{{a.object.id}}",
+        "side": "diagonal"
+      }
+    },
+    {
+      "call": "layout.stack",
+      "params": {
+        "ids": [
+          "{{a.object.id}}",
+          "{{b.object.id}}",
+          "{{c.object.id}}"
+        ]
+      }
+    },
+    {
+      "call": "layout.stack",
+      "params": {
+        "ids": [
+          "{{a.object.id}}",
+          "{{b.object.id}}",
+          "{{c.object.id}}"
+        ],
+        "direction": "column",
+        "gap": 8,
+        "align": "center",
+        "origin": {
+          "x": 50,
+          "y": 50
+        }
+      }
+    },
+    {
+      "call": "layout.stack",
+      "params": {
+        "ids": [
+          "{{a.object.id}}",
+          "{{b.object.id}}",
+          "{{c.object.id}}",
+          "{{d.object.id}}"
+        ],
+        "wrapAt": 350,
+        "align": "end"
+      }
+    },
+    {
+      "call": "layout.stack",
+      "params": {
+        "ids": []
+      }
+    },
+    {
+      "call": "layout.stack",
+      "params": {
+        "ids": [
+          "{{a.object.id}}",
+          "obj_missing"
+        ]
+      }
+    },
+    {
+      "call": "layout.stack",
+      "params": {
+        "ids": [
+          "{{a.object.id}}"
+        ],
+        "origin": {
+          "x": 1
+        }
+      }
+    },
+    {
+      "call": "layout.translate",
+      "params": {
+        "ids": [
+          "{{a.object.id}}",
+          "{{b.object.id}}"
+        ],
+        "dx": -30,
+        "dy": 15.5
+      }
+    },
+    {
+      "call": "layout.translate",
+      "params": {
+        "ids": [
+          "{{a.object.id}}"
+        ],
+        "dx": "far",
+        "dy": 0
+      }
+    },
+    {
+      "call": "layout.grid",
+      "params": {
+        "cells": [
+          {
+            "id": "{{a.object.id}}",
+            "row": 0,
+            "col": 0
+          },
+          {
+            "id": "{{b.object.id}}",
+            "row": 0,
+            "col": 1
+          },
+          {
+            "id": "{{c.object.id}}",
+            "row": 1,
+            "col": 0
+          },
+          {
+            "id": "{{d.object.id}}",
+            "row": 1,
+            "col": 2
+          }
+        ]
+      }
+    },
+    {
+      "call": "layout.grid",
+      "params": {
+        "cells": [
+          {
+            "id": "{{a.object.id}}",
+            "row": 0,
+            "col": 0
+          },
+          {
+            "id": "{{b.object.id}}",
+            "row": 1,
+            "col": 0
+          },
+          {
+            "id": "{{c.object.id}}",
+            "row": 1,
+            "col": 1
+          }
+        ],
+        "colGap": 5,
+        "rowGap": 7,
+        "colAlign": "center",
+        "rowAlign": "end",
+        "origin": {
+          "x": -100,
+          "y": -100
+        }
+      }
+    },
+    {
+      "call": "layout.grid",
+      "params": {
+        "cells": [
+          {
+            "id": "{{a.object.id}}",
+            "row": 0
+          }
+        ]
+      }
+    },
+    {
+      "call": "layout.grid",
+      "params": {
+        "cells": []
+      }
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "description": "Measuring text: notes and HTML fitted to their content (`size: fit`, a note created without a height), object.measure for notes, text shapes and images.",
+  "files": {
+    "img.png": "base64:iVBORw0KGgoAAAANSUhEUgAAAB4AAAAUCAIAAAAVyRqTAAAAIUlEQVR4nGP4z8BAI0Qrc0eNHjV61OhRo0eNHjWapkYDAFSVVcccYVaEAAAAAElFTkSuQmCC"
+  },
+  "steps": [
+    {
+      "call": "object.measure",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "# Heading\n\nA paragraph of text that wraps at some width."
+        }
+      }
+    },
+    {
+      "call": "object.measure",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "short"
+        },
+        "width": 200
+      }
+    },
+    {
+      "call": "object.measure",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "text",
+          "text": "Label text"
+        }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "fits\n\nits text"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 300
+        }
+      }
+    },
+    {
+      "call": "object.measure",
+      "params": {
+        "board": "{{board}}",
+        "type": "image",
+        "props": {
+          "path": "img.png"
+        }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "image",
+        "props": {
+          "path": "img.png"
+        },
+        "frame": {
+          "x": 0,
+          "y": 500
+        }
+      }
+    }
+  ]
+}

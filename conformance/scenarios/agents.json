@@ -1,0 +1,275 @@
+{
+  "description": "Agent lifecycle on terminal tiles: reports with seq and source (stale ones ignored), blocked tool calls, final answers, sessions, release, agent.list, agent.wait (answered, already there, timeout), lifecycle events.",
+  "ignore": {
+    "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+    "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)",
+    "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+    "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)"
+  },
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "terminal",
+        "props": {
+          "cwd": "{{root}}",
+          "command": [
+            "/bin/cat"
+          ],
+          "name": "worker"
+        },
+        "frame": {
+          "x": 50000,
+          "y": 50000,
+          "w": 600,
+          "h": 400
+        }
+      },
+      "save": "t"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "terminal",
+        "props": {
+          "cwd": "{{root}}",
+          "command": [
+            "/bin/cat"
+          ]
+        },
+        "frame": {
+          "x": 50700,
+          "y": 50000,
+          "w": 600,
+          "h": 400
+        }
+      },
+      "save": "u"
+    },
+    {
+      "call": "agent.list",
+      "params": {},
+      "keep": {
+        "result.agents": {
+          "board": "{{board}}"
+        }
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "working",
+        "seq": 1,
+        "source": "main"
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "idle",
+        "seq": 0,
+        "source": "main"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "blocked",
+        "seq": 2,
+        "source": "main",
+        "call": "c1",
+        "message": "Allow rm?"
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "blocked",
+        "seq": 3,
+        "source": "main",
+        "call": "c2",
+        "message": "Allow push?"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "working",
+        "seq": 4,
+        "source": "main",
+        "call": "c1"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "working",
+        "seq": 5,
+        "source": "main",
+        "call": "c2"
+      }
+    },
+    {
+      "call": "agent.report_session",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "sessionId": "sess-1",
+        "sessionPath": "/tmp/sess-1.jsonl"
+      }
+    },
+    {
+      "call": "agent.wait",
+      "params": {
+        "target": "worker",
+        "until": [
+          "done"
+        ],
+        "timeoutMs": 5000
+      },
+      "conn": "waiter",
+      "save": "w1",
+      "async": true
+    },
+    {
+      "sleepMs": 300,
+      "note": "let the wait register before the report that answers it"
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "idle",
+        "seq": 6,
+        "source": "main",
+        "final": "All done."
+      }
+    },
+    {
+      "await": "w1"
+    },
+    {
+      "call": "agent.wait",
+      "params": {
+        "target": "{{t.object.id}}",
+        "until": [
+          "idle",
+          "done"
+        ]
+      }
+    },
+    {
+      "call": "agent.wait",
+      "params": {
+        "target": "{{t.object.id}}",
+        "until": [
+          "working"
+        ],
+        "timeoutMs": 300
+      }
+    },
+    {
+      "call": "agent.wait",
+      "params": {
+        "target": "{{t.object.id}}",
+        "until": [
+          "sleeping"
+        ]
+      }
+    },
+    {
+      "call": "agent.wait",
+      "params": {
+        "target": "{{u.object.id}}",
+        "timeoutMs": 300
+      }
+    },
+    {
+      "call": "agent.wait",
+      "params": {
+        "target": "nobody"
+      }
+    },
+    {
+      "call": "agent.list",
+      "params": {},
+      "keep": {
+        "result.agents": {
+          "board": "{{board}}"
+        }
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "exploded"
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "obj_missing",
+        "kind": "omp",
+        "state": "idle"
+      }
+    },
+    {
+      "call": "agent.release",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "source": "main"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "agent.list",
+      "params": {},
+      "keep": {
+        "result.agents": {
+          "board": "{{board}}"
+        }
+      }
+    }
+  ]
+}

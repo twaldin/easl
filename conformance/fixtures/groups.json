@@ -1,0 +1,1758 @@
+{
+  "scenario": "groups",
+  "description": "Groups are regions fitted to their members plus padding and a title band: refit when members move, resize or go away, nested groups, a frame given for a group is ignored, translate moves members.",
+  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 300,
+          "y": 0
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 300,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 300,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 0,
+          "y": 300
+        },
+        "props": {
+          "kind": "ellipse"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 300
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "ellipse"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 300
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "ellipse"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "members": [
+            "<obj:1>",
+            "<obj:2>"
+          ],
+          "title": "Pair"
+        },
+        "type": "group"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 508,
+              "x": -24,
+              "y": -56
+            },
+            "id": "<obj:4>",
+            "props": {
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 508,
+              "x": -24,
+              "y": -56
+            },
+            "id": "<obj:4>",
+            "props": {
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "z": 4
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "x": 500,
+          "y": 50
+        },
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 500,
+              "y": 50
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 500,
+              "y": 50
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 230,
+              "w": 708,
+              "x": -24,
+              "y": -56
+            },
+            "id": "<obj:4>",
+            "props": {
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:2>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 230,
+              "w": 708,
+              "x": -24,
+              "y": -56
+            },
+            "id": "<obj:4>",
+            "props": {
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:2>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "h": 5,
+          "w": 5,
+          "x": -1000,
+          "y": -1000
+        },
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 230,
+              "w": 708,
+              "x": -24,
+              "y": -56
+            },
+            "id": "<obj:4>",
+            "props": {
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:3>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 230,
+              "w": 708,
+              "x": -24,
+              "y": -56
+            },
+            "id": "<obj:4>",
+            "props": {
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:3>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:4>",
+        "props": {
+          "color": "green",
+          "padding": 8
+        }
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 198,
+              "w": 676,
+              "x": -8,
+              "y": -40
+            },
+            "id": "<obj:4>",
+            "props": {
+              "color": "green",
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "padding": 8,
+              "title": "Pair"
+            },
+            "rev": "<rev:4>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 198,
+              "w": 676,
+              "x": -8,
+              "y": -40
+            },
+            "id": "<obj:4>",
+            "props": {
+              "color": "green",
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "padding": 8,
+              "title": "Pair"
+            },
+            "rev": "<rev:4>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "members": [
+            "<obj:4>",
+            "<obj:3>"
+          ],
+          "padding": 40,
+          "title": "Outer"
+        },
+        "type": "group"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 552,
+              "w": 756,
+              "x": -48,
+              "y": -112
+            },
+            "id": "<obj:5>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:3>"
+              ],
+              "padding": 40,
+              "title": "Outer"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "z": 5
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 552,
+              "w": 756,
+              "x": -48,
+              "y": -112
+            },
+            "id": "<obj:5>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:3>"
+              ],
+              "padding": 40,
+              "title": "Outer"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "z": 5
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "layout.translate",
+      "method": "layout.translate",
+      "request": {
+        "dx": 20,
+        "dy": 20,
+        "ids": [
+          "<obj:4>"
+        ]
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "frames": {
+            "<obj:4>": {
+              "h": 198,
+              "w": 676,
+              "x": 12,
+              "y": -20
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 20,
+              "y": 20
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 520,
+              "y": 70
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 198,
+              "w": 676,
+              "x": 12,
+              "y": -20
+            },
+            "id": "<obj:4>",
+            "props": {
+              "color": "green",
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "padding": 8,
+              "title": "Pair"
+            },
+            "rev": "<rev:5>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 532,
+              "w": 768,
+              "x": -40,
+              "y": -92
+            },
+            "id": "<obj:5>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:3>"
+              ],
+              "padding": 40,
+              "title": "Outer"
+            },
+            "rev": "<rev:2>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:5>"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 532,
+              "w": 768,
+              "x": -40,
+              "y": -92
+            },
+            "id": "<obj:5>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:3>"
+              ],
+              "padding": 40,
+              "title": "Outer"
+            },
+            "rev": "<rev:2>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          }
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "as": "graph",
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "graph": {
+            "arrows": [],
+            "arrowsIn": [],
+            "arrowsOut": [],
+            "enclosedBy": [
+              "<obj:5>"
+            ],
+            "encloses": [
+              "<obj:1>",
+              "<obj:2>"
+            ],
+            "overlaps": []
+          },
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 198,
+              "w": 676,
+              "x": 12,
+              "y": -20
+            },
+            "id": "<obj:4>",
+            "props": {
+              "color": "green",
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "padding": 8,
+              "title": "Pair"
+            },
+            "rev": "<rev:5>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      }
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:1>"
+          },
+          "event": "object.deleted"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 148,
+              "w": 176,
+              "x": 512,
+              "y": 30
+            },
+            "id": "<obj:4>",
+            "props": {
+              "color": "green",
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "padding": 8,
+              "title": "Pair"
+            },
+            "rev": "<rev:6>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 482,
+              "w": 768,
+              "x": -40,
+              "y": -42
+            },
+            "id": "<obj:5>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:3>"
+              ],
+              "padding": 40,
+              "title": "Outer"
+            },
+            "rev": "<rev:3>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 148,
+              "w": 176,
+              "x": 512,
+              "y": 30
+            },
+            "id": "<obj:4>",
+            "props": {
+              "color": "green",
+              "members": [
+                "<obj:1>",
+                "<obj:2>"
+              ],
+              "padding": 8,
+              "title": "Pair"
+            },
+            "rev": "<rev:6>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:4>",
+        "props": {
+          "members": [
+            "<obj:2>",
+            "<obj:3>"
+          ]
+        }
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 378,
+              "w": 696,
+              "x": -8,
+              "y": 30
+            },
+            "id": "<obj:4>",
+            "props": {
+              "color": "green",
+              "members": [
+                "<obj:2>",
+                "<obj:3>"
+              ],
+              "padding": 8,
+              "title": "Pair"
+            },
+            "rev": "<rev:7>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 378,
+              "w": 696,
+              "x": -8,
+              "y": 30
+            },
+            "id": "<obj:4>",
+            "props": {
+              "color": "green",
+              "members": [
+                "<obj:2>",
+                "<obj:3>"
+              ],
+              "padding": 8,
+              "title": "Pair"
+            },
+            "rev": "<rev:7>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 490,
+              "w": 776,
+              "x": -48,
+              "y": -42
+            },
+            "id": "<obj:5>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:3>"
+              ],
+              "padding": 40,
+              "title": "Outer"
+            },
+            "rev": "<rev:4>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:5>"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 490,
+              "w": 776,
+              "x": -48,
+              "y": -42
+            },
+            "id": "<obj:5>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:3>"
+              ],
+              "padding": 40,
+              "title": "Outer"
+            },
+            "rev": "<rev:4>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          }
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 100,
+          "x": 0,
+          "y": 900
+        },
+        "props": {
+          "members": [],
+          "title": "Empty"
+        },
+        "type": "group"
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 0,
+              "y": 900
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [],
+              "title": "Empty"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "z": 6
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 0,
+              "y": 900
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [],
+              "title": "Empty"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "z": 6
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "title": "No members"
+        },
+        "type": "group"
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:7>",
+            "props": {
+              "title": "No members"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "z": 7
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:7>",
+            "props": {
+              "title": "No members"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time>",
+            "z": 7
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": [
+            {
+              "createdAt": "<time>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 520,
+                "y": 70
+              },
+              "id": "<obj:2>",
+              "props": {
+                "kind": "rect"
+              },
+              "rev": "<rev:3>",
+              "type": "shape",
+              "updatedAt": "<time>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 2
+            },
+            {
+              "createdAt": "<time>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 0,
+                "y": 300
+              },
+              "id": "<obj:3>",
+              "props": {
+                "kind": "ellipse"
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time>",
+              "z": 3
+            },
+            {
+              "createdAt": "<time>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 378,
+                "w": 696,
+                "x": -8,
+                "y": 30
+              },
+              "id": "<obj:4>",
+              "props": {
+                "color": "green",
+                "members": [
+                  "<obj:2>",
+                  "<obj:3>"
+                ],
+                "padding": 8,
+                "title": "Pair"
+              },
+              "rev": "<rev:7>",
+              "type": "group",
+              "updatedAt": "<time>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 4
+            },
+            {
+              "createdAt": "<time>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 490,
+                "w": 776,
+                "x": -48,
+                "y": -42
+              },
+              "id": "<obj:5>",
+              "props": {
+                "members": [
+                  "<obj:4>",
+                  "<obj:3>"
+                ],
+                "padding": 40,
+                "title": "Outer"
+              },
+              "rev": "<rev:4>",
+              "type": "group",
+              "updatedAt": "<time>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 5
+            },
+            {
+              "createdAt": "<time>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 100,
+                "x": 0,
+                "y": 900
+              },
+              "id": "<obj:6>",
+              "props": {
+                "members": [],
+                "title": "Empty"
+              },
+              "rev": "<rev:1>",
+              "type": "group",
+              "updatedAt": "<time>",
+              "z": 6
+            },
+            {
+              "createdAt": "<time>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 0,
+                "w": 0,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:7>",
+              "props": {
+                "title": "No members"
+              },
+              "rev": "<rev:1>",
+              "type": "group",
+              "updatedAt": "<time>",
+              "z": 7
+            }
+          ],
+          "revision": "<board:1>",
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "board.history",
+      "method": "board.history",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "cursor": "<cursor>",
+          "entries": [
+            {
+              "actor": "system",
+              "at": "<time>",
+              "kind": "restart",
+              "rev": "<board:2>",
+              "seq": "<seq:1>",
+              "summary": "easl started (pid <pid>); board opened with 0 objects"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:1>",
+              "kind": "created",
+              "rev": "<board:3>",
+              "seq": "<seq:2>",
+              "summary": "created shape rect at (0, 0) 160×100",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:2>",
+              "kind": "created",
+              "rev": "<board:4>",
+              "seq": "<seq:3>",
+              "summary": "created shape rect at (300, 0) 160×100",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:3>",
+              "kind": "created",
+              "rev": "<board:5>",
+              "seq": "<seq:4>",
+              "summary": "created shape ellipse at (0, 300) 160×100",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:4>",
+              "kind": "created",
+              "rev": "<board:6>",
+              "seq": "<seq:5>",
+              "summary": "created group (2 members) at (-24, -56) 508×180",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:2>",
+              "kind": "updated",
+              "rev": "<board:7>",
+              "seq": "<seq:6>",
+              "summary": "shape rect: moved (300, 0) → (500, 50)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "cause": "fit to its members",
+              "id": "<obj:4>",
+              "kind": "updated",
+              "rev": "<board:8>",
+              "seq": "<seq:7>",
+              "summary": "group (2 members): resized 508×180 → 708×230",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:4>",
+              "kind": "updated",
+              "rev": "<board:9>",
+              "seq": "<seq:8>",
+              "summary": "group (2 members): moved (-24, -56) → (-8, -40); resized 708×230 → 676×198; props color, padding",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:5>",
+              "kind": "created",
+              "rev": "<board:10>",
+              "seq": "<seq:9>",
+              "summary": "created group (2 members) at (-48, -112) 756×552",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:1>",
+              "kind": "updated",
+              "rev": "<board:11>",
+              "seq": "<seq:10>",
+              "summary": "shape rect: moved (0, 0) → (20, 20)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:2>",
+              "kind": "updated",
+              "rev": "<board:11>",
+              "seq": "<seq:11>",
+              "summary": "shape rect: moved (500, 50) → (520, 70)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "cause": "fit to its members",
+              "id": "<obj:4>",
+              "kind": "updated",
+              "rev": "<board:11>",
+              "seq": "<seq:12>",
+              "summary": "group (2 members): moved (-8, -40) → (12, -20)",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "cause": "fit to its members",
+              "id": "<obj:5>",
+              "kind": "updated",
+              "rev": "<board:11>",
+              "seq": "<seq:13>",
+              "summary": "group (2 members): moved (-48, -112) → (-40, -92); resized 756×552 → 768×532",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:1>",
+              "kind": "deleted",
+              "rev": "<board:12>",
+              "seq": "<seq:14>",
+              "summary": "deleted shape rect",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "cause": "fit to its members",
+              "id": "<obj:4>",
+              "kind": "updated",
+              "rev": "<board:13>",
+              "seq": "<seq:15>",
+              "summary": "group (2 members): moved (12, -20) → (512, 30); resized 676×198 → 176×148",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "cause": "fit to its members",
+              "id": "<obj:5>",
+              "kind": "updated",
+              "rev": "<board:14>",
+              "seq": "<seq:16>",
+              "summary": "group (2 members): moved (-40, -92) → (-40, -42); resized 768×532 → 768×482",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:4>",
+              "kind": "updated",
+              "rev": "<board:15>",
+              "seq": "<seq:17>",
+              "summary": "group (2 members): moved (512, 30) → (-8, 30); resized 176×148 → 696×378; props members",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "cause": "fit to its members",
+              "id": "<obj:5>",
+              "kind": "updated",
+              "rev": "<board:16>",
+              "seq": "<seq:18>",
+              "summary": "group (2 members): moved (-40, -42) → (-48, -42); resized 768×482 → 776×490",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:6>",
+              "kind": "created",
+              "rev": "<board:17>",
+              "seq": "<seq:19>",
+              "summary": "created group (0 members) at (0, 900) 100×100",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:7>",
+              "kind": "created",
+              "rev": "<board:1>",
+              "seq": "<seq:20>",
+              "summary": "created group (0 members) at (0, 0) 0×0",
+              "type": "group"
+            }
+          ],
+          "restarted": false,
+          "truncated": false
+        }
+      }
+    }
+  ]
+}

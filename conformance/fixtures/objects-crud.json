@@ -1,0 +1,1126 @@
+{
+  "scenario": "objects-crud",
+  "description": "Create, read, update and delete objects of the types that need no live surface; props merge, null deletes a prop, revisions, conflicts, warnings, and the errors of each.",
+  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 120,
+          "w": 280,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "# Title\n\nbody"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Title\n\nbody"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Title\n\nbody"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 400,
+          "y": 0
+        },
+        "props": {
+          "color": "blue",
+          "fill": "semi",
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "color": "blue",
+              "fill": "semi",
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "color": "blue",
+              "fill": "semi",
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 40,
+          "w": 200,
+          "x": 400,
+          "y": 200
+        },
+        "props": {
+          "kind": "text",
+          "text": "label",
+          "textSize": 2
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 40,
+              "w": 200,
+              "x": 400,
+              "y": 200
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "text",
+              "text": "label",
+              "textSize": 2
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 40,
+              "w": 200,
+              "x": 400,
+              "y": 200
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "text",
+              "text": "label",
+              "textSize": 2
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 700,
+          "y": 0
+        },
+        "props": {
+          "kind": "ellipse"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 700,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "ellipse"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 700,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "ellipse"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 4
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Title\n\nbody"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time>",
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "markdown": "changed",
+          "title": "T"
+        }
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "changed",
+              "title": "T"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "changed",
+              "title": "T"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "w": 300,
+          "x": 10
+        },
+        "id": "<obj:1>",
+        "rev": "<rev:2>"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 300,
+              "x": 10,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "changed",
+              "title": "T"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 300,
+              "x": 10,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "changed",
+              "title": "T"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "markdown": "stale"
+        },
+        "rev": "<rev:2>"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "object <obj:1> is at rev 3, not 2"
+        },
+        "id": "r9",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "title": null
+        }
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 300,
+              "x": 10,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "changed"
+            },
+            "rev": "<rev:4>",
+            "type": "note",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 300,
+              "x": 10,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "changed"
+            },
+            "rev": "<rev:4>",
+            "type": "note",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "props": {
+          "another": "x",
+          "bogus": 1
+        }
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "another": "x",
+              "bogus": 1,
+              "color": "blue",
+              "fill": "semi",
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "warnings": [
+            "unknown prop \"another\" for shape (kept, but nothing reads it; shape props: color, fill, key, kind, points, text, textSize)",
+            "unknown prop \"bogus\" for shape (kept, but nothing reads it; shape props: color, fill, key, kind, points, text, textSize)"
+          ]
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "another": "x",
+              "bogus": 1,
+              "color": "blue",
+              "fill": "semi",
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "props": {
+          "scale": 2
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "props.scale is gone: a tile's content zoom is props.zoom (the frame keeps its size; 1.5 is 150%), a text shape's font size props.textSize"
+        },
+        "id": "r12",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "x": "left"
+        },
+        "id": "<obj:2>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "frame.x must be a number"
+        },
+        "id": "r13",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": 5,
+        "id": "<obj:2>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "frame must be an object with x, y, w, h"
+        },
+        "id": "r14",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "y": 50
+        },
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 50
+            },
+            "id": "<obj:2>",
+            "props": {
+              "another": "x",
+              "bogus": 1,
+              "color": "blue",
+              "fill": "semi",
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 50
+            },
+            "id": "<obj:2>",
+            "props": {
+              "another": "x",
+              "bogus": 1,
+              "color": "blue",
+              "fill": "semi",
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "props": {},
+        "type": "widget"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown object type"
+        },
+        "id": "r16",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "props": "text",
+        "type": "note"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "props must be an object"
+        },
+        "id": "r17",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 100,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "x",
+          "scale": 2
+        },
+        "type": "note"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "props.scale is gone: a tile's content zoom is props.zoom (the frame keeps its size; 1.5 is 150%), a text shape's font size props.textSize"
+        },
+        "id": "r18",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 10,
+          "w": 10,
+          "x": 0,
+          "y": 500
+        },
+        "props": {
+          "kind": "rect",
+          "mystery": true
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 10,
+              "w": 10,
+              "x": 0,
+              "y": 500
+            },
+            "id": "<obj:5>",
+            "props": {
+              "kind": "rect",
+              "mystery": true
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 5
+          },
+          "warnings": [
+            "unknown prop \"mystery\" for shape (kept, but nothing reads it; shape props: color, fill, key, kind, points, text, textSize)"
+          ]
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 10,
+              "w": 10,
+              "x": 0,
+              "y": 500
+            },
+            "id": "<obj:5>",
+            "props": {
+              "kind": "rect",
+              "mystery": true
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time>",
+            "z": 5
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "as": "image",
+        "id": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "object.get no longer renders images: use view.render with target <obj:1>"
+        },
+        "id": "r20",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "as": "pixels",
+        "id": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown as: pixels"
+        },
+        "id": "r21",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r22",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:4>"
+          },
+          "event": "object.deleted"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:4>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object <obj:4>"
+        },
+        "id": "r23",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:4>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object <obj:4>"
+        },
+        "id": "r24",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r25",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": [
+            {
+              "createdAt": "<time>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 300,
+                "x": 10,
+                "y": 0
+              },
+              "id": "<obj:1>",
+              "props": {
+                "markdown": "changed"
+              },
+              "rev": "<rev:4>",
+              "type": "note",
+              "updatedAt": "<time>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 1
+            },
+            {
+              "createdAt": "<time>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 400,
+                "y": 50
+              },
+              "id": "<obj:2>",
+              "props": {
+                "another": "x",
+                "bogus": 1,
+                "color": "blue",
+                "fill": "semi",
+                "kind": "rect"
+              },
+              "rev": "<rev:3>",
+              "type": "shape",
+              "updatedAt": "<time>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 2
+            },
+            {
+              "createdAt": "<time>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 40,
+                "w": 200,
+                "x": 400,
+                "y": 200
+              },
+              "id": "<obj:3>",
+              "props": {
+                "kind": "text",
+                "text": "label",
+                "textSize": 2
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time>",
+              "z": 3
+            },
+            {
+              "createdAt": "<time>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 10,
+                "w": 10,
+                "x": 0,
+                "y": 500
+              },
+              "id": "<obj:5>",
+              "props": {
+                "kind": "rect",
+                "mystery": true
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time>",
+              "z": 5
+            }
+          ],
+          "revision": "<board:1>",
+          "root": "<root>"
+        }
+      }
+    }
+  ]
+}

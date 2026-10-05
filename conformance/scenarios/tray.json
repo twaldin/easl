@@ -1,0 +1,278 @@
+{
+  "git": true,
+  "files": {
+    "src/app.ts": "export function greet(name: string): string {\n  return `hello ${name}`;\n}\n\nexport function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport const answer = 42;\n",
+    "README.md": "# Sample\n\nA repository for the conformance suite.\n\n## Usage\n\nRun it.\n",
+    "notes/plan.md": "# Plan\n\n- step one\n- step two\n"
+  },
+  "description": "The selection tray: stage object, code, group and note mentions, list, unstage, a peek drain then commit, a plain drain, edits mark mentions edited, deleting an object removes its mentions; tray.changed events.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 200
+        }
+      },
+      "save": "n"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect",
+          "text": "box"
+        },
+        "frame": {
+          "x": 400,
+          "y": 0,
+          "w": 160,
+          "h": 100
+        }
+      },
+      "save": "r"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "code",
+        "props": {
+          "path": "src/app.ts",
+          "range": {
+            "start": 5,
+            "end": 7
+          }
+        },
+        "frame": {
+          "x": 0,
+          "y": 400,
+          "w": 640,
+          "h": 300
+        }
+      },
+      "save": "c",
+      "settleMs": 1000
+    },
+    {
+      "call": "tray.list",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": {
+          "kind": "object",
+          "object": "{{r.object.id}}"
+        }
+      },
+      "save": "m1"
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": {
+          "kind": "code",
+          "object": "{{c.object.id}}",
+          "path": "src/app.ts",
+          "lines": {
+            "start": 5,
+            "end": 7
+          },
+          "symbol": "add"
+        }
+      },
+      "save": "m2"
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": {
+          "kind": "group",
+          "objects": [
+            "{{n.object.id}}",
+            "{{r.object.id}}"
+          ],
+          "name": "these two"
+        }
+      },
+      "save": "m3"
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": {
+          "kind": "note",
+          "object": "{{n.object.id}}",
+          "block": "paragraph",
+          "headings": [
+            "Plan"
+          ],
+          "lines": {
+            "start": 3,
+            "end": 3
+          },
+          "text": "Ship the parser."
+        }
+      },
+      "save": "m4"
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": {
+          "kind": "object",
+          "object": "obj_missing"
+        }
+      }
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": {
+          "kind": "sparkle",
+          "object": "{{r.object.id}}"
+        }
+      },
+      "ignore": {
+        "response.error.message": "Swift's JSONDecoder error text (DecodingError description); the code is what matters"
+      }
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "tray.list",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{r.object.id}}",
+        "props": {
+          "color": "red"
+        }
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{n.object.id}}",
+        "frame": {
+          "x": 5
+        }
+      }
+    },
+    {
+      "call": "tray.list",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "tray.unstage",
+      "params": {
+        "id": "{{m3.mention.id}}"
+      }
+    },
+    {
+      "call": "tray.unstage",
+      "params": {
+        "id": "men_missing"
+      }
+    },
+    {
+      "call": "tray.drain",
+      "params": {
+        "board": "{{board}}",
+        "peek": true
+      },
+      "save": "peek"
+    },
+    {
+      "call": "tray.list",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "tray.commit",
+      "params": {
+        "board": "{{board}}",
+        "ids": [
+          "{{m1.mention.id}}",
+          "men_unknown"
+        ]
+      }
+    },
+    {
+      "call": "tray.list",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "tray.drain",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "tray.list",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "tray.drain",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": {
+          "kind": "object",
+          "object": "{{r.object.id}}"
+        }
+      }
+    },
+    {
+      "call": "object.delete",
+      "params": {
+        "id": "{{r.object.id}}"
+      }
+    },
+    {
+      "call": "tray.list",
+      "params": {
+        "board": "{{board}}"
+      }
+    }
+  ]
+}
