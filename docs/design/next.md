@@ -14,7 +14,7 @@ What easl builds after 0.1.0, and the decisions behind it. Each section is a lan
 ### Getting there without breaking anything
 
 1. An **API conformance suite** (`conformance/`, docs/testing.md): scripted scenarios recorded from a development instance of the app, normalised for ids, times, revisions and paths, that replay against any socket and diff. The methods that need the Mac client (view.*, agent.prompt/read, object.reload) are marked as delegated. Still open: scenarios for what easld adds beyond today's API (several clients on one board, render delegation).
-2. **easld passes the suite** (`easld/`, docs/design.md "Architecture"): 15 of 17 scenarios today. Still open: measuring what AppKit lays out (note and text-shape heights for object.measure and `size: "fit"`, code captions, arrow label sizes for `avoid` routing and label overlaps), changes-tile measuring, and the terminal side (zmx sessions, agent.read).
+2. **easld passes the suite** (`easld/`, docs/design.md "Architecture"): 15 of 18 scenarios today (view.open_url, added on main after the port, is next). Still open: measuring what AppKit lays out (note and text-shape heights for object.measure and `size: "fit"`, code captions, arrow label sizes for `avoid` routing and label overlaps), changes-tile measuring, and the terminal side (zmx sessions, agent.read).
 3. **The app becomes easld's client.**
 
 Server-side features (the all-agents overview, supervision stats, review passes, remote boards) are built on easld, not on today's app.
