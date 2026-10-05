@@ -119,6 +119,11 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
     /// Loaded extensions by entry id, and why the others didn't load.
     private var contexts: [String: WKWebExtensionContext] = [:]
     private var problems: [String: String] = [:]
+    /// Entries whose load is under way (reading the extension, its review sheet open).
+    private var loading: Set<String> = []
+    /// Why `browser-extensions.json` couldn't be read: nothing runs, and nothing is written
+    /// over the file, until the user fixes it and relaunches.
+    private var unreadable: String?
     /// One tab per browser tile in a window, one window per board window, as handed to WebKit
     /// (it keeps them weakly and asks them everything).
     private var tabs: [ObjectIdentifier: ExtensionTab] = [:]
@@ -145,7 +150,13 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
     // MARK: Installed extensions
 
     func loadInstalled() {
-        list = store.load()
+        do {
+            list = try store.load()
+        } catch {
+            unreadable = "\(store.url.lastPathComponent) can't be read: \(error.localizedDescription)"
+            NSLog("easl: browser extensions not loaded: %@", unreadable ?? "")
+            return
+        }
         // Entries written by hand get their ids now, so their storage stays theirs.
         save()
         for entry in list.extensions where entry.enabled {
@@ -154,13 +165,21 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
     }
 
     private func save() {
+        guard unreadable == nil else { return }
         do { try store.save(list) } catch { NSLog("easl: cannot save browser extensions: %@", "\(error)") }
+    }
+
+    /// The entry as the list has it now, if it should still run: a load waits on WebKit and on
+    /// the review sheet, and the user may disable or remove the extension meanwhile.
+    private func stillWanted(_ id: String) -> BrowserExtensionList.Entry? {
+        list.extensions.first { $0.id == id && $0.enabled }
     }
 
     /// Loads one extension. An entry the user hasn't reviewed shows what it asks for first and
     /// loads only once they agree; declining a new one forgets it.
     private func load(_ entry: BrowserExtensionList.Entry) async {
-        guard contexts[entry.id] == nil else { return }
+        guard contexts[entry.id] == nil, loading.insert(entry.id).inserted else { return }
+        defer { loading.remove(entry.id) }
         let url = URL(fileURLWithPath: entry.path)
         let context: WKWebExtensionContext
         do {
@@ -186,21 +205,23 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
         // Like the tiles' pages (`isInspectable`): Develop › easl in Safari reaches its pages.
         context.isInspectable = true
         context.inspectionName = context.webExtension.displayName
-        var current = entry
-        if !entry.reviewed {
+        guard var current = stillWanted(entry.id) else { return }
+        if !current.reviewed {
             guard let window = CanvasWindowController.frontmost?.window else {
                 fail(entry, "waiting for a board window to ask about its permissions")
                 return
             }
             guard await review(context, in: window) else {
-                if contexts[entry.id] == nil { list.remove(entry.id) }
+                list.remove(entry.id)
                 save()
                 return
             }
+            guard let latest = stillWanted(entry.id) else { return }
+            current = latest
             current.reviewed = true
             current.permissions = context.webExtension.requestedPermissions.map(\.rawValue).sorted()
             current.sites = Self.requestedSites(context.webExtension).map(\.string).sorted()
-            list.update(entry.id) { $0 = current }
+            list.update(entry.id) { [current] in $0 = current }
             save()
         }
         context.grantedPermissions = Dictionary(uniqueKeysWithValues: Set(current.permissions).map { (WKWebExtension.Permission(rawValue: $0), Date.distantFuture) })
@@ -355,15 +376,16 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
         let name = contexts[id]?.webExtension.displayName ?? Self.name(of: entry)
         Task {
             guard await ask(in: window, title: "Remove “\(name)”?", detail: "It stops running in browser tiles, and what it stored in easl (its settings, a signed-in vault) is deleted. The extension's app stays installed.", confirm: "Remove") else { return }
-            let context = contexts[id]
             unload(id)
             list.remove(id)
             save()
-            guard let context else { return }
+            // By id, not through a loaded context: a disabled extension's storage goes too
+            // (WebKit lists every extension that stored anything, loaded or not).
             let types = WKWebExtensionController.allExtensionDataTypes
-            if let record = await controller.dataRecord(ofTypes: types, for: context) {
+            let records = await controller.dataRecords(ofTypes: types).filter { $0.uniqueIdentifier == id }
+            if !records.isEmpty {
                 await withCheckedContinuation { continuation in
-                    controller.removeData(ofTypes: types, from: [record]) { continuation.resume() }
+                    controller.removeData(ofTypes: types, from: records) { continuation.resume() }
                 }
             }
             NSLog("easl: removed browser extension %@", entry.path)
@@ -378,6 +400,12 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
     // MARK: Menu
 
     func fill(_ menu: NSMenu) {
+        if let unreadable {
+            let note = NSMenuItem(title: unreadable, action: nil, keyEquivalent: "")
+            note.isEnabled = false
+            menu.addItem(note)
+            return
+        }
         for entry in list.extensions {
             let context = contexts[entry.id]
             let item = NSMenuItem(title: context?.webExtension.displayName ?? Self.name(of: entry), action: nil, keyEquivalent: "")

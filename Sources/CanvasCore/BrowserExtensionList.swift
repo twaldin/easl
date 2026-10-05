@@ -73,7 +73,8 @@ public struct BrowserExtensionList: Codable, Equatable, Sendable {
         extensions.removeAll { $0.id == id }
     }
 
-    /// The list's file in an easl home; unreadable or absent counts as empty.
+    /// The list's file in an easl home. Absent counts as empty; one that doesn't decode (a hand
+    /// edit gone wrong) throws, so nothing writes an empty list over the user's extensions.
     public struct Store: Sendable {
         public let url: URL
 
@@ -81,9 +82,9 @@ public struct BrowserExtensionList: Codable, Equatable, Sendable {
             self.url = url
         }
 
-        public func load() -> BrowserExtensionList {
-            guard let data = try? Data(contentsOf: url) else { return BrowserExtensionList() }
-            return (try? JSONDecoder().decode(BrowserExtensionList.self, from: data)) ?? BrowserExtensionList()
+        public func load() throws -> BrowserExtensionList {
+            guard FileManager.default.fileExists(atPath: url.path) else { return BrowserExtensionList() }
+            return try JSONDecoder().decode(BrowserExtensionList.self, from: Data(contentsOf: url))
         }
 
         public func save(_ list: BrowserExtensionList) throws {
@@ -96,7 +97,7 @@ public struct BrowserExtensionList: Codable, Equatable, Sendable {
 }
 
 /// What the user picked to add as a browser extension, resolved to what WebKit loads: an app
-/// (the App Store's Bitwarden.app, 1Password for Safari) carries its Safari web extensions as
+/// (the App Store's Bitwarden.app) carries its Safari web extensions as
 /// `.appex` bundles in `Contents/PlugIns`; an `.appex` is one; a folder with `manifest.json` is
 /// an unpacked extension (a developer's build).
 public enum BrowserExtensionSource: Equatable, Sendable {

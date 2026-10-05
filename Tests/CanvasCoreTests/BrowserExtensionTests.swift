@@ -46,17 +46,31 @@ struct BrowserExtensionTests {
 
     @Test func addingTheSameExtensionAgainReenablesItAndKeepsItsIdentity() throws {
         let store = BrowserExtensionList.Store(url: root.appendingPathComponent("browser-extensions.json"))
-        // No file yet, or one that isn't a list: nothing installed.
-        #expect(store.load() == BrowserExtensionList())
-        var list = store.load()
+        // No file yet: nothing installed.
+        #expect(try store.load() == BrowserExtensionList())
+        var list = try store.load()
         let first = list.add(path: "/Applications/Vault.app/Contents/PlugIns/Safari.appex")
         list.update(first.id) { $0.enabled = false; $0.reviewed = true }
         try store.save(list)
-        var loaded = store.load()
+        var loaded = try store.load()
         let again = loaded.add(path: "/Applications/Vault.app/Contents/PlugIns/../PlugIns/Safari.appex")
         #expect(loaded.extensions.count == 1)
         #expect(again.id == first.id && again.enabled && again.reviewed)
         loaded.remove(first.id)
         #expect(loaded.extensions.isEmpty)
+    }
+
+    @Test func aHandWrittenEntryLoadsAndABrokenListIsNeverReadAsEmpty() throws {
+        let url = root.appendingPathComponent("browser-extensions.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = BrowserExtensionList.Store(url: url)
+        // Only a path, as a user or a test writes it: it loads, enabled and not yet reviewed.
+        try Data(#"{"extensions":[{"path":"/tmp/unpacked"}]}"#.utf8).write(to: url)
+        let entry = try #require(try store.load().extensions.first)
+        #expect(entry.path == "/tmp/unpacked" && entry.enabled && !entry.reviewed && entry.permissions.isEmpty)
+        // A mistake (an entry without its path) must not read as "no extensions", which the app
+        // would then save over the file, losing every extension's id and grants.
+        try Data(#"{"extensions":[{"path":"/tmp/unpacked"},{"enabled":false}]}"#.utf8).write(to: url)
+        #expect(throws: (any Error).self) { try store.load() }
     }
 }
