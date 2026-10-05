@@ -280,9 +280,13 @@ type BrowserProps struct {
 	// names the tile; the app never overwrites it
 	Title *string `json:"title,omitempty"`
 	// written by the app: the page's own title; shown when `title` is unset; never bumps rev
-	PageTitle *string    `json:"pageTitle,omitempty"`
-	Zoom      *Zoom      `json:"zoom,omitempty"`
-	Key       *ObjectKey `json:"key,omitempty"`
+	PageTitle *string `json:"pageTitle,omitempty"`
+	Zoom      *Zoom   `json:"zoom,omitempty"`
+	// a named browser profile: its own cookies, logins and storage, shared by every tile that names it; absent: the default profile. Tiles a page opens (links, popups) take it
+	Profile *string `json:"profile,omitempty"`
+	// a page served from this Mac (localhost, 127.x, [::1], a .localhost name, a file) reloads when a file under the board root (a file page: its folder) changes; hidden files and folders and node_modules don't count
+	ReloadOnChange *bool      `json:"reloadOnChange,omitempty"`
+	Key            *ObjectKey `json:"key,omitempty"`
 }
 
 type CodePropsHistory struct {

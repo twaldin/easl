@@ -127,7 +127,7 @@ func (t ObjectType) IsTile() bool {
 func (t ObjectType) KnownProps() []string {
 	own := map[ObjectType][]string{
 		Terminal: {"cwd", "command", "zmxSession", "title", "name", "agent", "lifecycle", "follow", "zoom", "worktree", "branch"},
-		Browser:  {"url", "title", "pageTitle", "zoom"},
+		Browser:  {"url", "title", "pageTitle", "zoom", "profile", "reloadOnChange"},
 		Code:     {"path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "ref", "refSha", "zoom"},
 		Note:     {"markdown", "title", "root", "ref", "refSha", "zoom"},
 		HTML:     {"html", "title", "root", "ref", "refSha", "allowNetwork", "state", "zoom"},
