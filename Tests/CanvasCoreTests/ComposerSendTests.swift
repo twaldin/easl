@@ -297,20 +297,22 @@ final class ComposerSendTests {
 
     @Test func aCodexAnswerAsAPromptTakesNothingAndThePromptAfterItKeepsItsOwn() async throws {
         let codex = try terminal("codex")
-        let a = code("a.py")
+        let a = code("a.py"), b = code("b.py")
         showTray(to: codex)
         try agent(codex, "codex", .blocked, "Which color?")
-        try await send(ComposerDraft(text: "blue"), to: [codex])
-        // Sent from the composer before Codex's hook drained the answer.
-        try agent(codex, "codex", .idle)
         try board.stage(line(a, "a.py"))
-        try await send(draft(["use it"]), to: [codex])
-        try board.stage(line(code("b.py"), "b.py"))
+        try await send(draft(["blue"]), to: [codex])
+        #expect(board.composerPrompts[codex]?.map(\.answer) == [true] && board.tray.map(\.label) == ["a.py:1"])
         // Codex's answer arrives as a prompt: its hook reports working, then drains.
         try agent(codex, "codex", .working)
-        #expect(try await drain(codex, "blue").isEmpty, "the answer's drain takes nothing")
+        #expect(try await drain(codex, "blue [1]").isEmpty, "the answer's drain takes nothing")
+        #expect(board.tray.map(\.label) == ["a.py:1"])
+
+        // The composer prompt after it, queued mid-turn: its drain takes its own mention.
+        try await send(draft(["use it"]), to: [codex])
+        try board.stage(line(b, "b.py"))
         #expect(try await drain(codex, "[1] use it") == ["[1] a.py"], "the prompt after it keeps its mention")
-        #expect(board.tray.map(\.label) == ["b.py:1"])
+        #expect(board.tray.map(\.label) == ["b.py:1"] && board.composerPrompts[codex] == nil)
     }
 
     @Test func mentionsComeBackWhenOnlyAnAnswerWentIn() async throws {
