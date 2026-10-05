@@ -429,6 +429,7 @@ final class CanvasView: NSScrollView {
         }
         // The tile made for a page's popup takes the web view WebKit opens it in.
         (content as? BrowserTile)?.browserTile = { [weak self] opened in self?.tiles[opened]?.content as? BrowserTile }
+        (content as? BrowserTile)?.hasAttention = { [weak self] tile in self?.selection == [tile] || self?.focusedTile == tile }
         let tile = TileFrameView(object: object, content: content, frame: Self.docRect(object.frame))
         tile.onFrameCommit = { [weak self] rect in
             _ = try? self?.board.update(id, frame: Self.canvasFrame(rect))

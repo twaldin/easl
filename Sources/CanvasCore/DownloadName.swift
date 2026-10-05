@@ -30,8 +30,16 @@ public enum DownloadName {
         guard taken(name) else { return name }
         let (stem, ext) = split(name)
         var number = 2
-        while taken("\(stem) \(number)\(ext)") { number += 1 }
-        return "\(stem) \(number)\(ext)"
+        while taken(numbered(stem, number, ext)) { number += 1 }
+        return numbered(stem, number, ext)
+    }
+
+    /// "stem N.ext", the stem shortened so the whole name stays within 255 UTF-8 bytes.
+    private static func numbered(_ stem: String, _ number: Int, _ ext: String) -> String {
+        let suffix = " \(number)" + ext
+        var shortened = stem
+        while shortened.utf8.count + suffix.utf8.count > 255, !shortened.isEmpty { shortened.removeLast() }
+        return shortened + suffix
     }
 
     /// "archive.tar.gz" → ("archive", ".tar.gz"); "notes.txt" → ("notes", ".txt"); "Makefile"

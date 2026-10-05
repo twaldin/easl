@@ -106,8 +106,13 @@ extension BrowserTile {
     /// (kept for the session). A login the server refused asks again, saying so. Cancel shows the
     /// server's own refusal page. A server asking for a client certificate gets the user's choice
     /// among the keychain identities its certificate authorities issued. Server trust stays
-    /// WebKit's (an invalid certificate fails the load).
+    /// WebKit's (an invalid certificate fails the load). A download from this tile's page asks
+    /// the same way (`BrowserDownloads`).
     func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping @MainActor @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        answer(challenge, completionHandler)
+    }
+
+    func answer(_ challenge: URLAuthenticationChallenge, _ completionHandler: @escaping @MainActor @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         let space = challenge.protectionSpace
         switch space.authenticationMethod {
         case NSURLAuthenticationMethodHTTPBasic, NSURLAuthenticationMethodHTTPDigest, NSURLAuthenticationMethodNTLM:

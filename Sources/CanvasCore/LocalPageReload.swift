@@ -9,7 +9,15 @@ public enum LocalPage {
     public static func isLocal(_ url: URL) -> Bool {
         if url.isFileURL { return true }
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https", let host = url.host?.lowercased() else { return false }
-        return host == "localhost" || host.hasSuffix(".localhost") || host == "::1" || host == "[::1]" || host.hasPrefix("127.")
+        return host == "localhost" || host.hasSuffix(".localhost") || host == "::1" || host == "[::1]" || isLoopbackIPv4(host)
+    }
+
+    /// A dotted IPv4 address in 127.0.0.0/8 (`127.0.0.1`), not a name that starts like one
+    /// (`127.example.com`).
+    static func isLoopbackIPv4(_ host: String) -> Bool {
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4, octets.allSatisfy({ !$0.isEmpty && $0.count <= 3 && $0.allSatisfy(\.isASCII) && UInt8($0) != nil }) else { return false }
+        return octets[0] == "127"
     }
 
     /// The directory whose files are behind `url`: a file page's own folder, else the board's
@@ -36,9 +44,13 @@ public enum LocalPage {
 public final class LocalPageWatch {
     private var stream: FileEventStream?
 
-    /// FSEvents reports real paths (/private/tmp, not /tmp), so the root is resolved first.
+    /// FSEvents reports real paths (/private/tmp, not /tmp), so the root is resolved first, with
+    /// realpath(3): Foundation's `resolvingSymlinksInPath` strips `/private` again.
     public init?(directory: URL, latency: TimeInterval = 0.3, onChange: @escaping @MainActor @Sendable () -> Void) {
-        let root = directory.resolvingSymlinksInPath().path
+        let root = realpath(directory.path, nil).map { resolved in
+            defer { free(resolved) }
+            return String(cString: resolved)
+        } ?? directory.path
         stream = FileEventStream(paths: [root], latency: latency) { paths in
             guard paths.contains(where: { LocalPage.counts($0, under: root) }) else { return }
             DispatchQueue.main.async { MainActor.assumeIsolated { onChange() } }

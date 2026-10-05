@@ -96,6 +96,15 @@ final class BrowserDownloads: NSObject, WKDownloadDelegate {
         decisionHandler(.allow)
     }
 
+    /// A download behind a login or a client certificate asks as its tile's page would
+    /// (`BrowserTile.answer`); server trust stays WebKit's. With its tile gone there is nobody to
+    /// ask, and the download fails as a refused login does.
+    func download(_ download: WKDownload, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping @MainActor @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust { return completionHandler(.performDefaultHandling, nil) }
+        guard let tile = entries[ObjectIdentifier(download)]?.tile, tile.window != nil else { return completionHandler(.cancelAuthenticationChallenge, nil) }
+        tile.answer(challenge, completionHandler)
+    }
+
     private func update(_ key: ObjectIdentifier, _ state: Status.State) {
         guard let entry = entries[key] else { return }
         entry.tile?.showDownload(Status(name: entry.name, file: entry.file, state: state))

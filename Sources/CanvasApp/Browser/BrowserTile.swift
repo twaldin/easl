@@ -101,8 +101,10 @@ final class BrowserTile: NSView, TileContent {
     /// `window.opener`.
     var browserTile: ((ObjectID) -> BrowserTile?)?
     /// The tile whose page opened this one as a popup the user asked for: shown again when the
-    /// popup's page closes it.
+    /// popup's page closes it while the popup has the user's attention (`hasAttention`: the
+    /// canvas's answer, selected or holding the keyboard).
     private var popupOpener: ObjectID?
+    var hasAttention: ((ObjectID) -> Bool)?
     /// The profile the web view was built with (`BrowserProfile`); a changed `props.profile`
     /// rebuilds it.
     private var webViewProfile: String?
@@ -111,6 +113,8 @@ final class BrowserTile: NSView, TileContent {
     private weak var findPreviousResponder: NSResponder?
     /// The files behind a local page, while `props.reloadOnChange` is on (`LocalPageWatch`).
     private var pageWatch: (directory: URL, watch: LocalPageWatch)?
+    /// A counted file change arrived while the page loaded: it reloads once that load ends.
+    private var reloadPending = false
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
@@ -329,6 +333,7 @@ final class BrowserTile: NSView, TileContent {
                     guard let self else { return }
                     self.chrome.isLoading = view.isLoading
                     if !view.isLoading { self.commitURL() }
+                    if !view.isLoading, self.reloadPending { self.filesChanged() }
                     self.signalChange()
                 }
             },
@@ -464,6 +469,7 @@ final class BrowserTile: NSView, TileContent {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeDelay) { _ = webView }
         self.webView = nil
         pageWatch = nil
+        reloadPending = false
         closeFind()
         pendingNavigations = []
         uncommittedNavigations = []
@@ -1016,14 +1022,19 @@ final class BrowserTile: NSView, TileContent {
             ? pageURL.flatMap(URL.init(string:)).flatMap { LocalPage.directory(for: $0, boardRoot: board.root) } : nil
         guard wanted != pageWatch?.directory else { return }
         pageWatch = nil
+        reloadPending = false
         guard let wanted else { return }
         guard let watch = LocalPageWatch(directory: wanted, onChange: { [weak self] in self?.filesChanged() }) else { return }
         pageWatch = (wanted, watch)
         NSLog("easl: browser %@ reloads when files in %@ change", objectID, wanted.path)
     }
 
+    /// A counted change reloads the page; one that arrives while the page loads (a reload still
+    /// fetching, an agent's second save) waits, and the page reloads once more when that load ends.
     private func filesChanged() {
-        guard let webView, pageWatch != nil, !webView.isLoading else { return }
+        guard let webView, pageWatch != nil else { return }
+        guard !webView.isLoading else { return reloadPending = true }
+        reloadPending = false
         NSLog("easl: browser %@ reloading: files changed", objectID)
         credit.user()
         track(webView.reload())
@@ -1248,13 +1259,16 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         return openPopup(url, configuration: configuration)
     }
 
-    /// The page closed its own window (`window.close()` in a popup it was opened as): its tile goes.
+    /// The page closed its own window (`window.close()` in a popup it was opened as): its tile
+    /// goes. Its opener is shown and selected again only while the popup still had the user's
+    /// attention (selected or holding the keyboard); otherwise nothing else moves.
     func webViewDidClose(_ webView: WKWebView) {
         guard webView === self.webView, board.objects[objectID] != nil else { return }
         NSLog("easl: browser %@ closed by its page", objectID)
+        let attended = hasAttention?(objectID) == true
         let caller: ObjectID? = if case .agent(let tile) = credit.actor() { tile } else { nil }
         try? board.delete(objectID, caller: caller)
-        if let popupOpener, board.objects[popupOpener] != nil { onOpenedTile?(popupOpener) }
+        if attended, let popupOpener, board.objects[popupOpener] != nil { onOpenedTile?(popupOpener) }
     }
 
     private func finished(_ navigation: WKNavigation?) {

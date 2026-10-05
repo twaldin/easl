@@ -13,6 +13,12 @@ struct BrowserFilesTests {
         #expect(DownloadName.unique("new.zip", taken: taken.contains) == "new.zip")
     }
 
+    @Test func aNumberedNameStillFitsTheFileSystem() {
+        let longest = String(repeating: "x", count: 251) + ".zip"
+        let again = DownloadName.unique(longest) { $0 == longest }
+        #expect(again.utf8.count == 255 && again.hasSuffix(" 2.zip") && again != longest)
+    }
+
     @Test func aSuggestedNameCanNeitherLeaveTheFolderNorHide() {
         #expect(DownloadName.sanitized("../../etc/passwd") == "-..-etc-passwd")
         #expect(DownloadName.sanitized(".bashrc") == "bashrc")
@@ -28,7 +34,7 @@ struct BrowserFilesTests {
         for local in ["http://localhost:3000/", "https://app.localhost/x", "http://127.0.0.1:8000/a", "http://[::1]:5173/", "file:///repo/site/index.html"] {
             #expect(LocalPage.isLocal(URL(string: local)!), "\(local)")
         }
-        for remote in ["https://example.com/", "http://10.0.0.2:3000/", "http://localhost.example.com/"] {
+        for remote in ["https://example.com/", "http://10.0.0.2:3000/", "http://localhost.example.com/", "http://127.example.com/", "http://127.0.0.1.example.com/", "http://127.0.0.256/"] {
             #expect(!LocalPage.isLocal(URL(string: remote)!), "\(remote)")
         }
         #expect(LocalPage.directory(for: URL(string: "http://localhost:3000/")!, boardRoot: root)?.path == "/repo")
