@@ -138,6 +138,10 @@ final class BrowserTile: NSView, TileContent {
         chrome.onEscape = { [weak self] in self?.leave() }
         chrome.onProblems = { [weak self] in self?.toggleProblems() }
         chrome.onDownload = { [weak self] in self?.revealDownload() }
+        chrome.onExtensions = { [weak self] anchor in
+            guard let self else { return }
+            BrowserExtensions.buttonClicked(self, anchor: anchor)
+        }
         chrome.onReload = { [weak self] in
             guard let self else { return }
             self.credit.user()
@@ -231,9 +235,11 @@ final class BrowserTile: NSView, TileContent {
         super.viewDidMoveToWindow()
         guard let window else {
             // Closed or its canvas went away: nothing will show or drive this page again.
+            BrowserExtensions.closed(self)
             release()
             return
         }
+        BrowserExtensions.opened(self)
         // A driven page moves to the stage while its window is off screen (minimized, a
         // background tab, the app hidden) and back when it returns.
         let center = NotificationCenter.default
@@ -271,7 +277,8 @@ final class BrowserTile: NSView, TileContent {
     /// The tile's web view: a fresh one in the tile's profile, or for a popup (`adoptPopup`) one
     /// from the configuration WebKit passed, which carries the opener (`window.opener`), its
     /// profile's store and settings. The popup gets a user content controller of its own: the
-    /// one it inherits answers to the opener's tile (its page log, its activity).
+    /// one it inherits answers to the opener's tile (its page log, its activity). Either way the
+    /// page runs the user's Safari extensions (`BrowserExtensions`).
     private func makeWebView(popup: WKWebViewConfiguration? = nil) -> WKWebView {
         let configuration = popup ?? WKWebViewConfiguration()
         // A popup's tile names its opener's profile (`openPopup`), whose store it carries.
@@ -281,6 +288,7 @@ final class BrowserTile: NSView, TileContent {
         } else {
             configuration.userContentController = WKUserContentController()
         }
+        BrowserExtensions.attach(to: configuration)
         configuration.applicationNameForUserAgent = BrowserProfile.applicationName
         // The page's context menu offers Inspect Element (Web Inspector), as in Safari with
         // its Develop menu on.
@@ -306,8 +314,10 @@ final class BrowserTile: NSView, TileContent {
         }, contentWorld: .page, name: PageCapture.messageName)
         let view = BrowserWebView(frame: webViewFrame, configuration: configuration)
         view.onUserInput = { [weak self] in
-            self?.credit.user()
-            self?.closeProblems()
+            guard let self else { return }
+            self.credit.user()
+            self.closeProblems()
+            BrowserExtensions.activated(self)
         }
         view.autoresizingMask = [.width, .height]
         view.navigationDelegate = self
@@ -317,7 +327,11 @@ final class BrowserTile: NSView, TileContent {
         webView = view
         observations = [
             view.observe(\.title, options: [.new]) { [weak self] view, _ in
-                MainActor.assumeIsolated { self?.commitTitle(view.title) }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.commitTitle(view.title)
+                    BrowserExtensions.changed(self, .title)
+                }
             },
             view.observe(\.url, options: [.new]) { [weak self] view, _ in
                 MainActor.assumeIsolated {
@@ -326,6 +340,7 @@ final class BrowserTile: NSView, TileContent {
                     // never "finish"; commit them here, or when the load they ran in ends.
                     if !view.isLoading { self.commitURL() }
                     self.signalChange()
+                    BrowserExtensions.changed(self, .url)
                 }
             },
             view.observe(\.isLoading, options: [.new]) { [weak self] view, _ in
@@ -335,6 +350,7 @@ final class BrowserTile: NSView, TileContent {
                     if !view.isLoading { self.commitURL() }
                     if !view.isLoading, self.reloadPending { self.filesChanged() }
                     self.signalChange()
+                    BrowserExtensions.changed(self, .loading)
                 }
             },
             view.observe(\.canGoBack, options: [.initial, .new]) { [weak self] view, _ in
@@ -404,6 +420,8 @@ final class BrowserTile: NSView, TileContent {
     }
 
     @objc private func windowVisibilityChanged() {
+        // A board window closed and opened again: its tiles are tabs again (`BrowserExtensions`).
+        if window?.isVisible == true { BrowserExtensions.opened(self) }
         // The board's window opened again after a close (`windowWillClose`): the page comes back.
         if webView == nil, isLive, window?.isVisible == true { return attach() }
         placePage()
@@ -712,6 +730,15 @@ final class BrowserTile: NSView, TileContent {
     func focusAddress() {
         chrome.focusAddress()
     }
+
+    /// The installed extensions changed (loaded, removed, an action's icon): the address bar's
+    /// button follows.
+    func extensionsChanged() {
+        chrome.setExtensions(BrowserExtensions.button(for: self))
+    }
+
+    /// Where an extension's popup hangs: its button, or the address bar while that's hidden.
+    var extensionsAnchor: NSView { chrome.extensions.isHidden ? chrome : chrome.extensions }
 
     /// Return on the selected tile: the page takes the keyboard (the address field while there
     /// is no page); ⌘L goes to the address field, ⌘Esc (Leave Tile) back to the canvas. Esc is
@@ -1343,6 +1370,10 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
     /// it in Finder), "Download failed" in red.
     private let downloadNote = NSButton(title: "", target: nil, action: nil)
     var onDownload: (() -> Void)?
+    /// The installed browser extensions' button, at the bar's trailing end while any run
+    /// (`BrowserExtensions`); clicked, it hands itself over as the anchor for a popup or menu.
+    let extensions = BrowserChrome.button("puzzlepiece.extension", "Extensions")
+    var onExtensions: ((NSView) -> Void)?
     private(set) var isEditing = false
 
     var download: BrowserDownloads.Status? {
@@ -1455,7 +1486,11 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
         downloadNote.target = self
         downloadNote.action = #selector(downloadClicked)
         downloadNote.isHidden = true
-        [back, forward, reload, address, downloadNote, releaseNote, problems].forEach(addSubview)
+        extensions.target = self
+        extensions.action = #selector(extensionsClicked)
+        extensions.imageScaling = .scaleProportionallyDown
+        extensions.isHidden = true
+        [back, forward, reload, address, downloadNote, releaseNote, problems, extensions].forEach(addSubview)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -1469,6 +1504,10 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
         forward.frame = NSRect(x: 32, y: y, width: side, height: side)
         reload.frame = NSRect(x: 58, y: y, width: side, height: side)
         var trailing: CGFloat = 8
+        if !extensions.isHidden {
+            extensions.frame = NSRect(x: bounds.width - 6 - side, y: y, width: side, height: side)
+            trailing += side + 2
+        }
         for pill in [problems, releaseNote, downloadNote] where !pill.isHidden {
             let width = min(ceil(pill.attributedTitle.size().width) + 14, 220)
             pill.frame = NSRect(x: bounds.width - trailing + 2 - width, y: (bounds.height - 18) / 2, width: width, height: 18)
@@ -1501,6 +1540,19 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
     @objc private func reloadClicked() { onReload?() }
     @objc private func problemsClicked() { onProblems?() }
     @objc private func downloadClicked() { onDownload?() }
+    @objc private func extensionsClicked() { onExtensions?(extensions) }
+
+    /// The extensions' button (`BrowserExtensions.button`): nil hides it; a single extension's
+    /// action it disabled on this page dims it and makes it unclickable.
+    func setExtensions(_ shown: (image: NSImage, label: String, enabled: Bool)?) {
+        extensions.image = shown?.image
+        extensions.toolTip = shown?.label
+        extensions.setAccessibilityLabel(shown?.label)
+        extensions.isEnabled = shown?.enabled ?? true
+        guard extensions.isHidden != (shown == nil) else { return }
+        extensions.isHidden = shown == nil
+        resizeSubviews(withOldSize: bounds.size)
+    }
 
     @objc private func addressSubmitted() {
         isEditing = false
