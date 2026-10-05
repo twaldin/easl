@@ -27,6 +27,8 @@ jobs:
         run: cd clients/python && python3 -m unittest
       - name: Agent hook tests
         run: bun test extensions/agent-hooks
+      - name: Script tests
+        run: python3 -m unittest discover -s scripts
 
   conformance:
     runs-on: ubuntu-latest

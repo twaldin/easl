@@ -288,8 +288,7 @@ public final class Board {
             object.frame = place(width: size.w, height: size.h, near: caller, stacking: true)
         }
         commit(object)
-        Metrics.shared.record("board.write")
-        Metrics.shared.offender("writers", caller.map { "agent:\($0)" } ?? "user")
+        countWrite(caller: caller)
         history.record(.created(object), by: object.createdBy)
         log(.created, object, actor: ActivityActor(caller: caller), "created \(ActivityLog.describe(object)) at \(ActivityLog.position(reported(object).frame))")
         onEvent?(.objectCreated(object))
@@ -336,6 +335,7 @@ public final class Board {
         object.props = object.props.merging(props)
         guard object != before else { return }
         commit(object)
+        Metrics.shared.record("board.bookkeeping")
         onEvent?(.objectUpdated(object))
     }
 
@@ -366,12 +366,7 @@ public final class Board {
         history.begin()
         defer { endStep() }
         commit(object)
-        if cause == GroupSpec.refitCause {
-            Metrics.shared.record("board.refit")
-        } else {
-            Metrics.shared.record("board.write")
-            Metrics.shared.offender("writers", caller.map { "agent:\($0)" } ?? "user")
-        }
+        countWrite(caller: caller, cause: cause)
         history.record(.updated(before: before, after: object), by: Actor(caller: caller))
         if let changes = ActivityLog.changes(from: before, to: object) {
             log(.updated, object, actor: credited, "\(ActivityLog.describe(object)): \(changes)", cause: cause, before: before)
@@ -397,6 +392,7 @@ public final class Board {
         changedAt.removeValue(forKey: id)
         reindexKey(id, from: removed.props, to: nil)
         bumpRevision()
+        countWrite(caller: caller)
         // Before the delete, so undo brings the object back first and then its chips.
         let unstaged = tray.enumerated().filter { $0.element.target.objectIDs.contains(id) }.map { PlacedMention(index: $0.offset, mention: $0.element) }
         if !unstaged.isEmpty { history.record(.unstaged(unstaged, pastedInto: nil), by: Actor(caller: caller)) }
@@ -461,6 +457,7 @@ public final class Board {
         let previous = objects[object.id]
         object.rev = max(revHighWater[object.id] ?? 0, objects[object.id]?.rev ?? 0, object.rev) + 1
         commit(object)
+        Metrics.shared.record("board.undo")
         if let previous {
             if let changes = ActivityLog.changes(from: previous, to: object) {
                 log(.updated, object, actor: replayActor, "\(ActivityLog.describe(object)): \(changes)")
@@ -470,6 +467,21 @@ public final class Board {
         } else {
             log(.created, object, actor: replayActor, "restored \(ActivityLog.describe(object)) at \(ActivityLog.position(reported(object).frame))")
             onEvent?(.objectCreated(object))
+        }
+    }
+
+    /// Counts a change to the board's objects for `app.metrics`: `board.write` (and the caller
+    /// among `writers`) for a create, update or delete; `board.refit` for a group re-bounded around
+    /// its members; `board.undo` for undo and redo (`restore` counts its own); bookkeeping
+    /// (`commitBookkeeping`) is `board.bookkeeping`.
+    private func countWrite(caller: ObjectID?, cause: String? = nil) {
+        if history.replaying {
+            Metrics.shared.record("board.undo")
+        } else if cause == GroupSpec.refitCause {
+            Metrics.shared.record("board.refit")
+        } else {
+            Metrics.shared.record("board.write")
+            Metrics.shared.offender("writers", caller.map { "agent:\($0)" } ?? "user")
         }
     }
 

@@ -103,7 +103,8 @@ class Events(threading.Thread):
             if "event" not in message:
                 continue
             data = message.get("data") or {}
-            kind = (data.get("object") or {}).get("type", "")
+            # object.created/updated carry the object itself as `data`; other events have no type.
+            kind = data.get("type", "") if message["event"] in ("object.created", "object.updated") else ""
             key = f"{message['event']}:{kind}" if kind else message["event"]
             self.counts[key] = self.counts.get(key, 0) + 1
             self.bytes += len(line)

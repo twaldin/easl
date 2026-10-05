@@ -215,6 +215,13 @@ public final class Metrics: @unchecked Sendable {
         process.reset()
     }
 
+    /// When counters were last reset (0: never); the main-thread monitor rebases on it.
+    fileprivate var resetAt: Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return since == launched ? 0 : since
+    }
+
     /// While the HUD shows, the process is sampled every second instead of every 10.
     public func sampleFast(_ on: Bool) {
         lock.lock()
@@ -276,19 +283,29 @@ public final class Metrics: @unchecked Sendable {
     }
 }
 
+/// One unit of a gauge held for as long as this lives (a live web view): released exactly once,
+/// however its owner lets go of it.
+public final class GaugeHold: Sendable {
+    private let name: String
+
+    public init(_ name: String) {
+        self.name = name
+        Metrics.shared.adjust(name, by: 1)
+    }
+
+    deinit { Metrics.shared.adjust(name, by: -1) }
+}
+
 /// The main run loop's turns, timed by an observer: a turn runs from waking (or the end of the
 /// previous turn) until the loop next checks timers or goes to sleep. Main-thread spans inside a
 /// turn are kept so a long turn can say what it did. Main thread only.
 private enum MainMonitor {
     nonisolated(unsafe) static var metrics: Metrics?
     nonisolated(unsafe) static var observer: CFRunLoopObserver?
-    nonisolated(unsafe) static var turnStart: Double?
+    nonisolated(unsafe) static var turns = RunLoopTurns(at: 0)
     nonisolated(unsafe) static var depth = 0
     /// Spans that ended in this turn: (nesting depth, label, ms), in end order.
     nonisolated(unsafe) static var spans: [(depth: Int, label: String, ms: Double)] = []
-    nonisolated(unsafe) static var busy = 0.0
-    nonisolated(unsafe) static var turns = 0
-    nonisolated(unsafe) static var flushed = 0.0
 
     static func install(_ metrics: Metrics) {
         guard observer == nil else { return }
@@ -299,7 +316,7 @@ private enum MainMonitor {
         }
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         self.observer = observer
-        flushed = Metrics.now()
+        turns = RunLoopTurns(at: Metrics.now(), reset: metrics.resetAt)
     }
 
     static func push() { depth += 1 }
@@ -313,21 +330,14 @@ private enum MainMonitor {
     }
 
     static func loop(_ activity: CFRunLoopActivity) {
+        guard let metrics else { return }
         let now = Metrics.now()
-        if let start = turnStart {
-            let ms = (now - start) * 1000
-            busy += ms
-            turns += 1
-            if ms >= Metrics.hitchStretch { metrics?.mainStretch(ms, cause: cause()) }
-        }
+        // Spans that ended before a reset are not the new window's (open ones keep their depth).
+        if turns.rebase(reset: metrics.resetAt) { spans.removeAll(keepingCapacity: true) }
+        let step = turns.activity(sleeping: activity == .beforeWaiting, at: now)
+        if let ms = step.turn, ms >= Metrics.hitchStretch { metrics.mainStretch(ms, cause: cause()) }
         spans.removeAll(keepingCapacity: true)
-        turnStart = activity == .beforeWaiting ? nil : now
-        if now - flushed >= 1 {
-            metrics?.mainBusy(busy, turns: turns)
-            busy = 0
-            turns = 0
-            flushed = now
-        }
+        if let busy = step.flush { metrics.mainBusy(busy.ms, turns: busy.turns) }
     }
 
     /// The turn's top-level spans, longest first, each with its longest nested span.
@@ -347,6 +357,49 @@ private enum MainMonitor {
         if let child = children.max(by: { $0.ms < $1.ms }) { parts.append((child.ms, String(format: "%@ %.0f ms", child.label, child.ms))) }
         guard !parts.isEmpty else { return "untagged work" }
         return parts.sorted { $0.ms > $1.ms }.prefix(3).map(\.text).joined(separator: "; ")
+    }
+}
+
+/// Run-loop turn timing (times in seconds, results in ms): each observed activity ends the turn
+/// in progress, and busy time is handed over about once a second. A metrics reset rebases it, so
+/// busy time and a turn that began before the reset don't count toward the new window.
+public struct RunLoopTurns: Sendable {
+    public private(set) var turnStart: Double?
+    private var busy = 0.0
+    private var turns = 0
+    private var flushed: Double
+    private var reset: Double
+
+    public init(at now: Double, reset: Double = 0) {
+        flushed = now
+        self.reset = reset
+    }
+
+    /// Applies a reset made at `reset` (a no-op for one already seen); true when it was new.
+    public mutating func rebase(reset: Double) -> Bool {
+        guard reset > self.reset else { return false }
+        self.reset = reset
+        busy = 0
+        turns = 0
+        flushed = reset
+        if let start = turnStart, start < reset { turnStart = reset }
+        return true
+    }
+
+    /// One run-loop activity at `now`: the length of the turn it ended (ms), and the busy time
+    /// and turn count due to be recorded, once a second.
+    public mutating func activity(sleeping: Bool, at now: Double) -> (turn: Double?, flush: (ms: Double, turns: Int)?) {
+        var turn: Double?
+        if let start = turnStart {
+            let ms = (now - start) * 1000
+            busy += ms
+            turns += 1
+            turn = ms
+        }
+        turnStart = sleeping ? nil : now
+        guard now - flushed >= 1 else { return (turn, nil) }
+        defer { busy = 0; turns = 0; flushed = now }
+        return (turn, (busy, turns))
     }
 }
 
@@ -387,10 +440,9 @@ final class ProcessSampler: @unchecked Sendable {
     }()
 
     init() {
-        queue.async { [self] in
-            base = Self.sample(getpid())
-            schedule()
-        }
+        // Set before `self` is shared with the queue: `snapshot` reads it from the caller's thread.
+        base = Self.sample(getpid())
+        queue.async { [self] in schedule() }
     }
 
     private func schedule() {

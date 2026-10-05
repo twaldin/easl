@@ -391,12 +391,16 @@ function metricsText(m: Metrics): string {
   if (m.longest) lines.push(`         longest ${Math.round(m.longest.ms)} ms, ${Math.round(m.longest.agoS)} s ago: ${m.longest.cause}`);
   lines.push(`process  cpu ${p.cpuPercent ?? 0}%  wakeups ${p.interruptWakeupsPerS ?? 0}/s  memory ${m.process.footprintMB ?? 0} MB (peak ${m.process.peakFootprintMB ?? 0})`);
   for (const h of m.process.helpers ?? []) lines.push(`         ${h.name} ${h.pid}: ${h.footprintMB} MB${h.cpuPercent === undefined ? "" : `, ${h.cpuPercent}%`}`);
+  // Requests by method: every request counts `api.in.<method>` on arrival and `api.<method>` when
+  // answered; `api.main.<method>` is the main-thread part of its dispatches (a batch's operations
+  // and async-only methods have none of their own).
   const api = Object.keys(m.counters)
-    .filter((k) => k.startsWith("api.main."))
-    .map((k) => ({ method: k.slice("api.main.".length), main: c(k, "total"), call: c(`api.${k.slice("api.main.".length)}`, "total") }))
-    .sort((a, b) => (b.main.ms ?? 0) - (a.main.ms ?? 0));
-  lines.push("api      (since reset) method: calls, main-thread ms (max), reply bytes");
-  for (const a of api.slice(0, 8)) lines.push(`         ${a.method}: ${a.main.n}, ${ms(a.main.ms)} ms (${ms(a.main.maxMs)}), ${kb(a.call.bytes)}`);
+    .filter((k) => k.startsWith("api.in."))
+    .map((k) => k.slice("api.in.".length))
+    .map((method) => ({ method, call: c(`api.${method}`, "total"), main: c(`api.main.${method}`, "total") }))
+    .sort((a, b) => (b.call.ms ?? 0) - (a.call.ms ?? 0));
+  lines.push("api      (since reset) method: requests, ms arrival to reply (max), main-thread ms, reply bytes");
+  for (const a of api.slice(0, 8)) lines.push(`         ${a.method}: ${a.call.n}, ${ms(a.call.ms)} ms (${ms(a.call.maxMs)}), main ${ms(a.main.ms)} ms, ${kb(a.call.bytes)}`);
   const events = Object.keys(m.counters).filter((k) => k.startsWith("event."));
   lines.push(`events   ${events.map((k) => `${k.slice(6)} ${c(k, "total").n} (${kb(c(k, "total").bytes)})`).join(", ") || "none"}; subscribers ${m.gauges["events.subscribers"] ?? 0}`);
   lines.push(`writes   ${c("board.write", "total").n}, group refits ${c("board.refit", "total").n}; top ${(m.top.writers ?? []).map((w) => `${w.key} ${w.n}`).join(", ") || "none"}`);
@@ -412,9 +416,12 @@ if (argv[0] === "metrics") {
   const flags = new Set(argv.slice(1));
   for (const flag of flags) if (!["--watch", "--reset", "--json"].includes(flag)) usage();
   const client = new CanvasClient();
+  // A watch resets once, on its first read.
+  let reset = flags.has("--reset");
   try {
     do {
-      const metrics = (await client.call("app.metrics", { reset: flags.has("--reset") && !flags.has("--watch"), watch: flags.has("--watch") })) as Metrics;
+      const metrics = (await client.call("app.metrics", { reset, watch: flags.has("--watch") })) as Metrics;
+      reset = false;
       if (flags.has("--watch")) process.stdout.write("\x1b[H\x1b[2J");
       console.log(flags.has("--json") ? JSON.stringify(metrics, null, 2) : metricsText(metrics));
       if (flags.has("--watch")) await Bun.sleep(1000);

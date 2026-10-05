@@ -12,6 +12,9 @@ final class HtmlTile: NSView, TileContent {
     private(set) var object: CanvasObject
     private let board: Board
     private(set) var webView: WKWebView?
+    /// `html.webviews` while `webView` exists; released with it, or with the tile when the tile
+    /// goes without a `detach` (deleted from the board).
+    private var webViewCount: GaugeHold?
     private var live = true
     private var building = false
     private var loadFailure: NSTextField?
@@ -103,7 +106,7 @@ final class HtmlTile: NSView, TileContent {
 
     private func attach(rules: WKContentRuleList) {
         Metrics.shared.record("html.load")
-        Metrics.shared.adjust("html.webviews", by: 1)
+        webViewCount = GaugeHold("html.webviews")
         let configuration = configuration(rules: rules)
         WebMentions.install(on: configuration)
 
@@ -128,7 +131,7 @@ final class HtmlTile: NSView, TileContent {
         readyWaiters.removeAll()
         work.cancelAll()
         guard let web = webView else { return }
-        Metrics.shared.adjust("html.webviews", by: -1)
+        webViewCount = nil
         web.stopLoading()
         web.configuration.userContentController.removeAllScriptMessageHandlers()
         web.removeFromSuperview()
@@ -258,10 +261,16 @@ final class HtmlTile: NSView, TileContent {
         guard live != self.live else { return }
         self.live = live
         if live, let web = webView {
-            // Back before its release: the page is still loaded.
+            // Back before its release: the page is still loaded. It may have re-rendered while
+            // hidden (a `state` change), which parked pages don't capture: refresh the snapshot
+            // once the page is on screen again.
             unpark()
             web.isHidden = false
             Metrics.shared.record("html.reuse")
+            WebStage.afterNextPresentationUpdate(web) { [weak self] in
+                guard let self, self.live, self.webView === web else { return }
+                self.scheduleSnapshot()
+            }
         } else if live {
             build()
         } else if pageShown, loadFailure == nil {

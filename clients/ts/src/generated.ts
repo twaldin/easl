@@ -695,7 +695,7 @@ export type AppMetricsResult = {
   uptimeS: number;
   /** seconds since launch or the last reset: the `total` window */
   sinceS: number;
-  /** by name, e.g. `main.busy`, `main.stretch50`, `main.stretch250`, `api.object.update`, `api.main.board.get`, `event.object.updated`, `board.write`, `board.refit`, `route.board`, `route.arrow`, `save.encode`, `save.write`, `card.call.HtmlTile`, `flip.live.TerminalTile`, `html.load`, `html.reuse`, `html.measure` */
+  /** by name, e.g. `main.busy`, `main.stretch50`, `main.stretch250`, `api.object.update`, `api.main.board.get`, `event.object.updated`, `board.write` (creates, updates, deletes), `board.refit`, `board.undo`, `board.bookkeeping`, `route.board`, `route.arrow`, `save.encode`, `save.write`, `card.call.HtmlTile`, `flip.live.TerminalTile`, `html.load`, `html.reuse`, `html.measure` */
   counters: Record<string, unknown>;
   /** current levels: `live.<Tile>` (tiles showing live content, by kind), `html.webviews`, `events.subscribers` */
   gauges: Record<string, unknown>;
@@ -1443,7 +1443,7 @@ export interface CanvasApi {
     ping(params?: SystemPingParams): Promise<SystemPingResult>;
   };
   app: {
-    /** What easl's own work costs, for finding what makes it slow: main-thread busy time and stretches (with the longest one's cause), per-method API calls (count, time from arrival to reply, reply bytes; `api.main.<method>` the main-thread part; `api.in.<method>` request bytes), events sent, board writes and group refits (top writers), arrow routings (`route.board` the whole board, `route.arrow` one arrow following its ends; top triggering objects), saves, live tiles per kind, HTML page loads, reuses, measures and renders, and the process's CPU, wakeups, memory and energy with its WebKit helpers'. Counters cover three windows: since launch or the last reset, the last 60 s, the last 10 min. `easl metrics [--watch] [--reset]` prints them as text. */
+    /** What easl's own work costs, for finding what makes it slow: main-thread busy time and stretches (with the longest one's cause), per-method API requests (`api.<method>`: requests answered, time from arrival to the queued reply, waiting behind earlier requests on the connection included, and reply bytes; `api.in.<method>` requests arrived and their bytes; `api.main.<method>` the main-thread part of its dispatches), events sent, board writes and group refits (top writers), arrow routings (`route.board` the whole board, `route.arrow` one arrow following its ends; top triggering objects), saves, live tiles per kind, HTML page loads, reuses, measures and renders, and the process's CPU, wakeups, memory and energy with its WebKit helpers'. Counters cover three windows: since launch or the last reset, the last 60 s, the last 10 min. `easl metrics [--watch] [--reset]` prints them as text. */
     metrics(params?: AppMetricsParams): Promise<AppMetricsResult>;
   };
   board: {

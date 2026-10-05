@@ -462,7 +462,9 @@ final class ShapeLayer: NSView {
 
     /// Takes a finished routing: every arrow whose spec and ends are still what the routing was
     /// given moves to its route and label and redraws if they changed. An arrow that changed
-    /// since keeps what it shows (its own route) for the routing that change made due.
+    /// since keeps what it shows (its own route) for the routing that change made due. Ends are
+    /// compared even when no routing was scheduled since: a drag, a resize, a scroll or a
+    /// selection-drag preview moves them before its pause schedules one.
     private func routed(_ result: ConnectorRouter.Result, _ inputs: RoutingInputs, ms: Double) {
         DevPerf.record("route.board", ms: ms)
         if let trigger = inputs.trigger { Metrics.shared.offender("routingTriggers", trigger, ms: ms) }
@@ -480,7 +482,7 @@ final class ShapeLayer: NSView {
             var changedSince: Set<ObjectID> = []
             for (id, given) in inputs.given {
                 guard let item = items[id], let spec = item.arrow?.spec else { continue }
-                if spec != given.spec || (!current && (arrowEnd(spec.from, of: id) != given.from || arrowEnd(spec.to, of: id) != given.to)) {
+                if spec != given.spec || arrowEnd(spec.from, of: id) != given.from || arrowEnd(spec.to, of: id) != given.to {
                     changedSince.insert(id)
                     continue
                 }

@@ -7,9 +7,10 @@ times interleaved, and prints medians with the targets as pass/fail (docs/testin
         [--scenarios visible-serial,hidden-serial,visible-batch,poll-idle] [--runs 3] [--out rows.jsonl]
 
 Bundles are frozen release builds (`EASL_BUNDLE_APP=/tmp/a.app scripts/bundle.sh release`). Each
-run starts every bundle in turn (the order alternating between runs) on a fresh development home
-(`EASL_DEV_HOME`, default /tmp/easl-perf-loop) holding the board from scripts/perf-board.py, shows
-it at 100% over the densest html area, then runs the scenarios:
+run starts every bundle in turn (the order alternating between runs) on a development home of its
+own (a new scratch directory under `--tmp`, default /tmp, deleted when the bundle stops; nothing
+else is ever deleted, so an existing `EASL_DEV_HOME` is never touched) holding the board from
+scripts/perf-board.py, shows it at 100% over the densest html area, then runs the scenarios:
 
 - `visible-serial` / `hidden-serial`: scripts/perf-load.py's serial burst with the window shown
   (on the testing Space) or minimized;
@@ -25,9 +26,11 @@ import argparse
 import json
 import os
 import re
+import shutil
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -52,9 +55,12 @@ def cpu_seconds(pid):
 
 
 class Instance:
-    def __init__(self, label, app, home, board, display):
-        self.label, self.app, self.home, self.board = label, app, home, board
-        self.root = os.path.join(os.path.dirname(home.rstrip("/")), os.path.basename(home.rstrip("/")) + "-root")
+    def __init__(self, label, app, tmp, board, display):
+        self.label, self.app, self.board = label, app, board
+        # Created here and owned by this run: the only directory `stop` deletes.
+        self.scratch = tempfile.mkdtemp(prefix="easl-perf-loop-", dir=tmp)
+        self.home, self.root = os.path.join(self.scratch, "home"), os.path.join(self.scratch, "root")
+        home = self.home
         self.env = dict(os.environ, EASL_DEV_HOME=home, EASL_DEV_APP=app, EASL_DEV_DISPLAY=display,
                         EASL_DEV_PARK_SPACE=os.environ.get("EASL_DEV_PARK_SPACE", "9"), EASL_SOCKET=os.path.join(home, "easl.sock"))
         self.variant = 0
@@ -73,7 +79,6 @@ class Instance:
             return None
 
     def start(self):
-        sh("rm", "-rf", self.home, self.root)
         args = ["python3", os.path.join(REPO, "scripts/perf-board.py"), self.home, self.root]
         if self.board != "synthetic":
             args += ["--replica", self.board]
@@ -88,7 +93,7 @@ class Instance:
 
     def stop(self):
         self.dev("stop", check=False)
-        sh("rm", "-rf", self.home, self.root, check=False)
+        shutil.rmtree(self.scratch, ignore_errors=True)
 
     def quiet(self, timeout=90, below=0.05, interval=1.0):
         """Waits until the app uses less than `below` of a core for two intervals in a row."""
@@ -194,6 +199,19 @@ def run_scenario(inst, name):
     return row
 
 
+def gate(name, t):
+    """PASS only when every measurement the scenario's targets need is present and within them."""
+    if name == "poll-idle":
+        checks = [("stretch", t["longest"], lambda v: v < 16)]
+    else:
+        checks = [("cpu", t["cpu"], lambda v: v < 3), ("stretch", t["longest"], lambda v: v < 100), ("routings", t["routes"], lambda v: v <= 2)]
+    missing = [n for n, v, _ in checks if v is None]
+    failed = [n for n, v, ok in checks if v is not None and not ok(v)]
+    if not missing and not failed:
+        return "PASS"
+    return "FAIL (" + ", ".join(failed + [f"{n} missing" for n in missing]) + ")"
+
+
 def summarize(rows, apps, scenarios):
     def med(values):
         values = [v for v in values if v is not None]
@@ -221,19 +239,16 @@ def summarize(rows, apps, scenarios):
             poll = [r["load"].get("poll", {}).get("p50") for r in mine]
             table[(app, name)] = dict(cpu=med(cpu), wall=med(wall), longest=med(longest), routes=med(routes), update=med(upd), poll=med(poll))
             t = table[(app, name)]
-            if name == "poll-idle":
-                verdict = "PASS" if t["longest"] is not None and t["longest"] < 16 else "FAIL"
-            else:
-                checks = [t["cpu"] < 3, (t["longest"] or 0) < 100, (t["routes"] or 0) <= 2]
-                verdict = "PASS" if all(checks) else "FAIL (" + ", ".join(n for n, ok in zip(("cpu", "stretch", "routings"), checks) if not ok) + ")"
+            verdict = gate(name, t)
             print(f"{app:10} {name:15} {t['cpu']!s:>6} {rng(cpu):>7} {t['wall']!s:>5} {rng(wall):>6} {t['longest']!s:>7} {rng(longest):>8} "
                   f"{t['routes']!s:>10} {t['update']!s:>11} {t['poll']!s:>9}  {verdict}")
         hidden, visible = table.get((app, "hidden-serial")), table.get((app, "visible-serial"))
         if hidden and visible:
-            ratio_wall = hidden["wall"] / visible["wall"] if visible["wall"] else None
-            ratio_upd = hidden["update"] / visible["update"] if visible["update"] else None
-            ok = ratio_wall is not None and ratio_wall <= 2 and (ratio_upd is None or ratio_upd <= 2)
-            print(f"{app:10} hidden/visible: wall {ratio_wall:.2f}x, update p50 {ratio_upd:.2f}x  {'PASS' if ok else 'FAIL'}")
+            ratio_wall = hidden["wall"] / visible["wall"] if hidden["wall"] and visible["wall"] else None
+            ratio_upd = hidden["update"] / visible["update"] if hidden["update"] and visible["update"] else None
+            ok = ratio_wall is not None and ratio_upd is not None and ratio_wall <= 2 and ratio_upd <= 2
+            shown = lambda r: "missing" if r is None else f"{r:.2f}x"
+            print(f"{app:10} hidden/visible: wall {shown(ratio_wall)}, update p50 {shown(ratio_upd)}  {'PASS' if ok else 'FAIL'}")
 
 
 def main():
@@ -243,7 +258,7 @@ def main():
     ap.add_argument("--scenarios", default="visible-serial,hidden-serial,visible-batch,poll-idle")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--out", default="/tmp/easl-perf-loop.jsonl")
-    ap.add_argument("--home", default=os.environ.get("EASL_DEV_HOME", "/tmp/easl-perf-loop"))
+    ap.add_argument("--tmp", default="/tmp", help="where each bundle's scratch home is created (and deleted)")
     ap.add_argument("--display", default=os.environ.get("EASL_DEV_DISPLAY", "CanvasTest"))
     ap.add_argument("--summarize", action="store_true", help="only print the table for --out's rows")
     args = ap.parse_args()
@@ -259,7 +274,7 @@ def main():
             order = apps if run % 2 == 0 else list(reversed(apps))
             for label, app in order:
                 print(f"run {run + 1}/{args.runs} {label}", flush=True)
-                inst = Instance(label, app, args.home, args.board, args.display)
+                inst = Instance(label, app, args.tmp, args.board, args.display)
                 try:
                     inst.start()
                     for name in scenarios:

@@ -8,10 +8,10 @@ public final class SocketServer: @unchecked Sendable {
         public let fd: Int32
         fileprivate var buffer = Data()
         fileprivate var source: DispatchSourceRead?
-        /// Requests in arrival order; one consumer task handles them sequentially so pipelined
-        /// calls (update then get) are answered in order.
-        fileprivate let requests: AsyncStream<JSONValue>.Continuation
-        fileprivate let stream: AsyncStream<JSONValue>
+        /// Requests in arrival order, with when they arrived; one consumer task handles them
+        /// sequentially so pipelined calls (update then get) are answered in order.
+        fileprivate let requests: AsyncStream<(request: JSONValue, arrived: Double)>.Continuation
+        fileprivate let stream: AsyncStream<(request: JSONValue, arrived: Double)>
         public fileprivate(set) var isOpen = true
         /// Set by handlers that require a login line before requests (the cmux socket's `auth`).
         /// Only the connection's handler touches it, and handlers run one request at a time.
@@ -28,10 +28,15 @@ public final class SocketServer: @unchecked Sendable {
         private var pending = 0
         /// A client this far behind is stuck: drop it rather than buffer without bound.
         static let maxPending = 32 << 20
+        /// Requests not yet answered, oldest first, for `api.<method>` accounting: a reply may be
+        /// the handler's result, or sent directly (`events.subscribe`'s acknowledgement, a
+        /// deferred `agent.wait`). Guarded by `writeLock`.
+        private var unanswered: [(serial: Int, id: JSONValue, method: String, arrived: Double)] = []
+        private var serial = 0
 
         init(fd: Int32) {
             self.fd = fd
-            (stream, requests) = AsyncStream.makeStream(of: JSONValue.self)
+            (stream, requests) = AsyncStream.makeStream(of: (request: JSONValue, arrived: Double).self)
         }
 
         /// Stops further writes; the fd itself is closed by the read source's cancel handler.
@@ -43,16 +48,46 @@ public final class SocketServer: @unchecked Sendable {
             return true
         }
 
-        /// Queues one JSON line. Safe from any thread; returns false once the peer is gone.
+        /// Queues one JSON line. Safe from any thread; returns false once the peer is gone. A
+        /// reply (`ok`) answers the oldest unanswered request with its `id`.
         @discardableResult
         public func send(_ value: JSONValue) -> Bool {
-            sendCounted(value) != nil
+            send(value, answering: nil)
         }
 
-        /// Queues one JSON line; the bytes queued, nil once the peer is gone.
-        func sendCounted(_ value: JSONValue) -> Int? {
-            guard let data = try? JSONEncoder().encode(value) else { return nil }
-            return write(data) ? data.count + 1 : nil
+        @discardableResult
+        private func send(_ value: JSONValue, answering serial: Int?) -> Bool {
+            guard let data = try? JSONEncoder().encode(value) else { return false }
+            guard write(data) else { return false }
+            if serial != nil || value["ok"] != nil { answered(serial, id: value["id"] ?? .null, bytes: data.count + 1) }
+            return true
+        }
+
+        /// A request arrived at `arrived` (`Metrics.now()`); its serial for `reply(_:to:)`.
+        fileprivate func expect(_ request: JSONValue, arrived: Double) -> Int? {
+            guard let method = request["method"]?.string else { return nil }
+            writeLock.lock()
+            defer { writeLock.unlock() }
+            serial += 1
+            unanswered.append((serial, request["id"] ?? .null, method, arrived))
+            return serial
+        }
+
+        /// The handler's reply to the request `serial`.
+        fileprivate func reply(_ value: JSONValue, to serial: Int?) {
+            send(value, answering: serial)
+        }
+
+        /// Records `api.<method>`: the call, the time from its arrival to its queued reply (awaits
+        /// and waiting behind earlier requests included; the main-thread part is
+        /// `api.main.<method>`) and the reply's bytes.
+        private func answered(_ serial: Int?, id: JSONValue, bytes: Int) {
+            writeLock.lock()
+            let index = serial.map { serial in unanswered.firstIndex { $0.serial == serial } } ?? unanswered.firstIndex { $0.id == id }
+            let request = index.map { unanswered.remove(at: $0) }
+            writeLock.unlock()
+            guard let request else { return }
+            Metrics.shared.record("api.\(request.method)", ms: (Metrics.now() - request.arrived) * 1000, bytes: bytes)
         }
 
         /// Queues a line already encoded as JSON (an event sent to several subscribers is encoded
@@ -188,15 +223,9 @@ public final class SocketServer: @unchecked Sendable {
         connections[fd] = connection
         let handler = self.handler
         Task {
-            for await request in connection.stream {
-                // Per method: calls, time from arrival to the queued reply (awaits included; the
-                // main-thread part is `api.main.<method>`), and reply bytes.
-                let started = Metrics.now()
-                guard let response = await handler(request, connection) else { continue }
-                let bytes = connection.sendCounted(response) ?? 0
-                if let method = request["method"]?.string {
-                    Metrics.shared.record("api.\(method)", ms: (Metrics.now() - started) * 1000, bytes: bytes)
-                }
+            for await (request, arrived) in connection.stream {
+                let serial = connection.expect(request, arrived: arrived)
+                if let response = await handler(request, connection) { connection.reply(response, to: serial) }
             }
         }
         source.resume()
@@ -225,7 +254,7 @@ public final class SocketServer: @unchecked Sendable {
                 request = .string(text.hasSuffix("\r") ? String(text.dropLast()) : text)
             }
             if let method = request["method"]?.string { Metrics.shared.record("api.in.\(method)", bytes: line.count + 1) }
-            connection.requests.yield(request)
+            connection.requests.yield((request, Metrics.now()))
         }
     }
 

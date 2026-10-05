@@ -81,9 +81,10 @@ final class MetricsHUD {
         }
         lines.append("cpu    \(number(p60?["cpuPercent"]?.number ?? 0))%  wakeups \(number(p60?["interruptWakeupsPerS"]?.number ?? 0))/s  "
             + "memory \(process?["footprintMB"]?.int ?? 0) MB (peak \(process?["peakFootprintMB"]?.int ?? 0))")
-        let api = (m["counters"]?.object ?? [:]).keys.filter { $0.hasPrefix("api.main.") }
-            .map { ($0.dropFirst("api.main.".count), counter($0)) }.filter { $0.1.n > 0 }.sorted { $0.1.ms > $1.1.ms }
-        lines.append("api    " + (api.isEmpty ? "idle" : api.prefix(3).map { "\($0.0) \($0.1.n)× \(number($0.1.ms)) ms" }.joined(separator: ", ")))
+        // Requests by method (`api.in.<method>` counts arrivals, `api.<method>` replies).
+        let api = (m["counters"]?.object ?? [:]).keys.filter { $0.hasPrefix("api.in.") }
+            .map { ($0.dropFirst("api.in.".count), counter("api.\($0.dropFirst("api.in.".count))")) }.filter { $0.1.n > 0 }.sorted { $0.1.ms > $1.1.ms }
+        lines.append("api    " + (api.isEmpty ? "idle" : api.prefix(3).map { "\($0.0) \($0.1.n) requests \(number($0.1.ms)) ms" }.joined(separator: ", ")))
         let route = counter("route.board")
         lines.append("route  board \(route.n)× \(number(route.ms)) ms (max \(number(route.max)))  arrows alone \(counter("route.arrow").n)")
         let save = counter("save.write"), encode = counter("save.encode")

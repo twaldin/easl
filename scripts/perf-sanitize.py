@@ -4,14 +4,24 @@ real board whose content must not leave its machine (docs/testing.md, "Performan
 
     python3 scripts/perf-sanitize.py <board.json> <out.json>
 
-Kept: object ids, types, frames, z, revisions, parents, group membership, arrow bindings (object
-ids, line ranges), route styles, shape kinds, fills, palette colors, numbers and booleans. Replaced
-with filler of the same length: titles, note text (line structure and list/heading markers kept),
-labels, shape text, keys (unique per original), urls, paths, commands, and html (a synthetic page
-of the same UTF-8 size, with a small script where the original had one). Everything outside the
-objects (tray, attention, answers, repository record) is dropped, and timestamps are fixed. The
-run ends with a leak check: no string of the input longer than 5 characters, other than kept ids
-and enum values, may appear anywhere in the output.
+Every value is handled by where it sits, never by how it is spelled:
+- Kept: types, frames, z, revisions, numbers and booleans, and enum values in their own fields
+  (shape kind and fill, arrow route, group flow, palette or #rrggbb colors, ...), each checked
+  against that field's closed list; anything else there becomes the field's first value.
+- Renumbered: ids, only in identity and reference positions (an object's id and parent, actor
+  tiles, arrow ends, group members, a follow tile's source), to `obj_01REPL<n>` in the original
+  order, so references, membership and id order survive and the originals don't.
+- Replaced with filler of the same length: titles, note text (line structure and list/heading
+  markers kept), labels, relations, shape text, keys (unique per original), urls, paths, commands,
+  and html (a synthetic page of the same UTF-8 size, with a small script where the original had
+  one). Structured props (page state, graphs, histories, agent records) and props a type doesn't
+  define become filler structures of the same encoded size, under replaced keys.
+Everything outside the objects (tray, attention, answers, repository record) is dropped, and
+timestamps are fixed. The run ends with a leak check that allows only this file's own vocabulary
+(lorem, the synthetic page's markup, schema keys, the closed enum lists) to come from the input:
+no string of the input longer than 5 characters and no word of 6+ letters (case-insensitive, also
+inside longer runs) may appear in the output otherwise. A failed check names lengths and schema
+paths, never content.
 """
 import hashlib
 import json
@@ -21,13 +31,50 @@ import sys
 
 LOREM = ("lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna "
          "aliqua ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat ")
-ID = re.compile(r"^(obj|brd)_[A-Za-z0-9]+$")
-ENUM_KEYS = {"type", "kind", "fill", "route", "flow", "color", "direction"}
-ENUM = re.compile(r"^#?[A-Za-z0-9_-]{1,24}$")
 SALT = os.urandom(16)
 FIXED_DATE = "2026-01-01T00:00:00Z"
-# Props whose values are free-form structures (their keys too): replaced whole, same size.
-OPAQUE = {"state", "graph", "history", "lastAction", "lastChanges", "anchor", "viewed", "reviewed", "agent", "lifecycle", "follow", "paths"}
+BOARD_ID = "brd_" + "0" * 20
+
+# Each type's props (`ObjectType.knownProps`, schema `TerminalProps` ... `GroupProps`). Any other
+# key is an agent's own prop: its key and value are replaced.
+KNOWN_PROPS = {
+    "terminal": {"cwd", "command", "zmxSession", "title", "name", "agent", "lifecycle", "follow", "zoom", "worktree", "branch"},
+    "browser": {"url", "title", "pageTitle", "zoom"},
+    "code": {"path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "ref", "refSha", "zoom"},
+    "note": {"markdown", "title", "root", "ref", "refSha", "zoom"},
+    "html": {"html", "title", "root", "ref", "refSha", "allowNetwork", "state", "zoom"},
+    "changes": {"root", "base", "head", "ref", "refSha", "paths", "title", "reviewed", "viewed", "zoom"},
+    "image": {"path", "caption", "title"},
+    "diagram": {"kind", "path", "symbol", "line", "direction", "depth", "expanded", "title", "graph", "zoom"},
+    "shape": {"kind", "text", "points", "color", "fill", "textSize"},
+    "arrow": {"from", "to", "relation", "label", "color", "route"},
+    "group": {"members", "title", "color", "padding", "flow"},
+}
+for _props in KNOWN_PROPS.values():
+    _props.add("key")
+TYPES = list(KNOWN_PROPS)
+# Closed lists, per type and field (schema enums); the first value stands in for anything else.
+ENUMS = {
+    ("shape", "kind"): ["rect", "ellipse", "text", "ink"],
+    ("shape", "fill"): ["none", "semi", "solid"],
+    ("arrow", "route"): ["straight", "orthogonal", "avoid"],
+    ("group", "flow"): ["right", "down", "left", "up"],
+    ("diagram", "kind"): ["calls"],
+    ("diagram", "direction"): ["incoming", "outgoing", "both"],
+    ("code", "lastAction"): ["read", "edit", "write", "lsp", "search"],
+}
+PALETTE = ["grey", "black", "blue", "green", "orange", "red", "violet"]
+HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+COLORS = {("shape", "color"), ("arrow", "color"), ("group", "color")}
+# Props holding object ids (reference positions).
+ID_PROPS = {("code", "followOf"), ("group", "members")}
+BINDINGS = {("arrow", "from"), ("arrow", "to")}
+# Props whose values are numbers or structures of numbers, kept as they are.
+NUMERIC = {"zoom", "padding", "textSize", "line", "depth", "follow", "range", "points"}
+# Keys the output carries as they are; every other key in it is a salted digest.
+SCHEMA_KEYS = ({"objects", "format", "revision", "id", "type", "frame", "z", "rev", "parent", "createdBy", "updatedBy",
+                "createdAt", "updatedAt", "props", "x", "y", "w", "h", "kind", "tile", "object", "lines", "selector", "node",
+                "point", "start", "end", "filler", "root"} | set().union(*KNOWN_PROPS.values()))
 
 
 def filler(n, offset=0):
@@ -88,98 +135,197 @@ def opaque(value):
     return {"filler": filler(pad)}
 
 
-def scrub(value, key=None):
-    """Strings replaced (ids and enum values kept); keys of plain props objects kept."""
+def text(value):
+    """Strings replaced by same-length filler, lists element by element, structures whole;
+    numbers, booleans and null kept."""
     if isinstance(value, str):
-        if ID.match(value) or (key in ENUM_KEYS and ENUM.match(value)):
-            return value
         return text_filler(value)
     if isinstance(value, list):
-        return [scrub(v, key) for v in value]
+        return [text(v) for v in value]
     if isinstance(value, dict):
-        return {(k if k in SCHEMA_KEYS else unique_filler(k)): scrub(v, k) for k, v in value.items()}
+        return opaque(value)
     return value
 
 
-# Keys the output may carry as they are: object fields, every type's props (`ObjectType.knownProps`),
-# bindings, frames, actors. Any other key (an agent's own prop, a nested structure's) is replaced.
-SCHEMA_KEYS = {
-    "objects", "format", "revision", "id", "type", "frame", "z", "rev", "parent", "createdBy", "updatedBy", "createdAt", "updatedAt", "props",
-    "x", "y", "w", "h", "object", "lines", "selector", "node", "point", "start", "end", "agent", "tile", "user", "filler",
-    "cwd", "command", "zmxSession", "title", "name", "lifecycle", "follow", "zoom", "worktree", "branch", "url", "pageTitle",
-    "path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history",
-    "pinnedCommit", "ref", "refSha", "markdown", "root", "html", "allowNetwork", "state", "base", "head", "paths",
-    "reviewed", "viewed", "kind", "line", "direction", "depth", "expanded", "graph", "text", "points", "color", "fill",
-    "textSize", "from", "to", "relation", "label", "route", "members", "padding", "flow", "key",
-}
+def numeric(value):
+    """Numbers, booleans and null (in lists and range objects) kept; anything else dropped."""
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    if isinstance(value, list):
+        return [numeric(v) for v in value if not isinstance(v, (str, dict))]
+    if isinstance(value, dict):
+        return {k: v for k, v in value.items() if k in ("start", "end") and isinstance(v, (int, float))}
+    return None
 
 
-def sanitize_props(type_, props):
+class Ids:
+    """Every id in an identity or reference position, renumbered in the original order."""
+
+    def __init__(self, board):
+        self.map = {}
+        found = set()
+        for o in objects_of(board):
+            found.update(s for s in id_positions(o) if isinstance(s, str))
+        for n, original in enumerate(sorted(found)):
+            self.map[original] = f"obj_01REPL{n:012d}"
+
+    def __call__(self, value):
+        return self.map[value] if isinstance(value, str) else None
+
+
+def objects_of(board):
+    objects = board.get("objects") or []
+    return objects if isinstance(objects, list) else list(objects.values())
+
+
+def id_positions(o):
+    """The strings an object holds in identity and reference positions."""
+    yield o.get("id")
+    yield o.get("parent")
+    for actor in ("createdBy", "updatedBy"):
+        if isinstance(o.get(actor), dict):
+            yield o[actor].get("tile")
+    props = o.get("props") if isinstance(o.get("props"), dict) else {}
+    t = o.get("type")
+    for key in ("from", "to"):
+        if (t, key) in BINDINGS and isinstance(props.get(key), dict):
+            yield props[key].get("object")
+    if (t, "followOf") in ID_PROPS:
+        yield props.get("followOf")
+    if (t, "members") in ID_PROPS and isinstance(props.get("members"), list):
+        yield from props["members"]
+
+
+def actor(value, ids):
+    if isinstance(value, dict) and value.get("kind") == "agent" and isinstance(value.get("tile"), str):
+        return {"kind": "agent", "tile": ids(value["tile"])}
+    return {"kind": "user"}
+
+
+def binding(value, ids):
+    if not isinstance(value, dict):
+        return {"point": [0, 0]}
+    if "point" in value:
+        return {"point": numeric(value["point"])}
+    out = {"object": ids(value.get("object"))}
+    if isinstance(value.get("lines"), dict):
+        out["lines"] = numeric(value["lines"])
+    if isinstance(value.get("selector"), str):
+        out["selector"] = text_filler(value["selector"])
+    if isinstance(value.get("node"), str):
+        out["node"] = unique_filler(value["node"])
+    return out
+
+
+def prop(type_, key, value, ids):
+    field = (type_, key)
+    if field in ENUMS:
+        allowed = ENUMS[field]
+        return value if value in allowed else allowed[0]
+    if field in COLORS:
+        return value if isinstance(value, str) and (value in PALETTE or HEX_COLOR.match(value)) else PALETTE[0]
+    if field in BINDINGS:
+        return binding(value, ids)
+    if field == ("group", "members"):
+        return [ids(m) for m in value] if isinstance(value, list) else []
+    if field == ("code", "followOf"):
+        return ids(value)
+    if key in NUMERIC:
+        return numeric(value)
+    if key == "html" and isinstance(value, str):
+        return html_filler(value)
+    if key in ("key", "zmxSession") and isinstance(value, str):
+        return unique_filler(value)
+    if key == "url" and isinstance(value, str):
+        return ("about:blank#" + filler(max(len(value) - 12, 0)))[: max(len(value), 11)]
+    return text(value)
+
+
+def sanitize_props(type_, props, ids):
+    known = KNOWN_PROPS.get(type_, set())
     out = {}
     for key, value in props.items():
-        if key not in SCHEMA_KEYS:
-            out[unique_filler(key)] = opaque(value)
-            continue
-        if key == "html" and isinstance(value, str):
-            out[key] = html_filler(value)
-        elif key == "key" and isinstance(value, str):
-            out[key] = unique_filler(value)
-        elif key in OPAQUE:
-            out[key] = opaque(value)
-        elif key == "url" and isinstance(value, str):
-            out[key] = ("about:blank#" + filler(max(len(value) - 12, 0)))[: max(len(value), 11)]
+        if key in known:
+            out[key] = prop(type_, key, value, ids)
         else:
-            out[key] = scrub(value, key)
+            out[unique_filler(key)] = opaque(value)
     return out
 
 
 def sanitize(board):
-    objects = board["objects"] if isinstance(board["objects"], list) else list(board["objects"].values())
+    ids = Ids(board)
     clean = []
-    for o in objects:
-        c = {k: o[k] for k in ("id", "type", "frame", "z", "rev") if k in o}
+    for o in objects_of(board):
+        if o.get("type") not in KNOWN_PROPS:
+            continue
+        c = {"id": ids(o["id"]), "type": o["type"]}
+        c["frame"] = {k: o["frame"][k] for k in "xywh"}
+        for k in ("z", "rev"):
+            if isinstance(o.get(k), (int, float)):
+                c[k] = o[k]
         if o.get("parent") is not None:
-            c["parent"] = o["parent"]
-        for actor in ("createdBy", "updatedBy"):
-            if actor in o:
-                c[actor] = scrub(o[actor])
+            c["parent"] = ids(o["parent"])
+        for who in ("createdBy", "updatedBy"):
+            if who in o:
+                c[who] = actor(o[who], ids)
         c["createdAt"] = c["updatedAt"] = FIXED_DATE
-        c["props"] = sanitize_props(o["type"], o.get("props") or {})
+        c["props"] = sanitize_props(o["type"], o.get("props") or {}, ids)
         clean.append(c)
-    out = {"id": board["id"], "root": "/tmp/" + filler(max(len(board.get("root", "")) - 5, 1)).replace(" ", "-"),
-           "revision": board.get("revision", 0), "objects": clean}
-    if "format" in board:
+    out = {"id": BOARD_ID, "root": "/tmp/" + filler(max(len(str(board.get("root", ""))) - 5, 1)).replace(" ", "-"),
+           "revision": board.get("revision", 0) if isinstance(board.get("revision"), int) else 0, "objects": clean}
+    if isinstance(board.get("format"), int):
         out["format"] = board["format"]
     return out
 
 
-def strings(value, key=None):
+def strings(value):
+    """Every string in `value`: values and keys."""
     if isinstance(value, str):
-        yield key, value
+        yield value
     elif isinstance(value, list):
         for v in value:
-            yield from strings(v, key)
+            yield from strings(v)
     elif isinstance(value, dict):
         for k, v in value.items():
-            yield None, k
-            yield from strings(v, k)
+            yield k
+            yield from strings(v)
+
+
+def vocabulary():
+    """What the output may carry without coming from the input: lorem, the synthetic page's
+    markup, schema keys, the closed enum lists, palette names, the fixed date and type names."""
+    words = [LOREM, html_filler("<script>" + "x" * 1000), FIXED_DATE, BOARD_ID, "about:blank", "/tmp/"]
+    words += list(SCHEMA_KEYS) + TYPES + PALETTE + [v for allowed in ENUMS.values() for v in allowed]
+    return {w.lower() for w in re.findall(r"[^\W\d_]+", " ".join(words))}, set(words)
+
+
+def kept(source):
+    """The input's strings the rules keep where they sit: closed-list values in their own fields."""
+    for o in objects_of(source):
+        props = o.get("props") if isinstance(o.get("props"), dict) else {}
+        for key, value in props.items():
+            field = (o.get("type"), key)
+            if (field in ENUMS or field in COLORS) and prop(field[0], key, value, None) == value:
+                yield value
 
 
 def leaks(source, text):
+    """Input strings and words found in `text` (the output) outside the output's own vocabulary
+    and the values `kept` in their fields. Letter runs of `text` that are vocabulary words (a schema
+    key such as `updatedBy`, lorem) are masked first, so an input word only matches what the
+    output doesn't carry by construction; inside any other run it still does."""
+    own_words, own_strings = vocabulary()
+    for value in kept(source):
+        own_strings.add(value)
+        own_words.update(w.lower() for w in re.findall(r"[^\W\d_]+", value))
+    masked = re.sub(r"[^\W\d_]+", lambda m: "\0" if m.group(0).lower() in own_words else m.group(0), text)
+    lowered = masked.lower()
     found = set()
-    for key, s in strings(source):
-        if len(s) <= 5 or ID.match(s) or (key in ENUM_KEYS and ENUM.match(s)) or s == FIXED_DATE or s in SCHEMA_KEYS:
-            continue
-        if s in text:
+    for s in strings(source):
+        if len(s) > 5 and s not in own_strings and s in masked:
             found.add(s)
-    # Every word of 8+ letters from the source's strings, too (words of html, notes, titles),
-    # except words the output carries by construction: lorem, schema keys, kept type and enum
-    # values, and the synthetic page's own markup.
-    vocabulary = set(re.findall(r"[^\W\d_]{8,}", " ".join(s for _, s in strings(source))))
-    kept = [s for key, s in strings(text and json.loads(text)) if key in ENUM_KEYS]
-    own = set(re.findall(r"[^\W\d_]+", " ".join([LOREM, html_filler("<script>" + "x" * 1000)] + kept))) | SCHEMA_KEYS
-    for word in vocabulary - own:
-        if re.search(r"\b" + re.escape(word) + r"\b", text):
+    for word in set(re.findall(r"[^\W\d_]{6,}", " ".join(strings(source)))):
+        if word.lower() not in own_words and word.lower() in lowered:
             found.add(word)
     return found
 
@@ -187,36 +333,41 @@ def leaks(source, text):
 def where(value, needle, path="$"):
     """JSON paths of the output strings (values or keys) holding `needle`; schema keys only."""
     if isinstance(value, str):
-        return [path] if needle in value else []
+        return [path] if needle.lower() in value.lower() else []
     if isinstance(value, list):
         return [p for i, v in enumerate(value) for p in where(v, needle, f"{path}[{i}]")]
     if isinstance(value, dict):
         found = []
         for k, v in value.items():
             name = k if k in SCHEMA_KEYS else "<key>"
-            if needle in k:
+            if needle.lower() in k.lower():
                 found.append(f"{path}.{name} (key)")
             found += where(v, needle, f"{path}.{name}")
         return found
     return []
 
 
-def main():
-    source = json.load(open(sys.argv[1]))
+def run(source):
+    """The sanitized board's JSON text, or SystemExit naming (by length and path only) what leaked."""
     clean = sanitize(source)
-    text = json.dumps(clean, ensure_ascii=False)
-    found = leaks(source, text)
+    out = json.dumps(clean, ensure_ascii=False)
+    found = leaks(source, out)
     if found:
         # Never print what leaked: this runs on the board's own machine and its output travels.
-        # Only its length and where it sits (schema key paths) are reported.
         places = [(len(s), where(clean, s)[:3]) for s in found]
-        sys.exit(f"leak check failed: {len(found)} strings survived: {places[:10]}")
+        raise SystemExit(f"leak check failed: {len(found)} strings survived: {places[:10]}")
+    return clean, out
+
+
+def main():
+    source = json.load(open(sys.argv[1]))
+    clean, out = run(source)
     with open(sys.argv[2], "w") as f:
-        f.write(text)
+        f.write(out)
     kinds = {}
     for o in clean["objects"]:
         kinds[o["type"]] = kinds.get(o["type"], 0) + 1
-    print(f"{len(clean['objects'])} objects {kinds}, {len(text.encode())} bytes, leak check passed")
+    print(f"{len(clean['objects'])} objects {kinds}, {len(out.encode())} bytes, leak check passed")
 
 
 if __name__ == "__main__":
