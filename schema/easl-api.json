@@ -112,6 +112,8 @@
         "title": { "type": "string", "description": "names the tile; the app never overwrites it" },
         "pageTitle": { "type": "string", "description": "written by the app: the page's own title; shown when `title` is unset; never bumps rev" },
         "zoom": { "$ref": "#/definitions/Zoom" },
+        "profile": { "type": "string", "description": "a named browser profile: its own cookies, logins and storage, shared by every tile that names it; absent: the default profile. Tiles a page opens (links, popups) take it" },
+        "reloadOnChange": { "type": "boolean", "default": false, "description": "a page served from this Mac (localhost, 127.x, [::1], a .localhost name, a file) reloads when a file under the board root (a file page: its folder) changes; hidden files and folders and node_modules don't count" },
         "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false

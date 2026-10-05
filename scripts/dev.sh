@@ -101,12 +101,14 @@ launch() {
   mkdir -p "$home"
   rm -f "$EASL_SOCKET"
   # The instance's environment, in its bundle for any launch (dev-bundle.sh adds EASL_HOME)
-  # and on this one. XDG_CONFIG_HOME passes through so a scratch Ghostty config can be tried
-  # (docs/testing.md).
+  # and on this one. XDG_CONFIG_HOME passes through so a scratch Ghostty config can be tried,
+  # EASL_DEV_DOWNLOADS so browser downloads land in a test folder, and EASL_DEV_EXTERNAL_OPEN=log
+  # so links handed to the default browser or another app are only logged (docs/testing.md).
   set -- EASL_NO_ACTIVATE=1 EASL_DEV_INPUT=1 EASL_DEV_PERF=1 EASL_ROOT="$root"
   [ -z "${EASL_DEV_HOME:-}" ] || set -- "$@" EASL_BROWSER_PROFILE=own
   [ -z "${XDG_CONFIG_HOME:-}" ] || set -- "$@" XDG_CONFIG_HOME="$XDG_CONFIG_HOME"
   [ -z "${EASL_DEV_EXTERNAL_OPEN:-}" ] || set -- "$@" EASL_DEV_EXTERNAL_OPEN="$EASL_DEV_EXTERNAL_OPEN"
+  [ -z "${EASL_DEV_DOWNLOADS:-}" ] || set -- "$@" EASL_DEV_DOWNLOADS="$EASL_DEV_DOWNLOADS"
   # The checkout's own home keeps the release bundle id, so a developer's everyday instance keeps
   # its browser logins and window frames; other homes get their own (dev-bundle.sh).
   bundle="$("$repo/scripts/dev-bundle.sh" $([ -n "${EASL_DEV_HOME:-}" ] || echo --release-id) "$app" "$home" "$@")"

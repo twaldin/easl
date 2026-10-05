@@ -90,6 +90,8 @@ class BrowserProps(TypedDict):
     title: NotRequired[str]
     pageTitle: NotRequired[str]
     zoom: NotRequired["Zoom"]
+    profile: NotRequired[str]
+    reloadOnChange: NotRequired[bool]
     key: NotRequired["ObjectKey"]
 
 class CodeProps(TypedDict):

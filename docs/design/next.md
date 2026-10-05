@@ -41,35 +41,15 @@ A prompt box outside the terminal. It sends to an agent from anywhere on the boa
 
 ## Links
 
-Every web link opens a browser tile beside where it came from:
-
-- terminal URL clicks (`TerminalSurfaceOpenURLDelegate`; today they fall through to `/usr/bin/open`);
-- agents running `open <url>` or using `$BROWSER` (a shim on the tile's PATH and `BROWSER`; an explicit `/usr/bin/open` bypasses it);
-- links in HTML and code tiles;
-- the existing paths: browser new-window links and http links in notes.
-
-⌥-click forces the default browser. Sign-in pages need no exception: Google's embedded-browser check passes with easl's Safari user agent (tested; an Android-webview user agent was rejected at the identifier step).
+Shipped (docs/design.md, docs/contracts.md `view.open_url` and the terminal's `open`/`BROWSER` shim): every web link opens a browser tile beside where it came from, a tile already showing the address is reused, and ⌥-click forces the default browser. Nothing open.
 
 ## Browser parity
 
-Browser tiles behave like a browser. None of this needs Chromium; it is WebKit delegate code easl doesn't implement yet:
+Shipped (docs/design.md, Browser): popups with `window.opener`, downloads, uploads, JavaScript dialogs, HTTP auth and client certificates, camera and microphone prompts, location, print, find, fullscreen, app links, profiles, tile reuse, reload on file change, and a user agent that tracks Safari. Still open:
 
-- sign-in popups: return a real child `WKWebView` built from the passed configuration, so `window.opener` works, and handle `webViewDidClose`;
-- downloads (`WKDownload` into ~/Downloads);
-- file upload (`runOpenPanelWith`);
-- `alert`/`confirm`/`prompt`;
-- HTTP auth and client certificates;
-- camera and microphone prompts per origin;
-- location (an Info.plist key and an entitlement);
-- print and find in page;
-- element fullscreen (`isElementFullscreenEnabled`);
-- app links (`zoommtg:`, `slack:`, …) handed to `NSWorkspace`;
-- browser profiles;
-- a user agent that tracks the installed Safari version, not a fixed `Version/18.0`.
-
-Opening a URL that a tile already shows focuses that tile. Optionally, a localhost page reloads when the files behind it change.
-
-Password managers come through `WKWebExtension` (macOS 15.4 and later), which hosts Safari web extensions. Passkeys for arbitrary sites need Apple's managed `com.apple.developer.web-browser.public-key-credential` entitlement, which an organization developer account requests, so they're parked.
+- Password managers through `WKWebExtension` (macOS 15.4 and later), which hosts Safari web extensions.
+- Passkeys for arbitrary sites need Apple's managed `com.apple.developer.web-browser.public-key-credential` entitlement, which an organization developer account requests, so they're parked.
+- Notifications: WebKit offers no public permission hook, so `Notification` requests stay denied.
 
 ## Backlog in scope
 

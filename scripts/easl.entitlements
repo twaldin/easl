@@ -27,5 +27,8 @@ Each key below only lets macOS ask; the user still decides, and Info.plist says 
 	<!-- Camera in terminal programs (imagesnap, ffmpeg) and getUserMedia video in browser tiles. -->
 	<key>com.apple.security.device.camera</key>
 	<true/>
+	<!-- navigator.geolocation in browser tiles (WebKit asks Core Location; Info.plist says why). -->
+	<key>com.apple.security.personal-information.location</key>
+	<true/>
 </dict>
 </plist>

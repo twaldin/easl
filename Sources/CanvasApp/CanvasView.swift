@@ -427,6 +427,9 @@ final class CanvasView: NSScrollView {
             self?.reveal(opened)
             self?.setSelection([opened])
         }
+        // The tile made for a page's popup takes the web view WebKit opens it in.
+        (content as? BrowserTile)?.browserTile = { [weak self] opened in self?.tiles[opened]?.content as? BrowserTile }
+        (content as? BrowserTile)?.hasAttention = { [weak self] tile in self?.selection == [tile] || self?.focusedTile == tile }
         let tile = TileFrameView(object: object, content: content, frame: Self.docRect(object.frame))
         tile.onFrameCommit = { [weak self] rect in
             _ = try? self?.board.update(id, frame: Self.canvasFrame(rect))
@@ -1382,6 +1385,7 @@ final class CanvasView: NSScrollView {
             menu.addItem(MenuAction.item("Snapshot to Image") { [weak self] in self?.snapshotPage(id) })
             menu.addItem(MenuAction.item("Open in Browser", enabled: browser.webAddress != nil) { [weak self] in self?.openPageInBrowser(id) })
             menu.addItem(MenuAction.item("Inspect Element", enabled: browser.canShowInspector) { [weak browser] in browser?.showInspector() })
+            browserItems(for: id, browser).forEach(menu.addItem)
         }
         menu.addItem(.separator())
         menu.addItem(MenuAction.item(count > 1 ? "Copy Object IDs" : "Copy Object ID") { [weak self] in self?.copyIDs() })

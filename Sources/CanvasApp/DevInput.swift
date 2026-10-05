@@ -12,8 +12,15 @@ enum DevInput {
     static var pointer: NSPoint?
     /// The enter/exit tracking areas the last replayed `move` was inside.
     static var hovered: [NSTrackingArea] = []
+    /// Files a replayed `panel` chose in an open panel, by panel, until its completion reads them.
+    private static var panelChoices: [ObjectIdentifier: [URL]] = [:]
 
     static let enabled = ProcessInfo.processInfo.environment["EASL_DEV_INPUT"] == "1"
+
+    /// What an open panel that ended with OK chose: a replayed `panel`'s file, else its own.
+    static func chosen(in panel: NSOpenPanel) -> [URL] {
+        panelChoices.removeValue(forKey: ObjectIdentifier(panel)) ?? panel.urls
+    }
 
     static func install() {
         guard enabled else { return }
@@ -211,6 +218,13 @@ enum DevInput {
         case "text":
             // Typing goes to a sheet (e.g. the group-name prompt) when one is open.
             ((window.attachedSheet ?? window).firstResponder as? NSTextInputClient)?.insertText(fields["text"] ?? "", replacementRange: NSRange(location: NSNotFound, length: 0))
+        case "panel":
+            // An open panel (a page's file upload) runs out of process, where no replayed click
+            // or key reaches its file list: choose `path` in it (as Upload with that file
+            // selected would).
+            guard let panel = window.attachedSheet as? NSOpenPanel else { return NSLog("DevInput: no open panel") }
+            panelChoices[ObjectIdentifier(panel)] = [URL(fileURLWithPath: fields["path"] ?? "")]
+            window.endSheet(panel, returnCode: .OK)
         case "command":
             (window.attachedSheet ?? window).firstResponder?.doCommand(by: NSSelectorFromString(fields["selector"] ?? ""))
         case "shortcut", "key":

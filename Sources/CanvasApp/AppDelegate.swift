@@ -382,9 +382,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleWebInspector(_ sender: Any?) { keyController?.toggleWebInspector(sender) }
     @objc func reloadPage(_ sender: Any?) { keyController?.reloadPage(sender) }
     @objc func snapshotPage(_ sender: Any?) { keyController?.snapshotPage(sender) }
+    @objc func printPage(_ sender: Any?) { keyController?.printPage(sender) }
+    @objc func findInPage(_ sender: Any?) { keyController?.findInPage(sender) }
     @objc func clearBrowsingData(_ sender: Any?) {
         guard let controller = keyController, let window = controller.window else { return }
-        BrowserProfile.confirmClear(in: window) { [weak controller] in controller?.canvas.showNotice("Browsing data cleared") }
+        let profiles = Set(registry.boards.values.flatMap { $0.objects.values }.filter { $0.type == .browser }.compactMap { BrowserProfile.name(in: $0.props) })
+        BrowserProfile.confirmClear(in: window, profiles: profiles) { [weak controller] in controller?.canvas.showNotice("Browsing data cleared") }
     }
 
     /// The tab bar's + button: open another board as a tab.
@@ -450,6 +453,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Save Note as Markdown…", #selector(saveNoteAsMarkdown(_:)), ""),
             // The focused or selected browser tile's page, frozen as an image tile beside it.
             item("Snapshot Page to Image", #selector(snapshotPage(_:)), ""),
+            // The focused or selected browser tile's page, through the print panel (⌘P is Go to…).
+            item("Print Page…", #selector(printPage(_:)), ""),
             .separator(),
             // The board window takes ⌘W first to close the selection or the focused terminal
             // (CanvasWindowController.handleKeyEquivalent); with neither, the tab or window closes.
@@ -465,6 +470,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Paste", #selector(NSText.paste(_:)), "v"),
             item("Select All", #selector(NSText.selectAll(_:)), "a"),
             item("Delete Selection", #selector(deleteSelection(_:)), "\u{8}"),
+            .separator(),
+            // The focused or selected browser tile's find bar. A page with the keyboard sees ⌘F
+            // first (a web app's own find); a code tile's ⌘F is the board window's
+            // (CanvasWindowController.handleKeyEquivalent) and a terminal's is its own.
+            item("Find in Page…", #selector(findInPage(_:)), "f"),
             .separator(),
             // Hyper-V: no shell, TUI, or Ghostty default binding uses all four modifiers.
             item("Paste Mentions into Terminal", #selector(pasteMentions(_:)), "v", [.control, .option, .shift, .command]),
