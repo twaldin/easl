@@ -56,6 +56,10 @@ final class CanvasTerminalView: TerminalView {
     /// (which would then take the refocus when it is hidden in turn).
     override var canBecomeKeyView: Bool { false }
 
+    /// A ⌥⌘-click is on its way to Ghostty as a ⌘-click (below), so a web link it opens goes to the
+    /// default browser (`TerminalTile.openLink`).
+    private(set) var forcingDefaultBrowser = false
+
     override func mouseDown(with event: NSEvent) {
         let flags = event.modifierFlags
         let point = convert(event.locationInWindow, from: nil)
@@ -67,12 +71,28 @@ final class CanvasTerminalView: TerminalView {
             return
         }
         if flags.contains(.command) { onMissedLink?(point, !flags.isDisjoint(with: [.option, .shift])) }
-        super.mouseDown(with: event)
+        forcingDefaultBrowser = Self.isOptionCommand(flags)
+        super.mouseDown(with: forcingDefaultBrowser ? Self.commandOnly(event) : event)
+    }
+
+    /// Ghostty opens a URL only for a click with exactly ⌘ (its `link-url` modifiers must equal
+    /// the click's, so ⌥⌘ finds no link). ⌥⌘-click on a URL is the user's way to ask for the
+    /// default browser, so Ghostty gets the click as a plain ⌘-click and `forcingDefaultBrowser`
+    /// says where the URL goes.
+    private static func isOptionCommand(_ flags: NSEvent.ModifierFlags) -> Bool {
+        flags.intersection([.command, .option, .control, .shift]) == [.command, .option]
+    }
+
+    private static func commandOnly(_ event: NSEvent) -> NSEvent {
+        NSEvent.mouseEvent(with: event.type, location: event.locationInWindow, modifierFlags: event.modifierFlags.subtracting(.option),
+                           timestamp: event.timestamp, windowNumber: event.windowNumber, context: nil, eventNumber: event.eventNumber,
+                           clickCount: event.clickCount, pressure: event.pressure) ?? event
     }
 
     /// In a window that isn't key, AppKit hands a view only a plain ⌘-click; ⌥⌘- and ⇧⌘-clicks
-    /// on a reference open it there too.
+    /// on a reference open it there too, and a ⌥⌘-click is always taken (it may be on a URL).
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        if let event, Self.isOptionCommand(event.modifierFlags) { return true }
         if let event, event.modifierFlags.contains(.command), linkAt?(convert(event.locationInWindow, from: nil)) != nil { return true }
         return super.acceptsFirstMouse(for: event)
     }
@@ -82,7 +102,8 @@ final class CanvasTerminalView: TerminalView {
             swallowedMouseUp = false
             return
         }
-        super.mouseUp(with: event)
+        defer { forcingDefaultBrowser = false }
+        super.mouseUp(with: forcingDefaultBrowser ? Self.commandOnly(event) : event)
     }
 
     /// Scrolling goes to the terminal (its scrollback, or a program that reads the wheel) except

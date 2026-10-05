@@ -39,6 +39,7 @@ enum ApiParams {
         "follow.report": (["tile", "path", "range", "changes", "action"], ["tile", "path", "action"]),
         "view.attention": (["id", "message", "clear", "caller"], ["id"]),
         "view.get": (["board"], []),
+        "view.open_url": (["url", "board", "caller"], ["url"]),
         "view.render": (["board", "target", "scale", "full", "exclude", "padding", "out", "format", "timeoutMs"], ["target"]),
         "view.snapshot": (["board", "out", "format"], []),
         "events.subscribe": (["board", "events"], []),

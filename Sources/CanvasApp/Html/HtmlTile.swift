@@ -34,6 +34,9 @@ final class HtmlTile: NSView, TileContent {
     /// A code tile the user opened from this page (`<canvas-link>`, `<canvas-code>`), or one
     /// that already showed the lines (`existing`); the canvas shows it.
     var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
+    /// A web link the user clicked on the page opened or found this browser tile; the canvas
+    /// shows it.
+    var onOpenedLink: ((ObjectID) -> Void)?
 
     /// `live: false` builds no web view (a page measured offscreen, `measure`).
     init(object: CanvasObject, board: Board, live: Bool = true) {
@@ -492,10 +495,18 @@ final class HtmlTile: NSView, TileContent {
 }
 
 extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
-    /// The page may load only its own document and kit; links never navigate the tile away.
+    /// The page may load only its own document and kit; links never navigate the tile away. A
+    /// web link the user just clicked goes to a browser tile beside this one instead
+    /// (`followed`): a link activated in the page's main frame, or a new window (`target=_blank`,
+    /// or a `window.open` the page calls while handling a click: with
+    /// `javaScriptCanOpenWindowsAutomatically` off, WebKit blocks one from a timer before asking).
+    /// Every other navigation off the page (a timer setting `location.href`, an iframe's `src`)
+    /// is cancelled.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }
         let isMain = action.targetFrame?.isMainFrame ?? true
+        let userLink = action.targetFrame == nil || (action.navigationType == .linkActivated && isMain)
+        if userLink, followed(action, in: webView) { return .cancel }
         if isMain { return url.scheme == HtmlKit.scheme && url.host == HtmlKit.host && url.path == pageURL.path ? .allow : .cancel }
         return ["about", "data", "blob", HtmlKit.scheme].contains(url.scheme ?? "") ? .allow : .cancel
     }
@@ -511,8 +522,26 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
         webView.load(URLRequest(url: pageURL))
     }
 
+    /// A new window the policy above let through (it opened as a link already when it could):
+    /// never a web view of its own.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         nil
+    }
+
+    /// Opens the http(s) link of `action` when the user clicked the page just now (a script
+    /// navigating or opening windows by itself is not a click): in a browser tile beside this
+    /// one (`Board.openLink`, a tile already showing it is reused), or in the default browser
+    /// with ⌥ held.
+    private func followed(_ action: WKNavigationAction, in webView: WKWebView) -> Bool {
+        guard let url = action.request.url, WebLink.isWeb(url), let click = (webView as? HtmlWebView)?.recentClick() else { return false }
+        if click.union(action.modifierFlags).contains(.option) {
+            ExternalOpen.open(url, because: "html \(object.id) link (⌥-click)")
+        } else {
+            let opened = board.openLink(url, near: object.id, caller: nil)
+            NSLog("easl: html %@ link %@ → %@ %@", object.id, url.absoluteString, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
+            onOpenedLink?(opened.object.id)
+        }
+        return true
     }
 }
 

@@ -783,6 +783,30 @@ final class ApiRouterTests {
         #expect(batch["error"]?["message"] == .string("op 0 (object.update): unknown param text; object.update takes id (required), rev, frame, size, props, caller"))
         #expect(board.objects[note.id]?.frame.x == note.frame.x, "nothing moved")
     }
+
+    @Test func openingAUrlShowsItBesideTheCallerAndReusesTheTile() async throws {
+        let caller = terminal()
+        var shown: [(tile: ObjectID, source: ObjectID?)] = []
+        router.showOpenedLink = { _, tile, source in shown.append((tile, source)) }
+        let client = try connect()
+
+        let first = try await call(client, "view.open_url", ["url": "http://127.0.0.1:8000/x.html", "caller": .string(caller)])
+        let tile = try #require(first["result"]?["object"]?["id"]?.string)
+        #expect(first["result"]?["existing"] == .bool(false))
+        #expect(board.objects[tile]?.type == .browser && board.objects[tile]?.props["url"]?.string == "http://127.0.0.1:8000/x.html")
+        #expect(board.objects[tile]?.createdBy == Actor(caller: caller))
+
+        let again = try await call(client, "view.open_url", ["url": "HTTP://127.0.0.1:8000/x.html", "caller": .string(caller)])
+        #expect(again["result"]?["object"]?["id"]?.string == tile && again["result"]?["existing"] == .bool(true))
+        #expect(board.objects.values.filter { $0.type == .browser }.count == 1)
+        #expect(shown.map(\.tile) == [tile, tile] && shown.allSatisfy { $0.source == caller })
+
+        for refused in ["file:///etc/hosts", "mailto:a@b.c", "example.com", "/tmp/x.html"] {
+            let reply = try await call(client, "view.open_url", ["url": .string(refused), "caller": .string(caller)])
+            #expect(reply["error"]?["code"] == .string("invalid_params"), "\(refused)")
+        }
+        #expect(board.objects.values.filter { $0.type == .browser }.count == 1)
+    }
 }
 
 /// Minimal blocking NDJSON client; reads happen off the main actor so the server can answer.

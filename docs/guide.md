@@ -14,7 +14,7 @@ Hyper means all four modifiers, ⌃⌥⇧⌘. Hold them and click, or give yours
 
 Terminals live in zmx sessions, so quitting easl, a crash, a rebuild or closing a board's tab ends nothing: agents and shells keep running and are back when you open the folder again. An agent that finishes while easl is closed comes back done (or blocked) with its answer. After a reboot, omp, Claude Code and Codex tiles relaunch with their recorded session. Closing a terminal tile ends its session; ⌘Z brings the tile back with a new one. To see or end sessions without the app: `zmx list` (easl's are named `canvas-obj_…`), `zmx kill <name>`.
 
-Terminal tiles are rendered by libghostty and use your Ghostty config (theme, colors, font family, keybinds; easl keeps its own font size; zooming the board, or a tile's content with ⌃⌘= / ⌃⌘-, scales text). A program's notification or bell becomes an attention marker, and ⌘-click opens a `path:line` in the output as a code tile.
+Terminal tiles are rendered by libghostty and use your Ghostty config (theme, colors, font family, keybinds; easl keeps its own font size; zooming the board, or a tile's content with ⌃⌘= / ⌃⌘-, scales text). A program's notification or bell becomes an attention marker, and ⌘-click opens a `path:line` in the output as a code tile and a URL in a browser tile beside the terminal (⌥⌘-click sends it to your default browser). `open https://…` in a terminal tile does the same.
 
 ## See which agent needs you
 

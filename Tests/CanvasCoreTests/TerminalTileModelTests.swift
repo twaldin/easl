@@ -519,6 +519,7 @@ struct LoginSessionTests {
         #expect(fresh == [
             "PATH": "\(app)/bin:/opt/homebrew/bin:/usr/bin", "PYTHONPATH": "\(app)/clients/python", "ZDOTDIR": "\(app)/extensions/shell/zsh",
             "EASL_ZSH_ZDOTDIR": "/Users/u/.config/zsh", "PROMPT_COMMAND": ". '\(app)/extensions/shell/bash/easl.bash'",
+            "BROWSER": "\(app)/bin/open",
         ], "launched from the Dock or a terminal")
 
         // Launched by an agent in a tile of another bundle (`dev.sh restart`, a non-interactive
@@ -534,6 +535,7 @@ struct LoginSessionTests {
         #expect(nested["PATH"] == "\(app)/bin:/Users/u/.nvm/versions/node/v22/bin:/usr/bin")
         #expect(nested["PYTHONPATH"] == "\(app)/clients/python:/Users/u/py")
         #expect(nested["PROMPT_COMMAND"] == ". '\(app)/extensions/shell/bash/easl.bash'; history -a")
+        #expect(nested["BROWSER"] == "\(app)/bin/open", "the shim of this bundle, not the old tile's")
 
         // The user's own ZDOTDIR, kept aside by that tile, is theirs again; an interactive shell
         // had already restored it, and only PROMPT_COMMAND still names the old bundle.

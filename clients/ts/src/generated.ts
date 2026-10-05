@@ -1301,6 +1301,20 @@ export type ViewGetResult = {
   appearance: "dark" | "light";
 };
 
+export type ViewOpenUrlParams = {
+  /** an absolute http or https URL */
+  url: string;
+  board?: Id;
+  /** the terminal the link comes from: the tile opens beside it; clients fill from EASL_TILE_ID */
+  caller?: Id;
+};
+export type ViewOpenUrlResult = {
+  /** the browser tile showing the address */
+  object: CanvasObject;
+  /** a tile already showed the address: nothing was created */
+  existing: boolean;
+};
+
 export type ViewRenderParams = {
   board?: Id;
   target: Id | Id[] | Frame;
@@ -1450,6 +1464,8 @@ export interface CanvasApi {
     attention(params: ViewAttentionParams): Promise<ViewAttentionResult>;
     /** What the user is looking at right now, without pixels: the visible board rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, whether the window is visible on screen, and its appearance (dark or light). */
     get(params?: ViewGetParams): Promise<ViewGetResult>;
+    /** Open a web address the way a ⌘-click on it in the caller's terminal does: an http or https URL shows in a browser tile beside the caller, and a tile already showing that address (compared by scheme, host, port, path, query and fragment, so `HTTP://Example.com:80` is `http://example.com/`) is reused (`existing: true`) instead of a duplicate. The user's view pans the least that shows the tile, never so far that the caller's terminal leaves view. Keyboard focus stays where it was: the tile is selected unless that would take the keyboard from another tile than a terminal (a note being edited, a page or code rows being typed in), which keeps it and its selection. Anything but http(s) is `invalid_params`: hand other schemes to the system (`/usr/bin/open`). The `bin/open` shim and `$BROWSER` in a terminal tile call this. */
+    open_url(params: ViewOpenUrlParams): Promise<ViewOpenUrlResult>;
     /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a board rect; ids render the board region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. A tile draws as on screen: its title bar at 1× (showing its content zoom's % when not 100%), its content at its `zoom` inside the frame. */
     render(params: ViewRenderParams): Promise<ViewRenderResult>;
     /** The board's window as the user sees it right now (viewport, tiles, toolbar, tray), with the viewport it shows. Terminal tiles are drawn from their session text. To look at something regardless of where the user is, use view.render. */
@@ -1517,6 +1533,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
     view: {
       attention: (params: ViewAttentionParams) => call("view.attention", params ?? {}, ["caller"]) as Promise<ViewAttentionResult>,
       get: (params?: ViewGetParams) => call("view.get", params ?? {}, ["board"]) as Promise<ViewGetResult>,
+      open_url: (params: ViewOpenUrlParams) => call("view.open_url", params ?? {}, ["board","caller"]) as Promise<ViewOpenUrlResult>,
       render: (params: ViewRenderParams) => call("view.render", params ?? {}, ["board"]) as Promise<ViewRenderResult>,
       snapshot: (params?: ViewSnapshotParams) => call("view.snapshot", params ?? {}, ["board"]) as Promise<ViewSnapshotResult>,
     },
@@ -1526,7 +1543,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"] as const;
+export const METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","events.subscribe"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

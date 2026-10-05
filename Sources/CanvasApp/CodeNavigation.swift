@@ -13,6 +13,8 @@ protocol CodeNavigationHost: AnyObject {
     /// Source position under `point` (in `navigationView`'s coordinates): 1-based line,
     /// 0-based UTF-16 column on the current side; nil over peeked base rows and gutters.
     func sourcePosition(atViewPoint point: NSPoint) -> (line: Int, character: Int)?
+    /// The http(s) URL written under `point` (in `navigationView`'s coordinates), if any.
+    func webLink(atViewPoint point: NSPoint) -> URL?
     /// Scrolls a 1-based source line into view.
     func reveal(line: Int)
 }
@@ -614,9 +616,29 @@ final class CodeNavigation: NSObject {
         lease = DocumentLease(file: file, root: board.root)
     }
 
+    /// The http(s) URL written under a click.
+    private func webLink(at event: NSEvent) -> URL? {
+        guard let host, let codeView else { return nil }
+        let point = codeView.convert(event.locationInWindow, from: nil)
+        return codeView.visibleRect.contains(point) ? host.webLink(atViewPoint: point) : nil
+    }
+
+    /// A clicked URL: in a browser tile beside this code tile (`Board.openLink`; one already
+    /// showing it is reused), shown like any link the user followed, or in the default browser.
+    private func open(_ url: URL, inDefaultBrowser: Bool) {
+        if inDefaultBrowser {
+            ExternalOpen.open(url, because: "code \(tile) link (⌥-click)")
+            return
+        }
+        let opened = board.openLink(url, near: tile, caller: nil)
+        NSLog("easl: code %@ link %@ → %@ %@", tile, url.absoluteString, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
+        canvas?.showOpenedLink(opened.object.id, openedFrom: tile)
+    }
+
     /// One app-level monitor for every code view: ⌘/⌥⌘-click and right-click on a host's text
     /// view, and closing a list panel on any click outside it. Hyper (which includes ⌃) is left
-    /// to the HyperMonitor.
+    /// to the HyperMonitor. A web URL in the text takes the ⌘-click before go-to-definition does
+    /// (a browser tile beside the code; ⌥⌘- and ⌥-click: the default browser).
     private static func installMonitor() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
@@ -631,6 +653,11 @@ final class CodeNavigation: NSObject {
         }
         let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
         guard !flags.contains(.control), let controller = controller(at: event), let codeView = controller.codeView else { return false }
+        let linkClicks: [NSEvent.ModifierFlags] = [[.command], [.command, .option], [.option]]
+        if event.type == .leftMouseDown, linkClicks.contains(flags), let link = controller.webLink(at: event) {
+            controller.open(link, inDefaultBrowser: flags.contains(.option))
+            return true
+        }
         switch (event.type, flags) {
         case (.leftMouseDown, [.command]), (.leftMouseDown, [.command, .option]):
             controller.goToDefinition(atViewPoint: codeView.convert(event.locationInWindow, from: nil), newTile: flags.contains(.option))

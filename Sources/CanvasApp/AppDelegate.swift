@@ -117,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return try await canvas.render(request, format: format)
         }
         router.viewState = { [weak self] board in self?.controllers[board.id]?.canvas.viewState }
+        router.showOpenedLink = { [weak self] board, opened, source in self?.controllers[board.id]?.canvas.showOpenedLink(opened, openedFrom: source) }
         router.openBoard = { [weak self, registry] root, select in
             self?.open(root: root, select: select) ?? registry.open(root: root)
         }

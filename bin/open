@@ -1,0 +1,55 @@
+#!/bin/sh
+# easl's open shim, also the tile's $BROWSER: in an easl terminal tile, `open <http(s) url>…` shows
+# each address in a browser tile beside the terminal (view.open_url: a tile already showing it is
+# reused). Anything else (files, apps, flags), a failed call, or a call outside a tile is the
+# system's /usr/bin/open, which also stays reachable by its full path.
+real=/usr/bin/open
+
+case "$EASL_TILE_ID" in ''|*[!A-Za-z0-9_-]*) exec "$real" "$@" ;; esac
+[ $# -gt 0 ] && [ -n "$EASL_SOCKET" ] && [ -S "$EASL_SOCKET" ] && [ -x /usr/bin/nc ] || exec "$real" "$@"
+
+# Every argument must be a plain URL, safe to put in the request as it is.
+for arg in "$@"; do
+  case "$arg" in
+    [hH][tT][tT][pP]://?*|[hH][tT][tT][pP][sS]://?*) ;;
+    *) exec "$real" "$@" ;;
+  esac
+  case "$arg" in
+    *[[:cntrl:][:space:]]*|*'"'*|*\\*) exec "$real" "$@" ;;
+  esac
+done
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/easl-open.XXXXXX") && mkfifo "$work/in" || exec "$real" "$@"
+
+# Sends one request and waits for its reply line. The server drops a connection whose client
+# has stopped sending before it has answered, and nc stops sending when its input ends, so its
+# input is a fifo that stays open until the reply is in. nc itself only gives up when idle, so
+# the reply is read from a file and nc stopped once it is there.
+open_url() {
+  line=
+  : >"$work/out"
+  /usr/bin/nc -U -w 6 "$EASL_SOCKET" <"$work/in" >"$work/out" 2>/dev/null &
+  nc=$!
+  exec 3>"$work/in"
+  printf '{"id":"1","method":"view.open_url","params":{"url":"%s","caller":"%s"}}\n' "$1" "$EASL_TILE_ID" >&3
+  tries=0
+  while [ "$tries" -lt 120 ]; do
+    read -r line <"$work/out" && break
+    kill -0 "$nc" 2>/dev/null || { read -r line <"$work/out"; break; }
+    /bin/sleep 0.05
+    tries=$((tries + 1))
+  done
+  exec 3>&-
+  kill "$nc"
+  wait "$nc"
+  case "$line" in *'"ok":true'*) return 0 ;; esac
+  return 1
+}
+
+# Each URL the app took is done; what is left (the first it did not take, and the rest) is the system's.
+while [ $# -gt 0 ]; do
+  open_url "$1" 2>/dev/null || break
+  shift
+done
+rm -rf "$work"
+[ $# -eq 0 ] || exec "$real" "$@"

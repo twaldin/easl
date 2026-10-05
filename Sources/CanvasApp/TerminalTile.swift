@@ -23,6 +23,9 @@ final class TerminalTile: NSView, TileContent {
     /// A ⌘-clicked reference opened this code tile (`created`) or re-aimed or found it there;
     /// `source` is the reference's rect in window coordinates.
     var onOpenedCode: ((CodeOpened, _ source: NSRect) -> Void)?
+    /// A web link the terminal's text activated (⌘-click on a URL) opened or found this browser
+    /// tile; the canvas shows it.
+    var onOpenedLink: ((ObjectID) -> Void)?
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
@@ -802,6 +805,25 @@ final class TerminalTile: NSView, TileContent {
         onOpenedCode?(opened, source.isNull ? .null : underline.convert(source, to: nil))
     }
 
+    /// A URL or path Ghostty found under a ⌘-click (`TerminalSurfaceOpenURLDelegate`; with a
+    /// delegate answering it Ghostty doesn't run `/usr/bin/open` itself). An http(s) URL opens in
+    /// a browser tile beside this terminal (`Board.openLink`: a tile already showing it is
+    /// reused); ⌥ held (a ⌥⌘-click, which `CanvasTerminalView` hands Ghostty as a ⌘-click: Ghostty
+    /// finds no link under ⌥⌘) opens it in the default browser instead, and any other scheme or a
+    /// file path goes to the system, as `open` would.
+    func openLink(_ text: String) {
+        let url = URL(string: text).flatMap { $0.scheme == nil ? nil : $0 }
+            ?? URL(fileURLWithPath: (text as NSString).expandingTildeInPath)
+        let forced = terminal.forcingDefaultBrowser || NSApp.currentEvent?.modifierFlags.contains(.option) == true
+        guard WebLink.isWeb(url), !forced else {
+            ExternalOpen.open(url, because: "terminal \(objectID) link\(forced ? " (⌥-click)" : "")")
+            return
+        }
+        let opened = board.openLink(url, near: objectID, caller: objectID)
+        NSLog("easl: terminal %@ link %@ → %@ %@", objectID, text, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
+        onOpenedLink?(opened.object.id)
+    }
+
     // MARK: Scrollback
 
     /// Ghostty's scrollbar (rows in total, the viewport's offset and rows); nil until reported.
@@ -963,7 +985,7 @@ final class TerminalTile: NSView, TileContent {
 @MainActor
 private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, TerminalSurfaceLifecycleDelegate, TerminalSurfaceGridResizeDelegate,
     TerminalSurfaceBellDelegate, TerminalSurfaceDesktopNotificationDelegate, TerminalSurfacePwdDelegate, TerminalSurfaceCloseDelegate,
-    TerminalSurfaceScrollbarDelegate, TerminalSurfaceCommandFinishedDelegate {
+    TerminalSurfaceScrollbarDelegate, TerminalSurfaceCommandFinishedDelegate, TerminalSurfaceOpenURLDelegate {
     weak var tile: TerminalTile?
 
     func terminalDidResize(_ size: TerminalGridMetrics) {
@@ -1007,5 +1029,9 @@ private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, Term
 
     func terminalDidClose(processAlive: Bool) {
         tile?.surfaceClosed(processAlive: processAlive)
+    }
+
+    func terminalDidRequestOpenURL(_ url: String, kind: TerminalOpenURLKind) {
+        tile?.openLink(url)
     }
 }

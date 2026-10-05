@@ -6,6 +6,7 @@ Each version's section is its GitHub release's notes.
 
 - **boards reopen where you left them.** Each board comes back at its zoom and spot on relaunch, kept on your Mac (not in the board file, so shared boards stay yours to look at your way).
 - **chrome text size.** View ▸ Increase / Decrease / Reset Chrome Text Size (⌥⌘= / ⌥⌘- / ⌥⌘0) scales the tray and tile title bars to 150%, separate from board zoom and a tile's content zoom.
+- **web links open in a browser tile beside where you clicked.** A ⌘-click on a URL in a terminal, a link in an HTML page or a note, a ⌘-click on a URL in code, and `open <url>` or `$BROWSER` run in a terminal tile (the new `view.open_url` call) show the page in a tile beside the source; a tile already showing that address is shown instead of a duplicate. ⌥-click (⌥⌘ in a terminal or code) sends the URL to your default browser; `/usr/bin/open` stays the system's.
 
 ## 0.1.0
 

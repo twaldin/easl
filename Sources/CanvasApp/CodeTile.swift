@@ -1196,6 +1196,15 @@ extension CodeTile: CodeNavigationHost {
         return (line, position.offset)
     }
 
+    /// The http(s) URL written under a point in the rows view (a comment, a string, a Markdown
+    /// link), whichever side of a diff the line is on; nil over the gutter, below the last row,
+    /// and anywhere else.
+    func webLink(atViewPoint point: NSPoint) -> URL? {
+        guard !rowsView.isInGutter(point), let painter = rowsView.painter, case .line? = painter.rows.row(CodePainter.row(atY: point.y)),
+              let position = rowsView.position(at: point) else { return nil }
+        return WebLink.match(in: painter.text(ofEntry: position.entry) as String, at: position.offset)?.url
+    }
+
     func reveal(line: Int) {
         guard showsCurrent, let rows = rowsView.painter?.rows else { return }
         scroll(toRow: rows.index(ofLine: line))
