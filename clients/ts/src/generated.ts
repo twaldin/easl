@@ -88,6 +88,10 @@ export type BrowserProps = {
   /** written by the app: the page's own title; shown when `title` is unset; never bumps rev */
   pageTitle?: string;
   zoom?: Zoom;
+  /** a named browser profile: its own cookies, logins and storage, shared by every tile that names it; absent: the default profile. Tiles a page opens (links, popups) take it */
+  profile?: string;
+  /** a page served from this Mac (localhost, 127.x, [::1], a .localhost name, a file) reloads when a file under the board root (a file page: its folder) changes; hidden files and folders and node_modules don't count */
+  reloadOnChange?: boolean;
   key?: ObjectKey;
 };
 

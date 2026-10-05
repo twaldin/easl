@@ -30,9 +30,6 @@ final class BrowserTile: NSView, TileContent {
     static let revealWait: TimeInterval = 0.5
     /// How long a released web view outlives its release (see `release`).
     static let closeDelay: TimeInterval = 2
-    /// A page asking for the same new tile again this soon (a second click on a `_blank` link
-    /// while the first tile appears) gets the first one back.
-    static let reopenInterval: TimeInterval = 2
 
     let objectID: ObjectID
     let board: Board
@@ -72,7 +69,6 @@ final class BrowserTile: NSView, TileContent {
     /// A tile the user opened from this page (their click on a `_blank` link or `window.open`
     /// button): the canvas shows and selects it.
     var onOpenedTile: ((ObjectID) -> Void)?
-    private var lastOpened: (url: String, id: ObjectID, at: Date)?
     /// Latest Hyper-hover answer, and the point whose answer is still wanted.
     private var hover: (point: CGPoint, element: WebMentions.Element)?
     private var hoverWanted: CGPoint?
@@ -672,23 +668,16 @@ final class BrowserTile: NSView, TileContent {
         failureView.isHidden = true
     }
 
-    /// A new tile beside this one (⌘-click, `target=_blank`), credited like a navigation, in this
-    /// tile's profile. One the user opened (`onOpenedTile`) is shown and selected, since it may
-    /// land outside the view; the same address asked for again within `reopenInterval` (a second
-    /// click while the first tile appears) gets the first tile instead of a duplicate.
+    /// A link opened beside this one (⌘-click, `target=_blank`), credited like a navigation, in
+    /// this tile's profile: a tile on the board already showing that address in the same profile
+    /// is reused (`Board.openLink`; a second click while the first tile appears gets it too).
+    /// One the user opened (`onOpenedTile`) is shown and selected, since it may be out of view.
     private func openTile(_ url: URL) {
-        let address = url.absoluteString
         let actor = credit.actor()
-        if let last = lastOpened, last.url == address, Date().timeIntervalSince(last.at) < Self.reopenInterval, board.objects[last.id] != nil {
-            if actor == .user { onOpenedTile?(last.id) }
-            return
-        }
-        let size = Board.defaultSize(.browser)
         let caller: ObjectID? = if case .agent(let tile) = actor { tile } else { nil }
-        let opened = board.create(type: .browser, props: .object(["url": .string(address)].merging(profileProps) { $1 }),
-                                  frame: board.place(width: size.w, height: size.h, near: objectID), caller: caller)
-        lastOpened = (address, opened.id, Date())
-        if actor == .user { onOpenedTile?(opened.id) }
+        let opened = board.openLink(url, near: objectID, caller: caller, props: profileProps)
+        if opened.existing { NSLog("easl: browser %@ link %@ reuses %@", objectID, url.absoluteString, opened.object.id) }
+        if actor == .user { onOpenedTile?(opened.object.id) }
     }
 
     /// `props.profile` for the tiles this page opens: they share its cookies and logins.
