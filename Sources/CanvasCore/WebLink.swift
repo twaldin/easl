@@ -63,7 +63,7 @@ public enum WebLink {
         matches(in: text).first { $0.range.location <= offset && offset < $0.range.location + $0.range.length }
     }
 
-    private static let stops: Set<unichar> = Set(" \t\r\n<>\"`\\".utf16)
+    private static let stops: Set<unichar> = Set(" \t\r\n<>\"'`\\".utf16)
 
     /// `http://` or `https://` at `index`.
     private static func hasScheme(_ string: NSString, at index: Int) -> Bool {

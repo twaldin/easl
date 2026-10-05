@@ -1423,7 +1423,7 @@
       }
     },
     "view.open_url": {
-      "description": "Open a web address the way a ⌘-click on it in the caller's terminal does: an http or https URL shows in a browser tile beside the caller, and a tile already showing that address (compared by scheme, host, port, path, query and fragment, so `HTTP://Example.com:80` is `http://example.com/`) is reused (`existing: true`) instead of a duplicate. The user's view pans the least that shows the tile, never so far that the caller's terminal leaves view; a reused tile is selected. Keyboard focus stays where it was. Anything but http(s) is `invalid_params`: hand other schemes to the system (`/usr/bin/open`). The `bin/open` shim and `$BROWSER` in a terminal tile call this.",
+      "description": "Open a web address the way a ⌘-click on it in the caller's terminal does: an http or https URL shows in a browser tile beside the caller, and a tile already showing that address (compared by scheme, host, port, path, query and fragment, so `HTTP://Example.com:80` is `http://example.com/`) is reused (`existing: true`) instead of a duplicate. The user's view pans the least that shows the tile, never so far that the caller's terminal leaves view. Keyboard focus stays where it was: the tile is selected unless that would take the keyboard from another tile than a terminal (a note being edited, a page or code rows being typed in), which keeps it and its selection. Anything but http(s) is `invalid_params`: hand other schemes to the system (`/usr/bin/open`). The `bin/open` shim and `$BROWSER` in a terminal tile call this.",
       "params": {
         "type": "object",
         "required": ["url"],

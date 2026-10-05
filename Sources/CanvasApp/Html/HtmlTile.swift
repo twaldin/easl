@@ -497,10 +497,16 @@ final class HtmlTile: NSView, TileContent {
 extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     /// The page may load only its own document and kit; links never navigate the tile away. A
     /// web link the user just clicked goes to a browser tile beside this one instead
-    /// (`followed`).
+    /// (`followed`): a link activated in the page's main frame, or a new window (`target=_blank`,
+    /// or a `window.open` the page calls while handling a click: with
+    /// `javaScriptCanOpenWindowsAutomatically` off, WebKit blocks one from a timer before asking).
+    /// Every other navigation off the page (a timer setting `location.href`, an iframe's `src`)
+    /// is cancelled.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
-        guard let url = action.request.url, !followed(action, in: webView) else { return .cancel }
+        guard let url = action.request.url else { return .cancel }
         let isMain = action.targetFrame?.isMainFrame ?? true
+        let userLink = action.targetFrame == nil || (action.navigationType == .linkActivated && isMain)
+        if userLink, followed(action, in: webView) { return .cancel }
         if isMain { return url.scheme == HtmlKit.scheme && url.host == HtmlKit.host && url.path == pageURL.path ? .allow : .cancel }
         return ["about", "data", "blob", HtmlKit.scheme].contains(url.scheme ?? "") ? .allow : .cancel
     }
@@ -516,9 +522,10 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
         webView.load(URLRequest(url: pageURL))
     }
 
+    /// A new window the policy above let through (it opened as a link already when it could):
+    /// never a web view of its own.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        _ = followed(action, in: webView)
-        return nil
+        nil
     }
 
     /// Opens the http(s) link of `action` when the user clicked the page just now (a script

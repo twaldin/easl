@@ -82,4 +82,14 @@ struct LinkTests {
         #expect(WebLink.match(in: text, at: 7) == nil)
         #expect(WebLink.match(in: text, at: 29) == nil, "the comma after it")
     }
+
+    /// A URL in a single-quoted string ends at the quote: the code after it (`run`) is no part of
+    /// the link, so a ⌘-click there still goes to its definition.
+    @Test func aQuotedURLLeavesTheCodeAfterItToNavigation() throws {
+        let text = "fetch('https://example.com/api').then(run);"
+        let link = try #require(WebLink.matches(in: text).first)
+        #expect(link.url.absoluteString == "https://example.com/api")
+        let run = (text as NSString).range(of: "run").location
+        #expect(WebLink.match(in: text, at: run) == nil)
+    }
 }

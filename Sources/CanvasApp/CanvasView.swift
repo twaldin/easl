@@ -2002,10 +2002,13 @@ final class CanvasView: NSScrollView {
     /// The browser tile a web link opened or found (`Board.openLink`, from a terminal's URL, a
     /// page, a note, code, or `view.open_url`), shown without taking anything from the user: the
     /// least pan that shows it, never so far that `source`, the tile the link is in, leaves
-    /// view; the tile is selected, and keyboard focus stays where it was.
+    /// view. Keyboard focus stays where it was: the tile is selected only when that leaves the
+    /// keyboard alone (`KeyboardFocus.afterSelectionChange`: a terminal, or the board, holds
+    /// it), so a note being edited, a page being typed in or code rows keep both the keyboard and
+    /// their selection.
     func showOpenedLink(_ id: ObjectID, openedFrom source: ObjectID?) {
         reveal(id, openedFrom: source.flatMap(docFrame) ?? .null)
-        setSelection([id])
+        if KeyboardFocus.afterSelectionChange([id], holder: keyboardHolder) == .stay { setSelection([id]) }
     }
 
     /// An object shown whole like a slide (an agent's terminal with its follow tile, `landing`):
