@@ -124,6 +124,10 @@ public final class ApiRouter {
     public var renderView: ((Board, RenderRequest, ImageFormat) async throws -> RenderOutput)?
     /// What the board's window shows; nil when it has none.
     public var viewState: ((Board) -> ViewState?)?
+    /// The window of `board` shows a browser tile a link opened (`view.open_url`): the least pan
+    /// that shows it, never so far that `source` (the caller's terminal, on this board) leaves
+    /// view; the tile, new or already open, is selected and keyboard focus stays.
+    public var showOpenedLink: ((Board, _ opened: ObjectID, _ source: ObjectID?) -> Void)?
     /// The last `lines` lines of a terminal tile's session text (a `TerminalTail`, soft-wrapped
     /// rows joined when the tile knows its width), read and trimmed off the main actor; nil when
     /// the session doesn't exist.
@@ -982,6 +986,16 @@ public final class ApiRouter {
             var result: [String: JSONValue] = ["id": .string(id), "active": .bool(true)]
             if !raised.cleared.isEmpty { result["cleared"] = .array(raised.cleared.map(JSONValue.string)) }
             return .object(result)
+
+        case "view.open_url":
+            let board = try board(p)
+            let raw = try string(p, "url")
+            guard let url = WebLink.parse(raw) else { throw Failure("invalid_params", "view.open_url opens http and https addresses, not \(raw)") }
+            let caller = caller(p)
+            let source = caller.flatMap { board.objects[$0] == nil ? nil : $0 }
+            let opened = board.openLink(url, near: source, caller: caller)
+            showOpenedLink?(board, opened.object.id, source)
+            return .object(["object": try JSONValue.encode(board.reported(opened.object)), "existing": .bool(opened.existing)])
 
         case "view.get":
             let board = try board(p)

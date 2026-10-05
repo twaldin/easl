@@ -210,7 +210,7 @@ extension Board {
     }
 }
 
-private extension Frame {
+extension Frame {
     /// How far this frame's center is from `other`'s.
     func centerDistance(to other: Frame) -> Double {
         hypot(x + w / 2 - (other.x + other.w / 2), y + h / 2 - (other.y + other.h / 2))

@@ -119,6 +119,26 @@ final class HtmlWebView: WKWebView {
     override var acceptsFirstResponder: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    private var lastClick: (time: TimeInterval, flags: NSEvent.ModifierFlags)?
+
+    /// The modifiers of the last click on the page when it was within `seconds` (a link the page
+    /// follows just after one is the user's: the web view tells a script's navigation from a click
+    /// only by its type, and `a.click()` looks like one).
+    func recentClick(within seconds: TimeInterval = 2) -> NSEvent.ModifierFlags? {
+        guard let lastClick, ProcessInfo.processInfo.systemUptime - lastClick.time <= seconds else { return nil }
+        return lastClick.flags
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        lastClick = (ProcessInfo.processInfo.systemUptime, event.modifierFlags)
+        super.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        lastClick = (ProcessInfo.processInfo.systemUptime, event.modifierFlags)
+        super.mouseUp(with: event)
+    }
+
     /// WebKit's context menu leads with Mention: the element under the right-click.
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)

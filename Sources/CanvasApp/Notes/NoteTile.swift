@@ -133,6 +133,9 @@ final class NoteTile: NSView, TileContent {
     /// A code link the user clicked opened this code tile, or found one already showing the
     /// lines (`existing`); the canvas shows it.
     var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
+    /// A web link the user clicked in the note opened or found this browser tile; the canvas
+    /// shows it.
+    var onOpenedLink: ((ObjectID) -> Void)?
     /// Where the note's relative paths resolve (`Board.linkRoot`, or where its ref was read).
     private var linkRoot: URL { reading?.root ?? board.linkRoot(of: object) }
 
@@ -368,7 +371,7 @@ final class NoteTile: NSView, TileContent {
         if event.clickCount >= 2 {
             beginEditing(at: point)
         } else if let link = link(at: point) {
-            open(link)
+            open(link, defaultBrowser: event.modifierFlags.contains(.option))
         } else {
             // Selecting and dragging the note is the frame's job.
             super.mouseDown(with: event)
@@ -422,18 +425,19 @@ final class NoteTile: NSView, TileContent {
 
     /// Links open beside the note: repo paths as code (`Board.openForNavigation`: the tile
     /// already showing those lines anywhere, else a plain tile in view re-aimed, else a new one
-    /// beside the note), web URLs as browser tiles.
-    private func open(_ link: NoteLink) {
+    /// beside the note), web URLs as browser tiles (`Board.openLink`: one already showing the
+    /// address is reused), or in the default browser with ⌥ held.
+    private func open(_ link: NoteLink, defaultBrowser: Bool) {
         switch link {
         case .code(let path, let lines):
             // A note anchored to a branch opens its code at the same ref.
             let opened = board.openForNavigation(CodeAim(path: board.boardPath(path, linkRoot: linkRoot), range: lines, ref: RefSource.ref(of: object.props)), from: object.id)
             onOpenedCode?(opened.id, opened.existing)
-        case .web(let url) where url.scheme == "http" || url.scheme == "https":
-            let size = Board.defaultSize(.browser)
-            board.create(type: .browser, props: .object(["url": .string(url.absoluteString)]), frame: board.place(width: size.w, height: size.h, near: object.id))
+        case .web(let url) where WebLink.isWeb(url) && !defaultBrowser:
+            let opened = board.openLink(url, near: object.id, caller: nil)
+            onOpenedLink?(opened.object.id)
         case .web(let url):
-            NSWorkspace.shared.open(url)
+            ExternalOpen.open(url, because: "note \(object.id) link\(WebLink.isWeb(url) ? " (⌥-click)" : "")")
         }
     }
 

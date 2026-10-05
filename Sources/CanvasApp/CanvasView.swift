@@ -399,6 +399,7 @@ final class CanvasView: NSScrollView {
                 }
                 self.recordNavigation(from: from, reaim: opened.reaim, landing: self.board.objects[opened.id].flatMap(CodeAim.init))
             }
+            terminal.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
         }
         // A page's or note's code link (an HTML tile's, a browser page's error list, a note's):
         // the tile already showing the lines is gone to, anything else is shown with the least pan.
@@ -407,6 +408,9 @@ final class CanvasView: NSScrollView {
         (content as? NoteTile)?.onOpenedCode = showCode
         (content as? BrowserTile)?.onOpenedCode = showCode
         (content as? DiagramTile)?.onOpenedCode = showCode
+        // A web link a note or HTML tile opened (`Board.openLink`): shown like a terminal's.
+        (content as? HtmlTile)?.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
+        (content as? NoteTile)?.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
         // A node the user opened: the pan that shows what it added (never for an agent's expand).
         (content as? DiagramTile)?.onExpanded = { [weak self] tile, added, clicked in self?.revealExpansion(tile: tile, added: added, clicked: clicked) }
         // A clicked line: user navigation. The changes tile keeps the selection and the keyboard
@@ -1993,6 +1997,15 @@ final class CanvasView: NSScrollView {
             if existing { goToShown(id) } else { reveal(id) }
             return nil
         }
+    }
+
+    /// The browser tile a web link opened or found (`Board.openLink`, from a terminal's URL, a
+    /// page, a note, code, or `view.open_url`), shown without taking anything from the user: the
+    /// least pan that shows it, never so far that `source`, the tile the link is in, leaves
+    /// view; the tile is selected, and keyboard focus stays where it was.
+    func showOpenedLink(_ id: ObjectID, openedFrom source: ObjectID?) {
+        reveal(id, openedFrom: source.flatMap(docFrame) ?? .null)
+        setSelection([id])
     }
 
     /// An object shown whole like a slide (an agent's terminal with its follow tile, `landing`):

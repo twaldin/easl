@@ -28,7 +28,7 @@ extension LoginSession {
     /// (docs/contracts.md "Terminal tile environment"): easl's `bin/` first on `PATH`, its
     /// `clients/python` on `PYTHONPATH`, `ZDOTDIR` its zsh integration with the user's own in
     /// `EASL_ZSH_ZDOTDIR`, and its bash integration in `PROMPT_COMMAND`, each before what the
-    /// app inherited.
+    /// app inherited; `BROWSER` is its `open` shim.
     ///
     /// An app launched from inside an easl tile (an agent's `scripts/dev.sh restart`, `open` in a
     /// tile) inherits that tile's integration, possibly of another bundle: taken as the user's own,
@@ -48,6 +48,9 @@ extension LoginSession {
             "PATH": ([bin] + (path.isEmpty ? ["/usr/bin", "/bin"] : path)).joined(separator: ":"),
             "PYTHONPATH": ([python] + kept(inherited["PYTHONPATH"]) { $0 + "/clients/python" }).joined(separator: ":"),
             "ZDOTDIR": resources + "/extensions/shell/zsh",
+            // Programs that open a web page (`$BROWSER`) reach the tile's `open` shim, which shows
+            // http(s) addresses in a browser tile beside the terminal.
+            "BROWSER": bin + "/open",
         ]
         let zdotdir = [inherited["ZDOTDIR"], inherited["EASL_ZSH_ZDOTDIR"]].compactMap { $0 }.first { integrationRoot(zsh: $0) == nil }
         if let zdotdir { env["EASL_ZSH_ZDOTDIR"] = zdotdir }
