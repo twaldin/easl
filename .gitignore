@@ -17,3 +17,4 @@ node_modules/
 /gettext-*.tar.gz
 *.p12
 AuthKey_*.p8
+/easld/easld
