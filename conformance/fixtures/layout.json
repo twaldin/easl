@@ -1,0 +1,1665 @@
+{
+  "scenario": "layout",
+  "description": "layout.place, layout.stack (rows, columns, wrapAt, align, origin), layout.translate and layout.grid with their defaults and errors.",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 100,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 50,
+          "w": 200,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 50,
+              "w": 200,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 50,
+              "w": 200,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 150,
+          "w": 50,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 150,
+              "w": 50,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 150,
+              "w": 50,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 80,
+          "w": 120,
+          "x": 1000,
+          "y": 1000
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 80,
+              "w": 120,
+              "x": 1000,
+              "y": 1000
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 80,
+              "w": 120,
+              "x": 1000,
+              "y": 1000
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 4
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "layout.place",
+      "method": "layout.place",
+      "request": {
+        "id": "<obj:2>",
+        "near": "<obj:1>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "frames": {
+            "<obj:2>": {
+              "h": 50,
+              "w": 200,
+              "x": 140,
+              "y": 0
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 50,
+              "w": 200,
+              "x": 140,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "layout.place",
+      "method": "layout.place",
+      "request": {
+        "align": "center",
+        "gap": 10,
+        "id": "<obj:3>",
+        "near": "<obj:1>",
+        "side": "below"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "frames": {
+            "<obj:3>": {
+              "h": 150,
+              "w": 50,
+              "x": 25,
+              "y": 110
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 150,
+              "w": 50,
+              "x": 25,
+              "y": 110
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "layout.place",
+      "method": "layout.place",
+      "request": {
+        "align": "end",
+        "id": "<obj:3>",
+        "near": "<obj:1>",
+        "side": "left"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "frames": {
+            "<obj:3>": {
+              "h": 150,
+              "w": 50,
+              "x": -90,
+              "y": -50
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 150,
+              "w": 50,
+              "x": -90,
+              "y": -50
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "layout.place",
+      "method": "layout.place",
+      "request": {
+        "id": "<obj:3>",
+        "near": "<obj:1>",
+        "side": "above"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "frames": {
+            "<obj:3>": {
+              "h": 150,
+              "w": 50,
+              "x": 0,
+              "y": -190
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 150,
+              "w": 50,
+              "x": 0,
+              "y": -190
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:4>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "layout.place",
+      "method": "layout.place",
+      "request": {
+        "id": "<obj:3>",
+        "near": "obj_missing"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object obj_missing on this board"
+        },
+        "id": "r10",
+        "ok": false
+      }
+    },
+    {
+      "step": "layout.place",
+      "method": "layout.place",
+      "request": {
+        "id": "<obj:3>",
+        "near": "<obj:1>",
+        "side": "diagonal"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "side must be one of right, left, above, below"
+        },
+        "id": "r11",
+        "ok": false
+      }
+    },
+    {
+      "step": "layout.stack",
+      "method": "layout.stack",
+      "request": {
+        "ids": [
+          "<obj:1>",
+          "<obj:2>",
+          "<obj:3>"
+        ]
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "frames": {
+            "<obj:1>": {
+              "h": 100,
+              "w": 100,
+              "x": 0,
+              "y": 0
+            },
+            "<obj:2>": {
+              "h": 50,
+              "w": 200,
+              "x": 140,
+              "y": 0
+            },
+            "<obj:3>": {
+              "h": 150,
+              "w": 50,
+              "x": 380,
+              "y": 0
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 150,
+              "w": 50,
+              "x": 380,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:5>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "layout.stack",
+      "method": "layout.stack",
+      "request": {
+        "align": "center",
+        "direction": "column",
+        "gap": 8,
+        "ids": [
+          "<obj:1>",
+          "<obj:2>",
+          "<obj:3>"
+        ],
+        "origin": {
+          "x": 50,
+          "y": 50
+        }
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "frames": {
+            "<obj:1>": {
+              "h": 100,
+              "w": 100,
+              "x": 100,
+              "y": 50
+            },
+            "<obj:2>": {
+              "h": 50,
+              "w": 200,
+              "x": 50,
+              "y": 158
+            },
+            "<obj:3>": {
+              "h": 150,
+              "w": 50,
+              "x": 125,
+              "y": 216
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 100,
+              "y": 50
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 50,
+              "w": 200,
+              "x": 50,
+              "y": 158
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 150,
+              "w": 50,
+              "x": 125,
+              "y": 216
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:6>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "layout.stack",
+      "method": "layout.stack",
+      "request": {
+        "align": "end",
+        "ids": [
+          "<obj:1>",
+          "<obj:2>",
+          "<obj:3>",
+          "<obj:4>"
+        ],
+        "wrapAt": 350
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "frames": {
+            "<obj:1>": {
+              "h": 100,
+              "w": 100,
+              "x": 100,
+              "y": 50
+            },
+            "<obj:2>": {
+              "h": 50,
+              "w": 200,
+              "x": 240,
+              "y": 100
+            },
+            "<obj:3>": {
+              "h": 150,
+              "w": 50,
+              "x": 100,
+              "y": 190
+            },
+            "<obj:4>": {
+              "h": 80,
+              "w": 120,
+              "x": 190,
+              "y": 260
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 50,
+              "w": 200,
+              "x": 240,
+              "y": 100
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:4>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 150,
+              "w": 50,
+              "x": 100,
+              "y": 190
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:7>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 80,
+              "w": 120,
+              "x": 190,
+              "y": 260
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "layout.stack",
+      "method": "layout.stack",
+      "request": {
+        "ids": []
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "ids must be a non-empty array of object ids"
+        },
+        "id": "r15",
+        "ok": false
+      }
+    },
+    {
+      "step": "layout.stack",
+      "method": "layout.stack",
+      "request": {
+        "ids": [
+          "<obj:1>",
+          "obj_missing"
+        ]
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object obj_missing on this board"
+        },
+        "id": "r16",
+        "ok": false
+      }
+    },
+    {
+      "step": "layout.stack",
+      "method": "layout.stack",
+      "request": {
+        "ids": [
+          "<obj:1>"
+        ],
+        "origin": {
+          "x": 1
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "origin needs x and y"
+        },
+        "id": "r17",
+        "ok": false
+      }
+    },
+    {
+      "step": "layout.translate",
+      "method": "layout.translate",
+      "request": {
+        "dx": -30,
+        "dy": 15.5,
+        "ids": [
+          "<obj:1>",
+          "<obj:2>"
+        ]
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "frames": {
+            "<obj:1>": {
+              "h": 100,
+              "w": 100,
+              "x": 70,
+              "y": 65.5
+            },
+            "<obj:2>": {
+              "h": 50,
+              "w": 200,
+              "x": 210,
+              "y": 115.5
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 70,
+              "y": 65.5
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 50,
+              "w": 200,
+              "x": 210,
+              "y": 115.5
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:5>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "layout.translate",
+      "method": "layout.translate",
+      "request": {
+        "dx": "far",
+        "dy": 0,
+        "ids": [
+          "<obj:1>"
+        ]
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "dx and dy are required numbers"
+        },
+        "id": "r19",
+        "ok": false
+      }
+    },
+    {
+      "step": "layout.grid",
+      "method": "layout.grid",
+      "request": {
+        "cells": [
+          {
+            "col": 0,
+            "id": "<obj:1>",
+            "row": 0
+          },
+          {
+            "col": 1,
+            "id": "<obj:2>",
+            "row": 0
+          },
+          {
+            "col": 0,
+            "id": "<obj:3>",
+            "row": 1
+          },
+          {
+            "col": 2,
+            "id": "<obj:4>",
+            "row": 1
+          }
+        ]
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {
+          "columns": [
+            {
+              "col": 0,
+              "w": 100,
+              "x": 70
+            },
+            {
+              "col": 1,
+              "w": 200,
+              "x": 210
+            },
+            {
+              "col": 2,
+              "w": 120,
+              "x": 450
+            }
+          ],
+          "frames": {
+            "<obj:1>": {
+              "h": 100,
+              "w": 100,
+              "x": 70,
+              "y": 65.5
+            },
+            "<obj:2>": {
+              "h": 50,
+              "w": 200,
+              "x": 210,
+              "y": 65.5
+            },
+            "<obj:3>": {
+              "h": 150,
+              "w": 50,
+              "x": 70,
+              "y": 205.5
+            },
+            "<obj:4>": {
+              "h": 80,
+              "w": 120,
+              "x": 450,
+              "y": 205.5
+            }
+          },
+          "rows": [
+            {
+              "h": 100,
+              "row": 0,
+              "y": 65.5
+            },
+            {
+              "h": 150,
+              "row": 1,
+              "y": 205.5
+            }
+          ]
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 50,
+              "w": 200,
+              "x": 210,
+              "y": 65.5
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:6>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 150,
+              "w": 50,
+              "x": 70,
+              "y": 205.5
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:8>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 80,
+              "w": 120,
+              "x": 450,
+              "y": 205.5
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "layout.grid",
+      "method": "layout.grid",
+      "request": {
+        "cells": [
+          {
+            "col": 0,
+            "id": "<obj:1>",
+            "row": 0
+          },
+          {
+            "col": 0,
+            "id": "<obj:2>",
+            "row": 1
+          },
+          {
+            "col": 1,
+            "id": "<obj:3>",
+            "row": 1
+          }
+        ],
+        "colAlign": "center",
+        "colGap": 5,
+        "origin": {
+          "x": -100,
+          "y": -100
+        },
+        "rowAlign": "end",
+        "rowGap": 7
+      },
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {
+          "columns": [
+            {
+              "col": 0,
+              "w": 200,
+              "x": -100
+            },
+            {
+              "col": 1,
+              "w": 50,
+              "x": 105
+            }
+          ],
+          "frames": {
+            "<obj:1>": {
+              "h": 100,
+              "w": 100,
+              "x": -50,
+              "y": -100
+            },
+            "<obj:2>": {
+              "h": 50,
+              "w": 200,
+              "x": -100,
+              "y": 107
+            },
+            "<obj:3>": {
+              "h": 150,
+              "w": 50,
+              "x": 105,
+              "y": 7
+            }
+          },
+          "rows": [
+            {
+              "h": 100,
+              "row": 0,
+              "y": -100
+            },
+            {
+              "h": 150,
+              "row": 1,
+              "y": 7
+            }
+          ]
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": -50,
+              "y": -100
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:4>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 50,
+              "w": 200,
+              "x": -100,
+              "y": 107
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:7>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 150,
+              "w": 50,
+              "x": 105,
+              "y": 7
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:9>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "layout.grid",
+      "method": "layout.grid",
+      "request": {
+        "cells": [
+          {
+            "id": "<obj:1>",
+            "row": 0
+          }
+        ]
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "each cell needs id, row, and col (integers)"
+        },
+        "id": "r22",
+        "ok": false
+      }
+    },
+    {
+      "step": "layout.grid",
+      "method": "layout.grid",
+      "request": {
+        "cells": []
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "cells must be a non-empty array of {id, row, col}"
+        },
+        "id": "r23",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.history",
+      "method": "board.history",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r24",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "cursor": "<cursor>",
+          "entries": [
+            {
+              "actor": "system",
+              "at": "<time:iso>",
+              "kind": "restart",
+              "rev": "<board:1>",
+              "seq": "<seq:1>",
+              "summary": "easl started (pid <pid>); board opened with 0 objects"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:1>",
+              "kind": "created",
+              "rev": "<board:2>",
+              "seq": "<seq:2>",
+              "summary": "created shape rect at (0, 0) 100×100",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:2>",
+              "kind": "created",
+              "rev": "<board:3>",
+              "seq": "<seq:3>",
+              "summary": "created shape rect at (0, 0) 200×50",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:3>",
+              "kind": "created",
+              "rev": "<board:4>",
+              "seq": "<seq:4>",
+              "summary": "created shape rect at (0, 0) 50×150",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:4>",
+              "kind": "created",
+              "rev": "<board:5>",
+              "seq": "<seq:5>",
+              "summary": "created shape rect at (1000, 1000) 120×80",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:2>",
+              "kind": "updated",
+              "rev": "<board:6>",
+              "seq": "<seq:6>",
+              "summary": "shape rect: moved (0, 0) → (140, 0)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:3>",
+              "kind": "updated",
+              "rev": "<board:7>",
+              "seq": "<seq:7>",
+              "summary": "shape rect: moved (0, 0) → (25, 110)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:3>",
+              "kind": "updated",
+              "rev": "<board:8>",
+              "seq": "<seq:8>",
+              "summary": "shape rect: moved (25, 110) → (-90, -50)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:3>",
+              "kind": "updated",
+              "rev": "<board:9>",
+              "seq": "<seq:9>",
+              "summary": "shape rect: moved (-90, -50) → (0, -190)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:3>",
+              "kind": "updated",
+              "rev": "<board:10>",
+              "seq": "<seq:10>",
+              "summary": "shape rect: moved (0, -190) → (380, 0)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:1>",
+              "kind": "updated",
+              "rev": "<board:11>",
+              "seq": "<seq:11>",
+              "summary": "shape rect: moved (0, 0) → (100, 50)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:2>",
+              "kind": "updated",
+              "rev": "<board:11>",
+              "seq": "<seq:12>",
+              "summary": "shape rect: moved (140, 0) → (50, 158)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:3>",
+              "kind": "updated",
+              "rev": "<board:11>",
+              "seq": "<seq:13>",
+              "summary": "shape rect: moved (380, 0) → (125, 216)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:2>",
+              "kind": "updated",
+              "rev": "<board:12>",
+              "seq": "<seq:14>",
+              "summary": "shape rect: moved (50, 158) → (240, 100)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:3>",
+              "kind": "updated",
+              "rev": "<board:12>",
+              "seq": "<seq:15>",
+              "summary": "shape rect: moved (125, 216) → (100, 190)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:4>",
+              "kind": "updated",
+              "rev": "<board:12>",
+              "seq": "<seq:16>",
+              "summary": "shape rect: moved (1000, 1000) → (190, 260)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:1>",
+              "kind": "updated",
+              "rev": "<board:13>",
+              "seq": "<seq:17>",
+              "summary": "shape rect: moved (100, 50) → (70, 66)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:2>",
+              "kind": "updated",
+              "rev": "<board:13>",
+              "seq": "<seq:18>",
+              "summary": "shape rect: moved (240, 100) → (210, 116)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:2>",
+              "kind": "updated",
+              "rev": "<board:14>",
+              "seq": "<seq:19>",
+              "summary": "shape rect: moved (210, 116) → (210, 66)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:3>",
+              "kind": "updated",
+              "rev": "<board:14>",
+              "seq": "<seq:20>",
+              "summary": "shape rect: moved (100, 190) → (70, 206)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:4>",
+              "kind": "updated",
+              "rev": "<board:14>",
+              "seq": "<seq:21>",
+              "summary": "shape rect: moved (190, 260) → (450, 206)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:1>",
+              "kind": "updated",
+              "rev": "<board:15>",
+              "seq": "<seq:22>",
+              "summary": "shape rect: moved (70, 66) → (-50, -100)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:2>",
+              "kind": "updated",
+              "rev": "<board:15>",
+              "seq": "<seq:23>",
+              "summary": "shape rect: moved (210, 66) → (-100, 107)",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:3>",
+              "kind": "updated",
+              "rev": "<board:15>",
+              "seq": "<seq:24>",
+              "summary": "shape rect: moved (70, 206) → (105, 7)",
+              "type": "shape"
+            }
+          ],
+          "restarted": false,
+          "truncated": false
+        }
+      }
+    }
+  ]
+}

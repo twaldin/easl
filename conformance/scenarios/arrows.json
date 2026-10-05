@@ -1,0 +1,264 @@
+{
+  "description": "Arrows bound to objects (straight and orthogonal), free point ends, labels; frames reported from the route; deleting an end detaches it to a point; graph relations.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 160,
+          "h": 100
+        }
+      },
+      "save": "a"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 400,
+          "y": 0,
+          "w": 160,
+          "h": 100
+        }
+      },
+      "save": "b"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 400,
+          "y": 300,
+          "w": 160,
+          "h": 100
+        }
+      },
+      "save": "c"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "arrow",
+        "props": {
+          "from": {
+            "object": "{{a.object.id}}"
+          },
+          "to": {
+            "object": "{{b.object.id}}"
+          },
+          "relation": "calls"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0
+        }
+      },
+      "save": "ab"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "arrow",
+        "props": {
+          "from": {
+            "object": "{{a.object.id}}"
+          },
+          "to": {
+            "object": "{{c.object.id}}"
+          },
+          "route": "orthogonal",
+          "label": "down"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0
+        }
+      },
+      "save": "ac"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "arrow",
+        "props": {
+          "from": {
+            "point": [
+              -200,
+              -200
+            ]
+          },
+          "to": {
+            "object": "{{a.object.id}}"
+          }
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0
+        }
+      },
+      "save": "pa"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "arrow",
+        "props": {
+          "from": {
+            "point": [
+              0,
+              600
+            ]
+          },
+          "to": {
+            "point": [
+              300,
+              700
+            ]
+          },
+          "color": "red"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0
+        }
+      },
+      "save": "free"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "arrow",
+        "props": {
+          "from": {
+            "object": "obj_missing"
+          },
+          "to": {
+            "object": "{{a.object.id}}"
+          }
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0
+        }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "arrow",
+        "props": {
+          "from": {
+            "object": "{{a.object.id}}"
+          }
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0
+        }
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{ab.object.id}}"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{a.object.id}}",
+        "as": "graph"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{ab.object.id}}",
+        "as": "graph"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{b.object.id}}",
+        "frame": {
+          "x": 600,
+          "y": 100
+        }
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{ab.object.id}}"
+      }
+    },
+    {
+      "call": "object.delete",
+      "params": {
+        "id": "{{c.object.id}}"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{ac.object.id}}"
+      }
+    },
+    {
+      "call": "layout.translate",
+      "params": {
+        "ids": [
+          "{{free.object.id}}"
+        ],
+        "dx": 10,
+        "dy": 10
+      }
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "{{board}}"
+      }
+    }
+  ],
+  "unordered": {
+    "response.result.graph.arrowsIn": "listed in the Swift board's dictionary order (unordered)",
+    "response.result.graph.arrowsOut": "listed in the Swift board's dictionary order (unordered)"
+  }
+}

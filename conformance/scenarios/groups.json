@@ -1,0 +1,239 @@
+{
+  "description": "Groups are regions fitted to their members plus padding and a title band: refit when members move, resize or go away, nested groups, a frame given for a group is ignored, translate moves members.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 160,
+          "h": 100
+        }
+      },
+      "save": "m1"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 300,
+          "y": 0,
+          "w": 160,
+          "h": 100
+        }
+      },
+      "save": "m2"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "ellipse"
+        },
+        "frame": {
+          "x": 0,
+          "y": 300,
+          "w": 160,
+          "h": 100
+        }
+      },
+      "save": "m3"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "group",
+        "props": {
+          "members": [
+            "{{m1.object.id}}",
+            "{{m2.object.id}}"
+          ],
+          "title": "Pair"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0
+        }
+      },
+      "save": "g"
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{m2.object.id}}",
+        "frame": {
+          "x": 500,
+          "y": 50
+        }
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{g.object.id}}"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{g.object.id}}",
+        "frame": {
+          "x": -1000,
+          "y": -1000,
+          "w": 5,
+          "h": 5
+        }
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{g.object.id}}",
+        "props": {
+          "padding": 8,
+          "color": "green"
+        }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "group",
+        "props": {
+          "members": [
+            "{{g.object.id}}",
+            "{{m3.object.id}}"
+          ],
+          "title": "Outer",
+          "padding": 40
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0
+        }
+      },
+      "save": "outer"
+    },
+    {
+      "call": "layout.translate",
+      "params": {
+        "ids": [
+          "{{g.object.id}}"
+        ],
+        "dx": 20,
+        "dy": 20
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{outer.object.id}}"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{g.object.id}}",
+        "as": "graph"
+      }
+    },
+    {
+      "call": "object.delete",
+      "params": {
+        "id": "{{m1.object.id}}"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{g.object.id}}"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{g.object.id}}",
+        "props": {
+          "members": [
+            "{{m2.object.id}}",
+            "{{m3.object.id}}"
+          ]
+        }
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{outer.object.id}}"
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "group",
+        "props": {
+          "members": [],
+          "title": "Empty"
+        },
+        "frame": {
+          "x": 0,
+          "y": 900,
+          "w": 100,
+          "h": 100
+        }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "group",
+        "props": {
+          "title": "No members"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0
+        }
+      }
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}"
+      }
+    }
+  ],
+  "unordered": {
+    "response.result.graph.arrowsIn": "listed in the Swift board's dictionary order (unordered)",
+    "response.result.graph.arrowsOut": "listed in the Swift board's dictionary order (unordered)"
+  }
+}

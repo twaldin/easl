@@ -1,0 +1,77 @@
+{
+  "description": "Framing and request validation: ping, malformed lines, missing method, unknown methods and params, pipelined requests answered in order.",
+  "steps": [
+    {
+      "call": "system.ping"
+    },
+    {
+      "raw": "this is not json"
+    },
+    {
+      "raw": "{\"id\":\"x1\",\"params\":{}}"
+    },
+    {
+      "raw": "{\"id\":\"x2\",\"method\":\"system.ping\"}"
+    },
+    {
+      "raw": "{\"id\":7,\"method\":\"system.ping\",\"params\":{}}"
+    },
+    {
+      "call": "no.such.method"
+    },
+    {
+      "call": "object.get",
+      "params": {}
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "obj_X",
+        "bogus": 1,
+        "other": 2
+      }
+    },
+    {
+      "call": "layout.translate",
+      "params": {
+        "ids": [
+          "obj_X"
+        ],
+        "delta": {
+          "x": 1
+        }
+      }
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "brd_doesnotexist"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "obj_doesnotexist"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "obj_doesnotexist",
+        "props": {}
+      }
+    },
+    {
+      "call": "object.delete",
+      "params": {
+        "id": "obj_doesnotexist"
+      }
+    },
+    {
+      "call": "system.ping",
+      "params": {
+        "unexpected": true
+      }
+    }
+  ]
+}

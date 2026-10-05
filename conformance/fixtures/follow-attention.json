@@ -1,0 +1,1193 @@
+{
+  "scenario": "follow-attention",
+  "description": "follow.report re-aims (creating) a terminal's follow tile, ignored with follow off and for files outside the root; view.attention raises, replaces, clears, and a new turn of the same caller clears its earlier markers.",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>",
+          "worktree": {
+            "branch": "main",
+            "main": true,
+            "path": "<root>"
+          }
+        }
+      },
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "worktree": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "id": "<obj:1>",
+            "props": {
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "worktree": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 49600,
+          "y": 50000
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 49600,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 49600,
+          "y": 50200
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 49600,
+              "y": 50200
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "follow.report",
+      "method": "follow.report",
+      "request": {
+        "action": "read",
+        "path": "src/app.ts",
+        "range": {
+          "end": 7,
+          "start": 5
+        },
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "id": "<obj:4>",
+            "props": {
+              "diffBase": "merge-base",
+              "followOf": "<obj:1>",
+              "history": [
+                {
+                  "action": "read",
+                  "path": "src/app.ts",
+                  "range": {
+                    "end": 7,
+                    "start": 5
+                  }
+                }
+              ],
+              "lastAction": "read",
+              "path": "src/app.ts",
+              "range": {
+                "end": 7,
+                "start": 5
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "code",
+            "updatedAt": "<time:number>",
+            "z": 4
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "follow": "<obj:4>",
+            "tile": "<obj:1>"
+          },
+          "event": "follow.updated"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "id": "<obj:1>",
+              "props": {
+                "branch": "main",
+                "command": [
+                  "/bin/cat"
+                ],
+                "cwd": "<root>",
+                "worktree": "<root>"
+              },
+              "rev": "<rev:1>",
+              "type": "terminal",
+              "updatedAt": "<time:number>",
+              "z": 1
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "id": "<obj:2>",
+              "props": {
+                "kind": "rect"
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "z": 2
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "id": "<obj:3>",
+              "props": {
+                "kind": "rect"
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "z": 3
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "agent",
+                "tile": "<obj:1>"
+              },
+              "id": "<obj:4>",
+              "props": {
+                "diffBase": "merge-base",
+                "followOf": "<obj:1>",
+                "history": "(1 locations, use object.get)",
+                "lastAction": "read",
+                "path": "src/app.ts",
+                "range": {
+                  "end": 7,
+                  "start": 5
+                }
+              },
+              "rev": "<rev:1>",
+              "type": "code",
+              "updatedAt": "<time:number>",
+              "z": 4
+            }
+          ],
+          "revision": "<board:1>",
+          "root": "<root>"
+        }
+      },
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)",
+        "response.result.objects.*.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "follow.report",
+      "method": "follow.report",
+      "request": {
+        "action": "edit",
+        "changes": [
+          {
+            "end": 3,
+            "start": 3
+          }
+        ],
+        "path": "<root>/README.md",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "id": "<obj:4>",
+            "props": {
+              "diffBase": "merge-base",
+              "followOf": "<obj:1>",
+              "history": [
+                {
+                  "action": "edit",
+                  "path": "README.md",
+                  "range": {
+                    "end": 3,
+                    "start": 3
+                  }
+                },
+                {
+                  "action": "read",
+                  "path": "src/app.ts",
+                  "range": {
+                    "end": 7,
+                    "start": 5
+                  }
+                }
+              ],
+              "lastAction": "edit",
+              "lastChanges": [
+                {
+                  "end": 3,
+                  "start": 3
+                }
+              ],
+              "path": "README.md",
+              "range": {
+                "end": 3,
+                "start": 3
+              }
+            },
+            "rev": "<rev:2>",
+            "type": "code",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "follow": "<obj:4>",
+            "tile": "<obj:1>"
+          },
+          "event": "follow.updated"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "follow.report",
+      "method": "follow.report",
+      "request": {
+        "action": "read",
+        "path": "/etc/hosts",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "follow.report",
+      "method": "follow.report",
+      "request": {
+        "action": "jump",
+        "path": "src/app.ts",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "id": "<obj:4>",
+            "props": {
+              "diffBase": "merge-base",
+              "followOf": "<obj:1>",
+              "history": [
+                {
+                  "action": "jump",
+                  "path": "src/app.ts"
+                },
+                {
+                  "action": "edit",
+                  "path": "README.md",
+                  "range": {
+                    "end": 3,
+                    "start": 3
+                  }
+                },
+                {
+                  "action": "read",
+                  "path": "src/app.ts",
+                  "range": {
+                    "end": 7,
+                    "start": 5
+                  }
+                }
+              ],
+              "lastAction": "jump",
+              "path": "src/app.ts"
+            },
+            "rev": "<rev:3>",
+            "type": "code",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "follow": "<obj:4>",
+            "tile": "<obj:1>"
+          },
+          "event": "follow.updated"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "follow": false
+        }
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "follow": false,
+              "worktree": "<root>"
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "id": "<obj:1>",
+            "props": {
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "follow": false,
+              "worktree": "<root>"
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "follow.report",
+      "method": "follow.report",
+      "request": {
+        "action": "read",
+        "path": "src/app.ts",
+        "range": {
+          "end": 1,
+          "start": 1
+        },
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "board.history",
+      "method": "board.history",
+      "request": {
+        "board": "<board>",
+        "kinds": [
+          "follow"
+        ]
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "cursor": "<cursor>",
+          "entries": [
+            {
+              "actor": "agent:<obj:1>",
+              "at": "<time:iso>",
+              "id": "<obj:4>",
+              "kind": "follow",
+              "rev": "<board:1>",
+              "seq": "<seq:1>",
+              "summary": "follow tile created at src/app.ts:5-7 (read)",
+              "type": "code"
+            },
+            {
+              "actor": "agent:<obj:1>",
+              "at": "<time:iso>",
+              "id": "<obj:4>",
+              "kind": "follow",
+              "rev": "<board:2>",
+              "seq": "<seq:2>",
+              "summary": "follow tile re-aimed at README.md:3-3 (edit)",
+              "type": "code"
+            },
+            {
+              "actor": "agent:<obj:1>",
+              "at": "<time:iso>",
+              "id": "<obj:4>",
+              "kind": "follow",
+              "rev": "<board:3>",
+              "seq": "<seq:3>",
+              "summary": "follow tile re-aimed at src/app.ts (jump)",
+              "type": "code"
+            }
+          ],
+          "restarted": false,
+          "truncated": false
+        }
+      },
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "omp",
+        "seq": 1,
+        "state": "working",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "follow": false,
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "worktree": "<root>"
+            },
+            "rev": "<rev:3>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "view.attention",
+      "method": "view.attention",
+      "request": {
+        "caller": "<obj:1>",
+        "id": "<obj:2>",
+        "message": "look here"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "active": true,
+          "id": "<obj:2>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": true,
+            "id": "<obj:2>",
+            "message": "look here",
+            "raisedBy": "<obj:1>"
+          },
+          "event": "attention.changed"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "view.attention",
+      "method": "view.attention",
+      "request": {
+        "caller": "<obj:1>",
+        "id": "<obj:2>",
+        "message": "look here instead"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "active": true,
+          "id": "<obj:2>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": true,
+            "id": "<obj:2>",
+            "message": "look here instead",
+            "raisedBy": "<obj:1>"
+          },
+          "event": "attention.changed"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "view.attention",
+      "method": "view.attention",
+      "request": {
+        "caller": "<obj:1>",
+        "id": "<obj:3>"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "active": true,
+          "id": "<obj:3>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": true,
+            "id": "<obj:3>",
+            "raisedBy": "<obj:1>"
+          },
+          "event": "attention.changed"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "omp",
+        "seq": 2,
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "follow": false,
+              "lifecycle": {
+                "seen": false,
+                "state": "done"
+              },
+              "worktree": "<root>"
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "done"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "omp",
+        "seq": 3,
+        "state": "working",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "follow": false,
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "worktree": "<root>"
+            },
+            "rev": "<rev:5>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "view.attention",
+      "method": "view.attention",
+      "request": {
+        "caller": "<obj:1>",
+        "id": "<obj:3>",
+        "message": "new turn"
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "active": true,
+          "cleared": [
+            "<obj:2>"
+          ],
+          "id": "<obj:3>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": false,
+            "id": "<obj:2>"
+          },
+          "event": "attention.changed"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "active": true,
+            "id": "<obj:3>",
+            "message": "new turn",
+            "raisedBy": "<obj:1>"
+          },
+          "event": "attention.changed"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "view.attention",
+      "method": "view.attention",
+      "request": {
+        "clear": true,
+        "id": "<obj:3>"
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {
+          "active": false,
+          "id": "<obj:3>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": false,
+            "id": "<obj:3>"
+          },
+          "event": "attention.changed"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "view.attention",
+      "method": "view.attention",
+      "request": {
+        "id": "obj_missing"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object obj_missing"
+        },
+        "id": "r21",
+        "ok": false
+      },
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "view.attention",
+      "method": "view.attention",
+      "request": {
+        "id": "<obj:2>",
+        "message": "from the user"
+      },
+      "response": {
+        "id": "r22",
+        "ok": true,
+        "result": {
+          "active": true,
+          "id": "<obj:2>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": true,
+            "id": "<obj:2>",
+            "message": "from the user"
+          },
+          "event": "attention.changed"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r23",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:2>"
+          },
+          "event": "object.deleted"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "active": false,
+            "id": "<obj:2>"
+          },
+          "event": "attention.changed"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    }
+  ]
+}

@@ -1,0 +1,1439 @@
+{
+  "scenario": "arrows",
+  "description": "Arrows bound to objects (straight and orthogonal), free point ends, labels; frames reported from the route; deleting an end detaches it to a point; graph relations.",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 400,
+          "y": 0
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 400,
+          "y": 300
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 300
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 300
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "from": {
+            "object": "<obj:1>"
+          },
+          "relation": "calls",
+          "to": {
+            "object": "<obj:2>"
+          }
+        },
+        "type": "arrow"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 228,
+              "x": 166,
+              "y": 50
+            },
+            "id": "<obj:4>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              },
+              "relation": "calls",
+              "to": {
+                "object": "<obj:2>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              },
+              "relation": "calls",
+              "to": {
+                "object": "<obj:2>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 4
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "from": {
+            "object": "<obj:1>"
+          },
+          "label": "down",
+          "route": "orthogonal",
+          "to": {
+            "object": "<obj:3>"
+          }
+        },
+        "type": "arrow"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 300,
+              "w": 228,
+              "x": 166,
+              "y": 50
+            },
+            "id": "<obj:5>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              },
+              "label": "down",
+              "route": "orthogonal",
+              "to": {
+                "object": "<obj:3>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 5
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:5>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              },
+              "label": "down",
+              "route": "orthogonal",
+              "to": {
+                "object": "<obj:3>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 5
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "from": {
+            "point": [
+              -200,
+              -200
+            ]
+          },
+          "to": {
+            "object": "<obj:1>"
+          }
+        },
+        "type": "arrow"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 196.0039053841465,
+              "w": 219.52437403023941,
+              "x": -200,
+              "y": -200
+            },
+            "id": "<obj:6>",
+            "props": {
+              "from": {
+                "point": [
+                  -200,
+                  -200
+                ]
+              },
+              "to": {
+                "object": "<obj:1>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 6
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:6>",
+            "props": {
+              "from": {
+                "point": [
+                  -200,
+                  -200
+                ]
+              },
+              "to": {
+                "object": "<obj:1>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 6
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "color": "red",
+          "from": {
+            "point": [
+              0,
+              600
+            ]
+          },
+          "to": {
+            "point": [
+              300,
+              700
+            ]
+          }
+        },
+        "type": "arrow"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 300,
+              "x": 0,
+              "y": 600
+            },
+            "id": "<obj:7>",
+            "props": {
+              "color": "red",
+              "from": {
+                "point": [
+                  0,
+                  600
+                ]
+              },
+              "to": {
+                "point": [
+                  300,
+                  700
+                ]
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 7
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:7>",
+            "props": {
+              "color": "red",
+              "from": {
+                "point": [
+                  0,
+                  600
+                ]
+              },
+              "to": {
+                "point": [
+                  300,
+                  700
+                ]
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 7
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "from": {
+            "object": "obj_missing"
+          },
+          "to": {
+            "object": "<obj:1>"
+          }
+        },
+        "type": "arrow"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:8>",
+            "props": {
+              "from": {
+                "object": "obj_missing"
+              },
+              "to": {
+                "object": "<obj:1>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 8
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:8>",
+            "props": {
+              "from": {
+                "object": "obj_missing"
+              },
+              "to": {
+                "object": "<obj:1>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 8
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "from": {
+            "object": "<obj:1>"
+          }
+        },
+        "type": "arrow"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:9>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 9
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:9>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 9
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 228,
+              "x": 166,
+              "y": 50
+            },
+            "id": "<obj:4>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              },
+              "relation": "calls",
+              "to": {
+                "object": "<obj:2>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "as": "graph",
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "graph": {
+            "arrows": [],
+            "arrowsIn": [
+              {
+                "arrow": "<obj:8>",
+                "from": "obj_missing",
+                "relation": null
+              }
+            ],
+            "arrowsOut": [
+              {
+                "arrow": "<obj:4>",
+                "relation": "calls",
+                "to": "<obj:2>"
+              },
+              {
+                "arrow": "<obj:5>",
+                "relation": null,
+                "to": "<obj:3>"
+              }
+            ],
+            "enclosedBy": [],
+            "encloses": [],
+            "overlaps": []
+          },
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "as": "graph",
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "graph": {
+            "arrows": [],
+            "arrowsIn": [],
+            "arrowsOut": [],
+            "enclosedBy": [
+              "<obj:1>"
+            ],
+            "encloses": [],
+            "from": {
+              "object": "<obj:1>"
+            },
+            "overlaps": [],
+            "to": {
+              "object": "<obj:2>"
+            }
+          },
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 228,
+              "x": 166,
+              "y": 50
+            },
+            "id": "<obj:4>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              },
+              "relation": "calls",
+              "to": {
+                "object": "<obj:2>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "x": 600,
+          "y": 100
+        },
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 600,
+              "y": 100
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 600,
+              "y": 100
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 428,
+              "x": 166,
+              "y": 100
+            },
+            "id": "<obj:4>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              },
+              "relation": "calls",
+              "to": {
+                "object": "<obj:2>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      }
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:3>"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:5>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              },
+              "label": "down",
+              "route": "orthogonal",
+              "to": {
+                "point": [
+                  394,
+                  350
+                ]
+              }
+            },
+            "rev": "<rev:2>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:3>"
+          },
+          "event": "object.deleted"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:5>"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 244,
+              "w": 314,
+              "x": 80,
+              "y": 106
+            },
+            "id": "<obj:5>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              },
+              "label": "down",
+              "route": "orthogonal",
+              "to": {
+                "point": [
+                  394,
+                  350
+                ]
+              }
+            },
+            "rev": "<rev:2>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          }
+        }
+      }
+    },
+    {
+      "step": "layout.translate",
+      "method": "layout.translate",
+      "request": {
+        "dx": 10,
+        "dy": 10,
+        "ids": [
+          "<obj:7>"
+        ]
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "frames": {
+            "<obj:7>": {
+              "h": 0,
+              "w": 0,
+              "x": 10,
+              "y": 10
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 10,
+              "y": 10
+            },
+            "id": "<obj:7>",
+            "props": {
+              "color": "red",
+              "from": {
+                "point": [
+                  10,
+                  610
+                ]
+              },
+              "to": {
+                "point": [
+                  310,
+                  710
+                ]
+              }
+            },
+            "rev": "<rev:2>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 7
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:1>",
+              "props": {
+                "kind": "rect"
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "z": 1
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 600,
+                "y": 100
+              },
+              "id": "<obj:2>",
+              "props": {
+                "kind": "rect"
+              },
+              "rev": "<rev:2>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 2
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 0,
+                "w": 428,
+                "x": 166,
+                "y": 100
+              },
+              "id": "<obj:4>",
+              "props": {
+                "from": {
+                  "object": "<obj:1>"
+                },
+                "relation": "calls",
+                "to": {
+                  "object": "<obj:2>"
+                }
+              },
+              "rev": "<rev:1>",
+              "type": "arrow",
+              "updatedAt": "<time:number>",
+              "z": 4
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 244,
+                "w": 314,
+                "x": 80,
+                "y": 106
+              },
+              "id": "<obj:5>",
+              "props": {
+                "from": {
+                  "object": "<obj:1>"
+                },
+                "label": "down",
+                "route": "orthogonal",
+                "to": {
+                  "point": [
+                    394,
+                    350
+                  ]
+                }
+              },
+              "rev": "<rev:2>",
+              "type": "arrow",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 5
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 196.0039053841465,
+                "w": 219.52437403023941,
+                "x": -200,
+                "y": -200
+              },
+              "id": "<obj:6>",
+              "props": {
+                "from": {
+                  "point": [
+                    -200,
+                    -200
+                  ]
+                },
+                "to": {
+                  "object": "<obj:1>"
+                }
+              },
+              "rev": "<rev:1>",
+              "type": "arrow",
+              "updatedAt": "<time:number>",
+              "z": 6
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 300,
+                "x": 10,
+                "y": 610
+              },
+              "id": "<obj:7>",
+              "props": {
+                "color": "red",
+                "from": {
+                  "point": [
+                    10,
+                    610
+                  ]
+                },
+                "to": {
+                  "point": [
+                    310,
+                    710
+                  ]
+                }
+              },
+              "rev": "<rev:2>",
+              "type": "arrow",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 7
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 0,
+                "w": 0,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:8>",
+              "props": {
+                "from": {
+                  "object": "obj_missing"
+                },
+                "to": {
+                  "object": "<obj:1>"
+                }
+              },
+              "rev": "<rev:1>",
+              "type": "arrow",
+              "updatedAt": "<time:number>",
+              "z": 8
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 0,
+                "w": 0,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:9>",
+              "props": {
+                "from": {
+                  "object": "<obj:1>"
+                }
+              },
+              "rev": "<rev:1>",
+              "type": "arrow",
+              "updatedAt": "<time:number>",
+              "z": 9
+            }
+          ],
+          "revision": "<board:1>",
+          "root": "<root>"
+        }
+      }
+    }
+  ]
+}

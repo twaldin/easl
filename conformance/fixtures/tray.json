@@ -1,0 +1,1480 @@
+{
+  "scenario": "tray",
+  "description": "The selection tray: stage object, code, group and note mentions, list, unstage, a peek drain then commit, a plain drain, edits mark mentions edited, deleting an object removes its mentions; tray.changed events.",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>",
+          "worktree": {
+            "branch": "main",
+            "main": true,
+            "path": "<root>"
+          }
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 300,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 300,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 300,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 400,
+          "y": 0
+        },
+        "props": {
+          "kind": "rect",
+          "text": "box"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect",
+              "text": "box"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect",
+              "text": "box"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 300,
+          "w": 640,
+          "x": 0,
+          "y": 400
+        },
+        "props": {
+          "path": "src/app.ts",
+          "range": {
+            "end": 7,
+            "start": 5
+          }
+        },
+        "type": "code"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 300,
+              "w": 640,
+              "x": 0,
+              "y": 400
+            },
+            "id": "<obj:3>",
+            "props": {
+              "path": "src/app.ts",
+              "range": {
+                "end": 7,
+                "start": 5
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "code",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 300,
+              "w": 640,
+              "x": 0,
+              "y": 400
+            },
+            "id": "<obj:3>",
+            "props": {
+              "path": "src/app.ts",
+              "range": {
+                "end": 7,
+                "start": 5
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "code",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 300,
+              "w": 640,
+              "x": 0,
+              "y": 400
+            },
+            "id": "<obj:3>",
+            "props": {
+              "anchor": "export function add(a: number, b: number): number {",
+              "path": "src/app.ts",
+              "range": {
+                "end": 7,
+                "start": 5
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "code",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "tray.list",
+      "method": "tray.list",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "mentions": []
+        }
+      }
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "kind": "object",
+          "object": "<obj:2>"
+        }
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "mention": {
+            "edited": false,
+            "id": "<men:1>",
+            "label": "shape box",
+            "stagedAt": "<time:number>",
+            "target": {
+              "kind": "object",
+              "object": "<obj:2>"
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": false,
+                "id": "<men:1>",
+                "label": "shape box",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "object",
+                  "object": "<obj:2>"
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "kind": "code",
+          "lines": {
+            "end": 7,
+            "start": 5
+          },
+          "object": "<obj:3>",
+          "path": "src/app.ts",
+          "symbol": "add"
+        }
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "mention": {
+            "edited": false,
+            "id": "<men:2>",
+            "label": "src/app.ts:5-7 add",
+            "stagedAt": "<time:number>",
+            "target": {
+              "kind": "code",
+              "lines": {
+                "end": 7,
+                "start": 5
+              },
+              "object": "<obj:3>",
+              "path": "src/app.ts",
+              "symbol": "add"
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": false,
+                "id": "<men:1>",
+                "label": "shape box",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "object",
+                  "object": "<obj:2>"
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:2>",
+                "label": "src/app.ts:5-7 add",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "code",
+                  "lines": {
+                    "end": 7,
+                    "start": 5
+                  },
+                  "object": "<obj:3>",
+                  "path": "src/app.ts",
+                  "symbol": "add"
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "kind": "group",
+          "name": "these two",
+          "objects": [
+            "<obj:1>",
+            "<obj:2>"
+          ]
+        }
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "mention": {
+            "edited": false,
+            "id": "<men:3>",
+            "label": "these two",
+            "stagedAt": "<time:number>",
+            "target": {
+              "kind": "group",
+              "name": "these two",
+              "objects": [
+                "<obj:1>",
+                "<obj:2>"
+              ]
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": false,
+                "id": "<men:1>",
+                "label": "shape box",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "object",
+                  "object": "<obj:2>"
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:2>",
+                "label": "src/app.ts:5-7 add",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "code",
+                  "lines": {
+                    "end": 7,
+                    "start": 5
+                  },
+                  "object": "<obj:3>",
+                  "path": "src/app.ts",
+                  "symbol": "add"
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:3>",
+                "label": "these two",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "group",
+                  "name": "these two",
+                  "objects": [
+                    "<obj:1>",
+                    "<obj:2>"
+                  ]
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "block": "paragraph",
+          "headings": [
+            "Plan"
+          ],
+          "kind": "note",
+          "lines": {
+            "end": 3,
+            "start": 3
+          },
+          "object": "<obj:1>",
+          "text": "Ship the parser."
+        }
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "mention": {
+            "edited": false,
+            "id": "<men:4>",
+            "label": "note Plan › Ship the parser.",
+            "stagedAt": "<time:number>",
+            "target": {
+              "block": "paragraph",
+              "headings": [
+                "Plan"
+              ],
+              "kind": "note",
+              "lines": {
+                "end": 3,
+                "start": 3
+              },
+              "object": "<obj:1>",
+              "text": "Ship the parser."
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": false,
+                "id": "<men:1>",
+                "label": "shape box",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "object",
+                  "object": "<obj:2>"
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:2>",
+                "label": "src/app.ts:5-7 add",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "code",
+                  "lines": {
+                    "end": 7,
+                    "start": 5
+                  },
+                  "object": "<obj:3>",
+                  "path": "src/app.ts",
+                  "symbol": "add"
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:3>",
+                "label": "these two",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "group",
+                  "name": "these two",
+                  "objects": [
+                    "<obj:1>",
+                    "<obj:2>"
+                  ]
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:4>",
+                "label": "note Plan › Ship the parser.",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "block": "paragraph",
+                  "headings": [
+                    "Plan"
+                  ],
+                  "kind": "note",
+                  "lines": {
+                    "end": 3,
+                    "start": 3
+                  },
+                  "object": "<obj:1>",
+                  "text": "Ship the parser."
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "kind": "object",
+          "object": "obj_missing"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object obj_missing"
+        },
+        "id": "r10",
+        "ok": false
+      }
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "kind": "sparkle",
+          "object": "<obj:2>"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r11",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Swift's JSONDecoder error text (DecodingError description); the code is what matters"
+      }
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "missing target; tray.stage takes target (required), board"
+        },
+        "id": "r12",
+        "ok": false
+      }
+    },
+    {
+      "step": "tray.list",
+      "method": "tray.list",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "mentions": [
+            {
+              "edited": false,
+              "id": "<men:1>",
+              "label": "shape box",
+              "stagedAt": "<time:number>",
+              "target": {
+                "kind": "object",
+                "object": "<obj:2>"
+              }
+            },
+            {
+              "edited": false,
+              "id": "<men:2>",
+              "label": "src/app.ts:5-7 add",
+              "stagedAt": "<time:number>",
+              "target": {
+                "kind": "code",
+                "lines": {
+                  "end": 7,
+                  "start": 5
+                },
+                "object": "<obj:3>",
+                "path": "src/app.ts",
+                "symbol": "add"
+              }
+            },
+            {
+              "edited": false,
+              "id": "<men:3>",
+              "label": "these two",
+              "stagedAt": "<time:number>",
+              "target": {
+                "kind": "group",
+                "name": "these two",
+                "objects": [
+                  "<obj:1>",
+                  "<obj:2>"
+                ]
+              }
+            },
+            {
+              "edited": false,
+              "id": "<men:4>",
+              "label": "note Plan › Ship the parser.",
+              "stagedAt": "<time:number>",
+              "target": {
+                "block": "paragraph",
+                "headings": [
+                  "Plan"
+                ],
+                "kind": "note",
+                "lines": {
+                  "end": 3,
+                  "start": 3
+                },
+                "object": "<obj:1>",
+                "text": "Ship the parser."
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "props": {
+          "color": "red"
+        }
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "color": "red",
+              "kind": "rect",
+              "text": "box"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": true,
+                "id": "<men:1>",
+                "label": "shape box",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "object",
+                  "object": "<obj:2>"
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:2>",
+                "label": "src/app.ts:5-7 add",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "code",
+                  "lines": {
+                    "end": 7,
+                    "start": 5
+                  },
+                  "object": "<obj:3>",
+                  "path": "src/app.ts",
+                  "symbol": "add"
+                }
+              },
+              {
+                "edited": true,
+                "id": "<men:3>",
+                "label": "these two",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "group",
+                  "name": "these two",
+                  "objects": [
+                    "<obj:1>",
+                    "<obj:2>"
+                  ]
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:4>",
+                "label": "note Plan › Ship the parser.",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "block": "paragraph",
+                  "headings": [
+                    "Plan"
+                  ],
+                  "kind": "note",
+                  "lines": {
+                    "end": 3,
+                    "start": 3
+                  },
+                  "object": "<obj:1>",
+                  "text": "Ship the parser."
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "color": "red",
+              "kind": "rect",
+              "text": "box"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "x": 5
+        },
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 300,
+              "x": 5,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 300,
+              "x": 5,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "tray.list",
+      "method": "tray.list",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "mentions": [
+            {
+              "edited": true,
+              "id": "<men:1>",
+              "label": "shape box",
+              "stagedAt": "<time:number>",
+              "target": {
+                "kind": "object",
+                "object": "<obj:2>"
+              }
+            },
+            {
+              "edited": false,
+              "id": "<men:2>",
+              "label": "src/app.ts:5-7 add",
+              "stagedAt": "<time:number>",
+              "target": {
+                "kind": "code",
+                "lines": {
+                  "end": 7,
+                  "start": 5
+                },
+                "object": "<obj:3>",
+                "path": "src/app.ts",
+                "symbol": "add"
+              }
+            },
+            {
+              "edited": true,
+              "id": "<men:3>",
+              "label": "these two",
+              "stagedAt": "<time:number>",
+              "target": {
+                "kind": "group",
+                "name": "these two",
+                "objects": [
+                  "<obj:1>",
+                  "<obj:2>"
+                ]
+              }
+            },
+            {
+              "edited": false,
+              "id": "<men:4>",
+              "label": "note Plan › Ship the parser.",
+              "stagedAt": "<time:number>",
+              "target": {
+                "block": "paragraph",
+                "headings": [
+                  "Plan"
+                ],
+                "kind": "note",
+                "lines": {
+                  "end": 3,
+                  "start": 3
+                },
+                "object": "<obj:1>",
+                "text": "Ship the parser."
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "tray.unstage",
+      "method": "tray.unstage",
+      "request": {
+        "id": "<men:3>"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": true,
+                "id": "<men:1>",
+                "label": "shape box",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "object",
+                  "object": "<obj:2>"
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:2>",
+                "label": "src/app.ts:5-7 add",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "code",
+                  "lines": {
+                    "end": 7,
+                    "start": 5
+                  },
+                  "object": "<obj:3>",
+                  "path": "src/app.ts",
+                  "symbol": "add"
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:4>",
+                "label": "note Plan › Ship the parser.",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "block": "paragraph",
+                  "headings": [
+                    "Plan"
+                  ],
+                  "kind": "note",
+                  "lines": {
+                    "end": 3,
+                    "start": 3
+                  },
+                  "object": "<obj:1>",
+                  "text": "Ship the parser."
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "tray.unstage",
+      "method": "tray.unstage",
+      "request": {
+        "id": "men_missing"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "mention men_missing"
+        },
+        "id": "r18",
+        "ok": false
+      }
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>",
+        "peek": true
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "context": "<canvas-mentions board=\"<board>\" root=\"<root>\">\n[1] shape <obj:2> \"box\" (drawn by user) (edited)\n[2] code src/app.ts:5-7 (symbol add) · tile <obj:3>\n    2      return `hello ${name}`;\n    3    }\n    4    \n  > 5    export function add(a: number, b: number): number {\n  > 6      return a + b;\n  > 7    }\n    8    \n    9    export const answer = 42;\n[3] note <obj:1> \"Plan\" · paragraph, markdown line 3 · in Plan\n    Ship the parser.\nRead more with the easl SDK or CLI: easl get <id> --as graph; look with easl render <id>\n</canvas-mentions>",
+          "mentions": [
+            {
+              "id": "<men:1>",
+              "label": "shape box",
+              "ref": "canvas:<men:1>@rev2",
+              "summary": "[1] shape <obj:2> \"box\" (drawn by user) (edited)"
+            },
+            {
+              "id": "<men:2>",
+              "label": "src/app.ts:5-7 add",
+              "ref": "canvas:<men:2>@rev1",
+              "summary": "[2] code src/app.ts:5-7 (symbol add) · tile <obj:3>\n    2      return `hello ${name}`;\n    3    }\n    4    \n  > 5    export function add(a: number, b: number): number {\n  > 6      return a + b;\n  > 7    }\n    8    \n    9    export const answer = 42;"
+            },
+            {
+              "id": "<men:4>",
+              "label": "note Plan › Ship the parser.",
+              "ref": "canvas:<men:4>@rev2",
+              "summary": "[3] note <obj:1> \"Plan\" · paragraph, markdown line 3 · in Plan\n    Ship the parser."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "tray.list",
+      "method": "tray.list",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {
+          "mentions": [
+            {
+              "edited": true,
+              "id": "<men:1>",
+              "label": "shape box",
+              "stagedAt": "<time:number>",
+              "target": {
+                "kind": "object",
+                "object": "<obj:2>"
+              }
+            },
+            {
+              "edited": false,
+              "id": "<men:2>",
+              "label": "src/app.ts:5-7 add",
+              "stagedAt": "<time:number>",
+              "target": {
+                "kind": "code",
+                "lines": {
+                  "end": 7,
+                  "start": 5
+                },
+                "object": "<obj:3>",
+                "path": "src/app.ts",
+                "symbol": "add"
+              }
+            },
+            {
+              "edited": false,
+              "id": "<men:4>",
+              "label": "note Plan › Ship the parser.",
+              "stagedAt": "<time:number>",
+              "target": {
+                "block": "paragraph",
+                "headings": [
+                  "Plan"
+                ],
+                "kind": "note",
+                "lines": {
+                  "end": 3,
+                  "start": 3
+                },
+                "object": "<obj:1>",
+                "text": "Ship the parser."
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "tray.commit",
+      "method": "tray.commit",
+      "request": {
+        "board": "<board>",
+        "ids": [
+          "<men:1>",
+          "men_unknown"
+        ]
+      },
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": false,
+                "id": "<men:2>",
+                "label": "src/app.ts:5-7 add",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "code",
+                  "lines": {
+                    "end": 7,
+                    "start": 5
+                  },
+                  "object": "<obj:3>",
+                  "path": "src/app.ts",
+                  "symbol": "add"
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:4>",
+                "label": "note Plan › Ship the parser.",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "block": "paragraph",
+                  "headings": [
+                    "Plan"
+                  ],
+                  "kind": "note",
+                  "lines": {
+                    "end": 3,
+                    "start": 3
+                  },
+                  "object": "<obj:1>",
+                  "text": "Ship the parser."
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "tray.list",
+      "method": "tray.list",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r22",
+        "ok": true,
+        "result": {
+          "mentions": [
+            {
+              "edited": false,
+              "id": "<men:2>",
+              "label": "src/app.ts:5-7 add",
+              "stagedAt": "<time:number>",
+              "target": {
+                "kind": "code",
+                "lines": {
+                  "end": 7,
+                  "start": 5
+                },
+                "object": "<obj:3>",
+                "path": "src/app.ts",
+                "symbol": "add"
+              }
+            },
+            {
+              "edited": false,
+              "id": "<men:4>",
+              "label": "note Plan › Ship the parser.",
+              "stagedAt": "<time:number>",
+              "target": {
+                "block": "paragraph",
+                "headings": [
+                  "Plan"
+                ],
+                "kind": "note",
+                "lines": {
+                  "end": 3,
+                  "start": 3
+                },
+                "object": "<obj:1>",
+                "text": "Ship the parser."
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r23",
+        "ok": true,
+        "result": {
+          "context": "<canvas-mentions board=\"<board>\" root=\"<root>\">\n[1] code src/app.ts:5-7 (symbol add) · tile <obj:3>\n    2      return `hello ${name}`;\n    3    }\n    4    \n  > 5    export function add(a: number, b: number): number {\n  > 6      return a + b;\n  > 7    }\n    8    \n    9    export const answer = 42;\n[2] note <obj:1> \"Plan\" · paragraph, markdown line 3 · in Plan\n    Ship the parser.\nRead more with the easl SDK or CLI: easl get <id> --as graph; look with easl render <id>\n</canvas-mentions>",
+          "mentions": [
+            {
+              "id": "<men:2>",
+              "label": "src/app.ts:5-7 add",
+              "ref": "canvas:<men:2>@rev1",
+              "summary": "[1] code src/app.ts:5-7 (symbol add) · tile <obj:3>\n    2      return `hello ${name}`;\n    3    }\n    4    \n  > 5    export function add(a: number, b: number): number {\n  > 6      return a + b;\n  > 7    }\n    8    \n    9    export const answer = 42;"
+            },
+            {
+              "id": "<men:4>",
+              "label": "note Plan › Ship the parser.",
+              "ref": "canvas:<men:4>@rev2",
+              "summary": "[2] note <obj:1> \"Plan\" · paragraph, markdown line 3 · in Plan\n    Ship the parser."
+            }
+          ]
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": []
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "tray.list",
+      "method": "tray.list",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r24",
+        "ok": true,
+        "result": {
+          "mentions": []
+        }
+      }
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r25",
+        "ok": true,
+        "result": {
+          "context": "",
+          "mentions": []
+        }
+      }
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "kind": "object",
+          "object": "<obj:2>"
+        }
+      },
+      "response": {
+        "id": "r26",
+        "ok": true,
+        "result": {
+          "mention": {
+            "edited": false,
+            "id": "<men:5>",
+            "label": "shape box",
+            "stagedAt": "<time:number>",
+            "target": {
+              "kind": "object",
+              "object": "<obj:2>"
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": false,
+                "id": "<men:5>",
+                "label": "shape box",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "object",
+                  "object": "<obj:2>"
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r27",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:2>"
+          },
+          "event": "object.deleted"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": []
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "tray.list",
+      "method": "tray.list",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r28",
+        "ok": true,
+        "result": {
+          "mentions": []
+        }
+      }
+    }
+  ]
+}

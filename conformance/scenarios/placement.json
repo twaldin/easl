@@ -1,0 +1,82 @@
+{
+  "description": "Objects created without a frame, or with only w and h, are placed in a free spot: beside the caller's terminal (stacking an agent's answers), else near the view. Where they land depends on the user's viewport, which only the client knows; the sizes and the rest are compared.",
+  "ignore": {
+    "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+    "response.result.object.frame.y": "placement inside the user's view (client viewport)",
+    "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+    "events.*.data.frame.y": "placement inside the user's view (client viewport)"
+  },
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "terminal",
+        "props": {
+          "cwd": "{{root}}",
+          "command": [
+            "/bin/cat"
+          ]
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 600,
+          "h": 400
+        }
+      },
+      "save": "t"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "caller": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "w": 300,
+          "h": 50
+        },
+        "caller": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "code",
+        "props": {
+          "path": "x.ts"
+        }
+      },
+      "settleMs": 1000
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "m"
+        },
+        "frame": {
+          "w": 200,
+          "h": 90
+        }
+      }
+    }
+  ]
+}

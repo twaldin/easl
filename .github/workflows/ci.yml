@@ -27,3 +27,20 @@ jobs:
         run: cd clients/python && python3 -m unittest
       - name: Agent hook tests
         run: bun test extensions/agent-hooks
+
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: conformance/go.mod
+      - name: Vet
+        working-directory: conformance
+        run: go vet ./...
+      - name: Test
+        working-directory: conformance
+        run: go test ./...
+      - name: gofmt
+        working-directory: conformance
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }

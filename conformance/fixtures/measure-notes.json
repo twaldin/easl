@@ -1,0 +1,249 @@
+{
+  "scenario": "measure-notes",
+  "description": "Measuring text: notes and HTML fitted to their content (`size: fit`, a note created without a height), object.measure for notes, text shapes and images.",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "markdown": "# Heading\n\nA paragraph of text that wraps at some width."
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "h": 110,
+          "w": 280
+        }
+      }
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "markdown": "short"
+        },
+        "type": "note",
+        "width": 200
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "h": 63,
+          "w": 200
+        }
+      }
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "kind": "text",
+          "text": "Label text"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "h": 28,
+          "w": 98
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "w": 300,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "fits\n\nits text"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 86,
+              "w": 300,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "fits\n\nits text"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 86,
+              "w": 300,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "fits\n\nits text"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "path": "img.png"
+        },
+        "type": "image"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "h": 46,
+          "w": 30
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "x": 0,
+          "y": 500
+        },
+        "props": {
+          "path": "img.png"
+        },
+        "type": "image"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 46,
+              "w": 30,
+              "x": 0,
+              "y": 500
+            },
+            "id": "<obj:2>",
+            "props": {
+              "path": "img.png"
+            },
+            "rev": "<rev:1>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 46,
+              "w": 30,
+              "x": 0,
+              "y": 500
+            },
+            "id": "<obj:2>",
+            "props": {
+              "path": "img.png"
+            },
+            "rev": "<rev:1>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    }
+  ]
+}

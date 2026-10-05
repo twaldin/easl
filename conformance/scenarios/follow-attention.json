@@ -1,0 +1,233 @@
+{
+  "git": true,
+  "files": {
+    "src/app.ts": "export function greet(name: string): string {\n  return `hello ${name}`;\n}\n\nexport function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport const answer = 42;\n",
+    "README.md": "# Sample\n\nA repository for the conformance suite.\n\n## Usage\n\nRun it.\n",
+    "notes/plan.md": "# Plan\n\n- step one\n- step two\n"
+  },
+  "description": "follow.report re-aims (creating) a terminal's follow tile, ignored with follow off and for files outside the root; view.attention raises, replaces, clears, and a new turn of the same caller clears its earlier markers.",
+  "ignore": {
+    "events.*.data.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+  },
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "terminal",
+        "props": {
+          "cwd": "{{root}}",
+          "command": [
+            "/bin/cat"
+          ]
+        },
+        "frame": {
+          "x": 50000,
+          "y": 50000,
+          "w": 600,
+          "h": 400
+        }
+      },
+      "save": "t"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 49600,
+          "y": 50000,
+          "w": 160,
+          "h": 100
+        }
+      },
+      "save": "r"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 49600,
+          "y": 50200,
+          "w": 160,
+          "h": 100
+        }
+      },
+      "save": "s"
+    },
+    {
+      "call": "follow.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "path": "src/app.ts",
+        "range": {
+          "start": 5,
+          "end": 7
+        },
+        "action": "read"
+      }
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "{{board}}"
+      },
+      "ignore": {
+        "response.result.objects.*.frame": "a new follow tile is placed in a free spot inside the user's view (client viewport)"
+      }
+    },
+    {
+      "call": "follow.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "path": "{{root}}/README.md",
+        "action": "edit",
+        "changes": [
+          {
+            "start": 3,
+            "end": 3
+          }
+        ]
+      }
+    },
+    {
+      "call": "follow.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "path": "/etc/hosts",
+        "action": "read"
+      }
+    },
+    {
+      "call": "follow.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "path": "src/app.ts",
+        "action": "jump"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{t.object.id}}",
+        "props": {
+          "follow": false
+        }
+      }
+    },
+    {
+      "call": "follow.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "path": "src/app.ts",
+        "range": {
+          "start": 1,
+          "end": 1
+        },
+        "action": "read"
+      }
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}",
+        "kinds": [
+          "follow"
+        ]
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "working",
+        "seq": 1
+      }
+    },
+    {
+      "call": "view.attention",
+      "params": {
+        "id": "{{r.object.id}}",
+        "message": "look here",
+        "caller": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "view.attention",
+      "params": {
+        "id": "{{r.object.id}}",
+        "message": "look here instead",
+        "caller": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "view.attention",
+      "params": {
+        "id": "{{s.object.id}}",
+        "caller": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "idle",
+        "seq": 2
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "working",
+        "seq": 3
+      }
+    },
+    {
+      "call": "view.attention",
+      "params": {
+        "id": "{{s.object.id}}",
+        "message": "new turn",
+        "caller": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "view.attention",
+      "params": {
+        "id": "{{s.object.id}}",
+        "clear": true
+      }
+    },
+    {
+      "call": "view.attention",
+      "params": {
+        "id": "obj_missing"
+      }
+    },
+    {
+      "call": "view.attention",
+      "params": {
+        "id": "{{r.object.id}}",
+        "message": "from the user"
+      }
+    },
+    {
+      "call": "object.delete",
+      "params": {
+        "id": "{{r.object.id}}"
+      }
+    }
+  ]
+}

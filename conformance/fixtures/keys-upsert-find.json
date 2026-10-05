@@ -1,0 +1,811 @@
+{
+  "scenario": "keys-upsert-find",
+  "description": "Object keys: upsert creates then updates by key, type mismatch is a conflict, a duplicate key on create is a conflict, object.find by key and keyPrefix.",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 120,
+          "w": 280,
+          "x": 0,
+          "y": 0
+        },
+        "key": "REL-1/summary",
+        "props": {
+          "markdown": "v1"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "created": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "key": "REL-1/summary",
+              "markdown": "v1"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "key": "REL-1/summary",
+              "markdown": "v1"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "key": "REL-1/summary",
+        "props": {
+          "markdown": "v2"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "created": false,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "key": "REL-1/summary",
+              "markdown": "v2"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "key": "REL-1/summary",
+              "markdown": "v2"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "key": "REL-1/summary",
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "key \"REL-1/summary\" is held by <obj:1>, a note, not a shape"
+        },
+        "id": "r4",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 100,
+          "x": 400,
+          "y": 0
+        },
+        "key": "REL-1/box",
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "created": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "key": "REL-1/box",
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "key": "REL-1/box",
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 100,
+          "x": 600,
+          "y": 0
+        },
+        "key": "REL-2/box",
+        "props": {
+          "kind": "ellipse"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "created": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 600,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "REL-2/box",
+              "kind": "ellipse"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 600,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "REL-2/box",
+              "kind": "ellipse"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "key": "",
+        "props": {},
+        "type": "note"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "key must not be empty"
+        },
+        "id": "r7",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 100,
+          "x": 0,
+          "y": 300
+        },
+        "props": {
+          "key": "REL-1/summary",
+          "markdown": "dup"
+        },
+        "type": "note"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "key \"REL-1/summary\" is held by <obj:1> (note \"v2\")"
+        },
+        "id": "r8",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "key": "REL-1/summary"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "key": "REL-1/summary",
+              "markdown": "v2"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "as": "graph",
+        "board": "<board>",
+        "key": "REL-1/summary"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "graph": {
+            "arrows": [],
+            "arrowsIn": [],
+            "arrowsOut": [],
+            "enclosedBy": [],
+            "encloses": [],
+            "overlaps": []
+          },
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "key": "REL-1/summary",
+              "markdown": "v2"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "keyPrefix": "REL-1/"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 100,
+                "x": 400,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "key": "REL-1/box",
+                "kind": "rect"
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "z": 2
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:1>",
+              "props": {
+                "key": "REL-1/summary",
+                "markdown": "v2"
+              },
+              "rev": "<rev:2>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "keyPrefix": "NOPE-"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "objects": []
+        }
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "key": "REL-9"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "no object on board <board> has key \"REL-9\""
+        },
+        "id": "r13",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "object.find takes key or keyPrefix, one of them"
+        },
+        "id": "r14",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "key": "a",
+        "keyPrefix": "b"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "object.find takes key or keyPrefix, one of them"
+        },
+        "id": "r15",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "key": "REL-2/box"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 600,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "REL-2/box",
+              "kind": "ellipse"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:3>",
+        "props": {
+          "key": "REL-1/summary"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "key \"REL-1/summary\" is held by <obj:1> (note \"v2\")"
+        },
+        "id": "r17",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:3>",
+        "props": {
+          "key": "REL-3/box"
+        }
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 600,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "REL-3/box",
+              "kind": "ellipse"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 100,
+              "x": 600,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "REL-3/box",
+              "kind": "ellipse"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "keyPrefix": "REL-"
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 100,
+                "x": 400,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "key": "REL-1/box",
+                "kind": "rect"
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "z": 2
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:1>",
+              "props": {
+                "key": "REL-1/summary",
+                "markdown": "v2"
+              },
+              "rev": "<rev:2>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 1
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 100,
+                "x": 600,
+                "y": 0
+              },
+              "id": "<obj:3>",
+              "props": {
+                "key": "REL-3/box",
+                "kind": "ellipse"
+              },
+              "rev": "<rev:2>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 3
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

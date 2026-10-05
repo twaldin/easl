@@ -1,0 +1,494 @@
+{
+  "scenario": "events",
+  "description": "events.subscribe with a board filter and an event-name filter on other connections; every event kind's payload.",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "filtered",
+      "request": {
+        "board": "<board>",
+        "events": [
+          "tray.changed",
+          "object.deleted"
+        ]
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "elsewhere",
+      "request": {
+        "board": "brd_other_board_000000"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 120,
+          "w": 280,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "hello"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "hello"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "hello"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "props": {
+          "markdown": "hello again"
+        }
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "hello again"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "hello again"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "kind": "object",
+          "object": "<obj:2>"
+        }
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "mention": {
+            "edited": false,
+            "id": "<men:1>",
+            "label": "note hello again",
+            "stagedAt": "<time:number>",
+            "target": {
+              "kind": "object",
+              "object": "<obj:2>"
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": false,
+                "id": "<men:1>",
+                "label": "note hello again",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "object",
+                  "object": "<obj:2>"
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        },
+        {
+          "board": "<board>",
+          "conn": "filtered",
+          "data": {
+            "mentions": [
+              {
+                "edited": false,
+                "id": "<men:1>",
+                "label": "note hello again",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "object",
+                  "object": "<obj:2>"
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "omp",
+        "seq": 1,
+        "state": "working",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              }
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "view.attention",
+      "method": "view.attention",
+      "request": {
+        "caller": "<obj:1>",
+        "id": "<obj:2>",
+        "message": "see"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "active": true,
+          "id": "<obj:2>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": true,
+            "id": "<obj:2>",
+            "message": "see",
+            "raisedBy": "<obj:1>"
+          },
+          "event": "attention.changed"
+        }
+      ]
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:2>"
+          },
+          "event": "object.deleted"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": []
+          },
+          "event": "tray.changed"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "active": false,
+            "id": "<obj:2>"
+          },
+          "event": "attention.changed"
+        },
+        {
+          "board": "<board>",
+          "conn": "filtered",
+          "data": {
+            "id": "<obj:2>"
+          },
+          "event": "object.deleted"
+        },
+        {
+          "board": "<board>",
+          "conn": "filtered",
+          "data": {
+            "mentions": []
+          },
+          "event": "tray.changed"
+        }
+      ]
+    }
+  ]
+}

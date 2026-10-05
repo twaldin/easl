@@ -1,0 +1,257 @@
+{
+  "description": "Create, read, update and delete objects of the types that need no live surface; props merge, null deletes a prop, revisions, conflicts, warnings, and the errors of each.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "# Title\n\nbody"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 280,
+          "h": 120
+        }
+      },
+      "save": "n"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect",
+          "color": "blue",
+          "fill": "semi"
+        },
+        "frame": {
+          "x": 400,
+          "y": 0,
+          "w": 160,
+          "h": 100
+        }
+      },
+      "save": "r"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "text",
+          "text": "label",
+          "textSize": 2
+        },
+        "frame": {
+          "x": 400,
+          "y": 200,
+          "w": 200,
+          "h": 40
+        }
+      },
+      "save": "t"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "ellipse"
+        },
+        "frame": {
+          "x": 700,
+          "y": 0,
+          "w": 160,
+          "h": 100
+        }
+      },
+      "save": "e"
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{n.object.id}}"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{n.object.id}}",
+        "props": {
+          "markdown": "changed",
+          "title": "T"
+        }
+      },
+      "save": "u1"
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{n.object.id}}",
+        "rev": "{{u1.object.rev}}",
+        "frame": {
+          "x": 10,
+          "w": 300
+        }
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{n.object.id}}",
+        "rev": "{{u1.object.rev}}",
+        "props": {
+          "markdown": "stale"
+        }
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{n.object.id}}",
+        "props": {
+          "title": null
+        }
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{r.object.id}}",
+        "props": {
+          "bogus": 1,
+          "another": "x"
+        }
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{r.object.id}}",
+        "props": {
+          "scale": 2
+        }
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{r.object.id}}",
+        "frame": {
+          "x": "left"
+        }
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{r.object.id}}",
+        "frame": 5
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{r.object.id}}",
+        "frame": {
+          "y": 50
+        }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "widget",
+        "props": {}
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": "text"
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "x",
+          "scale": 2
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 100
+        }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect",
+          "mystery": true
+        },
+        "frame": {
+          "x": 0,
+          "y": 500,
+          "w": 10,
+          "h": 10
+        }
+      },
+      "save": "w"
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{n.object.id}}",
+        "as": "image"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{n.object.id}}",
+        "as": "pixels"
+      }
+    },
+    {
+      "call": "object.delete",
+      "params": {
+        "id": "{{e.object.id}}"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{e.object.id}}"
+      }
+    },
+    {
+      "call": "object.delete",
+      "params": {
+        "id": "{{e.object.id}}"
+      }
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "{{board}}"
+      }
+    }
+  ]
+}

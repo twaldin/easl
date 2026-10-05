@@ -1,0 +1,208 @@
+{
+  "git": true,
+  "files": {
+    "src/app.ts": "export function greet(name: string): string {\n  return `hello ${name}`;\n}\n\nexport function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport const answer = 42;\n",
+    "README.md": "# Sample\n\nA repository for the conformance suite.\n\n## Usage\n\nRun it.\n",
+    "notes/plan.md": "# Plan\n\n- step one\n- step two\n"
+  },
+  "description": "Code tiles in a git repository: ranges, anchors, symbols, paths relative and absolute, a range re-aimed drops its anchor; object.measure of code.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "code",
+        "props": {
+          "path": "src/app.ts",
+          "range": {
+            "start": 5,
+            "end": 7
+          }
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 640,
+          "h": 300
+        }
+      },
+      "save": "c",
+      "settleMs": 1000
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "code",
+        "props": {
+          "path": "{{root}}/src/app.ts"
+        },
+        "frame": {
+          "x": 700,
+          "y": 0,
+          "w": 640,
+          "h": 300
+        }
+      },
+      "save": "abs",
+      "settleMs": 1000
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{c.object.id}}"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{abs.object.id}}"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{c.object.id}}",
+        "props": {
+          "range": {
+            "start": 1,
+            "end": 3
+          }
+        }
+      },
+      "settleMs": 1000
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{c.object.id}}",
+        "props": {
+          "range": {
+            "start": 9,
+            "end": 9
+          },
+          "caption": "the answer"
+        }
+      },
+      "settleMs": 1000
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "code",
+        "props": {
+          "path": "missing.ts"
+        },
+        "frame": {
+          "x": 0,
+          "y": 400,
+          "w": 640,
+          "h": 300
+        }
+      },
+      "settleMs": 1000
+    },
+    {
+      "call": "object.measure",
+      "params": {
+        "board": "{{board}}",
+        "type": "code",
+        "props": {
+          "path": "src/app.ts"
+        }
+      }
+    },
+    {
+      "call": "object.measure",
+      "params": {
+        "board": "{{board}}",
+        "type": "code",
+        "props": {
+          "path": "src/app.ts",
+          "range": {
+            "start": 1,
+            "end": 3
+          }
+        }
+      }
+    },
+    {
+      "call": "object.measure",
+      "params": {
+        "board": "{{board}}",
+        "type": "code",
+        "props": {
+          "path": "src/app.ts"
+        },
+        "width": 200
+      }
+    },
+    {
+      "call": "object.measure",
+      "params": {
+        "board": "{{board}}",
+        "type": "code",
+        "props": {
+          "path": "missing.ts"
+        }
+      }
+    },
+    {
+      "call": "object.measure",
+      "params": {
+        "board": "{{board}}",
+        "type": "widget",
+        "props": {}
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "code",
+        "props": {
+          "path": "src/app.ts",
+          "range": {
+            "start": 1,
+            "end": 3
+          }
+        },
+        "size": "fit",
+        "frame": {
+          "x": 0,
+          "y": 800
+        }
+      },
+      "save": "fit",
+      "settleMs": 1000
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{fit.object.id}}",
+        "props": {
+          "range": {
+            "start": 5,
+            "end": 10
+          }
+        },
+        "size": "fit"
+      },
+      "settleMs": 1000
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{fit.object.id}}",
+        "size": "huge"
+      }
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "{{board}}"
+      }
+    }
+  ]
+}

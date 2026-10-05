@@ -7,9 +7,26 @@ swift run -j 4 CanvasCoreTests        # swift-testing suites for CanvasCore
 bun scripts/gen-clients.ts --check    # generated TS/Python clients match schema/easl-api.json, package versions match VERSION
 (cd clients/python && python3 -m unittest)   # Python SDK (Python 3.11+): compositions loading, shipped compositions, connection config/reconnect against a fake socket
 bun test extensions/agent-hooks             # hook payload classification: which thread (the tile's session, a subagent, Codex's internal sessions) an event comes from; the Codex awareness block's easl commands stay plain words
+(cd conformance && go test ./...)          # the conformance runner's normalisation and diff (Go 1.26)
 ```
 
 `CanvasCoreTests` is an executable target, not a test target: with only the Command Line Tools installed, `swift test` doesn't discover swift-testing suites, so `main.swift` calls the swift-testing entry point. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.
+
+## API conformance
+
+`conformance/` drives the socket API the way agents do and checks a server against transcripts recorded from today's app. It is how `easld` (docs/design/next.md, "Getting there") proves it behaves like the app before the app becomes its client.
+
+```sh
+scripts/dev.sh start                                       # or any server: EASL_SOCKET=… / --socket
+go run ./conformance/cmd/easl-conformance replay --socket .easl-home/easl.sock            # every scenario
+go run ./conformance/cmd/easl-conformance replay --socket … --json out.json tray agents   # some, plus a JSON report (flags before scenario names)
+go run ./conformance/cmd/easl-conformance record --socket … --on "easl main <sha>, dev instance" [scenario…]
+```
+
+- `conformance/scenarios/<name>.json` is one conversation on a board of its own: the runner makes a fresh directory (with `files`, and with `git: true` a repository whose one commit has fixed dates, so its id never changes), opens it with `board.open`, subscribes to its events, and runs the steps. A step is a `call` with `params` (templates: `{{board}}`, `{{root}}`, `{{name.path}}` from a step saved as `name`), on a named `conn` (each its own connection), optionally `async` and `await`ed later; or a `raw` line, `readFile`, `writeFile`, `sleepMs`. Terminal tiles run `/bin/cat` far off screen and are deleted at the end.
+- `conformance/fixtures/<name>.json` is the transcript: each step's request, response and the events every subscribed connection received until it went quiet (`--settle`, default 120 ms; `settleMs` for steps that set off a slower write-back). An event on a connection that never subscribed fails its step (the transport sends events only after `events.subscribe`), and `record` refuses a run that has one. Ids become `<obj:1>`… (the prefix before `_`) by first appearance: an id is a value of an id field (every property the schema types `Id`, and the untyped `from`/`to` of an object's graph, `encloses`, `enclosedBy`, `follow`, `raisedBy`) or a key of `frames`, whatever made it, and once known it is replaced in any text (summaries, messages, refs). Revisions become `<rev:n>`/`<board:n>` by value (equal stays equal). Times keep their wire type: `<time:number>` (the API's dates, seconds since 2001, which schema/easl-api.json calls date-time strings: the fixtures record what the app sends) or `<time:iso>` (activity entries, board files); a value under a time key that isn't a moment between 2020 and now stays as it is, so it fails. The scenario directory becomes `<root>`, the home `~`, pids `<pid>`. Everything else is compared exactly, error messages included, and so is a key's presence: an explicit `null` and an absent key differ. A value the server can't know today (where a placement lands in the user's view, the foreground program of a terminal) is left out of the comparison (value and presence) through the scenario's or step's `ignore`, which says why; a step's `mask` leaves out only part of a string (the matches of `match` become `as`, the rest is still compared: a placement's coordinates in a history summary). Arrays a server lists in no particular order are compared sorted (`unordered`).
+- `replay` prints a table per scenario, per method and per method family, the client-delegated methods (`conformance/delegated.json`: view.get, view.render, view.snapshot, agent.prompt, agent.read's live-terminal modes (its `final` mode is the server's and replayed), object.reload, which need the Mac client), any schema method that is neither exercised nor delegated, and the diffs; it exits 1 unless everything passes.
+- Recording: run `record` against a fresh `scripts/dev.sh` instance of the commit you mean (`--on` says which), then `replay` against it twice: both must pass, or a step depends on timing. Re-record after an intended API change and review the fixture diff like code.
 
 ## A development instance
 

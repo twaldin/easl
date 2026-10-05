@@ -1,0 +1,191 @@
+{
+  "description": "Object keys: upsert creates then updates by key, type mismatch is a conflict, a duplicate key on create is a conflict, object.find by key and keyPrefix.",
+  "steps": [
+    {
+      "call": "object.upsert",
+      "params": {
+        "board": "{{board}}",
+        "key": "REL-1/summary",
+        "type": "note",
+        "props": {
+          "markdown": "v1"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 280,
+          "h": 120
+        }
+      }
+    },
+    {
+      "call": "object.upsert",
+      "params": {
+        "board": "{{board}}",
+        "key": "REL-1/summary",
+        "type": "note",
+        "props": {
+          "markdown": "v2"
+        }
+      }
+    },
+    {
+      "call": "object.upsert",
+      "params": {
+        "board": "{{board}}",
+        "key": "REL-1/summary",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        }
+      }
+    },
+    {
+      "call": "object.upsert",
+      "params": {
+        "board": "{{board}}",
+        "key": "REL-1/box",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 400,
+          "y": 0,
+          "w": 100,
+          "h": 100
+        }
+      }
+    },
+    {
+      "call": "object.upsert",
+      "params": {
+        "board": "{{board}}",
+        "key": "REL-2/box",
+        "type": "shape",
+        "props": {
+          "kind": "ellipse"
+        },
+        "frame": {
+          "x": 600,
+          "y": 0,
+          "w": 100,
+          "h": 100
+        }
+      }
+    },
+    {
+      "call": "object.upsert",
+      "params": {
+        "board": "{{board}}",
+        "key": "",
+        "type": "note",
+        "props": {}
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "dup",
+          "key": "REL-1/summary"
+        },
+        "frame": {
+          "x": 0,
+          "y": 300,
+          "w": 100,
+          "h": 100
+        }
+      }
+    },
+    {
+      "call": "object.find",
+      "params": {
+        "board": "{{board}}",
+        "key": "REL-1/summary"
+      }
+    },
+    {
+      "call": "object.find",
+      "params": {
+        "board": "{{board}}",
+        "key": "REL-1/summary",
+        "as": "graph"
+      }
+    },
+    {
+      "call": "object.find",
+      "params": {
+        "board": "{{board}}",
+        "keyPrefix": "REL-1/"
+      }
+    },
+    {
+      "call": "object.find",
+      "params": {
+        "board": "{{board}}",
+        "keyPrefix": "NOPE-"
+      }
+    },
+    {
+      "call": "object.find",
+      "params": {
+        "board": "{{board}}",
+        "key": "REL-9"
+      }
+    },
+    {
+      "call": "object.find",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "object.find",
+      "params": {
+        "board": "{{board}}",
+        "key": "a",
+        "keyPrefix": "b"
+      }
+    },
+    {
+      "call": "object.find",
+      "params": {
+        "board": "{{board}}",
+        "key": "REL-2/box"
+      },
+      "save": "f"
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{f.object.id}}",
+        "props": {
+          "key": "REL-1/summary"
+        }
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{f.object.id}}",
+        "props": {
+          "key": "REL-3/box"
+        }
+      }
+    },
+    {
+      "call": "object.find",
+      "params": {
+        "board": "{{board}}",
+        "keyPrefix": "REL-"
+      }
+    }
+  ],
+  "unordered": {
+    "response.result.graph.arrowsIn": "listed in the Swift board's dictionary order (unordered)",
+    "response.result.graph.arrowsOut": "listed in the Swift board's dictionary order (unordered)"
+  }
+}

@@ -13,7 +13,7 @@ What easl builds after 0.1.0, and the decisions behind it. Each section is a lan
 
 ### Getting there without breaking anything
 
-1. An **API conformance suite**: scripted scenarios run against a development instance of today's app (`scripts/dev.sh`), recording requests, responses and events, normalised for ids, times and revisions. The same scenarios replay against any socket and diff. Methods that need the app's UI are marked as such.
+1. An **API conformance suite** (`conformance/`, docs/testing.md): scripted scenarios recorded from a development instance of the app, normalised for ids, times, revisions and paths, that replay against any socket and diff. The methods that need the Mac client (view.*, agent.prompt/read, object.reload) are marked as delegated. Still open: scenarios for what easld adds beyond today's API (several clients on one board, render delegation).
 2. **easld passes the suite.**
 3. **The app becomes easld's client.**
 

@@ -1,0 +1,186 @@
+{
+  "description": "board.get with `since` (changed ids), heavy props summarised (long note markdown, html), and board.history: cursors, limit, kinds, bad parameters.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "first"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 280,
+          "h": 120
+        }
+      },
+      "save": "a"
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "{{board}}"
+      },
+      "save": "g0"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "second"
+        },
+        "frame": {
+          "x": 400,
+          "y": 0,
+          "w": 280,
+          "h": 120
+        }
+      },
+      "save": "b"
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{a.object.id}}",
+        "props": {
+          "markdown": "first, edited"
+        }
+      }
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "{{board}}",
+        "since": "{{g0.revision}}"
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": {
+          "markdown": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "frame": {
+          "x": 0,
+          "y": 300,
+          "w": 300,
+          "h": 300
+        }
+      },
+      "save": "long"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "html",
+        "props": {
+          "html": "<h1>hi</h1><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p><p>para</p>",
+          "title": "page"
+        },
+        "frame": {
+          "x": 800,
+          "y": 0,
+          "w": 400,
+          "h": 300
+        }
+      },
+      "save": "h"
+    },
+    {
+      "call": "board.get",
+      "params": {
+        "board": "{{board}}"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{long.object.id}}"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{h.object.id}}"
+      }
+    },
+    {
+      "call": "object.delete",
+      "params": {
+        "id": "{{b.object.id}}"
+      }
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}"
+      },
+      "save": "h1"
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}",
+        "limit": 2,
+        "kinds": [
+          "created",
+          "updated",
+          "deleted"
+        ]
+      }
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}",
+        "kinds": [
+          "deleted"
+        ]
+      }
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}",
+        "since": "{{h1.cursor}}"
+      }
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}",
+        "since": 2
+      }
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}",
+        "kinds": [
+          "exploded"
+        ]
+      }
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}",
+        "since": true
+      }
+    },
+    {
+      "call": "board.history",
+      "params": {
+        "board": "{{board}}",
+        "since": "yesterday"
+      }
+    }
+  ]
+}

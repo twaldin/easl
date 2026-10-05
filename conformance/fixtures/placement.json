@@ -1,0 +1,402 @@
+{
+  "scenario": "placement",
+  "description": "Objects created without a frame, or with only w and h, are placed in a free spot: beside the caller's terminal (stacking an agent's answers), else near the view. Where they land depends on the user's viewport, which only the client knows; the sizes and the rest are compared.",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      },
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:1>",
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:1>",
+        "frame": {
+          "h": 50,
+          "w": 300
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 50,
+              "w": 300
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 50,
+              "w": 300
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "path": "x.ts"
+        },
+        "type": "code"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 446,
+              "w": 640
+            },
+            "id": "<obj:4>",
+            "props": {
+              "path": "x.ts"
+            },
+            "rev": "<rev:1>",
+            "type": "code",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 446,
+              "w": 640
+            },
+            "id": "<obj:4>",
+            "props": {
+              "path": "x.ts"
+            },
+            "rev": "<rev:1>",
+            "type": "code",
+            "updatedAt": "<time:number>",
+            "z": 4
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 90,
+          "w": 200
+        },
+        "props": {
+          "markdown": "m"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 90,
+              "w": 200
+            },
+            "id": "<obj:5>",
+            "props": {
+              "markdown": "m"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 5
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 90,
+              "w": 200
+            },
+            "id": "<obj:5>",
+            "props": {
+              "markdown": "m"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 5
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    }
+  ]
+}
