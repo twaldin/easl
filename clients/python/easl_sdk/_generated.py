@@ -613,6 +613,26 @@ class EventsApi:
         params = {"board": board, "events": events}
         return self._call("events.subscribe", params, ["board"])
 
+@_snake_case_hints
+class ClientApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def attach(self, *, serves: list[Literal["view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "object.reload", "text.measure"]], boards: list["Id"] | None = None, focused: "Id" | None = None, name: str | None = None) -> dict[str, Any]:
+        """Make this connection a client that serves what only the Mac app can answer: the window (view.get, view.snapshot), drawing (view.render), live terminal surfaces (agent.prompt, agent.read's screen modes), WebKit and language servers (object.reload), and AppKit text measurement (text.measure). From then on the server sends this connection requests for the methods in `serves` (transport `clients`): a call that needs a client goes, after the server's own checks, to one that serves its method and shows its board (text.measure: any that serves it), the one whose user focused that board last, else the one focused most recently, else the one attached last. The call is forwarded as the same method with the caller's params (`board` and agent `target` resolved to ids; agent.prompt without `mentions`, which the server queues), and the client's result or error is the caller's. The server waits for object.reload's and view.render's `timeoutMs` plus 5 s and 30 s, else 5 s (view.get), 30 s (view.snapshot), 10 s (agent.prompt, agent.read), 2 s (text.measure); past that, or when the client disconnects first, the call fails `unavailable` (text.measure falls back to the glyph table). With no client for its board a delegated call fails `unavailable` saying what it needs. Attach again whenever `serves`, `boards` or `focused` change: each call replaces the last; closing the connection detaches. Answer text.measure without waiting on the server, which may hold a board while it measures. For the Mac app; agents never need it."""
+        params = {"serves": serves, "boards": boards, "focused": focused, "name": name}
+        return self._call("client.attach", params, [])
+
+@_snake_case_hints
+class TextApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def measure(self, *, items: list[dict[str, Any]], board: "Id" | None = None) -> dict[str, Any]:
+        """Sizes of text as the board lays it out, in board points: an attached Mac client that serves text.measure (client.attach) measures it with AppKit, exactly as it draws; with none, or when it doesn't answer within 2 s, the server approximates from its glyph table (advance widths of the app's fonts, extracted on a Mac; no kerning) and says `approximate: true`. object.measure, `size: fit`, layout.check and arrow routing measure through it. note: `text` is markdown laid out as a note `width` wide (default 280) with its live fences and images read under `root`: the size is the note's whole frame (title bar included) and `tableShortfall` how much wider it would have to be to show every table cell whole; text: a text shape's text at `textSize` (default 1: 20 pt Shantell Sans) wrapped at `width` (default unwrapped): its bounds rounded up, plus 2; label: a rect's or ellipse's label (18 pt, centered) wrapped at `width`, likewise; arrowLabel: an arrow's caption (15 pt, centered, wrapped at 240): its chip, 8 wider than the text; caption: a code tile's caption strip (`inline code` in the code font): the narrowest frame that shows it whole, and the strip's height."""
+        params = {"items": items, "board": board}
+        return self._call("text.measure", params, ["board"])
+
 class GeneratedApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self.system = SystemApi(call)
@@ -625,8 +645,10 @@ class GeneratedApi:
         self.follow = FollowApi(call)
         self.view = ViewApi(call)
         self.events = EventsApi(call)
+        self.client = ClientApi(call)
+        self.text = TextApi(call)
 
-METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","events.subscribe"]
+METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","events.subscribe","client.attach","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

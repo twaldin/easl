@@ -987,6 +987,8 @@ export type ObjectCreateResult = {
   diagram?: Record<string, unknown>;
   /** `size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids */
   overlaps?: Id[];
+  /** the frame was measured (`size: fit`, a note's automatic height) from easld's glyph table rather than by an attached Mac client, as object.measure's `approximate` */
+  approximate?: true;
 };
 
 export type ObjectUpdateParams = {
@@ -1005,6 +1007,8 @@ export type ObjectUpdateResult = {
   warnings?: string[];
   /** present when a `size: fit` refit covers others, or a `frame` given outright (e.g. a browser tile widened to a desktop viewport) makes the object cover one it didn't before (by layout.check's overlap rule; in a batch, only fits, once the whole batch is laid out): the ids of everything it covers. Grow away from neighbours or move it (layout.place) rather than leave the user's tiles buried */
   overlaps?: Id[];
+  /** as object.create's */
+  approximate?: true;
 };
 
 export type ObjectUpsertParams = {
@@ -1029,6 +1033,8 @@ export type ObjectUpsertResult = {
   diagram?: Record<string, unknown>;
   /** as object.create's and object.update's */
   overlaps?: Id[];
+  /** as object.create's */
+  approximate?: true;
 };
 
 export type ObjectDeleteParams = {
@@ -1046,7 +1052,12 @@ export type ObjectMeasureParams = {
   width?: number;
   caller?: Id;
 };
-export type ObjectMeasureResult = Size;
+export type ObjectMeasureResult = {
+  w: number;
+  h: number;
+  /** text in it (a note, a text shape or a shape's label, a code tile's caption) was measured from easld's glyph table, because no attached Mac client serves text.measure (or it didn't answer in time): a few points off what the app draws, and a line near the edge may wrap differently. Absent when exact */
+  approximate?: true;
+};
 
 export type ObjectReloadParams = {
   id: Id;
@@ -1227,6 +1238,8 @@ export type LayoutCheckResult = {
   })[];
   /** present when there is advice that isn't a fault: more than 6 labelled arrows all one color (label chips are outlined in their arrow's color, so one color can't show which line a label names): color arrows by lane or flow */
   hints?: string[];
+  /** an `overflow`, `truncated` or `labelOverlaps` finding rests on a text size from easld's glyph table (no attached Mac client measured it): check it by eye. A finding exact sizes would add isn't flagged */
+  approximate?: true;
 };
 
 export type TrayListParams = {
@@ -1488,6 +1501,47 @@ export type EventsSubscribeParams = {
 };
 export type EventsSubscribeResult = Record<string, unknown>;
 
+export type ClientAttachParams = {
+  /** the methods this client answers */
+  serves: ("view.get" | "view.render" | "view.snapshot" | "agent.prompt" | "agent.read" | "object.reload" | "text.measure")[];
+  /** the boards it shows (open in one of its windows or tabs), each open on the server; default none */
+  boards?: Id[];
+  /** the board its user is looking at now (the key window's selected tab), one of `boards`; the client focused last on a board serves that board first */
+  focused?: Id;
+  /** how messages name the client, e.g. "easl 0.2.0" */
+  name?: string;
+};
+export type ClientAttachResult = {
+  /** this client, cli_… */
+  client: Id;
+};
+
+export type TextMeasureParams = {
+  items: ({
+    kind: "note" | "text" | "label" | "arrowLabel" | "caption";
+    text: string;
+    /** note: the frame's width (default 280); text and label: the wrap width (default unwrapped); ignored by arrowLabel and caption */
+    width?: number;
+    /** text: the shape's `textSize` (default 1) */
+    textSize?: number;
+    /** note: the directory its fences' and images' paths are read under (default the board root) */
+    root?: string;
+  })[];
+  /** the board whose root a note's paths default to */
+  board?: Id;
+};
+export type TextMeasureResult = {
+  /** one per item, in order */
+  sizes: {
+    w: number;
+    h: number;
+    /** note: points of width missing to show every table cell whole (0: nothing cut) */
+    tableShortfall?: number;
+  }[];
+  /** measured from the server's glyph table, not by a Mac client */
+  approximate?: true;
+};
+
 /** Every API method, grouped by namespace (`api.board.get(...)`). */
 export interface CanvasApi {
   system: {
@@ -1590,6 +1644,14 @@ export interface CanvasApi {
     /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}). */
     subscribe(params?: EventsSubscribeParams): Promise<EventsSubscribeResult>;
   };
+  client: {
+    /** Make this connection a client that serves what only the Mac app can answer: the window (view.get, view.snapshot), drawing (view.render), live terminal surfaces (agent.prompt, agent.read's screen modes), WebKit and language servers (object.reload), and AppKit text measurement (text.measure). From then on the server sends this connection requests for the methods in `serves` (transport `clients`): a call that needs a client goes, after the server's own checks, to one that serves its method and shows its board (text.measure: any that serves it), the one whose user focused that board last, else the one focused most recently, else the one attached last. The call is forwarded as the same method with the caller's params (`board` and agent `target` resolved to ids; agent.prompt without `mentions`, which the server queues), and the client's result or error is the caller's. The server waits for object.reload's and view.render's `timeoutMs` plus 5 s and 30 s, else 5 s (view.get), 30 s (view.snapshot), 10 s (agent.prompt, agent.read), 2 s (text.measure); past that, or when the client disconnects first, the call fails `unavailable` (text.measure falls back to the glyph table). With no client for its board a delegated call fails `unavailable` saying what it needs. Attach again whenever `serves`, `boards` or `focused` change: each call replaces the last; closing the connection detaches. Answer text.measure without waiting on the server, which may hold a board while it measures. For the Mac app; agents never need it. */
+    attach(params: ClientAttachParams): Promise<ClientAttachResult>;
+  };
+  text: {
+    /** Sizes of text as the board lays it out, in board points: an attached Mac client that serves text.measure (client.attach) measures it with AppKit, exactly as it draws; with none, or when it doesn't answer within 2 s, the server approximates from its glyph table (advance widths of the app's fonts, extracted on a Mac; no kerning) and says `approximate: true`. object.measure, `size: fit`, layout.check and arrow routing measure through it. note: `text` is markdown laid out as a note `width` wide (default 280) with its live fences and images read under `root`: the size is the note's whole frame (title bar included) and `tableShortfall` how much wider it would have to be to show every table cell whole; text: a text shape's text at `textSize` (default 1: 20 pt Shantell Sans) wrapped at `width` (default unwrapped): its bounds rounded up, plus 2; label: a rect's or ellipse's label (18 pt, centered) wrapped at `width`, likewise; arrowLabel: an arrow's caption (15 pt, centered, wrapped at 240): its chip, 8 wider than the text; caption: a code tile's caption strip (`inline code` in the code font): the narrowest frame that shows it whole, and the strip's height. */
+    measure(params: TextMeasureParams): Promise<TextMeasureResult>;
+  };
 }
 
 /** Params a client fills from its tile (`caller`) and board when the call omits them, with the env var each defaults from. */
@@ -1658,10 +1720,16 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
     events: {
       subscribe: (params?: EventsSubscribeParams) => call("events.subscribe", params ?? {}, ["board"]) as Promise<EventsSubscribeResult>,
     },
+    client: {
+      attach: (params: ClientAttachParams) => call("client.attach", params ?? {}, []) as Promise<ClientAttachResult>,
+    },
+    text: {
+      measure: (params: TextMeasureParams) => call("text.measure", params ?? {}, ["board"]) as Promise<TextMeasureResult>,
+    },
   };
 }
 
-export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","events.subscribe"] as const;
+export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","events.subscribe","client.attach","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

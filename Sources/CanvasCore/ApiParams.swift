@@ -44,5 +44,7 @@ enum ApiParams {
         "view.render": (["board", "target", "scale", "full", "exclude", "padding", "out", "format", "timeoutMs"], ["target"]),
         "view.snapshot": (["board", "out", "format"], []),
         "events.subscribe": (["board", "events"], []),
+        "client.attach": (["serves", "boards", "focused", "name"], ["serves"]),
+        "text.measure": (["items", "board"], ["items"]),
     ]
 }

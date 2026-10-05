@@ -15,7 +15,7 @@ const (
 	CodeConflict = "conflict"
 	// method known but not implemented by this build.
 	CodeUnsupported = "unsupported"
-	// target exists but cannot act right now (e.g. a terminal tile without an attached surface), or the app is not running.
+	// target exists but cannot act right now (e.g. a terminal tile without an attached surface), or the app is not running: no attached client (client.attach) serves the call, it didn't answer in time, or it disconnected before answering.
 	CodeUnavailable = "unavailable"
 	// agent.wait deadline passed before the agent reached a requested state.
 	CodeTimeout = "timeout"
@@ -190,6 +190,14 @@ var Methods = map[string]ParamSpec{
 	"events.subscribe": {
 		Accepted: []string{"board", "events"},
 		Required: nil,
+	},
+	"client.attach": {
+		Accepted: []string{"serves", "boards", "focused", "name"},
+		Required: []string{"serves"},
+	},
+	"text.measure": {
+		Accepted: []string{"items", "board"},
+		Required: []string{"items"},
 	},
 }
 
