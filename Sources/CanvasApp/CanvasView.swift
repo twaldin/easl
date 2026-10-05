@@ -158,12 +158,11 @@ final class CanvasView: NSScrollView {
     private var viewportMover: ActivityActor = .user
     private var activitySettle: DispatchWorkItem?
     /// This client's record of where the view was left (`SavedViewport`), not the board's.
-    private let viewportStore: SavedViewport.Store
+    private var viewportRecorder: SavedViewport.Recorder
     /// Whether the opening view is in place: nothing is saved before it, or a board closed in its
     /// first turn would record the unplaced view over the real one.
     private var viewPlaced = false
     private var viewportSave: DispatchWorkItem?
-    private var savedViewport: SavedViewport?
     /// The saved view this board opened with, held until the user first moves the view: the
     /// window can still change size after the board opens (a tab joining the group, the saved
     /// frame, a hidden tab shown), and the view shows that centre through it, not the corner
@@ -223,7 +222,7 @@ final class CanvasView: NSScrollView {
 
     init(board: Board) {
         self.board = board
-        viewportStore = SavedViewport.Store(url: AppPaths.viewport(of: board.id))
+        viewportRecorder = SavedViewport.Recorder(store: SavedViewport.Store(url: AppPaths.viewport(of: board.id)))
         super.init(frame: .zero)
         documentView = document
         document.canvas = self
@@ -1541,13 +1540,14 @@ final class CanvasView: NSScrollView {
     /// The view a board opens with: where this client left it (zoom and centre), else the top of
     /// its content (`centerOnContent`), as every board's first open.
     private func placeOpeningView() {
-        if let saved = viewportStore.load() {
+        if let saved = viewportRecorder.opened {
             restoreView(saved)
             openedAtSavedView = saved
         } else {
             centerOnContent()
         }
-        savedViewport = currentViewport
+        // Nothing is marked as written for a first open: even if the view never moves, the first
+        // close or quit records it (`saveViewport`).
         viewPlaced = true
     }
 
@@ -1606,15 +1606,12 @@ final class CanvasView: NSScrollView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
-    /// Writes the view now if it moved since it was last written: when the board's tab closes and
-    /// the app quits.
+    /// Writes the view now unless the file holds it already: when the board's tab closes and the
+    /// app quits. A write that failed is tried again at the next of those.
     func saveViewport() {
         viewportSave?.cancel()
         guard viewPlaced else { return }
-        let current = currentViewport
-        guard current != savedViewport else { return }
-        savedViewport = current
-        try? viewportStore.save(current)
+        viewportRecorder.record(currentViewport)
     }
 
     private func scroll(to origin: NSPoint) {

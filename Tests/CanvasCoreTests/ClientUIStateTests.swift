@@ -31,6 +31,36 @@ struct ClientUIStateTests {
         }
     }
 
+    @Test func aBoardThatNeverMovedStillGetsItsRecordAtTheFirstClose() {
+        let placed = SavedViewport(zoom: 1, x: 400, y: -90)
+        var open = SavedViewport.Recorder(store: viewport(of: "brd_a"))
+        #expect(open.opened == nil, "a first open")
+        // Closing, or quitting, with the view where the board put it: nothing moved, nothing was written before.
+        let wrote = open.record(placed)
+        #expect(wrote)
+        // The next open restores it, whatever the board's content became meanwhile.
+        let reopened = SavedViewport.Recorder(store: viewport(of: "brd_a"))
+        #expect(reopened.opened == placed)
+    }
+
+    @Test func aFailedWriteIsTriedAgainAtTheNextCloseOrQuit() throws {
+        let first = SavedViewport(zoom: 0.5, x: 1, y: 2)
+        var open = SavedViewport.Recorder(store: viewport(of: "brd_a"))
+        // A file where the directory should be: the write can't succeed (a full disk, a read-only home).
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try Data().write(to: home.appendingPathComponent("viewport"))
+        let failed = open.record(first)
+        #expect(!failed)
+        #expect(open.written == nil, "a failed write isn't remembered as written")
+        #expect(viewport(of: "brd_a").load() == nil)
+        try FileManager.default.removeItem(at: home.appendingPathComponent("viewport"))
+        let retried = open.record(first)
+        #expect(retried, "the next close or quit writes it")
+        #expect(viewport(of: "brd_a").load() == first)
+        let unchanged = open.record(first)
+        #expect(unchanged, "unchanged: nothing more to write")
+    }
+
     @Test func chromeTextScaleStepsThroughItsLevelsAndStops() {
         var scale = ChromeTextScale.normal
         var seen = [scale]

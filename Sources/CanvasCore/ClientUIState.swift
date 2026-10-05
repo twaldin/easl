@@ -40,6 +40,37 @@ public struct SavedViewport: Codable, Equatable, Sendable {
             try JSONEncoder().encode(viewport).write(to: url, options: .atomic)
         }
     }
+
+    /// A board's record as one open board keeps it: the view it opened at (nil: a first open, or
+    /// a file that couldn't be read) and what is on disk now. `record` writes whatever differs
+    /// from the disk, so a board that never moved still gets its record at the first close or
+    /// quit, and a write that failed is tried again at the next one.
+    public struct Recorder: Sendable {
+        public let store: Store
+        /// What the store held when the board opened, or nil.
+        public let opened: SavedViewport?
+        /// What the last successful write (or the load) left on disk; nil: nothing readable.
+        public private(set) var written: SavedViewport?
+
+        public init(store: Store) {
+            self.store = store
+            opened = store.load()
+            written = opened
+        }
+
+        /// Writes `viewport` unless the disk holds it already; false when the write failed.
+        @discardableResult
+        public mutating func record(_ viewport: SavedViewport) -> Bool {
+            guard viewport != written else { return true }
+            do {
+                try store.save(viewport)
+            } catch {
+                return false
+            }
+            written = viewport
+            return true
+        }
+    }
 }
 
 /// How much the app's chrome text (the tray, tile title bars and their status text) is scaled,
