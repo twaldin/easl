@@ -138,7 +138,8 @@ final class ShapeLayer: NSView {
         canvas.onSelectionDrag = { [unowned layer] ids, offset in layer.previewDrag(ids, offset: offset) }
         canvas.moveProps = { object, dx, dy in ShapeLayer.moveProps(object, dx: dx, dy: dy) }
         canvas.board.arrowPath = { [unowned layer] id in
-            layer.items[id]?.arrow.map { $0.path.map(ShapeLayer.canvasPoint) }
+            layer.followNow(id)
+            return layer.items[id]?.arrow.map { $0.path.map(ShapeLayer.canvasPoint) }
         }
         canvas.board.settleArrows = { [unowned layer] in layer.settleArrows() }
         canvas.board.settledRouting = { [unowned layer] in layer.routing }
@@ -295,9 +296,36 @@ final class ShapeLayer: NSView {
         }
     }
 
+    /// Arrows bound to `id` follow it. A change the API is making (a write, each operation of
+    /// an `object.batch`) only marks them (`followPending`): they follow once, when anything
+    /// reads or draws them (`followNow`) or on the next main-queue turn, so a batch that moves a
+    /// tile several times, or many tiles one arrow joins, routes each arrow alone once, outside
+    /// the batch's own turn.
     func reroute(boundTo id: ObjectID) {
         guard let arrows = arrowsBound[id] else { return }
-        for arrowID in arrows { reroute(arrow: arrowID) }
+        guard ApiActivity.shared.dispatching > 0 else {
+            for arrowID in arrows { reroute(arrow: arrowID) }
+            return
+        }
+        if followPending.isEmpty {
+            DispatchQueue.main.async { [weak self] in self?.followNow() }
+        }
+        followPending.formUnion(arrows)
+    }
+
+    private var followPending: Set<ObjectID> = []
+
+    /// Routes the arrows `reroute(boundTo:)` marked, or only `id` among them.
+    func followNow(_ id: ObjectID? = nil) {
+        if let id {
+            guard followPending.remove(id) != nil else { return }
+            reroute(arrow: id)
+            return
+        }
+        guard !followPending.isEmpty else { return }
+        let arrows = followPending
+        followPending = []
+        for arrowID in arrows.sorted() { reroute(arrow: arrowID) }
     }
 
     /// Routes one arrow alone, following a change to what it is bound to (a drag, a scroll, an
@@ -351,6 +379,7 @@ final class ShapeLayer: NSView {
     /// place in the board's routing now. Others report the route they are drawn on, which
     /// follows their ends; the board's routing catches up when the burst of changes ends.
     func settleArrows() {
+        followNow()
         settleProvisional()
     }
 
@@ -501,6 +530,7 @@ final class ShapeLayer: NSView {
     }
 
     override func viewWillDraw() {
+        followNow()
         settleProvisional()
         super.viewWillDraw()
     }
