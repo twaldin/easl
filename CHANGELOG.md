@@ -2,6 +2,11 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- **boards reopen where you left them.** Each board comes back at its zoom and spot on relaunch, kept on your Mac (not in the board file, so shared boards stay yours to look at your way).
+- **chrome text size.** View ▸ Increase / Decrease / Reset Chrome Text Size (⌥⌘= / ⌥⌘- / ⌥⌘0) scales the tray and tile title bars to 150%, separate from board zoom and a tile's content zoom.
+
 ## 0.1.0
 
 easl is a native Mac app: one infinite board where your agents run in real terminals beside your code, a browser, html pages and diagrams.
