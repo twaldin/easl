@@ -105,8 +105,9 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       }
       // Peek, hand the context to the agent, then commit: a hook killed before its output
       // reached the agent leaves the tray intact. Only the tray's prompt target gets the tray;
-      // mentions other agents attached for this tile (agent.prompt) come with any prompt. The
-      // prompt's text lets a prompt sent from easl's composer take its own mentions.
+      // mentions other agents attached for this tile (agent.prompt) come with any prompt. With
+      // `prompt`, this is the submission drain: it takes the oldest prompt easl's composer typed
+      // here, with that prompt's own mentions.
       const drained = await client.api.tray.drain({ peek: true, prompt });
       if (!drained.context) return undefined;
       await Bun.write(Bun.stdout, context(drained.context));

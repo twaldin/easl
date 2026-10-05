@@ -111,8 +111,8 @@ export const CanvasPlugin = async ({ directory }: Input) => {
     },
 
     // The user's prompt: this session is the tile's (resume), and the tray rides along as a
-    // synthetic part, which the model reads and the TUI doesn't show. The prompt's text lets a
-    // prompt sent from easl's composer take its own mentions.
+    // synthetic part, which the model reads and the TUI doesn't show. With `prompt`, this is the
+    // submission drain: it takes the oldest prompt easl's composer typed here, with its own mentions.
     "chat.message": async (input: { sessionID: string }, output: { message: { id: string }; parts: Json[] }) => {
       if (children.has(input.sessionID)) return;
       void quietly(client.api.agent.report_session({ tile: tile!, kind: "opencode", sessionId: input.sessionID }));

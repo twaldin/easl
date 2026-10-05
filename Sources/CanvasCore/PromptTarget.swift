@@ -81,11 +81,22 @@ public enum PromptTarget {
     }
 
     /// `text` isn't a prompt to `terminal`'s integration, which drains nothing when it is
-    /// submitted: a slash command or a shell escape (`/…`, `!…`, and omp's `$…`), as the hooks
-    /// (extensions/agent-hooks/hook.ts) and omp's extension skip them.
+    /// submitted, by that integration's own rule:
+    /// - Claude Code, Codex and Gemini CLI (extensions/agent-hooks/hook.ts, `UserPromptSubmit`):
+    ///   a slash command or shell escape, `/…` or `!…`;
+    /// - omp (extensions/omp/easl.ts, `input`): `/…`, `!…` and `$…`;
+    /// - opencode (extensions/opencode/easl.ts, `chat.message`): nothing. Its shell mode is only
+    ///   the `!` key binding, so pasted `!…` text is an ordinary prompt, and a `/command` expands
+    ///   into one; both reach `chat.message`
+    ///   (https://github.com/anomalyco/opencode/blob/v1.14.46/packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx#L1136-L1198).
+    /// Any other integration: nothing.
     public static func skipsDrain(_ text: String, in terminal: CanvasObject) -> Bool {
         guard let first = text.trimmingCharacters(in: .whitespacesAndNewlines).first else { return true }
-        return first == "/" || first == "!" || (first == "$" && terminal.props["agent"]?["kind"]?.string == "omp")
+        switch terminal.props["agent"]?["kind"]?.string {
+        case "claude", "codex", "gemini": return first == "/" || first == "!"
+        case "omp": return first == "/" || first == "!" || first == "$"
+        default: return false
+        }
     }
 
     /// Where Hyper-V (Paste Mentions into Terminal) pastes: the terminal holding the keyboard,

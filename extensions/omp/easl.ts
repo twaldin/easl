@@ -151,7 +151,9 @@ export default function canvas(pi: ExtensionAPI): void {
     publish();
   });
 
-  // Tray drain, phase 1: peek the tray when the user actually submits prose.
+  // Tray drain, phase 1: peek the tray when the user actually submits prose. With `prompt`, this
+  // is the submission drain: it takes the oldest prompt easl's composer typed here instead, with
+  // that prompt's own mentions.
   pi.on("input", async (event) => {
     if (event.source !== "interactive") return;
     const text = event.text.trim();

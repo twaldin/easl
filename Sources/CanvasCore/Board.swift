@@ -777,14 +777,15 @@ public final class Board {
     /// terminal the context goes to: mentions of it say so, other terminals are named. The
     /// mentions other agents handed to `caller` (`handOff`) follow the tray's, one block per
     /// sender; `tray` false leaves the tray out (it shows another terminal). `prompt` is the text
-    /// the caller's integration is about to submit: when the composer typed that text into
-    /// `caller` (`queueComposerPrompt`), this drain is that prompt's and takes its own mentions,
-    /// numbered from 1, instead of the tray (none for an answer or a prompt without tokens), so
-    /// a retarget, a new mention or a second prompt meanwhile never changes what its `[n]` mean.
-    /// Any other drain (no `prompt`, another text) takes the tray as always.
+    /// the caller's integration is about to submit: its submission drain. When the composer typed
+    /// prompts into `caller` that no submission drain claimed yet (`queueComposerPrompt`), this
+    /// drain is the oldest one's, whatever its text (agents rewrite it), and takes that prompt's
+    /// own mentions, numbered from 1, instead of the tray (none for an answer or a prompt without
+    /// tokens), so a retarget, a new mention or a second prompt meanwhile never changes what its
+    /// `[n]` mean. A drain without `prompt`, or with none waiting, takes the tray as always.
     /// Old-side and pinned code excerpts are read from git, hence async.
     public func drain(peek: Bool = false, caller: ObjectID? = nil, prompt: String? = nil, tray includeTray: Bool = true) async -> (mentions: [MentionContext.Resolved], context: String) {
-        let sent = caller.flatMap { caller in prompt.flatMap { takeComposerPrompt(for: caller, prompt: $0) } }
+        let sent = caller.flatMap { caller in prompt.flatMap { claimComposerPrompt(for: caller, submitted: $0) } }
         let staged = sent?.mentions ?? (includeTray ? tray : [])
         var resolved = await resolve(staged, caller: caller)
         var blocks = resolved.isEmpty ? [] : [MentionContext.render(resolved, board: self, targets: staged.map(\.target))]
@@ -961,6 +962,7 @@ public final class Board {
         if state == .unknown { lifecycle["via"] = .string(NotifyingAgent.via) }
         let agent = (terminal.props["agent"] ?? .object([:])).merging(.object(["kind": .string(kind)]))
         try update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
+        composerAgentReported(tile, state: state)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .object(lifecycle)))
     }
 

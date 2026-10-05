@@ -186,38 +186,45 @@ public struct ComposerState: Codable, Equatable, Sendable {
 }
 
 /// A prompt the composer typed into one terminal whose integration drains, waiting for that
-/// prompt's drain: the drain from that terminal whose `prompt` is this text takes `mentions`
-/// (numbered from 1) instead of the tray, whatever the tray, the prompt target or the composer's
-/// later prompts are by then. A drain without a `prompt` (Hyper-V, a script, an older hook) or
-/// with another text never takes it. A prompt without mentions (an answer to a question, a
-/// prompt with no tokens) keeps the tray out of its own drain.
+/// prompt's drain. A terminal's prompts form a queue in the order they were typed, which is the
+/// order its agent submits them (prompts it queues mid-turn included): the next drain from that
+/// terminal that carries a `prompt` (its integration's submission drain, whatever the text, which
+/// the agent may have rewritten) is the oldest one's, and takes its `mentions` (numbered from 1)
+/// instead of the tray, whatever the tray, the prompt target or the composer's later prompts are
+/// by then. A drain without a `prompt` (Hyper-V, a script, the CLI, an older integration) never
+/// sees the queue. A prompt without mentions (a prompt with no tokens, an answer) takes nothing.
 public struct ComposerPrompt: Equatable, Sendable {
     public var id: String
-    /// The text as typed, as `key` compares it.
+    /// The text as typed; only compared, for the log, with the text its drain says it submits.
     public var prompt: String
     public var mentions: [Mention]
+    /// The text answers a question or approval the agent was blocked on. A dialog takes it
+    /// without any prompt (Claude Code's): it is dropped once the agent is past that question
+    /// (`answerSettledAt`), unless a submission drain (Codex answers a queued question with a
+    /// prompt) claims it first.
+    public var answer: Bool
     public var queuedAt: Date
+    /// An answer's agent left `blocked` for `working` or `idle` at this time.
+    public var answerSettledAt: Date?
 
-    /// How long a prompt waits for its drain: an answer typed into a dialog never drains (Claude
-    /// Code's questions, approvals), nor does a prompt its agent never read.
-    public static let lifetime: TimeInterval = 600
-
-    /// `text` as a drain's `prompt` is compared with what the composer typed: whitespace runs
-    /// (the newlines and indents a terminal or agent may change) as one space, none at the ends.
-    public static func key(_ text: String) -> String {
-        text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-    }
+    /// A safety cap: a prompt that waited this long for its drain is taken as never coming
+    /// (prompts queued behind a long turn wait as long as that turn).
+    public static let lifetime: TimeInterval = 2 * 3600
+    /// How long an answer stays after its agent is past the question, for the drain of an
+    /// answer that became a prompt (Codex's hook reports `working`, then drains).
+    public static let answerGrace: TimeInterval = 2
 }
 
 extension Board {
-    /// Queues the composer's prompt `text` to `terminal` before the text goes in, with copies of
-    /// `mentions` (ids of their own, so each terminal's delivery is its own). Returns its id, to
-    /// withdraw it if the text can't be typed.
+    /// Queues the composer's prompt `text` to `terminal` before the text goes in, behind the
+    /// prompts already waiting there, with copies of `mentions` (ids of their own, so each
+    /// terminal's delivery is its own). Returns its id, to withdraw it if the text can't be typed.
     @discardableResult
-    public func queueComposerPrompt(_ text: String, to terminal: ObjectID, mentions: [Mention], now: Date = Date()) -> String {
+    public func queueComposerPrompt(_ text: String, to terminal: ObjectID, mentions: [Mention], answer: Bool = false, now: Date = Date()) -> String {
         expireComposerPrompts(now: now)
-        let copies = mentions.map { Mention(id: IDs.make("men"), target: $0.target, label: $0.label, stagedAt: $0.stagedAt, edited: $0.edited) }
-        let prompt = ComposerPrompt(id: IDs.make("cmp"), prompt: ComposerPrompt.key(text), mentions: copies, queuedAt: now)
+        let copies = answer ? [] : mentions.map { Mention(id: IDs.make("men"), target: $0.target, label: $0.label, stagedAt: $0.stagedAt, edited: $0.edited) }
+        let blocked = objects[terminal]?.props["lifecycle"]?["state"]?.string == LifecycleState.blocked.rawValue
+        let prompt = ComposerPrompt(id: IDs.make("cmp"), prompt: text, mentions: copies, answer: answer, queuedAt: now, answerSettledAt: answer && !blocked ? now : nil)
         composerPrompts[terminal, default: []].append(prompt)
         return prompt.id
     }
@@ -230,23 +237,52 @@ extension Board {
         }
     }
 
-    /// The composer's prompt that `caller`'s drain of `prompt` belongs to: the oldest queued
-    /// with that text. One without mentions is taken now (nothing to deliver or commit); one with
-    /// mentions stays until they are committed (`tray.commit`), so a peek loses nothing.
-    func takeComposerPrompt(for caller: ObjectID, prompt: String, now: Date = Date()) -> ComposerPrompt? {
+    /// The composer's prompt `caller`'s submission drain of `submitted` belongs to: the oldest
+    /// waiting. One without mentions is taken now (nothing to deliver or commit); one with
+    /// mentions stays until they are committed (`tray.commit`), so a peek loses nothing. When
+    /// neither text contains the other (the agent rewrote more than it wraps), one log line
+    /// says so, with lengths only.
+    func claimComposerPrompt(for caller: ObjectID, submitted: String, now: Date = Date()) -> ComposerPrompt? {
         expireComposerPrompts(now: now)
-        let key = ComposerPrompt.key(prompt)
-        guard var queue = composerPrompts[caller], let index = queue.firstIndex(where: { $0.prompt == key }) else { return nil }
-        let found = queue[index]
-        if found.mentions.isEmpty {
-            queue.remove(at: index)
+        guard var queue = composerPrompts[caller], let first = queue.first else { return nil }
+        let sent = first.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let seen = submitted.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !sent.contains(seen), !seen.contains(sent) {
+            NSLog("easl: composer prompt to \(caller) claimed by a drain whose text differs (sent \(sent.count) characters, drained \(seen.count))")
+        }
+        if first.mentions.isEmpty {
+            queue.removeFirst()
             composerPrompts[caller] = queue.isEmpty ? nil : queue
         }
-        return found
+        return first
     }
 
-    /// Drops delivered mentions from the composer's prompts, and each prompt they leave empty.
-    /// Returns how many were delivered.
+    /// `tile`'s agent reported `state`: once it is past a question (working or idle, no longer
+    /// blocked), the answers waiting there have `ComposerPrompt.answerGrace` left.
+    func composerAgentReported(_ tile: ObjectID, state: LifecycleState, now: Date = Date()) {
+        guard state == .working || state == .idle, var queue = composerPrompts[tile] else { return }
+        for index in queue.indices where queue[index].answer && queue[index].answerSettledAt == nil {
+            queue[index].answerSettledAt = now
+        }
+        composerPrompts[tile] = queue
+    }
+
+    /// Drops answers whose agent is past the question (`answerGrace` ago), and gives back the
+    /// mentions of prompts that waited `ComposerPrompt.lifetime`. The app calls this every
+    /// minute; queueing and claiming call it too.
+    public func expireComposerPrompts(now: Date = Date()) {
+        for (terminal, queue) in composerPrompts {
+            let settled = { (prompt: ComposerPrompt) in prompt.answerSettledAt.map { now.timeIntervalSince($0) > ComposerPrompt.answerGrace } ?? false }
+            let expired = { (prompt: ComposerPrompt) in now.timeIntervalSince(prompt.queuedAt) > ComposerPrompt.lifetime }
+            let left = queue.filter { !settled($0) && !expired($0) }
+            guard left.count != queue.count else { continue }
+            composerPrompts[terminal] = left.isEmpty ? nil : left
+            returnUndelivered(queue.filter { !settled($0) && expired($0) }, from: terminal)
+        }
+    }
+
+    /// Drops delivered mentions from the composer's prompts, and each prompt they leave empty
+    /// (its drain came: the prompts behind it are next). Returns how many were delivered.
     func commitComposerPrompts(_ ids: [MentionID]) -> Int {
         var count = 0
         for (terminal, queue) in composerPrompts {
@@ -268,18 +304,6 @@ extension Board {
     public func dropComposerPrompts(of terminal: ObjectID) {
         guard let queue = composerPrompts.removeValue(forKey: terminal) else { return }
         returnUndelivered(queue, from: terminal)
-    }
-
-    /// Prompts older than `ComposerPrompt.lifetime` never drained: their mentions go back to
-    /// the tray. The app calls this now and then; queueing and draining call it too.
-    public func expireComposerPrompts(now: Date = Date()) {
-        for (terminal, queue) in composerPrompts {
-            let expired = queue.filter { now.timeIntervalSince($0.queuedAt) > ComposerPrompt.lifetime }
-            guard !expired.isEmpty else { continue }
-            let left = queue.filter { now.timeIntervalSince($0.queuedAt) <= ComposerPrompt.lifetime }
-            composerPrompts[terminal] = left.isEmpty ? nil : left
-            returnUndelivered(expired, from: terminal)
-        }
     }
 
     /// A deleted object leaves every queued prompt's mentions; a deleted terminal's own prompts
