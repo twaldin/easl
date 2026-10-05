@@ -49,7 +49,10 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
   Bubbles sit beside their tile, off other tiles (cut short, the whole message in the tooltip, when that's what keeps them off) and never over the terminal the user is typing in.
 - **Edge pill** (arrow + the start of the message; the whole message in its tooltip): something that needs the user is off screen that way; clicking it goes there.
   It sits on a stretch of the view's edge with no tile under it; when the edge is covered, it is a chip in the toolbar row beside the drawing toolbar.
-- **⌘J**: the next thing on this board that needs the user, blocked agents first, then markers, then agents that finished unseen; "Nothing needs you" when there's nothing.
+- **Question tile** (`type: question`, `easl ask`): an agent's question with its options (the recommended one outlined, each with its why), links to its context, and who asks.
+  The user presses a number (or clicks) to pick, may add a note, and Return (or Answer) answers; the answer reaches the asker, and the tile collapses to it. Dismiss cancels it; Archive hides a closed one; cancelled and expired ones are dimmed.
+- **Open asks**: the count beside the drawing toolbar of questions waiting on the user; clicking it goes to the next one.
+- **⌘J**: the next thing on this board that needs the user, blocked agents first, then open questions, then markers, then agents that finished unseen; "Nothing needs you" when there's nothing.
 
 ## Agents' tiles
 

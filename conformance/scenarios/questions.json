@@ -1,0 +1,247 @@
+{
+  "description": "Question objects: create (asker defaulting to the calling terminal, sized by its options, size fit), each validation rule's invalid_params, object.find by type and status, answering through object.update (answer stamped, tile shrunk, the answer handed to the asking terminal's next drain), a closed question taking only archived, cancel, and expiry (a question created or updated past its expiresAt expires right after, announced as object.updated).",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "terminal",
+        "props": { "cwd": "{{root}}", "command": ["/bin/cat"] },
+        "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 }
+      },
+      "save": "t"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": {
+          "question": "Ship the question tile before the perf lane?",
+          "options": [
+            { "id": "now", "label": "Ship now", "why": "it is done and green" },
+            { "id": "later", "label": "After #28" }
+          ],
+          "recommended": "now",
+          "context": [{ "path": "Sources/CanvasCore/Question.swift", "lines": { "start": 1, "end": 20 } }, { "url": "https://github.com/twaldin/easl/pull/28" }]
+        },
+        "frame": { "x": 0, "y": 0, "w": 460, "h": 324 },
+        "caller": "{{t.object.id}}"
+      },
+      "save": "q1"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": {
+          "question": "Which name?",
+          "options": [{ "id": "a", "label": "ask" }, { "id": "b", "label": "question" }, { "id": "c", "label": "pick" }],
+          "asker": { "name": "cos", "host": "mini" },
+          "expiresAt": "2099-01-01T00:00:00Z"
+        },
+        "frame": { "x": 600, "y": 0 },
+        "size": "fit"
+      },
+      "save": "q2"
+    },
+    {
+      "call": "object.measure",
+      "params": { "type": "question", "props": { "question": "Q?", "options": [{ "id": "a", "label": "A" }], "context": [{ "object": "{{t.object.id}}" }] }, "width": 500 }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "question", "props": { "question": "Q?", "options": [] }, "frame": { "x": 0, "y": 1000, "w": 460, "h": 200 } },
+      "note": "no asker and no caller"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "question", "props": { "question": " ", "options": [], "asker": { "name": "cos" } }, "frame": { "x": 0, "y": 1000, "w": 460, "h": 200 } }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "question", "props": { "question": "Q?", "options": { "a": "A" }, "asker": { "name": "cos" } }, "frame": { "x": 0, "y": 1000, "w": 460, "h": 200 } }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Q?", "options": [{ "id": "a", "label": "A", "description": "x" }], "asker": { "name": "cos" } },
+        "frame": { "x": 0, "y": 1000, "w": 460, "h": 200 }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Q?", "options": [{ "id": "a", "label": "A" }, { "id": "a", "label": "B" }], "asker": { "name": "cos" } },
+        "frame": { "x": 0, "y": 1000, "w": 460, "h": 200 }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Q?", "options": [{ "id": "a", "label": "A" }], "recommended": "b", "asker": { "name": "cos" } },
+        "frame": { "x": 0, "y": 1000, "w": 460, "h": 200 }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Q?", "options": [{ "id": "a", "label": "A" }], "context": [{ "object": "not an id" }], "asker": { "name": "cos" } },
+        "frame": { "x": 0, "y": 1000, "w": 460, "h": 200 }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Q?", "options": [{ "id": "a", "label": "A" }], "asker": { "host": "mini" } },
+        "frame": { "x": 0, "y": 1000, "w": 460, "h": 200 }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Q?", "options": [{ "id": "a", "label": "A" }], "asker": { "name": "cos" }, "status": "answered", "answer": { "option": "a" } },
+        "frame": { "x": 0, "y": 1000, "w": 460, "h": 200 }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Q?", "options": [{ "id": "a", "label": "A" }], "asker": { "name": "cos" }, "expiresAt": "in an hour" },
+        "frame": { "x": 0, "y": 1000, "w": 460, "h": 200 }
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Q?", "options": [{ "id": "a", "label": "A" }], "asker": { "name": "cos" }, "archived": true },
+        "frame": { "x": 0, "y": 1000, "w": 460, "h": 200 }
+      }
+    },
+    {
+      "call": "object.find",
+      "params": { "board": "{{board}}", "type": "question", "status": "open" }
+    },
+    {
+      "call": "object.find",
+      "params": { "board": "{{board}}", "key": "x", "status": "open" }
+    },
+    {
+      "call": "object.find",
+      "params": { "board": "{{board}}", "type": "question", "keyPrefix": "x" }
+    },
+    {
+      "call": "object.find",
+      "params": { "board": "{{board}}", "type": "questions" }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q1.object.id}}", "props": { "status": "answered" } }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q1.object.id}}", "props": { "status": "answered", "answer": { "option": "soon" } } }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q1.object.id}}", "props": { "status": "cancelled", "answer": { "note": "x" } } }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q1.object.id}}", "props": { "status": "answered", "answer": { "option": "later", "note": "after the perf lane lands" } } },
+      "note": "the user's answer: answer.at and answer.by written by the server, the tile shrunk to the answer"
+    },
+    {
+      "call": "tray.drain",
+      "params": { "board": "{{board}}", "caller": "{{t.object.id}}", "peek": true },
+      "note": "the answered question waits for the asking terminal's next prompt"
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q1.object.id}}", "props": { "question": "Something else?" } }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q1.object.id}}", "props": { "status": "answered", "archived": true } }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q2.object.id}}", "props": { "status": "cancelled" } }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q2.object.id}}", "props": { "status": "expired" } }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Still needed?", "options": [{ "id": "y", "label": "Yes" }], "asker": { "name": "cos" }, "expiresAt": "2021-01-01T00:00:00Z" },
+        "frame": { "x": 1200, "y": 0, "w": 460, "h": 244 }
+      },
+      "save": "q3",
+      "settleMs": 400,
+      "note": "created past its expiry: expired right after (object.updated by the board)"
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{q3.object.id}}" }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Open for a while?", "options": [{ "id": "y", "label": "Yes" }], "asker": { "name": "cos" }, "expiresAt": "2099-01-01T00:00:00Z" },
+        "frame": { "x": 1800, "y": 0, "w": 460, "h": 244 }
+      },
+      "save": "q4"
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q4.object.id}}", "props": { "expiresAt": "2021-01-01T00:00:00Z" } },
+      "settleMs": 400,
+      "note": "moved into the past: expired right after"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Free text?", "options": [], "asker": { "name": "cos" } },
+        "frame": { "x": 2400, "y": 0, "w": 460, "h": 194 }
+      },
+      "save": "q5"
+    },
+    {
+      "call": "object.find",
+      "params": { "board": "{{board}}", "type": "question", "status": "open" }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q5.object.id}}", "props": { "status": "answered", "answer": { "note": "no option needed" } } }
+    },
+    {
+      "call": "object.find",
+      "params": { "board": "{{board}}", "type": "question" }
+    }
+  ]
+}

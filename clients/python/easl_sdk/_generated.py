@@ -164,6 +164,20 @@ class DiagramProps(TypedDict):
     zoom: NotRequired["Zoom"]
     key: NotRequired["ObjectKey"]
 
+class QuestionProps(TypedDict):
+    """A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `recommended` and `answer.option` name an option, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step)"""
+    question: Required[str]
+    options: Required[list[dict[str, Any]]]
+    recommended: NotRequired[str]
+    context: NotRequired[list[Union[dict[str, Any], dict[str, Any], dict[str, Any]]]]
+    asker: NotRequired[dict[str, Any]]
+    status: NotRequired[Literal["open", "answered", "cancelled", "expired"]]
+    expiresAt: NotRequired[str]
+    answer: NotRequired[dict[str, Any]]
+    archived: NotRequired[bool]
+    zoom: NotRequired["Zoom"]
+    key: NotRequired["ObjectKey"]
+
 class ShapeProps(TypedDict):
     kind: Required[Literal["rect", "ellipse", "text", "ink"]]
     text: NotRequired[str]
@@ -208,7 +222,7 @@ class Size(TypedDict):
     w: Required[float]
     h: Required[float]
 
-ObjectType = Literal["terminal", "browser", "code", "note", "html", "changes", "image", "diagram", "shape", "arrow", "group"]
+ObjectType = Literal["terminal", "browser", "code", "note", "html", "changes", "image", "diagram", "question", "shape", "arrow", "group"]
 
 class CanvasObject(TypedDict):
     id: Required["Id"]
@@ -409,9 +423,9 @@ class ObjectApi:
         params = {"id": id, "as": as_, "since": since}
         return self._call("object.get", params, [])
 
-    def find(self, *, board: "Id" | None = None, key: str | None = None, key_prefix: str | None = None, as_: Literal["raw", "graph"] | None = None) -> dict[str, Any]:
-        """Find an object by its `props.key` (ObjectKey) instead of its id: `key` returns it as object.get does (`as: graph` too), or `not_found`; `keyPrefix` lists every object whose key starts with it, in key order ("REL-" for every ticket's region), possibly none. One of the two. Keys are per board: `board` defaults as for object.create."""
-        params = {"board": board, "key": key, "keyPrefix": key_prefix, "as": as_}
+    def find(self, *, board: "Id" | None = None, key: str | None = None, key_prefix: str | None = None, type: "ObjectType" | None = None, status: str | None = None, as_: Literal["raw", "graph"] | None = None) -> dict[str, Any]:
+        """Find objects by what they are instead of by id: `key` returns the object holding that `props.key` (ObjectKey) as object.get does (`as: graph` too), or `not_found`; `keyPrefix` lists every object whose key starts with it, in key order ("REL-" for every ticket's region), possibly none; `type` lists every object of that type, oldest first, and with `status` only those whose `props.status` is it (`type: question, status: open`: the questions still waiting on the user). One of key, keyPrefix, type. Per board: `board` defaults as for object.create."""
+        params = {"board": board, "key": key, "keyPrefix": key_prefix, "type": type, "status": status, "as": as_}
         return self._call("object.find", params, ["board"])
 
     def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame", "SizeFrame"] | None = None, size: Literal["fit"] | None = None, parent: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:

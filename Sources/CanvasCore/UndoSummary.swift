@@ -84,6 +84,7 @@ extension UndoHistory.Step {
         case .changes: ("changes tile", "changes tiles", "Changes Tile")
         case .image: ("image", "images", "Image")
         case .diagram: ("diagram", "diagrams", "Diagram")
+        case .question: ("question", "questions", "Question")
         case .browser: ("browser tile", "browser tiles", "Browser Tile")
         case .shape: ("shape", "shapes", "Shape")
         case .arrow: ("arrow", "arrows", "Arrow")

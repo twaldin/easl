@@ -434,6 +434,10 @@ final class TileFrameView: NSView {
         // The file name wherever the file is (`ImageProps.title`); the path is the tooltip's.
         case .image: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["path"].flatMap(\.string).map { ($0 as NSString).lastPathComponent } ?? "Image"
         case .diagram: return DiagramSpec.title(props)
+        // Who asks; a terminal asking is named in the body (its header's name).
+        case .question:
+            let asker = QuestionSpec(props).asker
+            return asker?.name.map { name in "Question from \(asker?.host.map { "\(name)@\($0)" } ?? name)" } ?? "Question"
         case .changes:
             let spec = ChangesSpec(props)
             if let title = props["title"]?.string { return title }

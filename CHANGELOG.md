@@ -15,6 +15,7 @@ Each version's section is its GitHub release's notes.
 - **agent write bursts no longer freeze the board.** An agent writing tile after tile used to re-route every arrow on the main thread once per write (a 139-write burst on a 339-object board: 34 s of CPU, the UI frozen for 45 s). The board now routes once the burst ends, off the main thread, while arrows bound to a written tile follow it as it changes.
 - **`easl metrics`** (`app.metrics`, View › Performance HUD): what easl's work costs (main-thread busy time and stretches, per-method API cost, events, writes per agent, routings, saves, live tiles, CPU, memory and wakeups), and an `app.log` line naming the cause of any main-thread stretch over 250 ms.
 - HTML tiles panned or zoomed out of view and back within 30 s no longer reload their page.
+- **agents ask you on the board.** `easl ask "…" --option id=label[:why] … --recommend id` posts a question tile: the question, its options with the recommended one marked and why, links to its context, and who asks. Open questions are on ⌘J after blocked agents and counted beside the drawing toolbar; press a number and Return to answer. The answer reaches the asking terminal with its next prompt, or a script waiting with `easl ask --wait` (which also takes the `{question, options, recommended}` JSON an agent already has). Questions can expire (`--expires 30m`), be cancelled (`easl ask cancel`), and be archived once closed. API: the `question` object type (`QuestionProps`), validated on create and update, and `object.find` by `type` and `status`.
 
 ## 0.1.0
 

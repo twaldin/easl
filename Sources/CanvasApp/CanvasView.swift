@@ -331,6 +331,9 @@ final class CanvasView: NSScrollView {
         case .objectUpdated(let object):
             if object.type == .group {
                 groups[object.id]?.update(object)
+            } else if TileFactory.hidden(object) {
+                // Archived: the tile goes, the object stays (unarchiving brings it back).
+                if tiles[object.id] != nil { removeTile(object.id) }
             } else if let tile = tiles[object.id] {
                 // The user's own resize already laid the content out at this size; any other
                 // (an agent's update or fit, undo) re-aims a code tile at its range.
@@ -351,7 +354,7 @@ final class CanvasView: NSScrollView {
             }
             scheduleGeometry()
         case .objectDeleted(let id):
-            tiles.removeValue(forKey: id)?.removeFromSuperview()
+            removeTile(id)
             groups.removeValue(forKey: id)?.removeFromSuperview()
             if enteredGroup == id { exitGroup() }
             hideMarker(id)
@@ -360,7 +363,6 @@ final class CanvasView: NSScrollView {
                 layoutPills()
             }
             seenLocally.remove(id)
-            if selection.contains(id) { setSelection(selection.subtracting([id])) }
             syncAuthors(of: id)
             scheduleGeometry()
         case .attentionChanged(let id, let marker):
@@ -369,9 +371,16 @@ final class CanvasView: NSScrollView {
         }
     }
 
+    /// A tile's view off the board (its object deleted, or an archived question), out of the
+    /// selection with it.
+    private func removeTile(_ id: ObjectID) {
+        tiles.removeValue(forKey: id)?.removeFromSuperview()
+        if selection.contains(id) { setSelection(selection.subtracting([id])) }
+    }
+
     private func add(_ object: CanvasObject) {
         if object.type == .group { return addGroup(object) }
-        guard tiles[object.id] == nil, TileFactory.hasTile(object.type) else { return }
+        guard tiles[object.id] == nil, TileFactory.hasTile(object.type), !TileFactory.hidden(object) else { return }
         let id = object.id
         let content = TileFactory.make(object, board: board)
         if chromeHidden { (content as? CodeTile)?.setPresenting(true) }
@@ -408,6 +417,9 @@ final class CanvasView: NSScrollView {
         (content as? NoteTile)?.onOpenedCode = showCode
         (content as? BrowserTile)?.onOpenedCode = showCode
         (content as? DiagramTile)?.onOpenedCode = showCode
+        (content as? QuestionTile)?.onOpenedCode = showCode
+        (content as? QuestionTile)?.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
+        (content as? QuestionTile)?.onGoTo = { [weak self] target in self?.goToShown(target) }
         // A web link a note or HTML tile opened (`Board.openLink`): shown like a terminal's.
         (content as? HtmlTile)?.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
         (content as? NoteTile)?.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
@@ -1026,11 +1038,22 @@ final class CanvasView: NSScrollView {
     }
 
     /// Keyboard focus for a tile the keyboard just went to: a terminal takes it itself (on the
-    /// next turn, once a new one's surface exists); anything else leaves it with the canvas, so
-    /// Esc, Delete, ⌘W, ⌘G and the arrows act on the selection, and Return enters it.
+    /// next turn, once a new one's surface exists), as does an open question (its number keys
+    /// pick, Return answers); anything else leaves it with the canvas, so Esc, Delete, ⌘W, ⌘G
+    /// and the arrows act on the selection, and Return enters it.
     func takeKeyboard(_ id: ObjectID) {
-        guard board.objects[id]?.type == .terminal else {
+        let type = board.objects[id]?.type
+        guard type == .terminal || type == .question else {
             window?.makeFirstResponder(document)
+            return
+        }
+        if type == .question {
+            // The canvas keeps it when the question is closed (enterKeyboard refuses).
+            window?.makeFirstResponder(document)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.selection == [id] else { return }
+                _ = self.tiles[id]?.content.enterKeyboard()
+            }
             return
         }
         DispatchQueue.main.async { [weak self] in
@@ -1039,7 +1062,7 @@ final class CanvasView: NSScrollView {
     }
 
     /// Tiles Return hands the keyboard to (an HTML tile's page never takes it: `HtmlWebView`).
-    private static let enterable: Set<ObjectType> = [.terminal, .code, .changes, .note, .browser]
+    private static let enterable: Set<ObjectType> = [.terminal, .code, .changes, .note, .browser, .question]
 
     /// Return with one tile selected and the canvas holding the keyboard: the tile
     /// takes it (`TileContent.enterKeyboard`), revealed first with the least pan (an agent's
@@ -1789,16 +1812,25 @@ final class CanvasView: NSScrollView {
     /// What Go to Next Needs-You visited last, as it was then.
     private var lastNeedsYou: NeedsYouItem?
 
-    /// Go to Next Needs-You (⌘J): the next blocked agent's terminal, then the next marked object,
+    /// Go to Next Needs-You (⌘J): the next blocked agent's terminal, then the next open question
+    /// (which takes the keyboard: number keys pick, Return answers), then the next marked object,
     /// then the next done agent's terminal not seen yet, on this board (`NeedsYouItem`), framed
     /// like Go to, selected (which acknowledges a marker), and given the keyboard (a terminal
     /// focuses, which sees a done agent). Pressed again from there, the one after it, around;
     /// from anywhere else, the first. When nothing needs the user, a notice says so.
     func goToNextNeedsYou() {
-        let items = NeedsYouItem.all(board.objects, attention: board.attention)
+        goToNext(NeedsYouItem.all(board.objects, attention: board.attention), none: "Nothing needs you")
+    }
+
+    /// The open-asks count's click: the same, through the open questions only.
+    func goToNextAsk() {
+        goToNext(NeedsYouItem.all(board.objects, attention: board.attention).filter { $0.reason == .question }, none: "No open asks")
+    }
+
+    private func goToNext(_ items: [NeedsYouItem], none: String) {
         let current = focusedTile ?? (selection.count == 1 ? selection.first : nil)
         let last = lastNeedsYou.flatMap { $0.id == current ? $0 : nil }
-        guard let next = NeedsYouItem.next(after: last, in: items) else { return showNotice("Nothing needs you") }
+        guard let next = NeedsYouItem.next(after: last, in: items) else { return showNotice(none) }
         lastNeedsYou = next
         go(to: next.id)
     }

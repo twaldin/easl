@@ -1,0 +1,609 @@
+import AppKit
+import CanvasCore
+
+/// A question an agent asks the user (`type: question`, `QuestionSpec`): the question, its
+/// options as buttons (the recommended one marked, each with its why), an optional note, links
+/// to the context (opened beside the tile), and who asks. Number keys pick, Return answers
+/// (`Board.answerQuestion`, which hands the answer to an asking terminal). Once closed it
+/// collapses to the outcome: the answer and who gave it when, or that it was cancelled or
+/// expired (dimmed). Its text scales with the chrome text size, like the title bar's.
+@MainActor
+final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
+    private var object: CanvasObject
+    private let board: Board
+    private var spec: QuestionSpec
+    /// The option picked with a click or its number key, waiting for Return or Answer.
+    private var picked: String?
+    private let scroll = NSScrollView()
+    private let page = QuestionPage()
+    private let note = NSTextField()
+    private var painter: QuestionPainter?
+
+    /// A context link opened: code (the tile, whether it was already on the board), a web page,
+    /// or an object on the board to go to.
+    var onOpenedCode: ((ObjectID, Bool) -> Void)?
+    var onOpenedLink: ((ObjectID) -> Void)?
+    var onGoTo: ((ObjectID) -> Void)?
+
+    init(object: CanvasObject, board: Board) {
+        self.object = object
+        self.board = board
+        spec = QuestionSpec(object.props)
+        super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.autoresizingMask = [.width, .height]
+        scroll.frame = bounds
+        scroll.documentView = page
+        addSubview(scroll)
+        page.tile = self
+        note.placeholderString = "Add a note (optional)"
+        note.bezelStyle = .roundedBezel
+        note.delegate = self
+        note.cell?.sendsActionOnEndEditing = false
+        page.addSubview(note)
+        NotificationCenter.default.addObserver(self, selector: #selector(relayout), name: ChromeText.didChange, object: nil)
+        relayout()
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    nonisolated override var isFlipped: Bool { true }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        relayout()
+    }
+
+    /// Lays the page out at the tile's width and chrome text scale; the note field sits where
+    /// the painter left room for it while the question is open.
+    @objc private func relayout() {
+        let width = max(120, scroll.contentSize.width)
+        let painter = QuestionPainter(spec: spec, object: object, board: board, width: width, scale: ChromeText.scale, picked: picked,
+                                      noting: !note.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        self.painter = painter
+        page.frame = NSRect(x: 0, y: 0, width: width, height: max(painter.height, scroll.contentSize.height))
+        note.isHidden = painter.noteRect == nil
+        if let rect = painter.noteRect {
+            note.frame = rect
+            note.font = ChromeText.font(QuestionPainter.noteFont)
+        } else if window?.firstResponder === note.currentEditor() {
+            window?.makeFirstResponder(self)
+        }
+        page.needsDisplay = true
+    }
+
+    fileprivate func paint(in rect: NSRect) {
+        painter?.draw(in: rect, noteDrawn: false)
+    }
+
+    // MARK: Acting
+
+    /// Picks `id` (a click or its number key); picking the picked one again unpicks it.
+    private func pick(_ id: String) {
+        guard spec.status == .open else { return }
+        picked = picked == id ? nil : id
+        relayout()
+    }
+
+    /// Answers with the picked option and the note; nothing until one of them is given.
+    private func confirm() {
+        let text = note.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard spec.status == .open, picked != nil || !text.isEmpty else { return }
+        do {
+            try board.answerQuestion(object.id, option: picked, note: text.isEmpty ? nil : text)
+            picked = nil
+            note.stringValue = ""
+            leave()
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    private func dismiss() {
+        _ = try? board.cancelQuestion(object.id)
+        leave()
+    }
+
+    private func archive() {
+        _ = try? board.archiveQuestion(object.id)
+    }
+
+    /// The keyboard back to the canvas, the tile still selected.
+    private func leave() {
+        guard window?.firstResponder === self || window?.firstResponder === note.currentEditor() else { return }
+        (enclosingCanvas)?.leaveTile(object.id)
+    }
+
+    private var enclosingCanvas: CanvasView? {
+        var view: NSView? = superview
+        while let current = view, !(current is CanvasView) { view = current.superview }
+        return view as? CanvasView
+    }
+
+    /// Context links open beside the tile: code with `Board.openForNavigation`, web pages with
+    /// `Board.openLink`; an object is gone to where it is.
+    private func open(_ context: QuestionSpec.Context) {
+        switch context {
+        case .object(let id):
+            guard board.objects[id] != nil else { return NSSound.beep() }
+            onGoTo?(id)
+        case .url(let text):
+            guard let url = URL(string: text) else { return NSSound.beep() }
+            if WebLink.isWeb(url) {
+                onOpenedLink?(board.openLink(url, near: object.id, caller: nil).object.id)
+            } else {
+                ExternalOpen.open(url, because: "question \(object.id) context")
+            }
+        case .path(let path, let lines):
+            let opened = board.openForNavigation(CodeAim(path: board.boardPath(path, linkRoot: board.root), range: lines), from: object.id)
+            onOpenedCode?(opened.id, opened.existing)
+        }
+    }
+
+    fileprivate func click(at point: NSPoint) -> Bool {
+        guard let painter, let hit = painter.hit(point) else { return false }
+        switch hit {
+        case .option(let id):
+            window?.makeFirstResponder(self)
+            pick(id)
+        case .context(let context): open(context)
+        case .answer: confirm()
+        case .dismiss: dismiss()
+        case .archive: archive()
+        }
+        return true
+    }
+
+    // MARK: Keyboard
+
+    override var acceptsFirstResponder: Bool { spec.status == .open }
+
+    /// 1–9 pick the options in order, Return answers, Tab goes to the note, Esc gives the
+    /// keyboard back to the canvas.
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option])
+        guard modifiers.isEmpty else { return super.keyDown(with: event) }
+        switch event.keyCode {
+        case 53: return leave()
+        case 36, 76: return confirm()
+        case 48:
+            window?.makeFirstResponder(note)
+            return
+        default: break
+        }
+        if let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit), digit <= spec.options.count {
+            pick(spec.options[digit - 1].id)
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
+    /// In the note: Return answers, Esc goes back to the options.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            confirm()
+            return true
+        case #selector(NSResponder.cancelOperation(_:)), #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertBacktab(_:)):
+            window?.makeFirstResponder(self)
+            return true
+        default:
+            return false
+        }
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        // The Answer button turns on with the first character of a note.
+        relayout()
+    }
+
+    // MARK: TileContent
+
+    func setLive(_ live: Bool) {}
+
+    func render(_ request: TileRenderRequest) async -> TileRender {
+        let painter = QuestionPainter(spec: spec, object: object, board: board, width: request.size.width, scale: 1, picked: picked,
+                                      noting: !note.stringValue.isEmpty, note: note.stringValue)
+        let content = CGSize(width: request.size.width, height: painter.height)
+        let size = request.full ? CGSize(width: request.size.width, height: max(request.size.height, content.height)) : request.size
+        let image = request.image(size: size) { bounds in
+            NSColor.textBackgroundColor.setFill()
+            bounds.fill()
+            painter.draw(in: bounds, noteDrawn: true)
+        }
+        guard let image else { return TileRender(image: nil, contentSize: content, state: .failed, reason: "bitmap allocation failed") }
+        return TileRender(image: image, contentSize: content, state: .rendered)
+    }
+
+    func mentionTarget(at point: NSPoint) -> MentionTarget? { .object(object.id) }
+
+    func outline(for target: MentionTarget) -> NSRect? { bounds }
+
+    var takesKeyboardFocus: Bool { spec.status == .open }
+
+    /// The keyboard to the question (number keys, Return), while it is open.
+    func enterKeyboard() -> Bool {
+        guard spec.status == .open else { return false }
+        return window?.makeFirstResponder(self) == true
+    }
+
+    func update(_ object: CanvasObject) {
+        self.object = object
+        spec = QuestionSpec(object.props)
+        if let picked, spec.option(picked) == nil || spec.status != .open { self.picked = nil }
+        relayout()
+    }
+}
+
+/// The scrolling page a question tile paints on; clicks go to the tile.
+@MainActor
+private final class QuestionPage: NSView {
+    weak var tile: QuestionTile?
+
+    nonisolated override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        tile?.paint(in: bounds)
+    }
+
+    /// A click on an option or button acts even while the window isn't key, as a note's links do.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        // Anywhere else on an open question: the keyboard to it, for its number keys and Return.
+        if tile?.click(at: convert(event.locationInWindow, from: nil)) != true, let tile, tile.acceptsFirstResponder {
+            window?.makeFirstResponder(tile)
+        }
+    }
+
+    override func resetCursorRects() {
+        // Buttons and links show they act.
+        for rect in tile?.clickableRects ?? [] { addCursorRect(rect, cursor: .pointingHand) }
+    }
+}
+
+extension QuestionTile {
+    fileprivate var clickableRects: [NSRect] { painter?.clickable ?? [] }
+}
+
+/// A question tile's layout and drawing, live and for renders: everything is placed once per
+/// width, scale and state, then drawn and hit-tested from the same rects.
+@MainActor
+struct QuestionPainter {
+    enum Hit {
+        case option(String), context(QuestionSpec.Context), answer, dismiss, archive
+    }
+
+    static let questionFont = NSFont.systemFont(ofSize: 15, weight: .semibold)
+    static let labelFont = NSFont.systemFont(ofSize: 13, weight: .medium)
+    static let whyFont = NSFont.systemFont(ofSize: 11.5)
+    static let metaFont = NSFont.systemFont(ofSize: 11)
+    static let keyFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+    static let noteFont = NSFont.systemFont(ofSize: 13)
+
+    private let spec: QuestionSpec
+    private let scale: CGFloat
+    private let width: CGFloat
+    private let picked: String?
+    private let noting: Bool
+    /// Drawn in the note field's place by renders (live, the field draws itself).
+    private let noteText: String
+    private var items: [(rect: NSRect, draw: () -> Void)] = []
+    private var hits: [(rect: NSRect, hit: Hit)] = []
+    private(set) var noteRect: NSRect?
+    private(set) var height: CGFloat = 0
+
+    var clickable: [NSRect] { hits.map(\.rect) }
+
+    init(spec: QuestionSpec, object: CanvasObject, board: Board, width: CGFloat, scale: Double, picked: String?, noting: Bool, note: String = "") {
+        self.spec = spec
+        self.scale = CGFloat(scale)
+        self.width = width
+        self.picked = picked
+        self.noting = noting
+        noteText = note
+        layout(object: object, board: board)
+    }
+
+    private func font(_ base: NSFont) -> NSFont { ChromeText.font(base, scale: Double(scale)) }
+    private func points(_ base: CGFloat) -> CGFloat { (base * scale).rounded() }
+
+    private func text(_ string: String, _ base: NSFont, _ color: NSColor, truncating: Bool = false) -> NSAttributedString {
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = truncating ? .byTruncatingTail : .byWordWrapping
+        return NSAttributedString(string: string, attributes: [.font: font(base), .foregroundColor: color, .paragraphStyle: style])
+    }
+
+    private static func measure(_ text: NSAttributedString, width: CGFloat) -> CGSize {
+        let rect = text.boundingRect(with: CGSize(width: max(1, width), height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading])
+        return CGSize(width: ceil(rect.width), height: ceil(rect.height))
+    }
+
+    /// Adds `text` at `y` wrapped to `width` from `x`; returns the y below it.
+    private mutating func place(_ text: NSAttributedString, x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
+        let size = Self.measure(text, width: width)
+        let rect = NSRect(x: x, y: y, width: width, height: size.height)
+        items.append((rect, { text.draw(with: rect, options: [.usesLineFragmentOrigin, .usesFontLeading]) }))
+        return rect.maxY
+    }
+
+    /// A terminal as people name it: its `name`, else what its header shows.
+    private func terminal(_ id: ObjectID, board: Board) -> String {
+        guard let object = board.objects[id] else { return "terminal \(id)" }
+        return object.props["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? board.terminalLabel?(id) ?? "terminal"
+    }
+
+    private func who(_ actor: Actor?, board: Board) -> String {
+        switch actor {
+        case .agent(let tile)?: terminal(tile, board: board)
+        case .user?, nil: "you"
+        }
+    }
+
+    private func asker(board: Board) -> String {
+        guard let asker = spec.asker else { return "someone" }
+        if let name = asker.name { return asker.host.map { "\(name)@\($0)" } ?? name }
+        return asker.tile.map { terminal($0, board: board) } ?? "someone"
+    }
+
+    private static func when(_ date: Date) -> String {
+        let format = DateFormatter()
+        format.dateStyle = Calendar.current.isDateInToday(date) ? .none : .medium
+        format.timeStyle = .short
+        return format.string(from: date)
+    }
+
+    private mutating func layout(object: CanvasObject, board: Board) {
+        let inset = points(14), inner = max(40, width - 2 * inset)
+        var y = inset
+        let secondary = NSColor.secondaryLabelColor
+        if spec.status == .open {
+            var meta = "Asked by \(asker(board: board))"
+            if let expires = spec.expiresAt { meta += " · expires \(Self.when(expires))" }
+            y = place(text(meta, Self.metaFont, secondary, truncating: true), x: inset, y: y, width: inner) + points(4)
+            y = place(text(spec.question, Self.questionFont, .labelColor), x: inset, y: y, width: inner) + points(10)
+            for (index, option) in spec.options.enumerated() {
+                y = placeOption(option, index: index, x: inset, y: y, width: inner) + points(6)
+            }
+            y = placeContext(x: inset, y: y + points(2), width: inner, board: board)
+            let field = NSRect(x: inset, y: y + points(2), width: inner, height: points(24))
+            noteRect = field
+            if !noteText.isEmpty {
+                let note = text(noteText, Self.noteFont, .labelColor, truncating: true)
+                items.append((field, {
+                    NSColor.separatorColor.setStroke()
+                    NSBezierPath(roundedRect: field.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5).stroke()
+                    note.draw(with: field.insetBy(dx: 6, dy: 4), options: [.usesLineFragmentOrigin])
+                }))
+            }
+            y = field.maxY + points(10)
+            y = placeFooter(x: inset, y: y, width: inner)
+        } else {
+            y = place(text(spec.question, Self.labelFont, secondary), x: inset, y: y, width: inner) + points(8)
+            y = placeOutcome(object: object, board: board, x: inset, y: y, width: inner)
+        }
+        height = y + inset
+    }
+
+    private mutating func placeOption(_ option: QuestionSpec.Option, index: Int, x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
+        let pad = points(9), key = points(20)
+        let recommended = option.id == spec.recommended
+        let isPicked = option.id == picked
+        let badge = recommended ? text("Recommended", Self.metaFont, .controlAccentColor) : nil
+        let badgeSize = badge.map { Self.measure($0, width: 200) } ?? .zero
+        let textX = x + pad + key + points(8)
+        let textWidth = max(20, width - (textX - x) - pad - (badge == nil ? 0 : badgeSize.width + points(8)))
+        let label = text(option.label, Self.labelFont, .labelColor)
+        let why = option.why.map { text($0, Self.whyFont, .secondaryLabelColor) }
+        let labelSize = Self.measure(label, width: textWidth)
+        let whySize = why.map { Self.measure($0, width: textWidth) } ?? .zero
+        let rowHeight = max(key, labelSize.height + (why == nil ? 0 : points(2) + whySize.height)) + 2 * pad
+        let row = NSRect(x: x, y: y, width: width, height: rowHeight)
+        let number = index < 9 ? "\(index + 1)" : ""
+        let keyText = text(number, Self.keyFont, isPicked ? .white : .secondaryLabelColor)
+        let keyRect = NSRect(x: x + pad, y: y + pad, width: key, height: key)
+        items.append((row, {
+            let shape = NSBezierPath(roundedRect: row.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7)
+            (isPicked ? NSColor.controlAccentColor.withAlphaComponent(0.16) : NSColor.quaternaryLabelColor.withAlphaComponent(0.08)).setFill()
+            shape.fill()
+            (isPicked || recommended ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
+            shape.lineWidth = isPicked ? 2 : 1
+            shape.stroke()
+            let circle = NSBezierPath(roundedRect: keyRect, xRadius: key / 2, yRadius: key / 2)
+            (isPicked ? NSColor.controlAccentColor : NSColor.quaternaryLabelColor.withAlphaComponent(0.25)).setFill()
+            circle.fill()
+            let size = keyText.size()
+            keyText.draw(at: NSPoint(x: keyRect.midX - size.width / 2, y: keyRect.midY - size.height / 2))
+            label.draw(with: NSRect(x: textX, y: y + pad, width: textWidth, height: labelSize.height), options: [.usesLineFragmentOrigin, .usesFontLeading])
+            why?.draw(with: NSRect(x: textX, y: y + pad + labelSize.height + (why == nil ? 0 : 2), width: textWidth, height: whySize.height),
+                      options: [.usesLineFragmentOrigin, .usesFontLeading])
+            badge?.draw(at: NSPoint(x: row.maxX - pad - badgeSize.width, y: y + pad + 2))
+        }))
+        hits.append((row, .option(option.id)))
+        return row.maxY
+    }
+
+    private mutating func placeContext(x: CGFloat, y: CGFloat, width: CGFloat, board: Board) -> CGFloat {
+        guard !spec.context.isEmpty else { return y }
+        let lead = text("Context:", Self.metaFont, .secondaryLabelColor)
+        let leadSize = Self.measure(lead, width: width)
+        items.append((NSRect(x: x, y: y + 2, width: leadSize.width, height: leadSize.height), { lead.draw(at: NSPoint(x: x, y: y + 2)) }))
+        var cursor = x + leadSize.width + points(6), line = y
+        let chipHeight = points(20), gap = points(6)
+        for context in spec.context {
+            let title: String
+            switch context {
+            case .object(let id): title = board.objects[id].map { Self.objectTitle($0) } ?? "\(id) (gone)"
+            default: title = context.label
+            }
+            let label = text(title, Self.metaFont, .linkColor, truncating: true)
+            let chipWidth = min(Self.measure(label, width: 400).width + 2 * gap, width)
+            if cursor + chipWidth > x + width, cursor > x + leadSize.width + points(6) {
+                cursor = x
+                line += chipHeight + points(4)
+            }
+            let chip = NSRect(x: cursor, y: line, width: chipWidth, height: chipHeight)
+            items.append((chip, {
+                NSColor.linkColor.withAlphaComponent(0.08).setFill()
+                NSBezierPath(roundedRect: chip, xRadius: 5, yRadius: 5).fill()
+                label.draw(with: chip.insetBy(dx: gap, dy: 3), options: [.usesLineFragmentOrigin])
+            }))
+            hits.append((chip, .context(context)))
+            cursor = chip.maxX + gap
+        }
+        return line + chipHeight + points(6)
+    }
+
+    private static func objectTitle(_ object: CanvasObject) -> String {
+        let title = TileFrameView.title(for: object)
+        return title.count > 40 ? String(title.prefix(39)) + "…" : title
+    }
+
+    private mutating func button(_ title: String, prominent: Bool, enabled: Bool, right: CGFloat, y: CGFloat, hit: Hit) -> NSRect {
+        let label = text(title, Self.labelFont, prominent ? (enabled ? .white : .tertiaryLabelColor) : (enabled ? .labelColor : .tertiaryLabelColor))
+        let size = Self.measure(label, width: 300)
+        let rect = NSRect(x: right - size.width - points(24), y: y, width: size.width + points(24), height: points(26))
+        items.append((rect, {
+            let shape = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+            if prominent {
+                (enabled ? NSColor.controlAccentColor : NSColor.quaternaryLabelColor.withAlphaComponent(0.25)).setFill()
+                shape.fill()
+            } else {
+                NSColor.separatorColor.setStroke()
+                shape.stroke()
+            }
+            label.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
+        }))
+        if enabled { hits.append((rect, hit)) }
+        return rect
+    }
+
+    private mutating func placeFooter(x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
+        let answer = button("Answer", prominent: true, enabled: picked != nil || noting, right: x + width, y: y, hit: .answer)
+        let dismiss = button("Dismiss", prominent: false, enabled: true, right: answer.minX - points(8), y: y, hit: .dismiss)
+        let count = min(spec.options.count, 9)
+        let hint = count == 0 ? "↩ answer" : count == 1 ? "1 picks · ↩ answers" : "1–\(count) pick · ↩ answers"
+        let label = text(hint, Self.metaFont, .tertiaryLabelColor, truncating: true)
+        let hintWidth = max(0, dismiss.minX - x - points(8))
+        let size = Self.measure(label, width: hintWidth)
+        let rect = NSRect(x: x, y: answer.midY - size.height / 2, width: hintWidth, height: size.height)
+        items.append((rect, { label.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine]) }))
+        return answer.maxY
+    }
+
+    private mutating func placeOutcome(object: CanvasObject, board: Board, x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
+        var y = y
+        let headline: String
+        var byline: String
+        switch spec.status {
+        case .answered:
+            let answer = spec.answer
+            headline = "✓ " + (spec.option(answer?.option).map(\.label) ?? answer?.option ?? "Answered")
+            byline = "Answered by \(who(answer?.by, board: board))"
+            if let at = answer?.at { byline += " · \(Self.when(at))" }
+        case .cancelled:
+            headline = "Cancelled"
+            byline = "Cancelled · \(Self.when(object.updatedAt))"
+        case .expired:
+            headline = "Expired"
+            byline = "Expired · \(Self.when(spec.expiresAt ?? object.updatedAt))"
+        case .open:
+            headline = ""
+            byline = ""
+        }
+        byline += " · asked by \(asker(board: board))"
+        y = place(text(headline, Self.questionFont, spec.status == .answered ? .labelColor : .secondaryLabelColor), x: x, y: y, width: width) + points(4)
+        if spec.status == .answered, let note = spec.answer?.note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            y = place(text("“\(note)”", Self.noteFont, .labelColor), x: x, y: y, width: width) + points(6)
+        }
+        let archive = button("Archive", prominent: false, enabled: true, right: x + width, y: y, hit: .archive)
+        let label = text(byline, Self.metaFont, .secondaryLabelColor, truncating: true)
+        let bylineWidth = max(0, archive.minX - x - points(8))
+        let size = Self.measure(label, width: bylineWidth)
+        let rect = NSRect(x: x, y: archive.midY - size.height / 2, width: bylineWidth, height: size.height)
+        items.append((rect, { label.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine]) }))
+        return archive.maxY
+    }
+
+    func hit(_ point: NSPoint) -> Hit? {
+        hits.last { $0.rect.contains(point) }?.hit
+    }
+
+    /// Draws the page; a cancelled or expired question dimmed. `noteDrawn`: the note field is
+    /// drawn here (renders), not by its own view.
+    func draw(in bounds: NSRect, noteDrawn: Bool) {
+        let dimmed = spec.status == .cancelled || spec.status == .expired
+        let context = NSGraphicsContext.current?.cgContext
+        if dimmed {
+            context?.saveGState()
+            context?.setAlpha(0.5)
+            context?.beginTransparencyLayer(auxiliaryInfo: nil)
+        }
+        for item in items where item.rect.intersects(bounds) {
+            if !noteDrawn, item.rect == noteRect { continue }
+            item.draw()
+        }
+        if noteDrawn, let noteRect, noteText.isEmpty {
+            NSColor.separatorColor.setStroke()
+            NSBezierPath(roundedRect: noteRect.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5).stroke()
+            text("Add a note (optional)", Self.noteFont, .placeholderTextColor).draw(at: NSPoint(x: noteRect.minX + 6, y: noteRect.minY + 4))
+        }
+        if dimmed {
+            context?.endTransparencyLayer()
+            context?.restoreGState()
+        }
+    }
+}
+
+/// The board's open asks, beside the drawing toolbar: how many questions wait on the user
+/// (`Board.waitingQuestions`); a click goes to the next one. Hidden when none waits.
+@MainActor
+final class AsksChip: NSButton {
+    var onGo: (() -> Void)?
+
+    init() {
+        super.init(frame: .zero)
+        bezelStyle = .rounded
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = 10
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.5).cgColor
+        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
+        refusesFirstResponder = true
+        image = NSImage(systemSymbolName: "questionmark.bubble", accessibilityDescription: nil)
+        imagePosition = .imageLeading
+        contentTintColor = .controlAccentColor
+        target = self
+        action = #selector(go)
+        isHidden = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override var intrinsicContentSize: NSSize {
+        let size = super.intrinsicContentSize
+        return NSSize(width: size.width + ChromeText.scaled(16), height: ChromeText.scaled(28))
+    }
+
+    /// `count` waiting questions; the tooltip lists the first few.
+    func show(_ waiting: [CanvasObject]) {
+        isHidden = waiting.isEmpty
+        guard !waiting.isEmpty else { return }
+        let text = waiting.count == 1 ? "1 open ask" : "\(waiting.count) open asks"
+        attributedTitle = NSAttributedString(string: " " + text, attributes: [
+            .font: ChromeText.font(NSFont.systemFont(ofSize: 12, weight: .medium)), .foregroundColor: NSColor.controlAccentColor,
+        ])
+        toolTip = waiting.prefix(5).map { "• " + QuestionSpec($0.props).question }.joined(separator: "\n") + "\nClick to go to the next one (⌘J visits them with the rest)"
+        invalidateIntrinsicContentSize()
+    }
+
+    @objc private func go() { onGo?() }
+}

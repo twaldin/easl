@@ -3,17 +3,22 @@ import Foundation
 /// Board objects an agent attaches to its `agent.prompt` for another agent (`mentions`). They
 /// wait for that terminal only, never in the user's tray, and reach it the way staged Hyper-click
 /// mentions do: resolved when its integration drains the next prompt it submits (the one
-/// `agent.prompt` typed), under a block that names the sending terminal. In memory only.
+/// `agent.prompt` typed), under a block that names the sending terminal. The board hands off the
+/// same way on its own account (an answered question to its asker), under a `header` of its own.
+/// In memory only.
 public struct Handoff: Equatable, Sendable {
     public var mention: Mention
     /// The prompting terminal, and how the tray names it (`PromptTarget.label`); nil for a script.
     public var from: ObjectID?
     public var fromName: String?
+    /// What the block says above the mentions instead of naming who attached them.
+    public var header: String?
 
-    public init(mention: Mention, from: ObjectID?, fromName: String?) {
+    public init(mention: Mention, from: ObjectID?, fromName: String?, header: String? = nil) {
         self.mention = mention
         self.from = from
         self.fromName = fromName
+        self.header = header
     }
 }
 
@@ -91,9 +96,10 @@ public struct HandoffMention: Sendable {
 
 extension Board {
     /// Queues mentions for `terminal`'s next drained prompt, after any already waiting there (a
-    /// target already waiting isn't queued twice). Returns the queued mentions.
+    /// target already waiting isn't queued twice). Returns the queued mentions. `header` replaces
+    /// the block's "Attached by …" line (the board's own hand-offs).
     @discardableResult
-    public func handOff(_ targets: [MentionTarget], to terminal: ObjectID, from: ObjectID?, fromName: String?) throws -> [Mention] {
+    public func handOff(_ targets: [MentionTarget], to terminal: ObjectID, from: ObjectID?, fromName: String?, header: String? = nil) throws -> [Mention] {
         let tile = try object(terminal)
         guard tile.type == .terminal else { throw BoardError.invalidParams("\(terminal) is not a terminal tile") }
         var queued: [Mention] = []
@@ -102,28 +108,31 @@ extension Board {
             if handoffs[terminal]?.contains(where: { $0.mention.target == target }) == true || queued.contains(where: { $0.target == target }) { continue }
             queued.append(Mention(id: IDs.make("men"), target: target, label: MentionContext.label(for: target, on: self), stagedAt: Date()))
         }
-        handoffs[terminal, default: []].append(contentsOf: queued.map { Handoff(mention: $0, from: from, fromName: fromName) })
+        handoffs[terminal, default: []].append(contentsOf: queued.map { Handoff(mention: $0, from: from, fromName: fromName, header: header) })
         return queued
     }
 
     /// The mentions handed to `caller`, resolved now and numbered from `index`, with one context
-    /// block per sending terminal (in the order they were sent).
+    /// block per sending terminal (or board header), in the order they were sent.
     func resolveHandoffs(for caller: ObjectID, from index: Int) async -> (mentions: [MentionContext.Resolved], blocks: [String]) {
         let waiting = handoffs[caller] ?? []
-        var senders: [ObjectID?] = []
-        for handoff in waiting where !senders.contains(handoff.from) { senders.append(handoff.from) }
+        var senders: [(from: ObjectID?, header: String?)] = []
+        for handoff in waiting where !senders.contains(where: { $0.from == handoff.from && $0.header == handoff.header }) {
+            senders.append((handoff.from, handoff.header))
+        }
         var resolved: [MentionContext.Resolved] = []
         var blocks: [String] = []
         for sender in senders {
-            let group = waiting.filter { $0.from == sender }
+            let group = waiting.filter { $0.from == sender.from && $0.header == sender.header }
             var part: [MentionContext.Resolved] = []
             for handoff in group {
                 part.append(await MentionContext.resolve(handoff.mention, index: index + resolved.count + part.count, on: self, caller: caller))
             }
             resolved.append(contentsOf: part)
             let name = group.first?.fromName.map { " \"\($0)\"" } ?? ""
-            let header = sender.map { "Attached by terminal \($0)\(name) to its prompt to you (agent.prompt):" } ?? "Attached by a script to its prompt to you (agent.prompt):"
-            blocks.append(MentionContext.render(part, board: self, targets: group.map(\.mention.target), from: sender, header: header))
+            let header = sender.header ?? sender.from.map { "Attached by terminal \($0)\(name) to its prompt to you (agent.prompt):" }
+                ?? "Attached by a script to its prompt to you (agent.prompt):"
+            blocks.append(MentionContext.render(part, board: self, targets: group.map(\.mention.target), from: sender.from, header: header))
         }
         return (resolved, blocks)
     }

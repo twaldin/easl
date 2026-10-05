@@ -135,6 +135,7 @@ public enum MentionContext {
                 if object.type == .note, let markdown = object.props["markdown"]?.string {
                     lines.append(contentsOf: noteLines(markdown, of: id))
                 }
+                if object.type == .question { lines.append(contentsOf: QuestionSpec.mentionLines(object.props)) }
                 if object.type == .terminal, let screen = await board.terminalScreen?(id) {
                     let shown = TerminalExcerpt.lines(screen.text)
                     // What the user is looking at: the rows they scrolled back to, saying so.
@@ -426,6 +427,7 @@ public enum MentionContext {
         case .changes: return props["title"]?.string ?? ChangesSpec(props).name
         case .image: return props["title"]?.string ?? props["path"]?.string ?? "image"
         case .diagram: return DiagramSpec.title(props)
+        case .question: return props["question"]?.string ?? "question"
         case .shape: return props["text"]?.string ?? props["kind"]?.string ?? ""
         case .arrow: return props["label"]?.string ?? props["relation"]?.string ?? ""
         case .group: return props["title"]?.string ?? ""

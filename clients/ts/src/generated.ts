@@ -286,6 +286,54 @@ export type DiagramProps = {
   key?: ObjectKey;
 };
 
+/** A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `recommended` and `answer.option` name an option, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step) */
+export type QuestionProps = {
+  question: string;
+  /** what the user picks from (number keys 1–9 pick on the tile); may be empty, then the answer is a note */
+  options: {
+    /** unique among the options; what `answer.option` names */
+    id: string;
+    label: string;
+    /** the case for it, shown under the label */
+    why?: string;
+  }[];
+  /** the id of the option the asker recommends; the tile marks it */
+  recommended?: string;
+  /** what to look at before answering; each a link on the tile that opens beside it */
+  context?: ({
+    object: Id;
+  } | {
+    url: string;
+  } | {
+    /** board-relative or absolute */
+    path: string;
+    lines?: LineRange;
+  })[];
+  /** who asks: a terminal on the board (`tile`; the answer is handed to it), or a name (an agent elsewhere, a script) on an optional host; at least one of tile and name. Default: the calling terminal (`caller`); a create without either is invalid_params */
+  asker?: {
+    tile?: Id;
+    name?: string;
+    host?: string;
+  };
+  /** written open on create; answered with `answer` (the user's pick on the tile, or an object.update), cancelled (the asker took it back: `easl ask cancel`, or the user dismissed it), expired (by easl at `expiresAt`) */
+  status?: "open" | "answered" | "cancelled" | "expired";
+  /** when an open question stops waiting (RFC 3339); none by default */
+  expiresAt?: string;
+  /** with status answered only: the picked option and/or a note (at least one); `at` and `by` are written by easl when the question becomes answered */
+  answer?: {
+    /** an option id */
+    option?: string;
+    note?: string;
+    at?: string;
+    /** who answered: the user, or an agent's terminal (`caller`) */
+    by?: Actor;
+  };
+  /** true hides a closed question's tile (archive is not a status: `status` keeps how it ended, `answer` stays); an open question can't be archived */
+  archived?: boolean;
+  zoom?: Zoom;
+  key?: ObjectKey;
+};
+
 export type ShapeProps = {
   kind: "rect" | "ellipse" | "text" | "ink";
   text?: string;
@@ -366,7 +414,7 @@ export type Size = {
   h: number;
 };
 
-export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "changes" | "image" | "diagram" | "shape" | "arrow" | "group";
+export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "changes" | "image" | "diagram" | "question" | "shape" | "arrow" | "group";
 
 export type CanvasObject = {
   id: Id;
@@ -380,7 +428,7 @@ export type CanvasObject = {
   updatedBy?: Actor;
   createdAt: string;
   updatedAt: string;
-  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one) */
+  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one) */
   props: Record<string, unknown>;
 };
 
@@ -902,6 +950,10 @@ export type ObjectFindParams = {
   key?: string;
   /** list the objects whose keys start with this */
   keyPrefix?: string;
+  /** list the objects of this type */
+  type?: ObjectType;
+  /** with `type`: only objects whose props.status is this (a question's open, answered, cancelled, expired) */
+  status?: string;
   /** with `key`: as object.get */
   as?: "raw" | "graph";
 };
@@ -909,14 +961,14 @@ export type ObjectFindResult = {
   /** `key`: the object, with the rest of object.get's result beside it */
   object?: CanvasObject;
   graph?: Record<string, unknown>;
-  /** `keyPrefix`: the objects, summarized as board.get lists them */
+  /** `keyPrefix`, `type`: the objects, summarized as board.get lists them */
   objects?: CanvasObject[];
 };
 
 export type ObjectCreateParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props: Record<string, unknown>;
   frame?: Frame | FitFrame | SizeFrame;
   /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
@@ -943,7 +995,7 @@ export type ObjectUpdateParams = {
   frame?: FramePatch;
   /** measure the frame's size from the content */
   size?: "fit";
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props?: Record<string, unknown>;
   caller?: Id;
 };
@@ -988,7 +1040,7 @@ export type ObjectDeleteResult = Record<string, unknown>;
 export type ObjectMeasureParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props: Record<string, unknown>;
   /** wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640) */
   width?: number;
@@ -1461,7 +1513,7 @@ export interface CanvasApi {
   object: {
     /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. A browser tile adds `page`: the console messages, uncaught errors and failed requests its page reported since it loaded (recorded from the first line of the page on), its error and warning counts, and web vitals; pass `page.cursor` back as `since` to read only what came after. A note adds `fences`: each anchored fence's state (live, relocated, stale, applied, missing), resolved range and reason, resolved against disk now; a code tile showing a range adds `rangeStatus`, the same for its range. To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
-    /** Find an object by its `props.key` (ObjectKey) instead of its id: `key` returns it as object.get does (`as: graph` too), or `not_found`; `keyPrefix` lists every object whose key starts with it, in key order ("REL-" for every ticket's region), possibly none. One of the two. Keys are per board: `board` defaults as for object.create. */
+    /** Find objects by what they are instead of by id: `key` returns the object holding that `props.key` (ObjectKey) as object.get does (`as: graph` too), or `not_found`; `keyPrefix` lists every object whose key starts with it, in key order ("REL-" for every ticket's region), possibly none; `type` lists every object of that type, oldest first, and with `status` only those whose `props.status` is it (`type: question, status: open`: the questions still waiting on the user). One of key, keyPrefix, type. Per board: `board` defaults as for object.create. */
     find(params?: ObjectFindParams): Promise<ObjectFindResult>;
     /** Create an object. Omit `frame` (or give only its `w` and `h`) to let the board place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: one without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;

@@ -80,6 +80,10 @@ public enum ObjectMeasure {
             }
             let body = DiagramLayout(graph).bodySize
             size = CGSize(width: body.width, height: RenderMath.tileTitleHeight + body.height)
+        case .question:
+            // Counted from the props (`QuestionSpec.size`), not measured: `width` wide, if given.
+            let counted = QuestionSpec.size(props)
+            size = CGSize(width: natural ?? CGFloat(counted.w), height: CGFloat(counted.h))
         case .browser, .terminal, .arrow, .group:
             throw Failure.unsupported("\(type.rawValue) objects have no intrinsic size")
         }

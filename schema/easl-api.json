@@ -298,6 +298,63 @@
       },
       "additionalProperties": false
     },
+    "QuestionProps": {
+      "type": "object",
+      "required": ["question", "options"],
+      "description": "A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `recommended` and `answer.option` name an option, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step)",
+      "properties": {
+        "question": { "type": "string", "minLength": 1 },
+        "options": {
+          "type": "array",
+          "description": "what the user picks from (number keys 1–9 pick on the tile); may be empty, then the answer is a note",
+          "items": {
+            "type": "object",
+            "required": ["id", "label"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "description": "unique among the options; what `answer.option` names" },
+              "label": { "type": "string", "minLength": 1 },
+              "why": { "type": "string", "description": "the case for it, shown under the label" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "recommended": { "type": "string", "description": "the id of the option the asker recommends; the tile marks it" },
+        "context": {
+          "type": "array",
+          "description": "what to look at before answering; each a link on the tile that opens beside it",
+          "items": {
+            "oneOf": [
+              { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/Id" } }, "additionalProperties": false },
+              { "type": "object", "required": ["url"], "properties": { "url": { "type": "string", "minLength": 1 } }, "additionalProperties": false },
+              { "type": "object", "required": ["path"], "properties": { "path": { "type": "string", "minLength": 1, "description": "board-relative or absolute" }, "lines": { "$ref": "#/definitions/LineRange" } }, "additionalProperties": false }
+            ]
+          }
+        },
+        "asker": {
+          "type": "object",
+          "description": "who asks: a terminal on the board (`tile`; the answer is handed to it), or a name (an agent elsewhere, a script) on an optional host; at least one of tile and name. Default: the calling terminal (`caller`); a create without either is invalid_params",
+          "properties": { "tile": { "$ref": "#/definitions/Id" }, "name": { "type": "string", "minLength": 1 }, "host": { "type": "string" } },
+          "additionalProperties": false
+        },
+        "status": { "enum": ["open", "answered", "cancelled", "expired"], "default": "open", "description": "written open on create; answered with `answer` (the user's pick on the tile, or an object.update), cancelled (the asker took it back: `easl ask cancel`, or the user dismissed it), expired (by easl at `expiresAt`)" },
+        "expiresAt": { "type": "string", "format": "date-time", "description": "when an open question stops waiting (RFC 3339); none by default" },
+        "answer": {
+          "type": "object",
+          "description": "with status answered only: the picked option and/or a note (at least one); `at` and `by` are written by easl when the question becomes answered",
+          "properties": {
+            "option": { "type": "string", "description": "an option id" },
+            "note": { "type": "string" },
+            "at": { "type": "string", "format": "date-time" },
+            "by": { "$ref": "#/definitions/Actor", "description": "who answered: the user, or an agent's terminal (`caller`)" }
+          },
+          "additionalProperties": false
+        },
+        "archived": { "type": "boolean", "description": "true hides a closed question's tile (archive is not a status: `status` keeps how it ended, `answer` stays); an open question can't be archived" },
+        "zoom": { "$ref": "#/definitions/Zoom" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
+      },
+      "additionalProperties": false
+    },
     "ShapeProps": {
       "type": "object",
       "required": ["kind"],
@@ -386,7 +443,7 @@
       "description": "any of x, y, w, h; the rest keep their current values (with size: fit, w is the wrap or widest width and h is measured)"
     },
     "Size": { "type": "object", "required": ["w", "h"], "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "additionalProperties": false },
-    "ObjectType": { "enum": ["terminal", "browser", "code", "note", "html", "changes", "image", "diagram", "shape", "arrow", "group"] },
+    "ObjectType": { "enum": ["terminal", "browser", "code", "note", "html", "changes", "image", "diagram", "question", "shape", "arrow", "group"] },
     "CanvasObject": {
       "type": "object",
       "required": ["id", "type", "frame", "z", "rev", "createdBy", "createdAt", "updatedAt", "props"],
@@ -401,7 +458,7 @@
         "updatedBy": { "$ref": "#/definitions/Actor" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
-        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)" }
+        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)" }
       },
       "additionalProperties": false
     },
@@ -954,13 +1011,15 @@
       }
     },
     "object.find": {
-      "description": "Find an object by its `props.key` (ObjectKey) instead of its id: `key` returns it as object.get does (`as: graph` too), or `not_found`; `keyPrefix` lists every object whose key starts with it, in key order (\"REL-\" for every ticket's region), possibly none. One of the two. Keys are per board: `board` defaults as for object.create.",
+      "description": "Find objects by what they are instead of by id: `key` returns the object holding that `props.key` (ObjectKey) as object.get does (`as: graph` too), or `not_found`; `keyPrefix` lists every object whose key starts with it, in key order (\"REL-\" for every ticket's region), possibly none; `type` lists every object of that type, oldest first, and with `status` only those whose `props.status` is it (`type: question, status: open`: the questions still waiting on the user). One of key, keyPrefix, type. Per board: `board` defaults as for object.create.",
       "params": {
         "type": "object",
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "key": { "type": "string", "description": "the key exactly" },
           "keyPrefix": { "type": "string", "description": "list the objects whose keys start with this" },
+          "type": { "$ref": "#/definitions/ObjectType", "description": "list the objects of this type" },
+          "status": { "type": "string", "description": "with `type`: only objects whose props.status is this (a question's open, answered, cancelled, expired)" },
           "as": { "enum": ["raw", "graph"], "default": "raw", "description": "with `key`: as object.get" }
         },
         "additionalProperties": false
@@ -970,7 +1029,7 @@
         "properties": {
           "object": { "$ref": "#/definitions/CanvasObject", "description": "`key`: the object, with the rest of object.get's result beside it" },
           "graph": { "type": "object" },
-          "objects": { "type": "array", "items": { "$ref": "#/definitions/CanvasObject" }, "description": "`keyPrefix`: the objects, summarized as board.get lists them" }
+          "objects": { "type": "array", "items": { "$ref": "#/definitions/CanvasObject" }, "description": "`keyPrefix`, `type`: the objects, summarized as board.get lists them" }
         }
       }
     },
@@ -982,7 +1041,7 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width)" },
           "parent": { "$ref": "#/definitions/Id" },
@@ -1002,7 +1061,7 @@
           "rev": { "type": "integer" },
           "frame": { "$ref": "#/definitions/FramePatch" },
           "size": { "const": "fit", "description": "measure the frame's size from the content" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
         "additionalProperties": false
@@ -1045,7 +1104,7 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "width": { "type": "number", "description": "wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
