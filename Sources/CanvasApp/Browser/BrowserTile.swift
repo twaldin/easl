@@ -1542,11 +1542,13 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
     @objc private func downloadClicked() { onDownload?() }
     @objc private func extensionsClicked() { onExtensions?(extensions) }
 
-    /// The extensions' button (`BrowserExtensions.button`): nil hides it.
-    func setExtensions(_ shown: (image: NSImage, label: String)?) {
+    /// The extensions' button (`BrowserExtensions.button`): nil hides it; a single extension's
+    /// action it disabled on this page dims it and makes it unclickable.
+    func setExtensions(_ shown: (image: NSImage, label: String, enabled: Bool)?) {
         extensions.image = shown?.image
         extensions.toolTip = shown?.label
         extensions.setAccessibilityLabel(shown?.label)
+        extensions.isEnabled = shown?.enabled ?? true
         guard extensions.isHidden != (shown == nil) else { return }
         extensions.isHidden = shown == nil
         resizeSubviews(withOldSize: bounds.size)

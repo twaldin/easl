@@ -62,7 +62,7 @@ enum BrowserExtensions {
 
     /// The address bar's extensions button: the one extension's action icon, or a puzzle piece
     /// for several; nil (hidden) with none running.
-    static func button(for tile: BrowserTile) -> (image: NSImage, label: String)? {
+    static func button(for tile: BrowserTile) -> (image: NSImage, label: String, enabled: Bool)? {
         guard #available(macOS 15.4, *) else { return nil }
         return ExtensionHost.shared.button(for: tile)
     }
@@ -128,13 +128,20 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
     /// (it keeps them weakly and asks them everything).
     private var tabs: [ObjectIdentifier: ExtensionTab] = [:]
     private var windows: [ObjectIdentifier: ExtensionWindow] = [:]
-    /// Extension pages shown in their own window (options, a tab an extension opens on itself).
-    private var pageWindows: [NSWindow] = []
+    /// Extension pages shown in their own window (options, a tab an extension opens on itself),
+    /// with the id of the extension each belongs to.
+    private var pageWindows: [(window: NSWindow, extension: String)] = []
 
     private override init() {
         let configuration: WKWebExtensionController.Configuration = ProcessInfo.processInfo.environment["EASL_BROWSER_PROFILE"] == "own"
             ? .init(identifier: BrowserProfile.identifier(home: AppPaths.support)) : .default()
         configuration.defaultWebsiteDataStore = BrowserProfile.store
+        // Extension pages (background, popup, options) keep their own website data (local
+        // storage, IndexedDB) in the tiles' default profile too, not WebKit's default store, so
+        // an `own` instance's extensions never share it with the user's app.
+        let pages = configuration.webViewConfiguration ?? WKWebViewConfiguration()
+        pages.websiteDataStore = BrowserProfile.store
+        configuration.webViewConfiguration = pages
         controller = WKWebExtensionController(configuration: configuration)
         super.init()
         controller.delegate = self
@@ -175,32 +182,38 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
         list.extensions.first { $0.id == id && $0.enabled }
     }
 
-    /// Loads one extension. An entry the user hasn't reviewed shows what it asks for first and
-    /// loads only once they agree; declining a new one forgets it.
-    private func load(_ entry: BrowserExtensionList.Entry) async {
-        guard contexts[entry.id] == nil, loading.insert(entry.id).inserted else { return }
-        defer { loading.remove(entry.id) }
+    /// The extension at `entry.path` with its stable identity: the id names its storage, its
+    /// `runtime.id`, and its pages' origin (`webkit-extension://<id>/`).
+    private static func context(for entry: BrowserExtensionList.Entry) async throws -> WKWebExtensionContext {
         let url = URL(fileURLWithPath: entry.path)
-        let context: WKWebExtensionContext
-        do {
-            let webExtension: WKWebExtension
-            if url.pathExtension == "appex" {
-                guard let bundle = Bundle(url: url) else { throw BrowserExtensionSource.Failure(message: "\(url.lastPathComponent) isn't a readable bundle") }
-                webExtension = try await WKWebExtension(appExtensionBundle: bundle)
-            } else {
-                webExtension = try await WKWebExtension(resourceBaseURL: url)
-            }
-            context = WKWebExtensionContext(for: webExtension)
-        } catch {
-            fail(entry, Self.describe(error))
-            return
+        let webExtension: WKWebExtension
+        if url.pathExtension == "appex" {
+            guard let bundle = Bundle(url: url) else { throw BrowserExtensionSource.Failure(message: "\(url.lastPathComponent) isn't a readable bundle") }
+            webExtension = try await WKWebExtension(appExtensionBundle: bundle)
+        } else {
+            webExtension = try await WKWebExtension(resourceBaseURL: url)
         }
-        // Stable identity: the extension's storage, its `runtime.id`, and its pages' origin.
+        let context = WKWebExtensionContext(for: webExtension)
         context.uniqueIdentifier = entry.id
         if var base = URLComponents(url: context.baseURL, resolvingAgainstBaseURL: false) {
             base.host = entry.id.lowercased()
             base.path = "/"
             if let stable = base.url { context.baseURL = stable }
+        }
+        return context
+    }
+
+    /// Loads one extension. An entry the user hasn't reviewed shows what it asks for first and
+    /// loads only once they agree; declining a new one forgets it.
+    private func load(_ entry: BrowserExtensionList.Entry) async {
+        guard contexts[entry.id] == nil, loading.insert(entry.id).inserted else { return }
+        defer { loading.remove(entry.id) }
+        let context: WKWebExtensionContext
+        do {
+            context = try await Self.context(for: entry)
+        } catch {
+            fail(entry, Self.describe(error))
+            return
         }
         // Like the tiles' pages (`isInspectable`): Develop › easl in Safari reaches its pages.
         context.isInspectable = true
@@ -363,19 +376,25 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
         }
     }
 
+    /// Stops an extension; its open pages (options, its own tabs) close with it.
     private func unload(_ id: String) {
         problems[id] = nil
+        for page in pageWindows where page.extension == id { page.window.close() }
         guard let context = contexts.removeValue(forKey: id) else { return }
         do { try controller.unload(context) } catch { NSLog("easl: unloading browser extension %@: %@", id, "\(error)") }
         refreshButtons()
     }
 
-    /// Remove…: after a sheet, the extension stops and its storage (logins it kept, settings) goes.
+    /// Remove…: after a sheet, the extension stops, its open pages close, and everything it
+    /// stored goes: its `browser.storage` (WebKit's extension data records, by id, so a disabled
+    /// extension's too) and its pages' own website data (local storage, IndexedDB, cookies of
+    /// its `webkit-extension://<id>` origin, in the store its pages use).
     private func remove(_ id: String) {
         guard let entry = list.extensions.first(where: { $0.id == id }), let window = CanvasWindowController.frontmost?.window else { return }
         let name = contexts[id]?.webExtension.displayName ?? Self.name(of: entry)
         Task {
             guard await ask(in: window, title: "Remove “\(name)”?", detail: "It stops running in browser tiles, and what it stored in easl (its settings, a signed-in vault) is deleted. The extension's app stays installed.", confirm: "Remove") else { return }
+            let cleared = await clearPageData(of: entry)
             unload(id)
             list.remove(id)
             save()
@@ -388,8 +407,40 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
                     controller.removeData(ofTypes: types, from: records) { continuation.resume() }
                 }
             }
-            NSLog("easl: removed browser extension %@", entry.path)
+            NSLog("easl: removed browser extension %@ (%d storage records; its pages' data %@)", entry.path, records.count, cleared ? "cleared" : "not cleared")
         }
+    }
+
+    /// Empties what the extension's own pages stored as a website (local storage, IndexedDB,
+    /// Cache Storage) from a hidden page of its origin: WebKit lists no `webkit-extension://`
+    /// origin among a store's data records, so that data can't be removed by record. A disabled
+    /// extension is loaded for the moment it takes. False when its page didn't load or run.
+    private func clearPageData(of entry: BrowserExtensionList.Entry) async -> Bool {
+        var context = contexts[entry.id]
+        let temporary = context == nil
+        if temporary {
+            context = try? await Self.context(for: entry)
+            guard let context, (try? controller.load(context)) != nil else { return false }
+        }
+        guard let context, let configuration = context.webViewConfiguration else { return false }
+        defer { if temporary { try? controller.unload(context) } }
+        let page = WKWebView(frame: .zero, configuration: configuration)
+        let loaded = PageLoad()
+        page.navigationDelegate = loaded
+        page.loadHTMLString("<!doctype html><title>clear</title>", baseURL: context.baseURL)
+        guard await loaded.wait() else { return false }
+        let script = """
+            localStorage.clear(); sessionStorage.clear();
+            for (const db of await indexedDB.databases()) {
+              await new Promise(done => { const q = indexedDB.deleteDatabase(db.name); q.onsuccess = q.onerror = q.onblocked = done; });
+            }
+            if (self.caches) for (const key of await caches.keys()) await caches.delete(key);
+            return true;
+            """
+        let ran = (try? await page.callAsyncJavaScript(script, contentWorld: .page)) as? Bool == true
+        // A deletion the extension's open connections block finishes once they close (the unload).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { _ = page }
+        return ran
     }
 
     /// The name it last loaded with, else its file's.
@@ -522,7 +573,7 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
     }
 
     @objc private func windowWillClose(_ note: Notification) {
-        pageWindows.removeAll { $0 === note.object as? NSWindow }
+        pageWindows.removeAll { $0.window === note.object as? NSWindow }
         guard let board = (note.object as? NSWindow)?.windowController as? CanvasWindowController,
               let window = windows.removeValue(forKey: ObjectIdentifier(board)) else { return }
         for (key, tab) in tabs where tab.tile?.window === board.window {
@@ -549,17 +600,18 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
         contexts.values.sorted { ($0.webExtension.displayName ?? "") < ($1.webExtension.displayName ?? "") }
     }
 
-    func button(for tile: BrowserTile) -> (image: NSImage, label: String)? {
+    func button(for tile: BrowserTile) -> (image: NSImage, label: String, enabled: Bool)? {
         let running = running
         guard !running.isEmpty else { return nil }
         let puzzle = NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: "Extensions") ?? NSImage()
-        guard running.count == 1, let context = running.first else { return (puzzle, "Extensions") }
+        guard running.count == 1, let context = running.first else { return (puzzle, "Extensions", true) }
         let action = context.action(for: tab(for: tile))
         let image = action?.icon(for: NSSize(width: 16, height: 16)) ?? context.webExtension.actionIcon(for: NSSize(width: 16, height: 16)) ?? puzzle
         // The action's badge (a password manager's count of logins for the page) in the label.
         let label = action?.label ?? context.webExtension.displayName ?? "Extension"
         let badge = action?.badgeText ?? ""
-        return (image, badge.isEmpty ? label : "\(label) (\(badge))")
+        let disabled = action?.isEnabled == false ? " (not available on this page)" : ""
+        return (image, (badge.isEmpty ? label : "\(label) (\(badge))") + disabled, action?.isEnabled != false)
     }
 
     private func refreshButtons() {
@@ -570,6 +622,7 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
         let running = running
         if running.count == 1, let context = running.first { return perform(context, in: tile) }
         let menu = NSMenu()
+        menu.autoenablesItems = false
         for context in running {
             // By the extension's name: two actions can share a label ("Fill", "Open").
             let action = context.action(for: tab(for: tile))
@@ -578,6 +631,8 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
             item.image = action?.icon(for: NSSize(width: 16, height: 16)) ?? context.webExtension.actionIcon(for: NSSize(width: 16, height: 16))
             if let badge = action?.badgeText, !badge.isEmpty { item.badge = NSMenuItemBadge(string: badge) }
             item.representedObject = (context, tile) as (WKWebExtensionContext, BrowserTile)
+            // `action.disable(tabId)`: listed, but not clickable on this page.
+            item.isEnabled = action?.isEnabled != false
             menu.addItem(item)
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height + 4), in: anchor)
@@ -591,7 +646,10 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
     /// Clicking an extension's action is the user choosing this tab: it becomes active (the
     /// popup's `tabs.query({active: true})` finds it) and the action runs with a user gesture
     /// (`activeTab`); WebKit then asks to present its popup (`presentActionPopup`).
+    /// An action the extension disabled for this page (`action.disable(tabId)`) does nothing: no
+    /// user gesture is recorded (it would grant `activeTab`), no popup, no `onClicked`.
     private func perform(_ context: WKWebExtensionContext, in tile: BrowserTile) {
+        guard context.action(for: tab(for: tile))?.isEnabled != false else { return NSSound.beep() }
         activate(tile)
         context.performAction(for: tab(for: tile))
     }
@@ -610,9 +668,17 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
         window.title = title
         window.contentView = webView
         window.center()
-        pageWindows.append(window)
+        pageWindows.append((window, context.uniqueIdentifier))
         webView.load(URLRequest(url: url))
         window.orderFront(nil)
+    }
+
+    /// One of the loaded extensions' own pages (`webkit-extension://<id>/…`, from `tabs.update`)
+    /// in its page window (`showPage`); false for any other address.
+    func showExtensionPage(_ url: URL) -> Bool {
+        guard let context = contexts.values.first(where: { $0.baseURL.scheme == url.scheme && $0.baseURL.host?.lowercased() == url.host?.lowercased() }) else { return false }
+        showPage(url, of: context, title: context.webExtension.displayName ?? "Extension")
+        return true
     }
 
     private func openOptions(_ context: WKWebExtensionContext) {
@@ -631,7 +697,7 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
     }
 
     /// `tabs.create`: a browser tile beside the tab it came from (else the window's active tab,
-    /// else in view), selected when it should be active. An extension's own page opens in its
+    /// else in view), in that tab's browser profile, selected when it should be active. An extension's own page opens in its
     /// own window instead (`showPage`), so no tab comes back for it.
     func webExtensionController(_ controller: WKWebExtensionController, openNewTabUsing configuration: WKWebExtension.TabConfiguration, for extensionContext: WKWebExtensionContext, completionHandler: @escaping ((any WKWebExtensionTab)?, (any Error)?) -> Void) {
         if let url = configuration.url, url.scheme == extensionContext.baseURL.scheme {
@@ -642,9 +708,13 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
               let canvas = window.board?.canvas else {
             return completionHandler(nil, BrowserExtensionSource.Failure(message: "no board window is open"))
         }
-        let anchor = (configuration.parentTab as? ExtensionTab)?.tile?.objectID ?? window.active?.tile?.objectID
+        let source = (configuration.parentTab as? ExtensionTab)?.tile ?? window.active?.tile
+        let anchor = source?.objectID
+        // The new tab shares its source tile's browser profile (its cookies and logins).
+        var props: [String: JSONValue] = ["url": .string(configuration.url?.absoluteString ?? "about:blank")]
+        if let profile = source.flatMap({ BrowserProfile.name(in: $0.object.props) }) { props["profile"] = .string(profile) }
         let size = Board.defaultSize(.browser)
-        let object = canvas.board.create(type: .browser, props: .object(["url": .string(configuration.url?.absoluteString ?? "about:blank")]),
+        let object = canvas.board.create(type: .browser, props: .object(props),
                                          frame: canvas.board.place(width: size.w, height: size.h, near: anchor))
         if configuration.shouldBeActive { canvas.showNew(object) }
         guard let tile = canvas.tiles[object.id]?.content as? BrowserTile else { return completionHandler(nil, nil) }
@@ -736,8 +806,15 @@ final class ExtensionTab: NSObject, WKWebExtensionTab {
 
     func shouldGrantPermissionsOnUserGesture(for context: WKWebExtensionContext) -> Bool { true }
 
+    /// `tabs.update({url})`: the tile goes there. An extension's own page opens in its page
+    /// window (as `tabs.create` opens one); an address a browser tile can't load, or a tab whose
+    /// tile is gone, is an error the extension gets back.
     func loadURL(_ url: URL, for context: WKWebExtensionContext, completionHandler: @escaping ((any Error)?) -> Void) {
-        guard let tile else { return completionHandler(nil) }
+        if ExtensionHost.shared.showExtensionPage(url) { return completionHandler(nil) }
+        guard let tile else { return completionHandler(BrowserExtensionSource.Failure(message: "the tab is closed")) }
+        guard BrowserURL.normalize(url.absoluteString) != nil else {
+            return completionHandler(BrowserExtensionSource.Failure(message: "a browser tile can't open \(url.absoluteString)"))
+        }
         tile.credit.user()
         tile.load(url.absoluteString)
         completionHandler(nil)
@@ -818,4 +895,27 @@ final class ExtensionWindow: NSObject, WKWebExtensionWindow {
         }
         completionHandler(nil)
     }
+}
+
+/// Waits for a hidden page's load (`ExtensionHost.clearPageData`).
+@MainActor
+private final class PageLoad: NSObject, WKNavigationDelegate {
+    private var result: Bool?
+    private var waiter: CheckedContinuation<Bool, Never>?
+
+    func wait() async -> Bool {
+        if let result { return result }
+        return await withCheckedContinuation { waiter = $0 }
+    }
+
+    private func finish(_ ok: Bool) {
+        guard result == nil else { return }
+        result = ok
+        waiter?.resume(returning: ok)
+        waiter = nil
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finish(true) }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(false) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(false) }
 }

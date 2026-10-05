@@ -63,7 +63,7 @@ On macOS 15.4 or later, browser tiles run Safari web extensions, so your passwor
 2. In easl, choose easl › Browser Extensions › Add Extension… and pick the app. easl shows what the extension asks for (its permissions and the sites it runs on); Add allows it.
 3. The extension's icon appears at the right end of every browser tile's address bar. Click it to open its popup on that page: sign in or unlock there, then fill.
 
-With more than one extension, the address bar shows a puzzle piece that lists them. easl › Browser Extensions lists each one with Enabled, Options… and Remove… (removing one deletes what it stored in easl; its app stays installed). You can also add an `.appex` or an unpacked extension folder with a `manifest.json`, such as one you're developing.
+With more than one extension, the address bar shows a puzzle piece that lists them. easl › Browser Extensions lists each one with Enabled, Options… and Remove… (removing one closes its open pages and deletes what it stored in easl, its extension storage and its pages' local storage and databases; its app stays installed). An extension can turn its button off for a page; the button then shows dimmed and does nothing there. Tabs an extension opens use the browser profile of the tile they came from. You can also add an `.appex` or an unpacked extension folder with a `manifest.json`, such as one you're developing.
 
 What doesn't work yet: passkeys. Passkeys for arbitrary websites need an entitlement Apple grants to browsers on request, which easl doesn't have, so sign in with your saved password instead. Extensions can't open windows of their own, and an extension's own pages (its options, a full-page vault) open in a separate window, not a tile.
 
