@@ -46,8 +46,20 @@ public final class SocketServer: @unchecked Sendable {
         /// Queues one JSON line. Safe from any thread; returns false once the peer is gone.
         @discardableResult
         public func send(_ value: JSONValue) -> Bool {
-            guard let data = try? JSONEncoder().encode(value) else { return false }
-            return write(data)
+            sendCounted(value) != nil
+        }
+
+        /// Queues one JSON line; the bytes queued, nil once the peer is gone.
+        func sendCounted(_ value: JSONValue) -> Int? {
+            guard let data = try? JSONEncoder().encode(value) else { return nil }
+            return write(data) ? data.count + 1 : nil
+        }
+
+        /// Queues a line already encoded as JSON (an event sent to several subscribers is encoded
+        /// once). Safe from any thread; returns false once the peer is gone.
+        @discardableResult
+        public func send(encoded line: Data) -> Bool {
+            write(line)
         }
 
         /// Queues one plain-text line (protocols that answer some commands outside JSON).
@@ -177,7 +189,14 @@ public final class SocketServer: @unchecked Sendable {
         let handler = self.handler
         Task {
             for await request in connection.stream {
-                if let response = await handler(request, connection) { connection.send(response) }
+                // Per method: calls, time from arrival to the queued reply (awaits included; the
+                // main-thread part is `api.main.<method>`), and reply bytes.
+                let started = Metrics.now()
+                guard let response = await handler(request, connection) else { continue }
+                let bytes = connection.sendCounted(response) ?? 0
+                if let method = request["method"]?.string {
+                    Metrics.shared.record("api.\(method)", ms: (Metrics.now() - started) * 1000, bytes: bytes)
+                }
             }
         }
         source.resume()
@@ -205,6 +224,7 @@ public final class SocketServer: @unchecked Sendable {
                 }
                 request = .string(text.hasSuffix("\r") ? String(text.dropLast()) : text)
             }
+            if let method = request["method"]?.string { Metrics.shared.record("api.in.\(method)", bytes: line.count + 1) }
             connection.requests.yield(request)
         }
     }

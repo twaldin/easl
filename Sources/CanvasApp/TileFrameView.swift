@@ -532,15 +532,20 @@ final class TileFrameView: NSView {
     private func requestCard() {
         let request = cardRequest
         let asked = DevPerf.mark()
+        let kind = String(describing: type(of: content))
+        let started = Metrics.now()
         DevPerf.time("card.call.\(type(of: content))") {
-            content.cardSnapshot { [weak self] image in
-                guard let self, !self.isLive, self.cardRequest == request else { return }
-                DevPerf.record("card.latency.\(type(of: self.content))", since: asked)
-                DevPerf.time("card.install.\(type(of: self.content))") {
-                    self.card.image = image.map { self.cardImage($0) }
-                    self.card.isHidden = self.card.image == nil
-                    self.cardTitle.isHidden = self.card.image != nil
-                    self.showContent(false)
+            Metrics.shared.span("card", "card.call.\(kind)", detail: objectID) {
+                content.cardSnapshot { [weak self] image in
+                    guard let self, !self.isLive, self.cardRequest == request else { return }
+                    DevPerf.record("card.latency.\(type(of: self.content))", since: asked)
+                    Metrics.shared.record("card.latency.\(kind)", ms: (Metrics.now() - started) * 1000)
+                    DevPerf.time("card.install.\(type(of: self.content))") {
+                        self.card.image = image.map { self.cardImage($0) }
+                        self.card.isHidden = self.card.image == nil
+                        self.cardTitle.isHidden = self.card.image != nil
+                        self.showContent(false)
+                    }
                 }
             }
         }
@@ -577,12 +582,27 @@ final class TileFrameView: NSView {
 
     private var cardRequest = 0
     private var contentLive = true
+    /// Whether this tile's live content counts in `app.metrics` (`live.<Kind>`): while it is on a
+    /// board.
+    private var countedLive = false
 
     private func showContent(_ live: Bool) {
         guard live != contentLive else { return }
         contentLive = live
         content.isHidden = !live
-        DevPerf.time("content.\(live ? "live" : "unlive").\(type(of: content))") { content.setLive(live) }
+        let kind = String(describing: type(of: content))
+        if countedLive { Metrics.shared.adjust("live.\(kind)", by: live ? 1 : -1) }
+        DevPerf.time("content.\(live ? "live" : "unlive").\(type(of: content))") {
+            Metrics.shared.span("card", "flip.\(live ? "live" : "card").\(kind)", detail: objectID) { content.setLive(live) }
+        }
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        let onBoard = superview != nil
+        guard onBoard != countedLive else { return }
+        countedLive = onBoard
+        if contentLive { Metrics.shared.adjust("live.\(type(of: content))", by: onBoard ? 1 : -1) }
     }
 
     /// The card at the body's size and card resolution (content renders at that resolution

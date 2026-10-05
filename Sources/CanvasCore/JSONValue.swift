@@ -80,12 +80,43 @@ public enum JSONValue: Codable, Equatable, Sendable {
         return .object(base)
     }
 
-    /// Round-trips any Encodable through JSON.
+    /// Round-trips any Encodable through JSON. Hot paths build their values directly instead
+    /// (`init(_: CanvasObject)`): the round trip re-parses everything it just wrote.
     public static func encode<T: Encodable>(_ value: T) throws -> JSONValue {
         try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
     }
 
     public func decode<T: Decodable>(_ type: T.Type) throws -> T {
         try JSONDecoder().decode(T.self, from: JSONEncoder().encode(self))
+    }
+}
+
+extension JSONValue {
+    /// An object as its `Codable` form encodes (`JSONValue.encode(object)` gives the same value),
+    /// built without encoding: `props` is already JSON, so the API's board manifests, write
+    /// results and events cost a few dictionary inserts per object rather than a re-parse of
+    /// every prop.
+    public init(_ object: CanvasObject) {
+        var fields: [String: JSONValue] = [
+            "id": .string(object.id), "type": .string(object.type.rawValue), "frame": JSONValue(object.frame),
+            "z": .number(object.z), "rev": .number(Double(object.rev)), "createdBy": JSONValue(object.createdBy),
+            // JSONEncoder's default date strategy: seconds since the reference date.
+            "createdAt": .number(object.createdAt.timeIntervalSinceReferenceDate),
+            "updatedAt": .number(object.updatedAt.timeIntervalSinceReferenceDate), "props": object.props,
+        ]
+        if let parent = object.parent { fields["parent"] = .string(parent) }
+        if let updatedBy = object.updatedBy { fields["updatedBy"] = JSONValue(updatedBy) }
+        self = .object(fields)
+    }
+
+    public init(_ frame: Frame) {
+        self = .object(["x": .number(frame.x), "y": .number(frame.y), "w": .number(frame.w), "h": .number(frame.h)])
+    }
+
+    public init(_ actor: Actor) {
+        switch actor {
+        case .user: self = .object(["kind": .string("user")])
+        case .agent(let tile): self = .object(["kind": .string("agent"), "tile": .string(tile)])
+        }
     }
 }

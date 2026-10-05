@@ -31,7 +31,7 @@ public enum BoardEvent: Sendable {
     public var data: JSONValue {
         switch self {
         case .objectCreated(let object), .objectUpdated(let object):
-            (try? JSONValue.encode(object)) ?? .null
+            JSONValue(object)
         case .objectDeleted(let id):
             .object(["id": .string(id)])
         case .trayChanged(let mentions):
@@ -288,6 +288,8 @@ public final class Board {
             object.frame = place(width: size.w, height: size.h, near: caller, stacking: true)
         }
         commit(object)
+        Metrics.shared.record("board.write")
+        Metrics.shared.offender("writers", caller.map { "agent:\($0)" } ?? "user")
         history.record(.created(object), by: object.createdBy)
         log(.created, object, actor: ActivityActor(caller: caller), "created \(ActivityLog.describe(object)) at \(ActivityLog.position(reported(object).frame))")
         onEvent?(.objectCreated(object))
@@ -364,6 +366,12 @@ public final class Board {
         history.begin()
         defer { endStep() }
         commit(object)
+        if cause == GroupSpec.refitCause {
+            Metrics.shared.record("board.refit")
+        } else {
+            Metrics.shared.record("board.write")
+            Metrics.shared.offender("writers", caller.map { "agent:\($0)" } ?? "user")
+        }
         history.record(.updated(before: before, after: object), by: Actor(caller: caller))
         if let changes = ActivityLog.changes(from: before, to: object) {
             log(.updated, object, actor: credited, "\(ActivityLog.describe(object)): \(changes)", cause: cause, before: before)

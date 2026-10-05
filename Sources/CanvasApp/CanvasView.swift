@@ -2285,6 +2285,10 @@ final class CanvasView: NSScrollView {
     private func updateScene() {
         let perfStart = DevPerf.mark()
         defer { DevPerf.record("scene.pass", since: perfStart) }
+        Metrics.shared.span("scene", "scene.pass") { scenePass() }
+    }
+
+    private func scenePass() {
         if geometryDirty {
             geometryDirty = false
             objectsMoved()

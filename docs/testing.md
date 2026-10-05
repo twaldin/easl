@@ -119,6 +119,20 @@ For CPU and wakeups, measure the process from outside: `/usr/bin/top -l 5 -s 3 -
 - Idle soak: a minimized instance with the load you care about (e.g. three idle omp tiles and a shell running `while :; do date +%T; sleep 2; done`), shown once first (a window that was never shown hides focus and visibility bugs), then CPU, wakeups, and `footprint` at the start and after 20 minutes; finally show it and take a `shot`: every terminal shows its current screen, and typing (`input click` on it, `input text`) reaches it.
 - Memory: `footprint -p <pid>` for the app; WebKit's processes aren't its children, so attribute them with `responsibility_get_pid_responsible_for_pid` (e.g. Python `ctypes.CDLL(None)`) and sum their footprints.
 
+### Performance benchmark
+
+A repeatable loop for API-write bursts on a large board (docs/design/next.md, "Performance and monitoring"). Bundles are frozen release builds (`EASL_BUNDLE_APP=/tmp/a.app scripts/bundle.sh release`); the loop needs yabai and its own virtual screen (`EASL_DEV_DISPLAY`), and starts and stops its instances itself.
+
+```sh
+python3 scripts/perf-board.py <home> <root> [--arrows N] [--labels N]   # the synthetic board (seeded), into a dev home
+python3 scripts/perf-load.py serial|batch [--variant 0|1]                # an agent's 139-event write burst over EASL_SOCKET
+python3 scripts/perf-load.py poll --duration 60                          # board.get every 10 s, nothing else
+python3 scripts/perf-loop.py --app base=/tmp/a.app --app fix=/tmp/b.app [--board <sanitized.json>] [--runs 3]
+```
+
+- The loop starts each bundle in turn on a fresh home (order alternating between runs), shows the board at 100% over its html cards, and runs `visible-serial`, `hidden-serial` (window minimized), `visible-batch` and `poll-idle`. Each row (JSONL, `--out`) has the app's CPU from the burst's start until it is quiet again, the burst's wall time and per-method RPC latency, the `DevPerf` span around it (main busy, the longest stretch the main thread didn't sleep, `route.board` routings) and `app.metrics` where the bundle has it; the table prints medians and ranges with the targets as pass/fail. `--summarize` re-prints a table from earlier rows.
+- A real board's geometry without its content: `scripts/perf-sanitize.py <board.json> <out.json>` keeps ids, types, frames, z, groups, arrow bindings, routes and label lengths and html sizes and replaces every string with filler of the same length; it fails, naming only lengths and JSON paths, if any word of the input survives. Run it on the board's machine and copy only its output; `perf-board.py --replica <out.json>` re-roots it into a home.
+
 ### Terminals and agents
 
 - Terminal text: `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) zmx history canvas-<tileId> | tail -n 40` (zmx keys its socket directory off `TMPDIR`; the GUI app's differs from a terminal's).

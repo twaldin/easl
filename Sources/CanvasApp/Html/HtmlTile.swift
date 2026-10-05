@@ -4,8 +4,9 @@ import WebKit
 
 /// Agent- or user-authored HTML in a sandboxed web view (docs/design.md, HTML): a throwaway data
 /// store, http(s)/ws blocked except `props.allowNetwork` hosts, and no native bridge beyond the
-/// validated `canvas` channel. The web view exists only while the tile is live; offscreen it is
-/// released and the tile shows its last snapshot.
+/// validated `canvas` channel. The web view exists only while the tile is live, and for
+/// `parkDelay` after it leaves the view (hidden, so panning or zooming back shows the page without
+/// loading it again); then it is released and the tile shows its last snapshot.
 @MainActor
 final class HtmlTile: NSView, TileContent {
     private(set) var object: CanvasObject
@@ -101,6 +102,8 @@ final class HtmlTile: NSView, TileContent {
     }
 
     private func attach(rules: WKContentRuleList) {
+        Metrics.shared.record("html.load")
+        Metrics.shared.adjust("html.webviews", by: 1)
         let configuration = configuration(rules: rules)
         WebMentions.install(on: configuration)
 
@@ -118,17 +121,55 @@ final class HtmlTile: NSView, TileContent {
     }
 
     private func detach() {
+        unpark()
         snapshotTask?.cancel()
         snapshotTask = nil
         pageShown = false
         readyWaiters.removeAll()
         work.cancelAll()
         guard let web = webView else { return }
+        Metrics.shared.adjust("html.webviews", by: -1)
         web.stopLoading()
         web.configuration.userContentController.removeAllScriptMessageHandlers()
         web.removeFromSuperview()
         webView = nil
         hovered = nil
+    }
+
+    // MARK: Parked pages
+
+    /// How long a page that left the view stays loaded (hidden) before it is released.
+    static let parkDelay: TimeInterval = 30
+    /// Pages kept loaded out of view at once; parking another releases the longest parked.
+    static let maxParked = 12
+    private static var parked: [WeakTile] = []
+    private var parkTimer: Timer?
+
+    private struct WeakTile {
+        weak var tile: HtmlTile?
+    }
+
+    /// The page left the view: hide it and keep it for `parkDelay`.
+    private func park() {
+        guard let web = webView else { return }
+        web.isHidden = true
+        readyWaiters.removeAll()
+        Self.parked.removeAll { $0.tile == nil || $0.tile === self }
+        Self.parked.append(WeakTile(tile: self))
+        while Self.parked.count > Self.maxParked { Self.parked.removeFirst().tile?.detach() }
+        parkTimer?.invalidate()
+        parkTimer = Timer.scheduledTimer(withTimeInterval: Self.parkDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.live else { return }
+                self.detach()
+            }
+        }
+    }
+
+    private func unpark() {
+        parkTimer?.invalidate()
+        parkTimer = nil
+        Self.parked.removeAll { $0.tile == nil || $0.tile === self }
     }
 
     private func showFailure(_ message: String) {
@@ -196,7 +237,8 @@ final class HtmlTile: NSView, TileContent {
         snapshotTask?.cancel()
         snapshotTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled, let self, let web = self.webView, !web.bounds.isEmpty else { return }
+            // A parked (hidden) page draws nothing worth keeping: the card keeps its last image.
+            guard !Task.isCancelled, let self, self.live, let web = self.webView, !web.bounds.isEmpty else { return }
             let configuration = WKSnapshotConfiguration()
             configuration.snapshotWidth = NSNumber(value: min(web.bounds.width, 1200))
             if let image = try? await web.takeSnapshot(configuration: configuration), !Task.isCancelled {
@@ -207,7 +249,7 @@ final class HtmlTile: NSView, TileContent {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        if webView != nil { scheduleSnapshot() }
+        if live, webView != nil { scheduleSnapshot() }
     }
 
     // MARK: TileContent
@@ -215,7 +257,18 @@ final class HtmlTile: NSView, TileContent {
     func setLive(_ live: Bool) {
         guard live != self.live else { return }
         self.live = live
-        if live { build() } else { detach() }
+        if live, let web = webView {
+            // Back before its release: the page is still loaded.
+            unpark()
+            web.isHidden = false
+            Metrics.shared.record("html.reuse")
+        } else if live {
+            build()
+        } else if pageShown, loadFailure == nil {
+            park()
+        } else {
+            detach()
+        }
     }
 
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void) {
@@ -251,7 +304,11 @@ final class HtmlTile: NSView, TileContent {
     func render(_ request: TileRenderRequest) async -> TileRender {
         guard let window else { return .placeholder(request, "the tile has no window") }
         guard await beginOffscreen() else { return .placeholder(request, "timed out waiting for another render of this tile") }
-        defer { endOffscreen() }
+        let started = Metrics.now()
+        defer {
+            endOffscreen()
+            Metrics.shared.record("html.render", ms: (Metrics.now() - started) * 1000)
+        }
         let content: CGSize
         switch await loadOffscreen(size: request.size, appearance: request.appearance) {
         case .success(let extent): content = CGSize(width: max(request.size.width, extent.width), height: extent.height)
@@ -294,13 +351,22 @@ final class HtmlTile: NSView, TileContent {
     /// `measureReuse` (an agent's `layout.check` loop re-checks unchanged pages).
     static func measure(props: JSONValue, width: CGFloat, root: URL) async throws -> CGSize {
         let key = measureKey(props: props, width: width, root: root)
-        if let key, let known = measured[key], ContinuousClock.now - known.at < measureReuse { return known.size }
+        if let key, let known = measured[key], ContinuousClock.now - known.at < measureReuse {
+            Metrics.shared.record("html.measure.cached")
+            return known.size
+        }
+        let queued = Metrics.now()
         while measuring >= maxMeasuring {
             try Task.checkCancellation()
             try await Task.sleep(for: .milliseconds(30))
         }
+        let started = Metrics.now()
+        if started - queued > 0.001 { Metrics.shared.record("html.measure.wait", ms: (started - queued) * 1000) }
         measuring += 1
-        defer { measuring -= 1 }
+        defer {
+            measuring -= 1
+            Metrics.shared.record("html.measure", ms: (Metrics.now() - started) * 1000)
+        }
         let object = CanvasObject(id: IDs.make("obj"), type: .html, frame: Frame(x: 0, y: 0, w: Double(width), h: RenderMath.tileTitleHeight + 1),
                                   z: 0, createdBy: .user, createdAt: Date(), props: props)
         let tile = HtmlTile(object: object, board: Board(id: IDs.make("brd"), root: root), live: false)
@@ -407,7 +473,7 @@ final class HtmlTile: NSView, TileContent {
     func showSnapshot(_ show: Bool) {
         snapshotCover?.removeFromSuperview()
         snapshotCover = nil
-        guard show, webView != nil, let lastSnapshot else { return }
+        guard show, live, webView != nil, let lastSnapshot else { return }
         let cover = NSImageView(frame: bounds)
         cover.image = lastSnapshot
         cover.imageScaling = .scaleAxesIndependently
@@ -419,10 +485,15 @@ final class HtmlTile: NSView, TileContent {
         let previous = self.object
         self.object = object
         guard let web = webView else { return }
-        if (object.props["allowNetwork"] ?? .array([])) != (previous.props["allowNetwork"] ?? .array([])) {
+        let networkChanged = (object.props["allowNetwork"] ?? .array([])) != (previous.props["allowNetwork"] ?? .array([]))
+        if !live, networkChanged || object.props["html"] != previous.props["html"] {
+            // A parked page would load again unseen: release it; the card shows the change.
+            detach()
+        } else if networkChanged {
             detach()
             build()
         } else if object.props["html"] != previous.props["html"] {
+            Metrics.shared.record("html.reload")
             work.cancelAll()
             web.load(URLRequest(url: pageURL))
         } else if object.props["state"] != previous.props["state"] {
