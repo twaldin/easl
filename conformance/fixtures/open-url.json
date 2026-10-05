@@ -1,7 +1,7 @@
 {
   "scenario": "open-url",
-  "description": "view.open_url: an http(s) address opens a browser tile beside the caller's terminal, the same address (scheme and host case, default port, empty path normalised) reuses it, other schemes and missing urls are errors; without a caller the tile is placed near the user's view.",
-  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
+  "description": "view.open_url: an http(s) address opens a browser tile beside the caller's terminal, the same address (scheme and host case, default port, empty path normalised) reuses it, other schemes and missing urls are errors; without a caller the tile is placed near the user's view. A browser tile's own props (a named profile, reload when files change) are known props.",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",
@@ -56,7 +56,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -75,7 +75,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           }
         }
@@ -84,7 +84,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -103,7 +103,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           },
           "event": "object.created"
@@ -124,7 +124,7 @@
         "result": {
           "existing": false,
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -141,7 +141,7 @@
             },
             "rev": "<rev:1>",
             "type": "browser",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           }
         }
@@ -150,7 +150,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -167,7 +167,7 @@
             },
             "rev": "<rev:1>",
             "type": "browser",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           },
           "event": "object.created"
@@ -188,7 +188,7 @@
         "result": {
           "existing": true,
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -205,7 +205,7 @@
             },
             "rev": "<rev:1>",
             "type": "browser",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           }
         }
@@ -225,7 +225,7 @@
         "result": {
           "existing": false,
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -242,7 +242,7 @@
             },
             "rev": "<rev:1>",
             "type": "browser",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           }
         }
@@ -251,7 +251,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -268,7 +268,7 @@
             },
             "rev": "<rev:1>",
             "type": "browser",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           },
           "event": "object.created"
@@ -289,7 +289,7 @@
         "result": {
           "existing": false,
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -306,7 +306,7 @@
             },
             "rev": "<rev:1>",
             "type": "browser",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 4
           }
         }
@@ -315,7 +315,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -332,7 +332,7 @@
             },
             "rev": "<rev:1>",
             "type": "browser",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 4
           },
           "event": "object.created"
@@ -353,7 +353,7 @@
         "result": {
           "existing": true,
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -370,7 +370,7 @@
             },
             "rev": "<rev:1>",
             "type": "browser",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 4
           }
         }
@@ -436,7 +436,7 @@
         "result": {
           "existing": false,
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -450,7 +450,7 @@
             },
             "rev": "<rev:1>",
             "type": "browser",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 5
           }
         }
@@ -459,7 +459,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -473,7 +473,7 @@
             },
             "rev": "<rev:1>",
             "type": "browser",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 5
           },
           "event": "object.created"
@@ -501,7 +501,7 @@
           "entries": [
             {
               "actor": "system",
-              "at": "<time>",
+              "at": "<time:iso>",
               "kind": "restart",
               "rev": "<board:1>",
               "seq": "<seq:1>",
@@ -509,7 +509,7 @@
             },
             {
               "actor": "user",
-              "at": "<time>",
+              "at": "<time:iso>",
               "id": "<obj:1>",
               "kind": "created",
               "rev": "<board:2>",
@@ -519,7 +519,7 @@
             },
             {
               "actor": "agent:<obj:1>",
-              "at": "<time>",
+              "at": "<time:iso>",
               "id": "<obj:2>",
               "kind": "created",
               "rev": "<board:3>",
@@ -529,7 +529,7 @@
             },
             {
               "actor": "agent:<obj:1>",
-              "at": "<time>",
+              "at": "<time:iso>",
               "id": "<obj:3>",
               "kind": "created",
               "rev": "<board:4>",
@@ -539,7 +539,7 @@
             },
             {
               "actor": "agent:<obj:1>",
-              "at": "<time>",
+              "at": "<time:iso>",
               "id": "<obj:4>",
               "kind": "created",
               "rev": "<board:5>",
@@ -549,19 +549,103 @@
             },
             {
               "actor": "user",
-              "at": "<time>",
+              "at": "<time:iso>",
               "id": "<obj:5>",
               "kind": "created",
               "rev": "<board:6>",
               "seq": "<seq:6>",
-              "summary": "created browser http://<http-host>/other at (50000, 49250) 1000×726",
+              "summary": "created browser http://<http-host>/other at (<view>) 1000×726",
               "type": "browser"
             }
           ],
           "restarted": false,
           "truncated": false
         }
+      },
+      "masked": {
+        "response.result.entries.5.summary": "the /other tile's creation: placement inside the user's view (client viewport), as in the step before"
       }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 600,
+          "w": 800,
+          "x": 52000,
+          "y": 50000
+        },
+        "props": {
+          "bogus": 1,
+          "profile": "conformance",
+          "reloadOnChange": true,
+          "url": "http://<http-host>/conformance"
+        },
+        "type": "browser"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 600,
+              "w": 800,
+              "x": 52000,
+              "y": 50000
+            },
+            "id": "<obj:6>",
+            "props": {
+              "bogus": 1,
+              "profile": "conformance",
+              "reloadOnChange": true,
+              "url": "http://<http-host>/conformance"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 6
+          },
+          "warnings": [
+            "unknown prop \"bogus\" for browser (kept, but nothing reads it; browser props: key, pageTitle, profile, reloadOnChange, title, url, zoom)"
+          ]
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 600,
+              "w": 800,
+              "x": 52000,
+              "y": 50000
+            },
+            "id": "<obj:6>",
+            "props": {
+              "bogus": 1,
+              "profile": "conformance",
+              "reloadOnChange": true,
+              "url": "http://<http-host>/conformance"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 6
+          },
+          "event": "object.created"
+        }
+      ]
     }
   ]
 }

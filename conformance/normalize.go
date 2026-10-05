@@ -5,21 +5,29 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // normalizer rewrites what differs between two correct servers (or two runs of one) into stable
 // tokens, keeping the relations that matter:
 //
-//   - ids (`obj_01J…`, `men_…`) become `<obj:1>`, `<obj:2>`, … by first appearance, so "the
-//     same object" stays the same token and two objects stay apart;
+//   - ids become `<obj:1>`, `<obj:2>`, … (the prefix before `_`, numbered by first appearance),
+//     so "the same object" stays the same token and two objects stay apart. An id is a value of
+//     an id field (idKeys) or a key of an id-keyed map (idMaps) that has the schema's id shape
+//     (`definitions/Id`: a lowercase prefix, `_`, letters and digits), whatever generator made
+//     it; once known, it is replaced wherever it appears in text (summaries, messages, refs);
 //   - revisions become `<rev:n>` tokens by value, per kind (an object's `rev`; a board revision:
 //     `revision`, `cursor`, `since`, an activity entry's `rev`), so equal revisions stay equal and
 //     a write that should have moved one shows (`board.history`'s `cursor` and `seq` count log
 //     entries from the board's opening and stay as they are);
-//   - timestamps become `<time>`, absolute paths `<root>` (the scenario's directory), `<home>`
-//     and `<tmp>`, process ids `<pid>`.
+//   - valid timestamps keep their wire type: `<time:number>` (seconds since 2001-01-01, the API's
+//     dates) or `<time:iso>` (an ISO 8601 string: activity entries, board files). A value under
+//     a time key that is neither, or names a moment before 2020 or in the future, stays as it is
+//     and so differs from the recorded token;
+//   - absolute paths become `<root>` (the scenario's directory), `<run>` and `~`, process ids
+//     `<pid>`.
 //
-// The walk visits object keys in sorted order, so numbering is the same on every run.
+// The walks visit object keys in sorted order, so numbering is the same on every run.
 type normalizer struct {
 	tokens map[string]string
 	counts map[string]int
@@ -27,6 +35,10 @@ type normalizer struct {
 	paths  []pathSubst
 	// The method of the record being normalised.
 	method string
+	// Every known id as a whole word, rebuilt when one is learnt (nil: rebuild).
+	idWords *regexp.Regexp
+	// Valid moments lie in [earliestTime, latest].
+	latest time.Time
 }
 
 type pathSubst struct{ from, to string }
@@ -34,23 +46,43 @@ type pathSubst struct{ from, to string }
 func newNormalizer(paths []pathSubst) *normalizer {
 	// Longest first: the scenario root sits inside the temp directory.
 	sort.SliceStable(paths, func(i, j int) bool { return len(paths[i].from) > len(paths[j].from) })
-	return &normalizer{tokens: map[string]string{}, counts: map[string]int{}, revs: map[string]map[string]string{}, paths: paths}
+	return &normalizer{tokens: map[string]string{}, counts: map[string]int{}, revs: map[string]map[string]string{}, paths: paths,
+		latest: time.Now().Add(24 * time.Hour)}
 }
 
 // alias pins a value (the scenario's board id) to a fixed token.
 func (n *normalizer) alias(value, token string) {
 	if value != "" {
 		n.tokens[value] = token
+		n.idWords = nil
 	}
 }
 
 var (
-	idPattern   = regexp.MustCompile(`\b([a-z]+)_([0-9A-HJKMNP-TV-Z]{18})\b`)
+	// The schema's id (`definitions/Id`).
+	idShape     = regexp.MustCompile(`^[a-z]+_[0-9A-Za-z]+$`)
 	timePattern = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})\b`)
 	pidPattern  = regexp.MustCompile(`\bpid \d+`)
 	// Elapsed times in prose ("3s ago", "120 ms").
 	msPattern = regexp.MustCompile(`\b\d+(\.\d+)? ?ms\b`)
 )
+
+// idKeys are the fields whose string values (or arrays of them, nested too) are ids: every
+// property schema/easl-api.json types `#/definitions/Id` (TestIDKeysCoverTheSchema keeps the
+// two in step), and the id references the app sends that the schema leaves untyped.
+var idKeys = map[string]bool{
+	// Typed in the schema.
+	"arrow": true, "arrows": true, "board": true, "caller": true, "changed": true, "cleared": true, "crosses": true,
+	"enteredGroup": true, "exclude": true, "focused": true, "followOf": true, "id": true, "ids": true, "lines": true,
+	"members": true, "near": true, "object": true, "objects": true, "overlaps": true, "parent": true,
+	"promptTarget": true, "region": true, "regions": true, "selection": true, "target": true, "tile": true,
+	// Untyped on the wire: an object's graph (arrowsIn/arrowsOut ends, enclosure), the terminal a
+	// follow tile follows, who raised an attention marker.
+	"from": true, "to": true, "enclosedBy": true, "encloses": true, "follow": true, "raisedBy": true,
+}
+
+// idMaps are maps keyed by id (layout results' `frames`).
+var idMaps = map[string]bool{"frames": true}
 
 // Keys whose numeric value is a revision, by the revision space it counts in.
 var revisionKeys = map[string]string{
@@ -60,11 +92,70 @@ var revisionKeys = map[string]string{
 	"boardRev": "board",
 }
 
-// Keys whose value is a moment.
+// Keys whose value is a moment (schema date-time fields, and the app's API dates).
 var timeKeys = map[string]bool{
-	"createdAt": true, "updatedAt": true, "at": true, "time": true, "savedAt": true, "raisedAt": true,
-	"startedAt": true, "reportedAt": true, "modified": true, "ts": true, "date": true, "seenAt": true,
-	"stagedAt": true, "endedAt": true, "lastReport": true, "since_ms": true,
+	"at": true, "computedAt": true, "createdAt": true, "finishedAt": true, "raisedAt": true, "releasedAt": true,
+	"stagedAt": true, "submittedAt": true, "time": true, "updatedAt": true,
+}
+
+// The API's dates count seconds from here (Foundation's reference date).
+var referenceDate = time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// No moment a scenario sees is older (the fixed git commits are dated 2026).
+var earliestTime = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// learnIDs numbers the ids in a record's parts, in order, before any of them is rewritten, so an
+// id mentioned in text ahead of its field (an entry's `actor` before its `id`) gets its token.
+func (n *normalizer) learnIDs(parts ...any) {
+	for _, p := range parts {
+		n.collectIDs(p, false)
+	}
+}
+
+func (n *normalizer) collectIDs(v any, isID bool) {
+	switch x := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if m, ok := x[k].(map[string]any); ok && idMaps[k] {
+				ids := make([]string, 0, len(m))
+				for id := range m {
+					ids = append(ids, id)
+				}
+				sort.Strings(ids)
+				for _, id := range ids {
+					n.learn(id)
+				}
+			}
+			n.collectIDs(x[k], idKeys[k])
+		}
+	case []any:
+		for _, e := range x {
+			n.collectIDs(e, isID)
+		}
+	case []map[string]any:
+		for _, e := range x {
+			n.collectIDs(e, isID)
+		}
+	case string:
+		if isID {
+			n.learn(x)
+		}
+	}
+}
+
+func (n *normalizer) learn(id string) {
+	if _, ok := n.tokens[id]; ok || !idShape.MatchString(id) {
+		return
+	}
+	prefix := id[:strings.IndexByte(id, '_')]
+	n.counts[prefix]++
+	n.tokens[id] = fmt.Sprintf("<%s:%d>", prefix, n.counts[prefix])
+	n.idWords = nil
 }
 
 func (n *normalizer) value(v any, parentKey string, inEntry bool) any {
@@ -98,9 +189,12 @@ func (n *normalizer) value(v any, parentKey string, inEntry bool) any {
 
 func (n *normalizer) field(key string, v any, entry bool) any {
 	if timeKeys[key] {
-		switch v.(type) {
-		case string, float64:
-			return "<time>"
+		if t, ok := n.moment(v); ok {
+			return t
+		}
+		if s, ok := v.(string); ok {
+			// A malformed time is compared as it is, never rewritten as prose.
+			return s
 		}
 	}
 	if n.method == "board.history" {
@@ -128,6 +222,23 @@ func (n *normalizer) field(key string, v any, entry bool) any {
 	return n.value(v, key, entry)
 }
 
+// moment is a valid timestamp's token by its wire type; not ok for anything else (an object
+// such as layout.check's `at` point, or a malformed time, both compared as they are).
+func (n *normalizer) moment(v any) (string, bool) {
+	switch x := v.(type) {
+	case float64:
+		// Seconds since the reference date, compared as seconds (NaN fails both bounds).
+		if x >= earliestTime.Sub(referenceDate).Seconds() && x <= n.latest.Sub(referenceDate).Seconds() {
+			return "<time:number>", true
+		}
+	case string:
+		if t, err := time.Parse(time.RFC3339Nano, x); err == nil && !t.Before(earliestTime) && !t.After(n.latest) {
+			return "<time:iso>", true
+		}
+	}
+	return "", false
+}
+
 func (n *normalizer) revision(space string, value float64) string {
 	byValue := n.revs[space]
 	if byValue == nil {
@@ -152,24 +263,30 @@ func (n *normalizer) text(s string) string {
 			s = strings.ReplaceAll(s, p.from, p.to)
 		}
 	}
-	s = idPattern.ReplaceAllStringFunc(s, func(id string) string {
-		if t, ok := n.tokens[id]; ok {
+	if words := n.knownIDs(); words != nil {
+		s = words.ReplaceAllStringFunc(s, func(id string) string { return n.tokens[id] })
+	}
+	s = timePattern.ReplaceAllStringFunc(s, func(m string) string {
+		if t, ok := n.moment(m); ok {
 			return t
 		}
-		prefix := idPattern.FindStringSubmatch(id)[1]
-		n.counts[prefix]++
-		t := fmt.Sprintf("<%s:%d>", prefix, n.counts[prefix])
-		n.tokens[id] = t
-		return t
+		return m
 	})
-	for raw, t := range n.tokens {
-		// Ids that don't look like ids (a board's) are replaced wherever they appear.
-		if !idPattern.MatchString(raw) && len(raw) >= 8 && strings.Contains(s, raw) {
-			s = strings.ReplaceAll(s, raw, t)
-		}
-	}
-	s = timePattern.ReplaceAllString(s, "<time>")
 	s = pidPattern.ReplaceAllString(s, "pid <pid>")
 	s = msPattern.ReplaceAllString(s, "<ms>")
 	return s
+}
+
+// knownIDs matches every id learnt so far as a whole word, longest first (nil: none yet).
+func (n *normalizer) knownIDs() *regexp.Regexp {
+	if n.idWords != nil || len(n.tokens) == 0 {
+		return n.idWords
+	}
+	ids := make([]string, 0, len(n.tokens))
+	for id := range n.tokens {
+		ids = append(ids, regexp.QuoteMeta(id))
+	}
+	sort.Slice(ids, func(i, j int) bool { return len(ids[i]) > len(ids[j]) || len(ids[i]) == len(ids[j]) && ids[i] < ids[j] })
+	n.idWords = regexp.MustCompile(`\b(?:` + strings.Join(ids, "|") + `)\b`)
+	return n.idWords
 }

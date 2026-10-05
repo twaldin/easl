@@ -1,7 +1,7 @@
 {
   "scenario": "events",
   "description": "events.subscribe with a board filter and an event-name filter on other connections; every event kind's payload.",
-  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",
@@ -86,7 +86,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -105,7 +105,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           }
         }
@@ -114,7 +114,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -133,7 +133,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           },
           "event": "object.created"
@@ -161,7 +161,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -177,7 +177,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           }
         }
@@ -186,7 +186,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -202,7 +202,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           },
           "event": "object.created"
@@ -223,7 +223,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -239,7 +239,7 @@
             },
             "rev": "<rev:2>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -251,7 +251,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -267,7 +267,7 @@
             },
             "rev": "<rev:2>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -295,7 +295,7 @@
             "edited": false,
             "id": "<men:1>",
             "label": "note hello again",
-            "stagedAt": "<time>",
+            "stagedAt": "<time:number>",
             "target": {
               "kind": "object",
               "object": "<obj:2>"
@@ -312,7 +312,7 @@
                 "edited": false,
                 "id": "<men:1>",
                 "label": "note hello again",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "object",
                   "object": "<obj:2>"
@@ -331,7 +331,7 @@
                 "edited": false,
                 "id": "<men:1>",
                 "label": "note hello again",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "object",
                   "object": "<obj:2>"
@@ -361,7 +361,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -387,7 +387,7 @@
             },
             "rev": "<rev:2>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"

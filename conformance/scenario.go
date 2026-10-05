@@ -57,6 +57,9 @@ type Step struct {
 	// Record paths left out of the comparison (value and presence), with the reason:
 	// `response.result.object.props.title`, `events.*.data.frame`; `*` matches any key or index.
 	Ignore map[string]string `json:"ignore,omitempty"`
+	// Parts of the strings at record paths (as in Ignore) left out of the comparison: the
+	// matches of `match` become `as`, and the rest of the string is still compared.
+	Mask map[string]Mask `json:"mask,omitempty"`
 	// Arrays compared as sets (sorted first), with the reason.
 	Unordered map[string]string `json:"unordered,omitempty"`
 	// Keep only the array elements at a response path whose fields equal the given ones
@@ -71,6 +74,13 @@ type Step struct {
 type WriteFile struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
+}
+
+// Mask is one Step.Mask rule.
+type Mask struct {
+	Match string `json:"match"` // a Go regular expression
+	As    string `json:"as"`    // its replacement ($1 for a group)
+	Why   string `json:"why"`
 }
 
 // Label names a step in reports: its method, or the harness action.
@@ -110,6 +120,13 @@ func LoadScenarios(dir string) ([]Scenario, error) {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		s.Name = strings.TrimSuffix(filepath.Base(path), ".json")
+		for i, st := range s.Steps {
+			for p, m := range st.Mask {
+				if _, err := regexp.Compile(m.Match); err != nil {
+					return nil, fmt.Errorf("%s: step %d: mask %s: %w", path, i, p, err)
+				}
+			}
+		}
 		out = append(out, s)
 	}
 	return out, nil

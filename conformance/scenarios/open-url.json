@@ -1,5 +1,5 @@
 {
-  "description": "view.open_url: an http(s) address opens a browser tile beside the caller's terminal, the same address (scheme and host case, default port, empty path normalised) reuses it, other schemes and missing urls are errors; without a caller the tile is placed near the user's view.",
+  "description": "view.open_url: an http(s) address opens a browser tile beside the caller's terminal, the same address (scheme and host case, default port, empty path normalised) reuses it, other schemes and missing urls are errors; without a caller the tile is placed near the user's view. A browser tile's own props (a named profile, reload when files change) are known props.",
   "serve": {
     "/conformance": "<!doctype html><html><body><p>conformance page</p></body></html>",
     "/other": "<!doctype html><html><body><p>conformance page</p></body></html>",
@@ -110,7 +110,34 @@
       "call": "board.history",
       "params": {
         "board": "{{board}}"
+      },
+      "mask": {
+        "response.result.entries.5.summary": {
+          "match": " at \\(-?[0-9.]+, -?[0-9.]+\\) ",
+          "as": " at (<view>) ",
+          "why": "the /other tile's creation: placement inside the user's view (client viewport), as in the step before"
+        }
       }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "browser",
+        "props": {
+          "url": "http://{{httpHost}}/conformance",
+          "profile": "conformance",
+          "reloadOnChange": true,
+          "bogus": 1
+        },
+        "frame": {
+          "x": 52000,
+          "y": 50000,
+          "w": 800,
+          "h": 600
+        }
+      },
+      "settleMs": 1500
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
   "scenario": "boards",
   "description": "board.open (git repository, errors), board.list (this board), board.export to the default and a given path, read back.",
-  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",
@@ -145,7 +145,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -161,7 +161,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           }
         }
@@ -170,7 +170,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -186,7 +186,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           },
           "event": "object.created"
@@ -211,7 +211,7 @@
             "edited": false,
             "id": "<men:1>",
             "label": "note exported",
-            "stagedAt": "<time>",
+            "stagedAt": "<time:number>",
             "target": {
               "kind": "object",
               "object": "<obj:1>"
@@ -228,7 +228,7 @@
                 "edited": false,
                 "id": "<men:1>",
                 "label": "note exported",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "object",
                   "object": "<obj:1>"
@@ -294,7 +294,7 @@
         "id": "<board>",
         "objects": [
           {
-            "createdAt": "<time>",
+            "createdAt": "<time:iso>",
             "createdBy": {
               "kind": "user"
             },
@@ -310,7 +310,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:iso>",
             "z": 1
           }
         ],
@@ -341,7 +341,7 @@
         "id": "<board>",
         "objects": [
           {
-            "createdAt": "<time>",
+            "createdAt": "<time:iso>",
             "createdBy": {
               "kind": "user"
             },
@@ -357,7 +357,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:iso>",
             "z": 1
           }
         ],

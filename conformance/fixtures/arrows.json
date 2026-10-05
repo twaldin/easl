@@ -1,7 +1,7 @@
 {
   "scenario": "arrows",
   "description": "Arrows bound to objects (straight and orthogonal), free point ends, labels; frames reported from the route; deleting an end detaches it to a point; graph relations.",
-  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",
@@ -53,7 +53,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -69,7 +69,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           }
         }
@@ -78,7 +78,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -94,7 +94,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           },
           "event": "object.created"
@@ -122,7 +122,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -138,7 +138,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           }
         }
@@ -147,7 +147,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -163,7 +163,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           },
           "event": "object.created"
@@ -191,7 +191,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -207,7 +207,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           }
         }
@@ -216,7 +216,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -232,7 +232,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           },
           "event": "object.created"
@@ -266,7 +266,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -288,7 +288,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 4
           }
         }
@@ -297,7 +297,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -319,7 +319,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 4
           },
           "event": "object.created"
@@ -354,7 +354,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -377,7 +377,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 5
           }
         }
@@ -386,7 +386,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -409,7 +409,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 5
           },
           "event": "object.created"
@@ -445,7 +445,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -469,7 +469,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 6
           }
         }
@@ -478,7 +478,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -502,7 +502,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 6
           },
           "event": "object.created"
@@ -542,7 +542,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -570,7 +570,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 7
           }
         }
@@ -579,7 +579,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -607,7 +607,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 7
           },
           "event": "object.created"
@@ -640,7 +640,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -661,7 +661,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 8
           }
         }
@@ -670,7 +670,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -691,7 +691,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 8
           },
           "event": "object.created"
@@ -721,7 +721,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -739,7 +739,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 9
           }
         }
@@ -748,7 +748,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -766,7 +766,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 9
           },
           "event": "object.created"
@@ -784,7 +784,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -806,7 +806,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 4
           }
         }
@@ -849,7 +849,7 @@
             "overlaps": []
           },
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -865,7 +865,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           }
         }
@@ -899,7 +899,7 @@
             }
           },
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -921,7 +921,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 4
           }
         }
@@ -942,7 +942,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -958,7 +958,7 @@
             },
             "rev": "<rev:2>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -970,7 +970,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -986,7 +986,7 @@
             },
             "rev": "<rev:2>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -1007,7 +1007,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -1029,7 +1029,7 @@
             },
             "rev": "<rev:1>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 4
           }
         }
@@ -1050,7 +1050,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -1076,7 +1076,7 @@
             },
             "rev": "<rev:2>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -1104,7 +1104,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -1130,7 +1130,7 @@
             },
             "rev": "<rev:2>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -1167,7 +1167,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -1195,7 +1195,7 @@
             },
             "rev": "<rev:2>",
             "type": "arrow",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -1218,7 +1218,7 @@
           "board": "<board>",
           "objects": [
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -1234,11 +1234,11 @@
               },
               "rev": "<rev:1>",
               "type": "shape",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "z": 1
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -1254,14 +1254,14 @@
               },
               "rev": "<rev:2>",
               "type": "shape",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "updatedBy": {
                 "kind": "user"
               },
               "z": 2
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -1283,11 +1283,11 @@
               },
               "rev": "<rev:1>",
               "type": "arrow",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "z": 4
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -1313,14 +1313,14 @@
               },
               "rev": "<rev:2>",
               "type": "arrow",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "updatedBy": {
                 "kind": "user"
               },
               "z": 5
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -1344,11 +1344,11 @@
               },
               "rev": "<rev:1>",
               "type": "arrow",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "z": 6
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -1376,14 +1376,14 @@
               },
               "rev": "<rev:2>",
               "type": "arrow",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "updatedBy": {
                 "kind": "user"
               },
               "z": 7
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -1404,11 +1404,11 @@
               },
               "rev": "<rev:1>",
               "type": "arrow",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "z": 8
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -1426,7 +1426,7 @@
               },
               "rev": "<rev:1>",
               "type": "arrow",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "z": 9
             }
           ],

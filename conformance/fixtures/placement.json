@@ -1,7 +1,7 @@
 {
   "scenario": "placement",
   "description": "Objects created without a frame, or with only w and h, are placed in a free spot: beside the caller's terminal (stacking an agent's answers), else near the view. Where they land depends on the user's viewport, which only the client knows; the sizes and the rest are compared.",
-  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",
@@ -68,7 +68,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -85,7 +85,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           }
         }
@@ -94,7 +94,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -111,7 +111,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           },
           "event": "object.created"
@@ -140,7 +140,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -155,7 +155,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           }
         }
@@ -164,7 +164,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -179,7 +179,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           },
           "event": "object.created"
@@ -212,7 +212,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -227,7 +227,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           }
         }
@@ -236,7 +236,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -251,7 +251,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           },
           "event": "object.created"
@@ -279,7 +279,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -293,7 +293,7 @@
             },
             "rev": "<rev:1>",
             "type": "code",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 4
           }
         }
@@ -302,7 +302,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -316,7 +316,7 @@
             },
             "rev": "<rev:1>",
             "type": "code",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 4
           },
           "event": "object.created"
@@ -348,7 +348,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -362,7 +362,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 5
           }
         }
@@ -371,7 +371,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -385,7 +385,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 5
           },
           "event": "object.created"

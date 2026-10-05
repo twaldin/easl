@@ -1,7 +1,7 @@
 {
   "scenario": "agents",
-  "description": "Agent lifecycle on terminal tiles: reports with seq and source (stale ones ignored), blocked tool calls, final answers, sessions, release, agent.list, agent.wait (answered, already there, timeout), lifecycle events.",
-  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
+  "description": "Agent lifecycle on terminal tiles: reports with seq and source (stale ones ignored), blocked tool calls, final answers and reading them back (agent.read final: the answer, cut off by an error, none yet, still in its turn, with lines or since), sessions, release, agent.list, agent.wait (answered, already there, timeout), lifecycle events.",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",
@@ -69,7 +69,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -89,7 +89,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           }
         }
@@ -98,7 +98,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -118,7 +118,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           },
           "event": "object.created"
@@ -155,7 +155,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -174,7 +174,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           }
         }
@@ -183,7 +183,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -202,7 +202,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           },
           "event": "object.created"
@@ -272,7 +272,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -299,7 +299,7 @@
             },
             "rev": "<rev:2>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -360,7 +360,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -387,7 +387,7 @@
             },
             "rev": "<rev:2>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -424,7 +424,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -452,7 +452,7 @@
             },
             "rev": "<rev:3>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -502,7 +502,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -530,7 +530,7 @@
             },
             "rev": "<rev:4>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -570,7 +570,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -598,7 +598,7 @@
             },
             "rev": "<rev:4>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -634,7 +634,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -662,7 +662,7 @@
             },
             "rev": "<rev:5>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -702,7 +702,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -730,7 +730,7 @@
             },
             "rev": "<rev:5>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -766,7 +766,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -793,7 +793,7 @@
             },
             "rev": "<rev:6>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -839,7 +839,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -868,7 +868,7 @@
             },
             "rev": "<rev:7>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -932,7 +932,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -961,7 +961,7 @@
             },
             "rev": "<rev:8>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -1018,6 +1018,108 @@
       }
     },
     {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "final": true,
+        "target": "<obj:1>"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "agent": {
+            "board": "<board>",
+            "kind": "omp",
+            "lifecycle": {
+              "seen": false,
+              "state": "done"
+            },
+            "name": "worker",
+            "root": "<root>",
+            "sessionId": "sess-1",
+            "tile": "<obj:1>"
+          },
+          "lines": 1,
+          "text": "All done."
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "final": true,
+        "lines": 5,
+        "target": "worker"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "final takes no lines or since: it returns the whole last answer"
+        },
+        "id": "r17",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "final": true,
+        "since": "prompt",
+        "target": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "final takes no lines or since: it returns the whole last answer"
+        },
+        "id": "r18",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "final": true,
+        "target": "<obj:2>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no final answer is known for <obj:2>'s last turn: its agent (none reporting) reported none, or the turn was interrupted. Read the screen with since: \"prompt\" instead"
+        },
+        "id": "r19",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
       "step": "agent.wait",
       "method": "agent.wait",
       "request": {
@@ -1028,7 +1130,7 @@
         ]
       },
       "response": {
-        "id": "r16",
+        "id": "r20",
         "ok": true,
         "result": {
           "agent": {
@@ -1067,7 +1169,7 @@
           "code": "timeout",
           "message": "<obj:1> did not reach working in time"
         },
-        "id": "r17",
+        "id": "r21",
         "ok": false
       },
       "ignored": {
@@ -1091,7 +1193,7 @@
           "code": "invalid_params",
           "message": "unknown state string(\"sleeping\") in until; one of blocked, done, idle, unknown, working"
         },
-        "id": "r18",
+        "id": "r22",
         "ok": false
       },
       "ignored": {
@@ -1113,7 +1215,7 @@
           "code": "timeout",
           "message": "<obj:2> did not reach blocked|done|idle in time"
         },
-        "id": "r19",
+        "id": "r23",
         "ok": false
       },
       "ignored": {
@@ -1134,8 +1236,377 @@
           "code": "not_found",
           "message": "no terminal tile named or with id nobody"
         },
-        "id": "r20",
+        "id": "r24",
         "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "codex",
+        "state": "working",
+        "tile": "<obj:2>"
+      },
+      "response": {
+        "id": "r25",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "agent": {
+                "kind": "codex"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              }
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:2>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "final": true,
+        "target": "<obj:2>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "<obj:2> is still in its turn (working): agent.wait for it, then read final"
+        },
+        "id": "r26",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "error": "overloaded_error",
+        "kind": "codex",
+        "state": "idle",
+        "tile": "<obj:2>"
+      },
+      "response": {
+        "id": "r27",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "agent": {
+                "kind": "codex"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "message": "overloaded_error",
+                "seen": false,
+                "state": "idle"
+              }
+            },
+            "rev": "<rev:3>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "message": "overloaded_error",
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:2>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "final": true,
+        "target": "<obj:2>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "<obj:2>'s last turn ended on an error before any answer: overloaded_error"
+        },
+        "id": "r28",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "codex",
+        "state": "working",
+        "tile": "<obj:2>"
+      },
+      "response": {
+        "id": "r29",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "agent": {
+                "kind": "codex"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              }
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:2>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "error": "aborted",
+        "final": "Half an answer.\nSecond line.",
+        "kind": "codex",
+        "state": "idle",
+        "tile": "<obj:2>"
+      },
+      "response": {
+        "id": "r30",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "agent": {
+                "kind": "codex"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "message": "aborted",
+                "seen": false,
+                "state": "idle"
+              }
+            },
+            "rev": "<rev:5>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "message": "aborted",
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:2>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "final": true,
+        "target": "<obj:2>"
+      },
+      "response": {
+        "id": "r31",
+        "ok": true,
+        "result": {
+          "agent": {
+            "board": "<board>",
+            "kind": "codex",
+            "lifecycle": {
+              "message": "aborted",
+              "seen": false,
+              "state": "idle"
+            },
+            "root": "<root>",
+            "tile": "<obj:2>"
+          },
+          "cutOff": "aborted",
+          "lines": 2,
+          "text": "Half an answer.\nSecond line."
+        }
       },
       "ignored": {
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
@@ -1149,7 +1620,7 @@
       "method": "agent.list",
       "request": {},
       "response": {
-        "id": "r21",
+        "id": "r32",
         "ok": true,
         "result": {
           "agents": [
@@ -1167,9 +1638,11 @@
             },
             {
               "board": "<board>",
-              "kind": "unknown",
+              "kind": "codex",
               "lifecycle": {
-                "state": "unknown"
+                "message": "aborted",
+                "seen": false,
+                "state": "idle"
               },
               "root": "<root>",
               "tile": "<obj:2>"
@@ -1197,7 +1670,7 @@
           "code": "invalid_params",
           "message": "unknown state"
         },
-        "id": "r22",
+        "id": "r33",
         "ok": false
       },
       "ignored": {
@@ -1220,7 +1693,7 @@
           "code": "not_found",
           "message": "object obj_missing"
         },
-        "id": "r23",
+        "id": "r34",
         "ok": false
       },
       "ignored": {
@@ -1239,7 +1712,7 @@
         "tile": "<obj:1>"
       },
       "response": {
-        "id": "r24",
+        "id": "r35",
         "ok": true,
         "result": {}
       },
@@ -1247,7 +1720,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -1267,7 +1740,7 @@
             },
             "rev": "<rev:9>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -1299,11 +1772,11 @@
         "id": "<obj:1>"
       },
       "response": {
-        "id": "r25",
+        "id": "r36",
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -1323,7 +1796,7 @@
             },
             "rev": "<rev:9>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -1344,7 +1817,7 @@
       "method": "agent.list",
       "request": {},
       "response": {
-        "id": "r26",
+        "id": "r37",
         "ok": true,
         "result": {
           "agents": [
@@ -1360,9 +1833,11 @@
             },
             {
               "board": "<board>",
-              "kind": "unknown",
+              "kind": "codex",
               "lifecycle": {
-                "state": "unknown"
+                "message": "aborted",
+                "seen": false,
+                "state": "idle"
               },
               "root": "<root>",
               "tile": "<obj:2>"

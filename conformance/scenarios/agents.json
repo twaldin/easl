@@ -1,5 +1,5 @@
 {
-  "description": "Agent lifecycle on terminal tiles: reports with seq and source (stale ones ignored), blocked tool calls, final answers, sessions, release, agent.list, agent.wait (answered, already there, timeout), lifecycle events.",
+  "description": "Agent lifecycle on terminal tiles: reports with seq and source (stale ones ignored), blocked tool calls, final answers and reading them back (agent.read final: the answer, cut off by an error, none yet, still in its turn, with lines or since), sessions, release, agent.list, agent.wait (answered, already there, timeout), lifecycle events.",
   "ignore": {
     "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
     "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)",
@@ -182,6 +182,37 @@
       "await": "w1"
     },
     {
+      "call": "agent.read",
+      "params": {
+        "target": "{{t.object.id}}",
+        "final": true
+      }
+    },
+    {
+      "call": "agent.read",
+      "params": {
+        "target": "worker",
+        "final": true,
+        "lines": 5
+      }
+    },
+    {
+      "call": "agent.read",
+      "params": {
+        "target": "{{t.object.id}}",
+        "final": true,
+        "since": "prompt"
+      }
+    },
+    {
+      "call": "agent.read",
+      "params": {
+        "target": "{{u.object.id}}",
+        "final": true
+      },
+      "note": "no agent ever reported on u: no answer known"
+    },
+    {
       "call": "agent.wait",
       "params": {
         "target": "{{t.object.id}}",
@@ -222,6 +253,65 @@
       "params": {
         "target": "nobody"
       }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{u.object.id}}",
+        "kind": "codex",
+        "state": "working"
+      }
+    },
+    {
+      "call": "agent.read",
+      "params": {
+        "target": "{{u.object.id}}",
+        "final": true
+      },
+      "note": "still in its turn"
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{u.object.id}}",
+        "kind": "codex",
+        "state": "idle",
+        "error": "overloaded_error"
+      }
+    },
+    {
+      "call": "agent.read",
+      "params": {
+        "target": "{{u.object.id}}",
+        "final": true
+      },
+      "note": "the turn ended on an error before any answer"
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{u.object.id}}",
+        "kind": "codex",
+        "state": "working"
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{u.object.id}}",
+        "kind": "codex",
+        "state": "idle",
+        "final": "Half an answer.\nSecond line.",
+        "error": "aborted"
+      }
+    },
+    {
+      "call": "agent.read",
+      "params": {
+        "target": "{{u.object.id}}",
+        "final": true
+      },
+      "note": "an answer cut off by the error the turn ended on"
     },
     {
       "call": "agent.list",

@@ -1,7 +1,7 @@
 {
   "scenario": "keys-upsert-find",
   "description": "Object keys: upsert creates then updates by key, type mismatch is a conflict, a duplicate key on create is a conflict, object.find by key and keyPrefix.",
-  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",
@@ -55,7 +55,7 @@
         "result": {
           "created": true,
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -72,7 +72,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           }
         }
@@ -81,7 +81,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -98,7 +98,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           },
           "event": "object.created"
@@ -122,7 +122,7 @@
         "result": {
           "created": false,
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -139,7 +139,7 @@
             },
             "rev": "<rev:2>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -151,7 +151,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -168,7 +168,7 @@
             },
             "rev": "<rev:2>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -221,7 +221,7 @@
         "result": {
           "created": true,
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -238,7 +238,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           }
         }
@@ -247,7 +247,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -264,7 +264,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           },
           "event": "object.created"
@@ -294,7 +294,7 @@
         "result": {
           "created": true,
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -311,7 +311,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           }
         }
@@ -320,7 +320,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -337,7 +337,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           },
           "event": "object.created"
@@ -401,7 +401,7 @@
         "result": {
           "fences": [],
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -418,7 +418,7 @@
             },
             "rev": "<rev:2>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -449,7 +449,7 @@
             "overlaps": []
           },
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -466,7 +466,7 @@
             },
             "rev": "<rev:2>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -488,7 +488,7 @@
         "result": {
           "objects": [
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -505,11 +505,11 @@
               },
               "rev": "<rev:1>",
               "type": "shape",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "z": 2
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -526,7 +526,7 @@
               },
               "rev": "<rev:2>",
               "type": "note",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "updatedBy": {
                 "kind": "user"
               },
@@ -611,7 +611,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -628,7 +628,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           }
         }
@@ -666,7 +666,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -683,7 +683,7 @@
             },
             "rev": "<rev:2>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -695,7 +695,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -712,7 +712,7 @@
             },
             "rev": "<rev:2>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -735,7 +735,7 @@
         "result": {
           "objects": [
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -752,11 +752,11 @@
               },
               "rev": "<rev:1>",
               "type": "shape",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "z": 2
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -773,14 +773,14 @@
               },
               "rev": "<rev:2>",
               "type": "note",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "updatedBy": {
                 "kind": "user"
               },
               "z": 1
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -797,7 +797,7 @@
               },
               "rev": "<rev:2>",
               "type": "shape",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "updatedBy": {
                 "kind": "user"
               },

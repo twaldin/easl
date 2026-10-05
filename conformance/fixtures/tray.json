@@ -1,7 +1,7 @@
 {
   "scenario": "tray",
   "description": "The selection tray: stage object, code, group and note mentions, list, unstage, a peek drain then commit, a plain drain, edits mark mentions edited, deleting an object removes its mentions; tray.changed events.",
-  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",
@@ -58,7 +58,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -74,7 +74,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           }
         }
@@ -83,7 +83,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -99,7 +99,7 @@
             },
             "rev": "<rev:1>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           },
           "event": "object.created"
@@ -128,7 +128,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -145,7 +145,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           }
         }
@@ -154,7 +154,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -171,7 +171,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           },
           "event": "object.created"
@@ -203,7 +203,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -223,7 +223,7 @@
             },
             "rev": "<rev:1>",
             "type": "code",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           }
         }
@@ -232,7 +232,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -252,7 +252,7 @@
             },
             "rev": "<rev:1>",
             "type": "code",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           },
           "event": "object.created"
@@ -260,7 +260,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -281,7 +281,7 @@
             },
             "rev": "<rev:1>",
             "type": "code",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           },
           "event": "object.updated"
@@ -320,7 +320,7 @@
             "edited": false,
             "id": "<men:1>",
             "label": "shape box",
-            "stagedAt": "<time>",
+            "stagedAt": "<time:number>",
             "target": {
               "kind": "object",
               "object": "<obj:2>"
@@ -337,7 +337,7 @@
                 "edited": false,
                 "id": "<men:1>",
                 "label": "shape box",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "object",
                   "object": "<obj:2>"
@@ -373,7 +373,7 @@
             "edited": false,
             "id": "<men:2>",
             "label": "src/app.ts:5-7 add",
-            "stagedAt": "<time>",
+            "stagedAt": "<time:number>",
             "target": {
               "kind": "code",
               "lines": {
@@ -396,7 +396,7 @@
                 "edited": false,
                 "id": "<men:1>",
                 "label": "shape box",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "object",
                   "object": "<obj:2>"
@@ -406,7 +406,7 @@
                 "edited": false,
                 "id": "<men:2>",
                 "label": "src/app.ts:5-7 add",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "code",
                   "lines": {
@@ -446,7 +446,7 @@
             "edited": false,
             "id": "<men:3>",
             "label": "these two",
-            "stagedAt": "<time>",
+            "stagedAt": "<time:number>",
             "target": {
               "kind": "group",
               "name": "these two",
@@ -467,7 +467,7 @@
                 "edited": false,
                 "id": "<men:1>",
                 "label": "shape box",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "object",
                   "object": "<obj:2>"
@@ -477,7 +477,7 @@
                 "edited": false,
                 "id": "<men:2>",
                 "label": "src/app.ts:5-7 add",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "code",
                   "lines": {
@@ -493,7 +493,7 @@
                 "edited": false,
                 "id": "<men:3>",
                 "label": "these two",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "group",
                   "name": "these two",
@@ -536,7 +536,7 @@
             "edited": false,
             "id": "<men:4>",
             "label": "note Plan › Ship the parser.",
-            "stagedAt": "<time>",
+            "stagedAt": "<time:number>",
             "target": {
               "block": "paragraph",
               "headings": [
@@ -562,7 +562,7 @@
                 "edited": false,
                 "id": "<men:1>",
                 "label": "shape box",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "object",
                   "object": "<obj:2>"
@@ -572,7 +572,7 @@
                 "edited": false,
                 "id": "<men:2>",
                 "label": "src/app.ts:5-7 add",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "code",
                   "lines": {
@@ -588,7 +588,7 @@
                 "edited": false,
                 "id": "<men:3>",
                 "label": "these two",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "group",
                   "name": "these two",
@@ -602,7 +602,7 @@
                 "edited": false,
                 "id": "<men:4>",
                 "label": "note Plan › Ship the parser.",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "block": "paragraph",
                   "headings": [
@@ -693,7 +693,7 @@
               "edited": false,
               "id": "<men:1>",
               "label": "shape box",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "kind": "object",
                 "object": "<obj:2>"
@@ -703,7 +703,7 @@
               "edited": false,
               "id": "<men:2>",
               "label": "src/app.ts:5-7 add",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "kind": "code",
                 "lines": {
@@ -719,7 +719,7 @@
               "edited": false,
               "id": "<men:3>",
               "label": "these two",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "kind": "group",
                 "name": "these two",
@@ -733,7 +733,7 @@
               "edited": false,
               "id": "<men:4>",
               "label": "note Plan › Ship the parser.",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "block": "paragraph",
                 "headings": [
@@ -766,7 +766,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -784,7 +784,7 @@
             },
             "rev": "<rev:2>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -801,7 +801,7 @@
                 "edited": true,
                 "id": "<men:1>",
                 "label": "shape box",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "object",
                   "object": "<obj:2>"
@@ -811,7 +811,7 @@
                 "edited": false,
                 "id": "<men:2>",
                 "label": "src/app.ts:5-7 add",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "code",
                   "lines": {
@@ -827,7 +827,7 @@
                 "edited": true,
                 "id": "<men:3>",
                 "label": "these two",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "group",
                   "name": "these two",
@@ -841,7 +841,7 @@
                 "edited": false,
                 "id": "<men:4>",
                 "label": "note Plan › Ship the parser.",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "block": "paragraph",
                   "headings": [
@@ -863,7 +863,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -881,7 +881,7 @@
             },
             "rev": "<rev:2>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -905,7 +905,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -921,7 +921,7 @@
             },
             "rev": "<rev:2>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -933,7 +933,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -949,7 +949,7 @@
             },
             "rev": "<rev:2>",
             "type": "note",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -974,7 +974,7 @@
               "edited": true,
               "id": "<men:1>",
               "label": "shape box",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "kind": "object",
                 "object": "<obj:2>"
@@ -984,7 +984,7 @@
               "edited": false,
               "id": "<men:2>",
               "label": "src/app.ts:5-7 add",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "kind": "code",
                 "lines": {
@@ -1000,7 +1000,7 @@
               "edited": true,
               "id": "<men:3>",
               "label": "these two",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "kind": "group",
                 "name": "these two",
@@ -1014,7 +1014,7 @@
               "edited": false,
               "id": "<men:4>",
               "label": "note Plan › Ship the parser.",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "block": "paragraph",
                 "headings": [
@@ -1053,7 +1053,7 @@
                 "edited": true,
                 "id": "<men:1>",
                 "label": "shape box",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "object",
                   "object": "<obj:2>"
@@ -1063,7 +1063,7 @@
                 "edited": false,
                 "id": "<men:2>",
                 "label": "src/app.ts:5-7 add",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "code",
                   "lines": {
@@ -1079,7 +1079,7 @@
                 "edited": false,
                 "id": "<men:4>",
                 "label": "note Plan › Ship the parser.",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "block": "paragraph",
                   "headings": [
@@ -1165,7 +1165,7 @@
               "edited": true,
               "id": "<men:1>",
               "label": "shape box",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "kind": "object",
                 "object": "<obj:2>"
@@ -1175,7 +1175,7 @@
               "edited": false,
               "id": "<men:2>",
               "label": "src/app.ts:5-7 add",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "kind": "code",
                 "lines": {
@@ -1191,7 +1191,7 @@
               "edited": false,
               "id": "<men:4>",
               "label": "note Plan › Ship the parser.",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "block": "paragraph",
                 "headings": [
@@ -1234,7 +1234,7 @@
                 "edited": false,
                 "id": "<men:2>",
                 "label": "src/app.ts:5-7 add",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "code",
                   "lines": {
@@ -1250,7 +1250,7 @@
                 "edited": false,
                 "id": "<men:4>",
                 "label": "note Plan › Ship the parser.",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "block": "paragraph",
                   "headings": [
@@ -1286,7 +1286,7 @@
               "edited": false,
               "id": "<men:2>",
               "label": "src/app.ts:5-7 add",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "kind": "code",
                 "lines": {
@@ -1302,7 +1302,7 @@
               "edited": false,
               "id": "<men:4>",
               "label": "note Plan › Ship the parser.",
-              "stagedAt": "<time>",
+              "stagedAt": "<time:number>",
               "target": {
                 "block": "paragraph",
                 "headings": [
@@ -1405,7 +1405,7 @@
             "edited": false,
             "id": "<men:5>",
             "label": "shape box",
-            "stagedAt": "<time>",
+            "stagedAt": "<time:number>",
             "target": {
               "kind": "object",
               "object": "<obj:2>"
@@ -1422,7 +1422,7 @@
                 "edited": false,
                 "id": "<men:5>",
                 "label": "shape box",
-                "stagedAt": "<time>",
+                "stagedAt": "<time:number>",
                 "target": {
                   "kind": "object",
                   "object": "<obj:2>"

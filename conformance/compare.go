@@ -104,6 +104,11 @@ func (s Suite) RecordAll(scenarios []Scenario, o Options, recordedOn string, log
 		if err != nil {
 			return fmt.Errorf("%s: %w", sc.Name, err)
 		}
+		for i, r := range records {
+			if len(r.Unsubscribed) > 0 {
+				return fmt.Errorf("%s step %d (%s): not recorded: %s", sc.Name, i, r.Step, unsubscribedDiff(r.Unsubscribed))
+			}
+		}
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
 		enc.SetEscapeHTML(false)
@@ -173,14 +178,28 @@ func (s Suite) replay(sc Scenario, o Options) ScenarioResult {
 }
 
 // diffRecords compares two transcripts of a step as JSON values (so a fixture written to disk
-// and a fresh run compare alike) and names the paths that differ.
+// and a fresh run compare alike) and names the paths that differ. Events on a connection that
+// never subscribed fail the step whatever the fixture says (a recording never has them).
 func diffRecords(want, got Record) []string {
+	var diffs []string
+	if len(got.Unsubscribed) > 0 {
+		diffs = append(diffs, unsubscribedDiff(got.Unsubscribed))
+	}
+	want.Unsubscribed, got.Unsubscribed = nil, nil
 	var w, g any
 	roundTrip(want, &w)
 	roundTrip(got, &g)
-	var diffs []string
 	diffValues("", w, g, &diffs)
 	return diffs
+}
+
+func unsubscribedDiff(events []any) string {
+	var names []string
+	for _, e := range events {
+		m, _ := e.(map[string]any)
+		names = append(names, fmt.Sprintf("%v on %v", m["event"], m["conn"]))
+	}
+	return "events on connections that never subscribed: " + strings.Join(names, ", ")
 }
 
 func roundTrip(v any, out *any) {
@@ -212,8 +231,21 @@ func diffValues(path string, want, got any, diffs *[]string) {
 			sorted = append(sorted, k)
 		}
 		sort.Strings(sorted)
+		// A key's presence is compared before its value: an absent key and an explicit null
+		// (`props.title: null`, a removal) are different answers.
 		for _, k := range sorted {
-			diffValues(join(path, k), w[k], g[k], diffs)
+			wv, inWant := w[k]
+			gv, inGot := g[k]
+			switch {
+			case len(*diffs) >= maxDiffs:
+				return
+			case !inGot:
+				*diffs = append(*diffs, fmt.Sprintf("%s: absent, want %s", join(path, k), short(wv)))
+			case !inWant:
+				*diffs = append(*diffs, fmt.Sprintf("%s: got %s, want it absent", join(path, k), short(gv)))
+			default:
+				diffValues(join(path, k), wv, gv, diffs)
+			}
 		}
 		return
 	case []any:
@@ -247,9 +279,6 @@ func orRoot(path string) string {
 }
 
 func short(v any) string {
-	if v == nil {
-		return "nothing"
-	}
 	data, _ := json.Marshal(v)
 	s := string(data)
 	if len(s) > 160 {

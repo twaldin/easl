@@ -1,7 +1,7 @@
 {
   "scenario": "follow-attention",
   "description": "follow.report re-aims (creating) a terminal's follow tile, ignored with follow off and for files outside the root; view.attention raises, replaces, clears, and a new turn of the same caller clears its earlier markers.",
-  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",
@@ -67,7 +67,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -88,7 +88,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           }
         }
@@ -97,7 +97,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -112,7 +112,7 @@
             },
             "rev": "<rev:1>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 1
           },
           "event": "object.created"
@@ -143,7 +143,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -159,7 +159,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           }
         }
@@ -168,7 +168,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -178,7 +178,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 2
           },
           "event": "object.created"
@@ -209,7 +209,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -225,7 +225,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           }
         }
@@ -234,7 +234,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -244,7 +244,7 @@
             },
             "rev": "<rev:1>",
             "type": "shape",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 3
           },
           "event": "object.created"
@@ -275,7 +275,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -303,7 +303,7 @@
             },
             "rev": "<rev:1>",
             "type": "code",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "z": 4
           },
           "event": "object.created"
@@ -334,7 +334,7 @@
           "board": "<board>",
           "objects": [
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -349,11 +349,11 @@
               },
               "rev": "<rev:1>",
               "type": "terminal",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "z": 1
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -363,11 +363,11 @@
               },
               "rev": "<rev:1>",
               "type": "shape",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "z": 2
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "user"
               },
@@ -377,11 +377,11 @@
               },
               "rev": "<rev:1>",
               "type": "shape",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "z": 3
             },
             {
-              "createdAt": "<time>",
+              "createdAt": "<time:number>",
               "createdBy": {
                 "kind": "agent",
                 "tile": "<obj:1>"
@@ -400,7 +400,7 @@
               },
               "rev": "<rev:1>",
               "type": "code",
-              "updatedAt": "<time>",
+              "updatedAt": "<time:number>",
               "z": 4
             }
           ],
@@ -436,7 +436,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -478,7 +478,7 @@
             },
             "rev": "<rev:2>",
             "type": "code",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -534,7 +534,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -570,7 +570,7 @@
             },
             "rev": "<rev:3>",
             "type": "code",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -606,7 +606,7 @@
         "ok": true,
         "result": {
           "object": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -628,7 +628,7 @@
             },
             "rev": "<rev:2>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -640,7 +640,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -656,7 +656,7 @@
             },
             "rev": "<rev:2>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "user"
             },
@@ -708,7 +708,7 @@
           "entries": [
             {
               "actor": "agent:<obj:1>",
-              "at": "<time>",
+              "at": "<time:iso>",
               "id": "<obj:4>",
               "kind": "follow",
               "rev": "<board:1>",
@@ -718,7 +718,7 @@
             },
             {
               "actor": "agent:<obj:1>",
-              "at": "<time>",
+              "at": "<time:iso>",
               "id": "<obj:4>",
               "kind": "follow",
               "rev": "<board:2>",
@@ -728,7 +728,7 @@
             },
             {
               "actor": "agent:<obj:1>",
-              "at": "<time>",
+              "at": "<time:iso>",
               "id": "<obj:4>",
               "kind": "follow",
               "rev": "<board:3>",
@@ -763,7 +763,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -786,7 +786,7 @@
             },
             "rev": "<rev:3>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -923,7 +923,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -946,7 +946,7 @@
             },
             "rev": "<rev:4>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"
@@ -989,7 +989,7 @@
         {
           "board": "<board>",
           "data": {
-            "createdAt": "<time>",
+            "createdAt": "<time:number>",
             "createdBy": {
               "kind": "user"
             },
@@ -1012,7 +1012,7 @@
             },
             "rev": "<rev:5>",
             "type": "terminal",
-            "updatedAt": "<time>",
+            "updatedAt": "<time:number>",
             "updatedBy": {
               "kind": "agent",
               "tile": "<obj:1>"

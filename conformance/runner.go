@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -49,8 +50,14 @@ type Record struct {
 	Response any    `json:"response,omitempty"`
 	Events   []any  `json:"events,omitempty"`
 	Content  any    `json:"content,omitempty"`
+	// Events that arrived on connections that never subscribed (each with its `conn`): the
+	// transport sends event lines only after a successful events.subscribe, so any fails the
+	// step, and a recording that has them is refused.
+	Unsubscribed []any `json:"unsubscribedEvents,omitempty"`
 	// Paths left out of the comparison, with why.
 	Ignored map[string]string `json:"ignored,omitempty"`
+	// Paths whose text had a part masked (Step.Mask), with why.
+	Masked map[string]string `json:"masked,omitempty"`
 }
 
 // Fixture is a scenario's recorded transcript.
@@ -108,6 +115,13 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 		paths = append(paths, pathSubst{home, "~"})
 	}
 	norm := newNormalizer(paths)
+	// Ids the scenario writes itself (`obj_missing`) are the same for every server: they stay
+	// as they are.
+	for _, st := range s.Steps {
+		for _, id := range literalIDs(st.Params, nil) {
+			norm.alias(id, id)
+		}
+	}
 
 	conns := map[string]*conn{}
 	subscribed := map[string]bool{}
@@ -258,7 +272,7 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 		if step.SettleMs > 0 {
 			settle = time.Duration(step.SettleMs) * time.Millisecond
 		}
-		r.events = collect(conns, subscribed, settle)
+		r.events, r.strays = collect(conns, subscribed, settle)
 		if step.NoEvents {
 			r.events = nil
 		}
@@ -278,6 +292,7 @@ type rawRecord struct {
 	request  any
 	response map[string]any
 	events   []any
+	strays   []any
 	content  any
 }
 
@@ -287,6 +302,7 @@ func (r rawRecord) normalized(norm *normalizer, scenarioIgnore map[string]string
 	if r.conn != "main" {
 		rec.Conn = r.conn
 	}
+	norm.learnIDs(r.request, r.response, r.events, r.strays, r.content)
 	if r.request != nil {
 		rec.Request = norm.value(r.request, "", false)
 	}
@@ -300,12 +316,24 @@ func (r rawRecord) normalized(norm *normalizer, scenarioIgnore map[string]string
 	for _, e := range r.events {
 		rec.Events = append(rec.Events, norm.value(e, "", false))
 	}
+	for _, e := range r.strays {
+		rec.Unsubscribed = append(rec.Unsubscribed, norm.value(e, "", false))
+	}
 	if r.content != nil {
 		rec.Content = norm.value(r.content, "", false)
 	}
 	for p := range unordered {
 		doc := map[string]any{"request": rec.Request, "response": rec.Response, "events": toAny(rec.Events)}
 		sortUnordered(doc, strings.Split(p, "."))
+	}
+	if len(r.step.Mask) > 0 {
+		doc := map[string]any{"request": rec.Request, "response": rec.Response, "events": toAny(rec.Events), "content": rec.Content}
+		rec.Masked = map[string]string{}
+		for p, m := range r.step.Mask {
+			mask(doc, strings.Split(p, "."), regexp.MustCompile(m.Match), m.As)
+			rec.Masked[p] = m.Why
+		}
+		rec.Request, rec.Response, rec.Content = doc["request"], doc["response"], doc["content"]
 	}
 	ignore := map[string]string{}
 	for p, why := range scenarioIgnore {
@@ -372,18 +400,52 @@ func blank(v any, path []string) bool {
 	return hit
 }
 
-// collect waits until every subscribed connection has been quiet for settle, then takes their
-// events, connection by connection in name order.
-func collect(conns map[string]*conn, subscribed map[string]bool, settle time.Duration) []any {
-	if len(subscribed) == 0 {
-		return nil
+// mask rewrites the parts of the strings at path that match re with as (Step.Mask); the rest of
+// each string is still compared.
+func mask(v any, path []string, re *regexp.Regexp, as string) {
+	if len(path) == 0 {
+		return
+	}
+	head, rest := path[0], path[1:]
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			if head != "*" && head != k {
+				continue
+			}
+			if s, ok := e.(string); ok && len(rest) == 0 {
+				x[k] = re.ReplaceAllString(s, as)
+			} else {
+				mask(e, rest, re, as)
+			}
+		}
+	case []any:
+		for i, e := range x {
+			if head != "*" && head != fmt.Sprint(i) {
+				continue
+			}
+			if s, ok := e.(string); ok && len(rest) == 0 {
+				x[i] = re.ReplaceAllString(s, as)
+			} else {
+				mask(e, rest, re, as)
+			}
+		}
+	}
+}
+
+// collect waits until every connection has been quiet for settle, then takes their events,
+// connection by connection in name order: those of subscribed connections, and apart from them
+// (strays) any that arrived on a connection that never subscribed.
+func collect(conns map[string]*conn, subscribed map[string]bool, settle time.Duration) (events, strays []any) {
+	if len(conns) == 0 {
+		return nil, nil
 	}
 	start := time.Now()
 	deadline := start.Add(10 * settle)
 	for {
 		last := start
-		for name := range subscribed {
-			if t := conns[name].quietSince(); t.After(last) {
+		for _, c := range conns {
+			if t := c.quietSince(); t.After(last) {
 				last = t
 			}
 		}
@@ -393,25 +455,28 @@ func collect(conns map[string]*conn, subscribed map[string]bool, settle time.Dur
 		}
 		time.Sleep(wait)
 	}
-	names := make([]string, 0, len(subscribed))
-	for name := range subscribed {
+	names := make([]string, 0, len(conns))
+	for name := range conns {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	var out []any
 	for _, name := range names {
 		for _, e := range conns[name].takeEvents() {
 			ev := map[string]any{}
 			for k, v := range e {
 				ev[k] = v
 			}
-			if name != eventsConn {
+			if name != eventsConn || !subscribed[name] {
 				ev["conn"] = name
 			}
-			out = append(out, ev)
+			if subscribed[name] {
+				events = append(events, ev)
+			} else {
+				strays = append(strays, ev)
+			}
 		}
 	}
-	return out
+	return events, strays
 }
 
 // teardown deletes the scenario's terminal tiles, so their sessions end with the scenario.
@@ -585,6 +650,25 @@ func sortUnordered(v any, path []string) {
 			}
 		}
 	}
+}
+
+// literalIDs appends the id-shaped strings written in a step's params (not templates).
+func literalIDs(v any, into []string) []string {
+	switch x := v.(type) {
+	case map[string]any:
+		for _, e := range x {
+			into = literalIDs(e, into)
+		}
+	case []any:
+		for _, e := range x {
+			into = literalIDs(e, into)
+		}
+	case string:
+		if idShape.MatchString(x) {
+			into = append(into, x)
+		}
+	}
+	return into
 }
 
 func mergeMaps(a, b map[string]string) map[string]string {
