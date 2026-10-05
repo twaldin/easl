@@ -9,6 +9,7 @@ import (
 	"math"
 
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/question"
 )
 
 // Failure is ObjectMeasure.Failure: Code is the API error code (unsupported, unavailable,
@@ -99,6 +100,12 @@ func Size(typ model.ObjectType, props map[string]any, width *float64, root strin
 		}
 		bw, bh := graph.BodySize()
 		w, h = bw, TitleHeight+bh
+	case model.Question:
+		// Counted from the props (question.Size), not measured: `width` wide, if given.
+		w, h = question.Size(props)
+		if natural != nil {
+			w = *natural
+		}
 	default:
 		return 0, 0, &Failure{"unsupported", string(typ) + " objects have no intrinsic size"}
 	}

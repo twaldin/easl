@@ -102,12 +102,13 @@ const (
 	Changes  ObjectType = "changes"
 	Image    ObjectType = "image"
 	Diagram  ObjectType = "diagram"
+	Question ObjectType = "question"
 	Shape    ObjectType = "shape"
 	Arrow    ObjectType = "arrow"
 	Group    ObjectType = "group"
 )
 
-var ObjectTypes = []ObjectType{Terminal, Browser, Code, Note, HTML, Changes, Image, Diagram, Shape, Arrow, Group}
+var ObjectTypes = []ObjectType{Terminal, Browser, Code, Note, HTML, Changes, Image, Diagram, Question, Shape, Arrow, Group}
 
 func ParseObjectType(s string) (ObjectType, bool) {
 	for _, t := range ObjectTypes {
@@ -134,6 +135,7 @@ func (t ObjectType) KnownProps() []string {
 		Changes:  {"root", "base", "head", "ref", "refSha", "paths", "title", "reviewed", "viewed", "zoom"},
 		Image:    {"path", "caption", "title"},
 		Diagram:  {"kind", "path", "symbol", "line", "direction", "depth", "expanded", "title", "graph", "zoom"},
+		Question: {"question", "options", "recommended", "context", "asker", "status", "expiresAt", "answer", "archived", "zoom"},
 		Shape:    {"kind", "text", "points", "color", "fill", "textSize"},
 		Arrow:    {"from", "to", "relation", "label", "color", "route"},
 		Group:    {"members", "title", "color", "padding", "flow"},
@@ -192,6 +194,9 @@ func DefaultSize(t ObjectType) (w, h float64) {
 		return 640, 506
 	case Diagram:
 		return 760, 480
+	case Question:
+		// Three options, no context; a new question is sized by its props (question.Size).
+		return 460, 194 + 3*50
 	case Shape:
 		return 160, 100
 	}

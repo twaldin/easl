@@ -8,12 +8,17 @@ import (
 	"github.com/twaldin/easl/easld/internal/model"
 )
 
-// Handoff is a mention an agent attached to its agent.prompt for another terminal (Handoff.swift).
+// Handoff is a mention queued for another terminal's next drained prompt (Handoff.swift): one an
+// agent attached to its agent.prompt, or one the board hands off on its own account (an
+// answered question to its asker), under a Header of its own.
 type Handoff struct {
 	Mention  model.Mention
 	From     string // "" for a script
 	FromName string // "" for none
 	HasName  bool
+	// Header is what the block says above the mentions instead of naming who attached them; ""
+	// for none.
+	Header string
 }
 
 func mentionsJSON(list []model.Mention) []any {
@@ -167,8 +172,10 @@ func (b *Board) markMentionsEdited(before, after model.Object) {
 	}
 }
 
-// HandOff queues mentions for terminal's next drained prompt, after any already waiting there.
-func (b *Board) HandOff(targets []map[string]any, terminal, from, fromName string, hasName bool) ([]model.Mention, error) {
+// HandOff queues mentions for terminal's next drained prompt, after any already waiting there (a
+// target already waiting isn't queued twice). header ("" for none) replaces the block's
+// "Attached by …" line (the board's own hand-offs).
+func (b *Board) HandOff(targets []map[string]any, terminal, from, fromName string, hasName bool, header string) ([]model.Mention, error) {
 	tile, err := b.Object(terminal)
 	if err != nil {
 		return nil, err
@@ -200,27 +207,31 @@ func (b *Board) HandOff(targets []map[string]any, terminal, from, fromName strin
 		queued = append(queued, model.Mention{ID: model.NewID("men"), Target: target, Label: mention.Label(target, b), StagedAt: time.Now()})
 	}
 	for _, m := range queued {
-		b.handoffs[terminal] = append(b.handoffs[terminal], Handoff{Mention: m, From: from, FromName: fromName, HasName: hasName})
+		b.handoffs[terminal] = append(b.handoffs[terminal], Handoff{Mention: m, From: from, FromName: fromName, HasName: hasName, Header: header})
 	}
 	return queued, nil
 }
 
+// resolveHandoffs is the mentions handed to caller, resolved now and numbered from index, with
+// one context block per sending terminal (or board header), in the order they were sent.
 func (b *Board) resolveHandoffs(caller string, index int) ([]mention.Resolved, []string) {
 	waiting := b.handoffs[caller]
-	var senders []string
-	seen := map[string]bool{}
+	type sender struct{ from, header string }
+	var senders []sender
+	seen := map[sender]bool{}
 	for _, h := range waiting {
-		if !seen[h.From] {
-			seen[h.From] = true
-			senders = append(senders, h.From)
+		s := sender{h.From, h.Header}
+		if !seen[s] {
+			seen[s] = true
+			senders = append(senders, s)
 		}
 	}
 	var resolved []mention.Resolved
 	var blocks []string
-	for _, sender := range senders {
+	for _, s := range senders {
 		var group []Handoff
 		for _, h := range waiting {
-			if h.From == sender {
+			if h.From == s.from && h.Header == s.header {
 				group = append(group, h)
 			}
 		}
@@ -235,11 +246,14 @@ func (b *Board) resolveHandoffs(caller string, index int) ([]mention.Resolved, [
 		if group[0].HasName {
 			name = " \"" + group[0].FromName + "\""
 		}
-		header := "Attached by a script to its prompt to you (agent.prompt):"
-		if sender != "" {
-			header = "Attached by terminal " + sender + name + " to its prompt to you (agent.prompt):"
+		header := s.header
+		if header == "" {
+			header = "Attached by a script to its prompt to you (agent.prompt):"
+			if s.from != "" {
+				header = "Attached by terminal " + s.from + name + " to its prompt to you (agent.prompt):"
+			}
 		}
-		blocks = append(blocks, mention.Render(part, b, targets, sender, header))
+		blocks = append(blocks, mention.Render(part, b, targets, s.from, header))
 	}
 	return resolved, blocks
 }

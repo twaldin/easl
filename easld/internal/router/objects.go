@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/twaldin/easl/easld/internal/api"
@@ -179,6 +180,11 @@ func (r *Router) create(p map[string]any) (any, error) {
 			return nil, invalid("%s", problem)
 		}
 	}
+	if typ == model.Question {
+		if props, err = b.QuestionToCreate(props, caller); err != nil {
+			return nil, err
+		}
+	}
 	parent, _ := optStr(p, "parent")
 	o := b.Create(typ, props, frame, parent, caller)
 	return withWarnings(map[string]any{"object": objectJSON(b.ReportedOne(o))}, typ.UnknownPropWarnings(props)), nil
@@ -223,7 +229,13 @@ func (r *Router) update(p map[string]any) (any, error) {
 	if n, ok := intParam(p, "rev"); ok {
 		rev = &n
 	}
-	o, err := b.Update(id, rev, frame, nil, props, r.callerOf(p), "")
+	given, hasProps := p["props"]
+	caller := r.callerOf(p)
+	written, frame, err := b.QuestionUpdate(id, given, hasProps, frame, caller, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	o, err := b.Update(id, rev, frame, nil, written, caller, "")
 	if err != nil {
 		return nil, err
 	}
@@ -435,6 +447,10 @@ func (r *Router) get(p map[string]any) (any, error) {
 	return result, nil
 }
 
+// find is object.find: `key` → the object holding it, as `object.get` returns it; `keyPrefix` →
+// every object whose key starts with it, summarized as `board.get` lists them; `type` → every
+// object of that type (with `status`, whose `props.status` is that: open questions), summarized
+// likewise, oldest first.
 func (r *Router) find(p map[string]any) (any, error) {
 	b, err := r.boardOf(p)
 	if err != nil {
@@ -442,8 +458,21 @@ func (r *Router) find(p map[string]any) (any, error) {
 	}
 	key, hasKey := optStr(p, "key")
 	prefix, hasPrefix := optStr(p, "keyPrefix")
-	switch {
-	case hasKey && !hasPrefix:
+	typeName, hasType := optStr(p, "type")
+	given := 0
+	for _, has := range []bool{hasKey, hasPrefix, hasType} {
+		if has {
+			given++
+		}
+	}
+	if given != 1 {
+		return nil, invalid("object.find takes one of key, keyPrefix, or type")
+	}
+	status, hasStatus := optStr(p, "status")
+	if hasStatus && !hasType {
+		return nil, invalid("object.find takes status only with type (e.g. type question, status open)")
+	}
+	if hasKey {
 		o, ok, err := b.Holder(key)
 		if err != nil {
 			return nil, err
@@ -456,14 +485,39 @@ func (r *Router) find(p map[string]any) (any, error) {
 			params["as"] = view
 		}
 		return r.get(params)
-	case !hasKey && hasPrefix:
+	}
+	if hasPrefix {
 		objects := []any{}
 		for _, o := range b.Reported(b.ObjectsWithKeyPrefix(prefix)) {
 			objects = append(objects, objectJSON(summarized(o)))
 		}
 		return map[string]any{"objects": objects}, nil
 	}
-	return nil, invalid("object.find takes key or keyPrefix, one of them")
+	typ, ok := model.ParseObjectType(typeName)
+	if !ok {
+		return nil, invalid("unknown object type")
+	}
+	var found []model.Object
+	for _, o := range b.Objects() {
+		if o.Type != typ {
+			continue
+		}
+		if s, isString := o.Props["status"].(string); hasStatus && !(isString && s == status) {
+			continue
+		}
+		found = append(found, o)
+	}
+	sort.Slice(found, func(i, j int) bool {
+		if !found[i].CreatedAt.Equal(found[j].CreatedAt) {
+			return found[i].CreatedAt.Before(found[j].CreatedAt)
+		}
+		return found[i].ID < found[j].ID
+	})
+	objects := []any{}
+	for _, o := range b.Reported(found) {
+		objects = append(objects, objectJSON(summarized(o)))
+	}
+	return map[string]any{"objects": objects}, nil
 }
 
 // graph is object.get `as: graph` (DrawingGraph.swift): what the object encloses, what

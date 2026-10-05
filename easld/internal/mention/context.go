@@ -10,6 +10,7 @@ import (
 
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/question"
 )
 
 // Resolved is MentionContext.Resolved: one mention as the context gives it.
@@ -133,6 +134,9 @@ func Resolve(m model.Mention, index int, b BoardView, caller string) Resolved {
 		lines = append(lines, n+" "+describe(object, b, caller, nil)+edited)
 		if markdown, ok := str(object.Props, "markdown"); ok && object.Type == model.Note {
 			lines = append(lines, noteLines(markdown, t.Object, maxNoteLines, maxNoteCharacters, "    ")...)
+		}
+		if object.Type == model.Question {
+			lines = append(lines, question.MentionLines(object.Props)...)
 		}
 		// A terminal's screen and the page elements under a shape are the app's to read.
 	}

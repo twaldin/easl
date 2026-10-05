@@ -9,11 +9,13 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/mention"
 	"github.com/twaldin/easl/easld/internal/metrics"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/question"
 	"github.com/twaldin/easl/easld/internal/route"
 	"github.com/twaldin/easl/easld/internal/store"
 )
@@ -116,6 +118,15 @@ type Board struct {
 	Viewport func() *model.Frame
 	// settled is the drawing layer's last routing (Board.settledRouting).
 	settled *route.Result
+
+	// Lock is what serialises this board's work with everyone else's (the registry's Mu); the
+	// question expiry timer takes it to expire questions as a request would. A board without
+	// one (outside a registry) sets no timer: ExpireQuestions is the caller's.
+	Lock sync.Locker
+	// questionExpiry is the pending check for the earliest open question's expiresAt
+	// (Board.questionExpiry); expirySeq tells a timer that was replaced.
+	questionExpiry *time.Timer
+	expirySeq      int
 }
 
 // New is an empty board.
@@ -393,7 +404,6 @@ func DefaultSize(t model.ObjectType) (float64, float64) { return model.DefaultSi
 // Create adds an object (Board.create). Without a frame it is placed beside the caller, or at
 // the viewport's center (the origin without one); a group's frame follows its members.
 func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.Frame, parent, caller string) model.Object {
-	w, h := DefaultSize(typ)
 	z := 0.0
 	first := true
 	for _, o := range b.objects {
@@ -407,6 +417,10 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 		props = map[string]any{}
 	}
 	props, _ = model.Clone(props).(map[string]any)
+	w, h := DefaultSize(typ)
+	if typ == model.Question {
+		w, h = question.Size(props)
+	}
 	if typ == model.Terminal {
 		props = b.stampingWorktree(props)
 	}
@@ -548,6 +562,9 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 	data := o.APIJSON()
 	b.reanchorShown(before, o)
 	b.emit(EventObjectUpdated, data)
+	if o.Type == model.Question {
+		b.questionWritten(before, o)
+	}
 	if before.Frame != o.Frame {
 		b.refitGroups(id, credited, caller, refitting)
 	}
@@ -711,6 +728,9 @@ func (b *Board) commit(o model.Object) {
 		b.revHighWater[o.ID] = o.Rev
 	}
 	b.changed()
+	if o.Type == model.Question {
+		b.ScheduleQuestionExpiry()
+	}
 }
 
 // countWrite counts a change to the board's objects for `app.metrics`: `board.write` (and the
