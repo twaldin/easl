@@ -37,4 +37,17 @@ fires on the main run loop, follows the view's screen, and is paused when idle a
 frame is owed, never recreated. UIKit, and macOS 13, keep MSDisplayLink. Diff:
 `patches/libghostty-spm-frame-link.patch`.
 
+What this doesn't remove: libghostty's own renderer (the prebuilt xcframework) runs a
+`CVDisplayLink` of its own per surface, and upstream's `syncDisplayLink` (`src/renderer/generic.zig`)
+starts it when a frame has cell changes and stops it after the next draw that has none. Every
+`CVDisplayLinkStart` spawns a new CoreVideo thread, so a visible shell printing every 400 ms still
+shows about 20 display-link threads in a 5 s `sample` (30 before this patch). A standalone probe
+(no window, one link started for 250 ms every 400 ms) measured one new thread per start, 22 µs to
+start and 15 µs to stop, on the renderer's thread, none on the main thread; a paused
+`CADisplayLink` made none. We keep upstream's binary: `window-vsync = false` would remove the link
+but upstream warns of kernel panics on macOS 14.4+ with out-of-sync rendering, and patching it means
+building libghostty ourselves. The upstream fix is an idle grace period in `syncDisplayLink`: stop
+the link only after it has fired some frames (or ~0.5 s) without cell changes, instead of after the
+first idle draw.
+
 To update, copy the new tag's files as above, reapply both patches, and drop the test target again.
