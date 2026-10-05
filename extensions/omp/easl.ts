@@ -1,6 +1,6 @@
 // easl integration for omp. Active only inside an easl terminal tile (EASL_ENV=1).
 //  - drains the selection tray into the prompt you submit (hidden context, two-phase so a
-//    cancelled prompt loses nothing)
+//    prompt omp never prepares loses nothing; steering prompts each get their own)
 //  - reports lifecycle (working / blocked / idle), each turn's final answer, and session identity for resume
 //  - follow mode: forwards files the agent reads, edits, and writes to its follow tile
 //  - provides the shipped `easl` skill (skills/easl) to the agent, only inside easl
@@ -17,7 +17,7 @@ const IDLE_DEBOUNCE_MS = 250;
 // Marks our wrapper of omp's UI select with the function it wraps (process-wide, across reloads).
 const OMP_SELECT = Symbol.for("canvas-omp.select");
 
-type Staged = { prompt: string; ids: string[]; context: string; delivered: boolean };
+type Staged = { prompt: string; ids: string[]; context: string; committed: boolean };
 type ToolCall = { name: string; args: Record<string, unknown> | undefined };
 type Details = Record<string, any>;
 type Select = (this: unknown, title: unknown, ...rest: unknown[]) => Promise<unknown>;
@@ -41,7 +41,8 @@ export default function canvas(pi: ExtensionAPI): void {
   const blockers = new Map<string, string>();
   let approvals = 0;
   const calls = new Map<string, ToolCall>();
-  let staged: Staged | undefined;
+  // What each submitted prompt drained, in submission order, until its context is handed back.
+  let staged: Staged[] = [];
   // The last answer of the turn that just ended, sent with its idle report (agent.read final),
   // and the error that turn stopped on, if it didn't finish (an API error, an abort).
   let final: string | undefined;
@@ -69,12 +70,6 @@ export default function canvas(pi: ExtensionAPI): void {
   function reportSession(ctx: ExtensionContext): void {
     if (!reporting) return;
     void quietly(client.api.agent.report_session({ tile: tile!, kind: "omp", sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile() }));
-  }
-
-  function commitStaged(): void {
-    if (!staged?.delivered) return;
-    void quietly(client.api.tray.commit({ ids: staged.ids }));
-    staged = undefined;
   }
 
   // omp asks for every tool approval through its UI's select dialog, titled `Allow tool: <name>`.
@@ -111,7 +106,7 @@ export default function canvas(pi: ExtensionAPI): void {
     final = undefined;
     failure = undefined;
     blockers.clear();
-    staged = undefined;
+    staged = [];
     if (reporting) watchApprovals(ctx.ui);
     reportSession(ctx);
     publish();
@@ -136,7 +131,7 @@ export default function canvas(pi: ExtensionAPI): void {
     active = true;
     final = undefined;
     failure = undefined;
-    commitStaged();
+    staged = staged.filter((entry) => !entry.committed);
     publish();
   });
 
@@ -152,28 +147,44 @@ export default function canvas(pi: ExtensionAPI): void {
   });
 
   // Tray drain, phase 1: peek the tray when the user actually submits prose. With `prompt`, this
-  // is the submission drain: it takes the oldest prompt easl's composer typed here instead, with
-  // that prompt's own mentions.
+  // is the submission drain: a prompt easl's composer typed here takes its own mentions instead.
+  // Each submission keeps what it drained: prompts submitted while omp works (steering) wait in
+  // its queue, each with its own.
   pi.on("input", async (event) => {
     if (event.source !== "interactive") return;
     const text = event.text.trim();
     if (!text || /^[/!$]/.test(text)) return; // slash commands and shell escapes aren't prompts
+    staged = staged.filter((entry) => !entry.committed);
     try {
       const drained = await client.api.tray.drain({ peek: true, prompt: text });
-      staged = drained.context ? { prompt: text, ids: drained.mentions.map((m) => m.id), context: drained.context, delivered: false } : undefined;
+      if (!drained.context) return;
+      const ids = drained.mentions.map((m) => m.id);
+      // The tray goes with the latest prompt that peeked it, as one staged prompt did.
+      staged = staged.filter((entry) => entry.ids.join() !== ids.join());
+      staged.push({ prompt: text, ids, context: drained.context, committed: false });
     } catch {
-      staged = undefined; // app not running: prompt proceeds untouched
+      // app not running: prompt proceeds untouched
     }
   });
 
-  // Phase 2: attach the staged mentions as hidden, user-attributed context to that prompt.
+  // Phase 2: attach the staged mentions as hidden, user-attributed context to the prompts they
+  // were drained for, and commit them as that context is handed back. omp prepares a queued
+  // (steering) prompt through before_agent_start too, joining the queued prompts' text, but takes
+  // it inside the running turn with no agent_start (oh-my-pi v18.6.1
+  // packages/coding-agent/src/session/agent-session.ts #prepareQueuedUserMessages L7301-L7331, its before_agent_start L7362;
+  // packages/agent/src/agent-loop.ts L1317-L1324), so committing at agent_start would leave a
+  // steering prompt's mentions uncommitted. A retried preparation gets the same context again.
   pi.on("before_agent_start", (event) => {
     const systemPrompt = [...event.systemPrompt, guidance];
-    if (!staged || !event.prompt.includes(staged.prompt)) return { systemPrompt };
-    staged.delivered = true;
+    const delivered = staged.filter((entry) => event.prompt.includes(entry.prompt));
+    if (delivered.length === 0) return { systemPrompt };
+    const ids = delivered.flatMap((entry) => entry.ids);
+    const fresh = delivered.filter((entry) => !entry.committed).flatMap((entry) => entry.ids);
+    for (const entry of delivered) entry.committed = true;
+    if (fresh.length > 0) void quietly(client.api.tray.commit({ ids: fresh }));
     return {
       systemPrompt,
-      message: { customType: "canvas.mentions", content: staged.context, display: false, attribution: "user", details: { ids: staged.ids } },
+      message: { customType: "canvas.mentions", content: delivered.map((entry) => entry.context).join("\n"), display: false, attribution: "user", details: { ids } },
     };
   });
 

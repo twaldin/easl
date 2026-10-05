@@ -543,14 +543,15 @@ public final class ApiRouter {
     }
 
     /// The composer's send to one terminal (docs/design.md, Composer): `agent.prompt` from the
-    /// user, with every check it makes. For a terminal whose integration drains, the prompt is
-    /// queued behind the composer's earlier ones there with its own copies of `mentions`
-    /// (`Board.queueComposerPrompt`): the integration's submission drain that comes for it (the
-    /// next unclaimed one, in the agent's order) takes them, numbered from 1, and never the tray.
-    /// A text the integration doesn't drain for (`PromptTarget.skipsDrain`) queues nothing and
-    /// takes no mentions. `answer`: the agent is blocked on a question or approval and the text
-    /// is the user's answer, which only the user gives: it passes the blocked check alone,
-    /// unlike `force`, carries no mentions, and is queued as an answer.
+    /// user, with every check it makes. For a terminal whose integration drains, a prompt with
+    /// mentions is queued with its own copies of them (`Board.queueComposerPrompt`): the
+    /// integration's submission drain of that text (`Board.drain`, compared folded) takes them,
+    /// numbered from 1, and never the tray. A prompt without mentions queues nothing and drains
+    /// as any prompt does. A text the integration doesn't drain for (`PromptTarget.skipsDrain`)
+    /// queues nothing and takes no mentions. `answer`: the agent is blocked on a question or
+    /// approval and the text is the user's answer, which only the user gives: it passes the
+    /// blocked check alone, unlike `force`, carries no mentions, and is queued as an answer only
+    /// where the integration submits answers as prompts (`PromptTarget.answersAsPrompt`).
     public func composerPrompt(_ text: String, to terminal: ObjectID, on board: Board, mentions: [Mention], answer: Bool) async throws {
         guard let tile = board.objects[terminal], tile.type == .terminal else { throw Failure("not_found", "terminal \(terminal) was closed") }
         _ = try await submitPrompt(text, to: tile, on: board, attached: .composer(answer ? [] : mentions, answer: answer), caller: nil, force: false)
@@ -604,7 +605,7 @@ public final class ApiRouter {
             let senderName = sender.flatMap { try? agentTile($0) }.map { PromptTarget.label($0.1, shownTitle: terminalStatus?($0.0, $0.1.id).title) }
             handed = try board.handOff(mentions, to: terminal.id, from: sender, fromName: senderName)
         case .composer(let given, let answer):
-            if PromptTarget.drains(current), !PromptTarget.skipsDrain(text, in: current) {
+            if PromptTarget.drains(current), !PromptTarget.skipsDrain(text, in: current), answer ? PromptTarget.answersAsPrompt(current) : !given.isEmpty {
                 queued = board.queueComposerPrompt(text, to: terminal.id, mentions: given, answer: answer)
             }
         }
@@ -656,8 +657,8 @@ public final class ApiRouter {
     /// target), so a caller tile gets them only when it is that terminal; any other caller gets
     /// only what agents handed to it (`agent.prompt` `mentions`), and the tray stays as it is.
     /// Without a caller (a script) or a window, anyone drains the tray. A caller's submission
-    /// drain (with `prompt`) takes the oldest prompt the composer typed there instead, if one
-    /// waits (`Board.drain`).
+    /// drain (with `prompt`) of a text the composer typed there takes that prompt's own mentions
+    /// instead (`Board.drain`).
     private func drain(_ p: JSONValue) async throws -> JSONValue {
         let board = try board(p)
         let caller = p["caller"]?.string

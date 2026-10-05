@@ -186,22 +186,25 @@ public struct ComposerState: Codable, Equatable, Sendable {
 }
 
 /// A prompt the composer typed into one terminal whose integration drains, waiting for that
-/// prompt's drain. A terminal's prompts form a queue in the order they were typed, which is the
-/// order its agent submits them (prompts it queues mid-turn included): the next drain from that
-/// terminal that carries a `prompt` (its integration's submission drain, whatever the text, which
-/// the agent may have rewritten) is the oldest one's, and takes its `mentions` (numbered from 1)
-/// instead of the tray, whatever the tray, the prompt target or the composer's later prompts are
-/// by then. A drain without a `prompt` (Hyper-V, a script, the CLI, an older integration) never
-/// sees the queue. A prompt without mentions (a prompt with no tokens, an answer) takes nothing.
+/// prompt's drain: one with mentions, or an answer the integration turns into a prompt (Codex's
+/// queued questions). A drain from that terminal that carries a `prompt` (its integration's
+/// submission drain) claims the oldest one whose text it contains, compared folded (`fold`:
+/// letters and digits only), which survives what agents do to the text (Claude Code's paste
+/// wrapper, Codex's IDE context, omp's emoji, text already in the input editor), and takes its
+/// `mentions` (numbered from 1) instead of the tray, whatever the tray, the prompt target or the
+/// composer's later prompts are by then. A prompt typed in the terminal or sent by `agent.prompt`
+/// doesn't contain a composer prompt's text, so it claims nothing and drains as always, as does
+/// every drain without a `prompt` (Hyper-V, a script, the CLI, an older integration).
 public struct ComposerPrompt: Equatable, Sendable {
     public var id: String
-    /// The text as typed; only compared, for the log, with the text its drain says it submits.
+    /// The text as typed.
     public var prompt: String
+    /// `prompt` folded, as a submission drain's text is compared with it.
+    public var folded: String
     public var mentions: [Mention]
-    /// The text answers a question or approval the agent was blocked on. A dialog takes it
-    /// without any prompt (Claude Code's): it is dropped once the agent is past that question
-    /// (`answerSettledAt`), unless a submission drain (Codex answers a queued question with a
-    /// prompt) claims it first.
+    /// An answer to a question the agent was blocked on, which its integration submits as a
+    /// prompt: no mentions. Dropped once the agent is past the question (`answerSettledAt`),
+    /// unless its drain claims it first.
     public var answer: Bool
     public var queuedAt: Date
     /// An answer's agent left `blocked` for `working` or `idle` at this time.
@@ -210,21 +213,36 @@ public struct ComposerPrompt: Equatable, Sendable {
     /// A safety cap: a prompt that waited this long for its drain is taken as never coming
     /// (prompts queued behind a long turn wait as long as that turn).
     public static let lifetime: TimeInterval = 2 * 3600
-    /// How long an answer stays after its agent is past the question, for the drain of an
-    /// answer that became a prompt (Codex's hook reports `working`, then drains).
+    /// How long an answer stays after its agent is past the question, for the drain of the
+    /// prompt it became (Codex's hook reports `working`, then drains).
     public static let answerGrace: TimeInterval = 2
+    /// A folded text this short only matches a drain's folded text that equals it.
+    public static let shortest = 3
+
+    /// `text` with only its letters and digits, case-folded: what survives every agent's
+    /// rewrite of a prompt (emoji, punctuation, brackets, whitespace drop out).
+    public static func fold(_ text: String) -> String {
+        String(text.folding(options: [.caseInsensitive], locale: nil).unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(Character.init))
+    }
+
+    /// A submission drain whose folded text is `submitted` is this prompt's.
+    func isClaimed(by submitted: String) -> Bool {
+        folded.count < Self.shortest ? folded == submitted : submitted.contains(folded)
+    }
 }
 
 extension Board {
     /// Queues the composer's prompt `text` to `terminal` before the text goes in, behind the
     /// prompts already waiting there, with copies of `mentions` (ids of their own, so each
-    /// terminal's delivery is its own). Returns its id, to withdraw it if the text can't be typed.
+    /// terminal's delivery is its own), or as an answer. Returns its id, to withdraw it if the
+    /// text can't be typed.
     @discardableResult
     public func queueComposerPrompt(_ text: String, to terminal: ObjectID, mentions: [Mention], answer: Bool = false, now: Date = Date()) -> String {
         expireComposerPrompts(now: now)
         let copies = answer ? [] : mentions.map { Mention(id: IDs.make("men"), target: $0.target, label: $0.label, stagedAt: $0.stagedAt, edited: $0.edited) }
         let blocked = objects[terminal]?.props["lifecycle"]?["state"]?.string == LifecycleState.blocked.rawValue
-        let prompt = ComposerPrompt(id: IDs.make("cmp"), prompt: text, mentions: copies, answer: answer, queuedAt: now, answerSettledAt: answer && !blocked ? now : nil)
+        let prompt = ComposerPrompt(id: IDs.make("cmp"), prompt: text, folded: ComposerPrompt.fold(text), mentions: copies, answer: answer, queuedAt: now,
+                                    answerSettledAt: answer && !blocked ? now : nil)
         composerPrompts[terminal, default: []].append(prompt)
         return prompt.id
     }
@@ -238,23 +256,24 @@ extension Board {
     }
 
     /// The composer's prompt `caller`'s submission drain of `submitted` belongs to: the oldest
-    /// waiting. One without mentions is taken now (nothing to deliver or commit); one with
-    /// mentions stays until they are committed (`tray.commit`), so a peek loses nothing. When
-    /// neither text contains the other (the agent rewrote more than it wraps), one log line
+    /// waiting whose folded text it contains (`ComposerPrompt.isClaimed`). An answer is taken now
+    /// (nothing to deliver or commit); one with mentions stays until they are committed
+    /// (`tray.commit`), so a peek loses nothing. When prompts wait and none matches, one log line
     /// says so, with lengths only.
     func claimComposerPrompt(for caller: ObjectID, submitted: String, now: Date = Date()) -> ComposerPrompt? {
         expireComposerPrompts(now: now)
-        guard var queue = composerPrompts[caller], let first = queue.first else { return nil }
-        let sent = first.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let seen = submitted.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !sent.contains(seen), !seen.contains(sent) {
-            NSLog("easl: composer prompt to \(caller) claimed by a drain whose text differs (sent \(sent.count) characters, drained \(seen.count))")
+        guard var queue = composerPrompts[caller] else { return nil }
+        let folded = ComposerPrompt.fold(submitted)
+        guard let index = queue.firstIndex(where: { $0.isClaimed(by: folded) }) else {
+            NSLog("easl: a submission drain from \(caller) matched none of its \(queue.count) composer prompts (drained \(folded.count) letters and digits; waiting \(queue.map { String($0.folded.count) }.joined(separator: ", ")))")
+            return nil
         }
-        if first.mentions.isEmpty {
-            queue.removeFirst()
+        let found = queue[index]
+        if found.mentions.isEmpty {
+            queue.remove(at: index)
             composerPrompts[caller] = queue.isEmpty ? nil : queue
         }
-        return first
+        return found
     }
 
     /// `tile`'s agent reported `state`: once it is past a question (working or idle, no longer

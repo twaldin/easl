@@ -3,10 +3,9 @@ import Testing
 import CanvasCore
 
 /// The composer's ⌘↩ through the router (`ComposerSend`, `ApiRouter.composerPrompt`) and the
-/// drains its targets' integrations make over the socket: each integration's submission drain
-/// (with the text it submits, however the agent rewrote it) claims the oldest prompt the composer
-/// typed there, with that prompt's own mentions numbered from 1; every other drain takes the tray
-/// as it always did.
+/// drains its targets' integrations make over the socket: an integration's submission drain whose
+/// text contains a composer prompt's (folded, so the agent's rewrites don't matter) takes that
+/// prompt's own mentions numbered from 1; every other drain takes the tray as it always did.
 @MainActor
 final class ComposerSendTests {
     let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("cs-\(UUID().uuidString.prefix(8))")
@@ -161,18 +160,46 @@ final class ComposerSendTests {
         showTray(to: alpha)
         try agent(alpha, "omp", .working)
         try board.stage(line(a, "a.py"))
-        try await send(draft(["first"]), to: [alpha])
+        try await send(draft(["fix the parser"]), to: [alpha])
         try board.stage(line(b, "b.py"))
-        try await send(draft(["second"]), to: [alpha])
+        try await send(draft(["fix the parser"]), to: [alpha])
         try board.stage(line(x, "x.py"))
-        #expect(typed[alpha] == ["[1] first", "[1] second"])
+        #expect(typed[alpha] == ["[1] fix the parser", "[1] fix the parser"])
 
         // The turn runs 15 minutes before the agent submits them.
         board.expireComposerPrompts(now: Date().addingTimeInterval(15 * 60))
         #expect(board.composerPrompts[alpha]?.count == 2 && board.tray.map(\.label) == ["x.py:1"])
-        #expect(try await drain(alpha, "[1] first") == ["[1] a.py"])
-        #expect(try await drain(alpha, "[1] second") == ["[1] b.py"], "the second's [1] is b, as its text says")
+        #expect(try await drain(alpha, "[1] fix the parser") == ["[1] a.py"], "the same text twice: the older first")
+        #expect(try await drain(alpha, "[1] fix the parser") == ["[1] b.py"])
         #expect(try await drain(alpha, "[1] then") == ["[1] x.py"], "then the tray again")
+    }
+
+    @Test func aPromptTypedInTheTerminalOrSentByAnAgentNeverTakesAComposerPromptsMentions() async throws {
+        let alpha = try terminal("alpha")
+        let a = code("a.py"), x = code("x.py")
+        showTray(to: alpha)
+        try agent(alpha, "omp", .working)
+        // Typed in the terminal and sent by another agent while alpha works: waiting in its queue.
+        _ = try await call("agent.prompt", #"{"target":"\#(alpha)","text":"run the tests"}"#)
+        try board.stage(line(a, "a.py"))
+        try await send(draft(["review this"]), to: [alpha])
+        try board.stage(line(x, "x.py"))
+
+        #expect(try await drain(alpha, "fix the build") == ["[1] x.py"], "the typed prompt takes the tray, as always")
+        #expect(try await drain(alpha, "run the tests").isEmpty, "the agent's prompt finds the tray taken")
+        #expect(try await drain(alpha, "[1] review this") == ["[1] a.py"], "the composer's prompt still has its own")
+    }
+
+    @Test func aShortPromptOnlyMatchesItsOwnText() async throws {
+        let alpha = try terminal("alpha")
+        let a = code("a.py"), x = code("x.py")
+        showTray(to: alpha)
+        try board.stage(line(a, "a.py"))
+        try await send(ComposerDraft(text: mark, tokens: board.tray), to: [alpha])
+        #expect(typed[alpha] == ["[1]"] && board.composerPrompts[alpha]?.map(\.folded) == ["1"])
+        try board.stage(line(x, "x.py"))
+        #expect(try await drain(alpha, "fix line 1 of x") == ["[1] x.py"], "\"1\" inside another prompt isn't it")
+        #expect(try await drain(alpha, " [1]\n") == ["[1] a.py"])
     }
 
     @Test func aSlashCommandOrShellEscapeTakesNoMentionsWhereItsIntegrationSkipsIt() async throws {
@@ -200,9 +227,21 @@ final class ComposerSendTests {
         #expect(try await drain(claude, "[1] fix [2] and") == ["[1] a.py", "[2] b.py"])
 
         // omp skips `$…` too; Claude Code reads it as a prompt.
-        try await send(ComposerDraft(text: "$ ls"), to: [omp])
-        try await send(ComposerDraft(text: "$5 budget"), to: [claude])
-        #expect(board.composerPrompts[omp] == nil && board.composerPrompts[claude]?.map(\.prompt) == ["$5 budget"])
+        try board.stage(line(a, "a.py"))
+        var dollar = ComposerDraft(text: "$ ls ")
+        dollar.insert(board.tray[0], at: nil)
+        let (shell, _, _) = try await send(dollar, to: [omp])
+        #expect(!shell.takesMentions && board.composerPrompts[omp] == nil)
+        dollar.text = "$5 budget " + mark
+        try await send(dollar, to: [claude])
+        #expect(board.composerPrompts[claude]?.map(\.prompt) == ["$5 budget [1]"])
+        #expect(try await drain(claude, "$5 budget [1]") == ["[1] a.py"])
+
+        // omp's continue shortcuts never reach its drain: like any prompt without tokens they
+        // leave nothing waiting.
+        try await send(ComposerDraft(text: "c"), to: [omp])
+        try await send(ComposerDraft(text: "."), to: [omp])
+        #expect(board.composerPrompts[omp] == nil && typed[omp].map { Array($0.suffix(2)) } == ["c", "."])
 
         // opencode takes pasted `!…` and `/…` text as a prompt: its mentions go with it.
         showTray(to: opencode)
@@ -221,6 +260,7 @@ final class ComposerSendTests {
         try board.stage(line(a, "a.py"))
         try await send(draft(["fix"]), to: [alpha])
         try await send(ComposerDraft(text: "go on"), to: [alpha])
+        #expect(board.composerPrompts[alpha]?.count == 1, "a prompt without tokens leaves nothing waiting")
         try board.stage(line(x, "x.py"))
         let queued = board.composerPrompts[alpha]
 
@@ -237,8 +277,23 @@ final class ComposerSendTests {
 
         #expect(try await drain(alpha, "[1] fix") == ["[1] a.py"])
         try board.stage(line(x, "x.py"))
-        #expect(try await drain(alpha, "go on").isEmpty, "a prompt without tokens keeps the tray out of its drain")
-        #expect(board.tray.map(\.label) == ["x.py:1"] && board.composerPrompts[alpha] == nil)
+        #expect(try await drain(alpha, "go on") == ["[1] x.py"], "the prompt without tokens drains as any prompt")
+        #expect(board.composerPrompts[alpha] == nil)
+    }
+
+    @Test func ompSteeringPromptsEachTakeTheirOwnMentions() async throws {
+        let omp = try terminal("omp")
+        let a = code("a.py"), b = code("b.py")
+        showTray(to: omp)
+        try agent(omp, "omp", .working)
+        try board.stage(line(a, "a.py"))
+        try await send(draft(["first"]), to: [omp])
+        try board.stage(line(b, "b.py"))
+        try await send(draft(["second"]), to: [omp])
+        // omp peeks each steering prompt as it is submitted; the first isn't committed yet.
+        #expect(try await drain(omp, "[1] first", commit: false) == ["[1] a.py"])
+        #expect(try await drain(omp, "[1] second", commit: false) == ["[1] b.py"])
+        #expect(board.composerPrompts[omp]?.count == 2)
     }
 
     @Test func aPromptItsAgentNeverDrainedReturnsItsMentionsToTheTray() async throws {
@@ -269,9 +324,9 @@ final class ComposerSendTests {
         #expect(returned.count == 3)
     }
 
-    @Test func aDialogAnswerGoesOnceTheAgentIsPastTheQuestion() async throws {
+    @Test func aDialogAnswerLeavesNothingWaitingAndThePromptRightAfterKeepsItsMention() async throws {
         let claude = try terminal("claude")
-        let a = code("a.py"), b = code("b.py")
+        let a = code("a.py"), x = code("x.py")
         showTray(to: claude)
         try agent(claude, "claude", .blocked, "Allow?")
         try board.stage(line(a, "a.py"))
@@ -283,18 +338,14 @@ final class ComposerSendTests {
         let (sent, remaining, _) = try await send(answer, to: [claude])
         #expect(!sent.takesMentions && typed[claude] == ["2 [1]"])
         #expect(remaining.tokens.map(\.id) == staged.map(\.id) && board.tray == staged, "the tokens stay staged for the next prompt")
-        #expect(board.composerPrompts[claude]?.map(\.answer) == [true])
+        #expect(board.composerPrompts[claude] == nil, "the dialog takes the answer without any drain")
 
-        // The dialog takes it: no drain, the call finishes and the turn goes on.
-        board.expireComposerPrompts(now: Date().addingTimeInterval(60))
-        #expect(board.composerPrompts[claude]?.count == 1, "still blocked: the answer waits")
+        // The call finishes and the user sends the next prompt at once.
         try agent(claude, "claude", .working)
-        board.expireComposerPrompts(now: Date().addingTimeInterval(ComposerPrompt.answerGrace / 2))
-        #expect(board.composerPrompts[claude]?.count == 1, "a drain right after the agent's report could still be the answer's")
-        board.expireComposerPrompts(now: Date().addingTimeInterval(ComposerPrompt.answerGrace + 1))
-        #expect(board.composerPrompts[claude] == nil)
-        try board.stage(line(b, "b.py"))
-        #expect(try await drain(claude, "now the tests") == ["[1] a.py", "[2] b.py"], "the prompt typed next takes the live tray")
+        try await send(draft(["now the tests"]), to: [claude])
+        try board.stage(line(x, "x.py"))
+        #expect(try await drain(claude, "[1] now the tests") == ["[1] a.py"])
+        #expect(board.tray.map(\.label) == ["x.py:1"])
     }
 
     @Test func aCodexAnswerAsAPromptTakesNothingAndThePromptAfterItKeepsItsOwn() async throws {
@@ -305,9 +356,10 @@ final class ComposerSendTests {
         try board.stage(line(a, "a.py"))
         try await send(draft(["blue"]), to: [codex])
         #expect(board.composerPrompts[codex]?.map(\.answer) == [true] && board.tray.map(\.label) == ["a.py:1"])
-        // Codex's answer arrives as a prompt, whose hook drains right after reporting working
-        // (within `answerGrace` of that report, as the dialog test checks): the drain takes nothing.
-        #expect(try await drain(codex, "blue [1]").isEmpty, "the answer's drain takes nothing")
+        // Codex's answer arrives as a prompt, whose hook drains right after reporting working:
+        // the drain takes nothing.
+        #expect(typed[codex] == ["[1] blue"])
+        #expect(try await drain(codex, "[1] blue").isEmpty, "the answer's drain takes nothing")
         try agent(codex, "codex", .working)
         #expect(board.tray.map(\.label) == ["a.py:1"] && board.composerPrompts[codex] == nil)
 
@@ -316,6 +368,16 @@ final class ComposerSendTests {
         try board.stage(line(b, "b.py"))
         #expect(try await drain(codex, "[1] use it") == ["[1] a.py"], "the prompt after it keeps its mention")
         #expect(board.tray.map(\.label) == ["b.py:1"] && board.composerPrompts[codex] == nil)
+
+        // An answer Codex takes in a dialog (an approval) never drains: once Codex is past the
+        // question it goes, `answerGrace` later.
+        try agent(codex, "codex", .blocked, "Run tests?")
+        try await send(ComposerDraft(text: "yes"), to: [codex])
+        try agent(codex, "codex", .working)
+        board.expireComposerPrompts(now: Date().addingTimeInterval(ComposerPrompt.answerGrace / 2))
+        #expect(board.composerPrompts[codex]?.count == 1, "a drain right after the report could still be the answer's")
+        board.expireComposerPrompts(now: Date().addingTimeInterval(ComposerPrompt.answerGrace + 1))
+        #expect(board.composerPrompts[codex] == nil)
     }
 
     @Test func mentionsComeBackWhenOnlyAnAnswerWentIn() async throws {
