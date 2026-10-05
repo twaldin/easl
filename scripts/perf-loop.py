@@ -15,7 +15,9 @@ scripts/perf-board.py, shows it at 100% over the densest html area, then runs th
 - `visible-serial` / `hidden-serial`: scripts/perf-load.py's serial burst with the window shown
   (on the testing Space) or minimized;
 - `visible-batch`: the same writes as one `object.batch`;
-- `poll-idle`: 60 s of `board.get` every 10 s, nothing else.
+- `poll-idle`: 60 s of `board.get` every 10 s, nothing else;
+- `pan-zoom`: pans 3000 pt across the html cards and back, then zooms out three steps and in
+  again, twice (parked HTML pages: `html.reuse` against `html.load` in `app.metrics`).
 
 A row per scenario run records the app's CPU from the burst's start until it is quiet again
 (`ps`), the burst's wall time and RPC latencies, and the `DevPerf` span around it (main thread
@@ -162,6 +164,21 @@ class Instance:
         return self.cli("app.metrics", {"reset": True} if reset else {})
 
 
+def pan_zoom(inst):
+    """Pans the view 3000 pt right and back, then zooms out three steps and back in, twice; the
+    window is restored to where it started."""
+    started = time.time()
+    steps = 60
+    for _ in range(2):
+        for dx in (-3000, 3000):
+            inst.dev("input", "scroll", "700", "400", f"{dx / steps:.1f}", "0", "--repeat", str(steps))
+            time.sleep(1)
+        for item in ["View/Zoom Out"] * 3 + ["View/Zoom In"] * 3:
+            inst.dev("input", "mainmenu", item)
+            time.sleep(0.7)
+    return {"wall_s": round(time.time() - started, 1)}
+
+
 def parse_devperf(line):
     out = {}
     m = re.search(r"main busy (\d+) ms, hitches (\d+) \(longest ([\d.]+) ms\)", line)
@@ -182,6 +199,8 @@ def run_scenario(inst, name):
     started = time.time()
     if name == "poll-idle":
         load = json.loads(sh("python3", os.path.join(REPO, "scripts/perf-load.py"), "poll", "--duration", "60", env=inst.env))
+    elif name == "pan-zoom":
+        load = pan_zoom(inst)
     else:
         inst.variant += 1
         mode = "batch" if name.endswith("batch") else "serial"
@@ -196,6 +215,8 @@ def run_scenario(inst, name):
            "settled_s": round(settled, 1), **span, "load": load}
     if metrics:
         row["metrics"] = metrics
+        total = lambda counter: ((metrics.get("counters") or {}).get(counter) or {}).get("total", {}).get("n", 0)
+        row["html_loads"], row["html_reuses"] = total("html.load"), total("html.reuse")
     return row
 
 
@@ -203,6 +224,8 @@ def gate(name, t):
     """PASS only when every measurement the scenario's targets need is present and within them."""
     if name == "poll-idle":
         checks = [("stretch", t["longest"], lambda v: v < 16)]
+    elif name == "pan-zoom":
+        checks = [("stretch", t["longest"], lambda v: v < 100)]
     else:
         checks = [("cpu", t["cpu"], lambda v: v < 3), ("stretch", t["longest"], lambda v: v < 100), ("routings", t["routes"], lambda v: v <= 2)]
     missing = [n for n, v, _ in checks if v is None]
@@ -242,6 +265,8 @@ def summarize(rows, apps, scenarios):
             verdict = gate(name, t)
             print(f"{app:10} {name:15} {t['cpu']!s:>6} {rng(cpu):>7} {t['wall']!s:>5} {rng(wall):>6} {t['longest']!s:>7} {rng(longest):>8} "
                   f"{t['routes']!s:>10} {t['update']!s:>11} {t['poll']!s:>9}  {verdict}")
+            if name == "pan-zoom":
+                print(f"{'':10} {'':15} html page loads {med([r.get('html_loads') for r in mine])}, reuses {med([r.get('html_reuses') for r in mine])}")
         hidden, visible = table.get((app, "hidden-serial")), table.get((app, "visible-serial"))
         if hidden and visible:
             ratio_wall = hidden["wall"] / visible["wall"] if hidden["wall"] and visible["wall"] else None
@@ -255,7 +280,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--app", action="append", required=True, help="label=path of a frozen bundle")
     ap.add_argument("--board", default="synthetic", help="synthetic, or a sanitized board file (scripts/perf-sanitize.py)")
-    ap.add_argument("--scenarios", default="visible-serial,hidden-serial,visible-batch,poll-idle")
+    ap.add_argument("--scenarios", default="visible-serial,hidden-serial,visible-batch,poll-idle,pan-zoom")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--out", default="/tmp/easl-perf-loop.jsonl")
     ap.add_argument("--tmp", default="/tmp", help="where each bundle's scratch home is created (and deleted)")

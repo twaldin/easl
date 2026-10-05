@@ -2,15 +2,17 @@
 
 - Upstream: https://github.com/Lakr233/libghostty-spm (MIT, see `LICENSE`)
 - Tag: `1.6.20260922` (commit `b7f888e3baf8585ea9d590ab1a45b49475e00d1c`)
-- Kept: `Package.swift`, `LICENSE`, `Sources/**`, unchanged except the test target and the patch
-  below. The `libghostty` xcframework stays a remote `binaryTarget` with upstream's URL and
+- Kept: `Package.swift`, `LICENSE`, `Sources/**`, unchanged except the test target and the
+  patches below. The `libghostty` xcframework stays a remote `binaryTarget` with upstream's URL and
   checksum.
 - Dropped: `Example/`, `Tests/`, `docs/`, `Script/`, `Patches/`, `build.sh`, `Ghostty.build`,
   `Ghostty.ref`, `Package.local.swift`, `Package.swift.template`, `.github/`, `.gitattributes`,
   `.gitignore`, `.root`, `README.md`, `AGENTS.md`, `CLAUDE.md`, and the `GhosttyKitTest` test
   target in `Package.swift`.
 
-## Patch
+## Patches
+
+### Resource bundle
 
 `Sources/GhosttyTerminal/Configuration/GhosttyRuntimeResources.swift` looks for
 `GhosttyKit_GhosttyTerminal.bundle` in `Bundle.main.resourceURL` first and falls back to
@@ -21,5 +23,18 @@ rejects them at the app's root), so without the patch the first terminal crashes
 machine without the build directory.
 
 The same change as a unified diff against upstream: `patches/libghostty-spm-resources.patch` at
-the Canvas repo root (`git apply` in an upstream checkout). To update, copy the new tag's files as
-above, reapply the patch, and drop the test target again.
+the Canvas repo root (`git apply` in an upstream checkout).
+
+### Frame link per terminal view
+
+`TerminalSurfaceCoordinator` paces draws with MSDisplayLink, held while frames are owed and
+released after 30 idle frames. On macOS MSDisplayLink's driver creates a new `CVDisplayLink`, and
+with it a new thread, every time the link starts again, so a visible terminal printing a line every
+few hundred milliseconds started one per line (133 display-link threads in 5 s on a real board).
+The coordinator now takes a frame clock from its platform view (`makeFrameLink`,
+`TerminalFrameLink`): `AppTerminalView` gives it its own `NSView.displayLink` (macOS 14+), which
+fires on the main run loop, follows the view's screen, and is paused when idle and resumed when a
+frame is owed, never recreated. UIKit, and macOS 13, keep MSDisplayLink. Diff:
+`patches/libghostty-spm-frame-link.patch`.
+
+To update, copy the new tag's files as above, reapply both patches, and drop the test target again.

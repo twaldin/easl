@@ -66,6 +66,11 @@
 
         func commonInit() {
             wantsLayer = true
+            if #available(macOS 14, *) {
+                core.makeFrameLink = { [weak self] tick in
+                    self.map { ViewFrameLink(view: $0, tick: tick) }
+                }
+            }
 
             let metal = CAMetalLayer()
             metal.device = MTLCreateSystemDefaultDevice()
@@ -161,6 +166,42 @@
 
         deinit {
             NotificationCenter.default.removeObserver(self)
+        }
+    }
+
+    /// The terminal view's own display link (`NSView.displayLink`): it follows the view's screen,
+    /// fires on the main run loop, and is paused between bursts of output instead of recreated
+    /// (`TerminalFrameLink`).
+    @available(macOS 14, *)
+    @MainActor
+    final class ViewFrameLink: NSObject, TerminalFrameLink {
+        private var link: CADisplayLink?
+        private let tick: @MainActor () -> Void
+
+        init(view: NSView, tick: @escaping @MainActor () -> Void) {
+            self.tick = tick
+            super.init()
+            let link = view.displayLink(target: self, selector: #selector(step))
+            // As the shared link: 60 at least while output streams (30 reads as flicker).
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+            link.isPaused = true
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        }
+
+        var isPaused: Bool {
+            get { link?.isPaused ?? true }
+            set { link?.isPaused = newValue }
+        }
+
+        /// The link retains its target: invalidating it lets both go.
+        func invalidate() {
+            link?.invalidate()
+            link = nil
+        }
+
+        @objc private func step(_: CADisplayLink) {
+            tick()
         }
     }
 #endif
