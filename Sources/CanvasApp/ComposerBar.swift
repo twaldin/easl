@@ -31,11 +31,15 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     var onFocusChange: (() -> Void)?
     var targetMenu: (() -> NSMenu?)?
 
-    static let font = NSFont.systemFont(ofSize: 13)
-    static let unfocusedHeight: CGFloat = 34
+    /// The text's font, at the chrome text size (`ChromeText`), as are the bar's heights.
+    static var font: NSFont { ChromeText.font(.systemFont(ofSize: 13)) }
+    static var unfocusedHeight: CGFloat { ChromeText.scaled(34) }
     static let maxLines: CGFloat = 8
     private static let insets = (left: CGFloat(12), right: CGFloat(12), vertical: CGFloat(8))
-    private static let questionHeight: CGFloat = 18
+    private static var questionHeight: CGFloat { ChromeText.scaled(18) }
+    private static var labelFont: NSFont { ChromeText.font(.systemFont(ofSize: 12, weight: .medium)) }
+    /// What the target label says, to draw it again at a new chrome text size.
+    private var targetShown: (title: String?, extra: [String], hasTerminal: Bool) = (nil, [], false)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -76,7 +80,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         placeholder.font = Self.font
         placeholder.lineBreakMode = .byTruncatingTail
         question.textColor = .systemOrange
-        question.font = .systemFont(ofSize: 12, weight: .medium)
+        question.font = Self.labelFont
         question.lineBreakMode = .byTruncatingTail
         question.isHidden = true
         target.isBordered = false
@@ -187,15 +191,31 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     /// `title`: the tray's target (nil: none yet); `extra`: the other terminals picked in the
     /// menu, which get the prompt too.
     func showTarget(title: String?, extra: [String], hasTerminal: Bool) {
+        targetShown = (title, extra, hasTerminal)
         let also = extra.isEmpty ? "" : extra.count == 1 ? " + \(extra[0])" : " + \(extra.count) more"
         let label = title.map { "→ \($0)\(also) ▾" } ?? (hasTerminal ? "→ choose a terminal ▾" : "→ no terminal yet (⌘T)")
         target.attributedTitle = NSAttributedString(string: label, attributes: [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .font: Self.labelFont,
             .foregroundColor: NSColor.secondaryLabelColor,
         ])
         target.toolTip = extra.isEmpty ? CanvasBasics.trayTarget : "Sends to \(([title].compactMap { $0 } + extra).joined(separator: ", ")). \(CanvasBasics.trayTarget)"
         target.isEnabled = hasTerminal
         refresh()
+    }
+
+    /// View › Chrome Text Size changed: the text, its tokens, the question, the placeholder and
+    /// the target label redraw at the new size, and the bar takes its new height. The text keeps
+    /// its undo history (only its font changes).
+    func chromeTextChanged() {
+        placeholder.font = Self.font
+        question.font = Self.labelFont
+        if let storage = text.textStorage {
+            storage.addAttribute(.font, value: Self.font, range: NSRange(location: 0, length: storage.length))
+            text.layoutManager?.invalidateLayout(forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil)
+        }
+        text.typingAttributes = Self.attributes
+        showTarget(title: targetShown.title, extra: targetShown.extra, hasTerminal: targetShown.hasTerminal)
+        text.needsDisplay = true
     }
 
     /// The composer takes the keyboard.
@@ -432,27 +452,29 @@ final class TokenAttachment: NSTextAttachment {
 }
 
 /// Draws a token as the tray's chips were drawn: purple, its `[n]`, its label cut to fit
-/// (`TrayChips.fittedLabel`: a code location keeps its lines) and its changed note.
+/// (`TrayChips.fittedLabel`: a code location keeps its lines) and its changed note, at the
+/// chrome text size (`ChromeText`).
 final class TokenCell: NSTextAttachmentCell {
-    static let height: CGFloat = 18
-    private static let padding: CGFloat = 6
-    private static let labelLimit: CGFloat = 200
-    private static let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
-    private static let labelFont = NSFont.systemFont(ofSize: 12)
+    @MainActor static var height: CGFloat { ChromeText.scaled(18) }
+    @MainActor private static var padding: CGFloat { ChromeText.scaled(6) }
+    @MainActor private static var labelLimit: CGFloat { ChromeText.scaled(200) }
+    @MainActor private static var numberFont: NSFont { ChromeText.font(.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)) }
+    @MainActor private static var labelFont: NSFont { ChromeText.font(.systemFont(ofSize: 12)) }
 
     private var token: TokenAttachment? { attachment as? TokenAttachment }
 
-    private var pieces: (number: NSAttributedString, label: NSAttributedString) {
+    @MainActor private var pieces: (number: NSAttributedString, label: NSAttributedString) {
         guard let token else { return (NSAttributedString(), NSAttributedString()) }
+        let labelFont = Self.labelFont, limit = Self.labelLimit
         let number = NSAttributedString(string: TrayChips.badge(token.number) + " ", attributes: [.font: Self.numberFont, .foregroundColor: NSColor.secondaryLabelColor])
-        let measure: (String) -> CGFloat = { ceil(NSAttributedString(string: $0, attributes: [.font: Self.labelFont]).size().width) }
-        var label = TrayChips.fittedLabel(token.mention, width: Self.labelLimit, measure: measure)
-        if measure(label) > Self.labelLimit {
-            while label.count > 1, measure(label + "…") > Self.labelLimit { label.removeLast() }
+        let measure: (String) -> CGFloat = { ceil(NSAttributedString(string: $0, attributes: [.font: labelFont]).size().width) }
+        var label = TrayChips.fittedLabel(token.mention, width: limit, measure: measure)
+        if measure(label) > limit {
+            while label.count > 1, measure(label + "…") > limit { label.removeLast() }
             label += "…"
         }
         if let changed = token.changed { label += " · \(changed)" }
-        return (number, NSAttributedString(string: label, attributes: [.font: Self.labelFont, .foregroundColor: NSColor.labelColor]))
+        return (number, NSAttributedString(string: label, attributes: [.font: labelFont, .foregroundColor: NSColor.labelColor]))
     }
 
     nonisolated override func cellSize() -> NSSize {
@@ -462,8 +484,10 @@ final class TokenCell: NSTextAttachmentCell {
         }
     }
 
+    /// Centred on the text's line: as far below the baseline as the chip is taller than the
+    /// text's cap height, about.
     nonisolated override func cellBaselineOffset() -> NSPoint {
-        NSPoint(x: 0, y: -4)
+        MainActor.assumeIsolated { NSPoint(x: 0, y: -ChromeText.scaled(4)) }
     }
 
     nonisolated override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
