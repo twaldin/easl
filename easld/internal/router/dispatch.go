@@ -418,7 +418,10 @@ func (r *Router) boardOpen(p map[string]any) (any, error) {
 	if !store.IsDirectory(root) {
 		return nil, board.NotFound("no directory at %s", root)
 	}
-	b := r.reg.Open(root)
+	b, err := r.reg.Open(root)
+	if err != nil {
+		return nil, fail(api.CodeUnavailable, "%v", err)
+	}
 	result := map[string]any{"board": b.ID(), "root": b.Root(), "objects": float64(len(b.Objects()))}
 	if w := store.Containing(root); w != nil && b.Repo != nil && w.CommonDir == b.Repo.CommonDir {
 		info := map[string]any{"path": w.Toplevel, "main": w.IsMain()}

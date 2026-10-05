@@ -104,6 +104,8 @@ type Board struct {
 	pendingRefits []refit
 
 	workingDirectories map[string]string
+	// unknown is the board file's top-level keys easld doesn't know, written back as they were.
+	unknown map[string]any
 
 	// OnEvent receives every event, in order (the registry broadcasts them).
 	OnEvent func(model.Event)
@@ -220,6 +222,7 @@ func FromSnapshot(s *store.Snapshot) *Board {
 		r.Worktrees = append([]store.WorktreeRecord{}, s.Repo.Worktrees...)
 		b.Repo = &r
 	}
+	b.unknown = s.Unknown
 	return b
 }
 
@@ -293,6 +296,7 @@ func (b *Board) Snapshot() *store.Snapshot {
 		r.Worktrees = append([]store.WorktreeRecord{}, b.Repo.Worktrees...)
 		s.Repo = &r
 	}
+	s.Unknown = b.unknown // never changed after load, so the snapshot may share it
 	return s
 }
 

@@ -68,8 +68,8 @@ func (r *Registry) SortedBoards() []*Board {
 
 // Open is the board for a directory: its repository's board (rooted at the repository's
 // canonical root) when it is in git, tagged with the worktree it was opened from, else the
-// directory's own board.
-func (r *Registry) Open(root string) *Board {
+// directory's own board. A board file easld can't read (store.Unreadable) isn't opened.
+func (r *Registry) Open(root string) (*Board, error) {
 	root = store.Standardized(root)
 	worktree := store.Containing(root)
 	id := store.PathID(root)
@@ -80,13 +80,16 @@ func (r *Registry) Open(root string) *Board {
 		if worktree != nil {
 			existing.OpenedFrom(*worktree)
 		}
-		return existing
+		return existing, nil
 	}
 	boardRoot, commonDir := root, ""
 	if worktree != nil {
 		boardRoot, commonDir = worktree.CanonicalRoot(), worktree.CommonDir
 	}
-	b := r.load(boardRoot, id, commonDir)
+	b, err := r.load(boardRoot, id, commonDir)
+	if err != nil {
+		return nil, err
+	}
 	if worktree != nil {
 		b.OpenedFrom(*worktree)
 	}
@@ -102,14 +105,18 @@ func (r *Registry) Open(root string) *Board {
 		r.Frontmost = id
 	}
 	r.replayAgentReports(b)
-	return b
+	return b, nil
 }
 
 // load is BoardStore.load: the stored board (its root following the board's identity), else a
 // new one; a repository board records its common git directory.
-func (r *Registry) load(root, id, commonDir string) *Board {
+func (r *Registry) load(root, id, commonDir string) (*Board, error) {
+	snap, err := r.Store.Read(id)
+	if err != nil {
+		return nil, err
+	}
 	var b *Board
-	if snap, ok := r.Store.Read(id); ok {
+	if snap != nil {
 		snap.Root = root
 		b = FromSnapshot(snap)
 	} else {
@@ -124,7 +131,7 @@ func (r *Registry) load(root, id, commonDir string) *Board {
 		b.Repo = rec
 	}
 	b.OnChange = func() { r.Store.ScheduleSave(b.id, b.Snapshot) }
-	return b
+	return b, nil
 }
 
 // Board is the open board id names: its own, or a legacy board's id a repository board merged.

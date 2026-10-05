@@ -75,6 +75,10 @@ func TestConformance(t *testing.T) {
 		case !expected[sc.Scenario] && sc.Pass:
 			t.Logf("scenario %s passes now: add it to `passing`", sc.Scenario)
 		}
+		delete(expected, sc.Scenario)
+	}
+	for name := range expected {
+		t.Errorf("`passing` names %s, which is no scenario (renamed or removed?)", name)
 	}
 	if len(report.Uncovered) > 0 {
 		t.Errorf("schema methods with no scenario and not delegated: %v", report.Uncovered)

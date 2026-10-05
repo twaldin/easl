@@ -34,19 +34,27 @@ func (e *GitError) Error() string {
 // gitSlots caps concurrent git processes, as GitRunner.shared does (two app-wide).
 var gitSlots = make(chan struct{}, 2)
 
+// gitTimeout stops a git run whose caller set no timeout. The app awaits git off the main
+// actor, but easld runs every request under the registry's one lock, so a git that hangs (a
+// stuck network filesystem, a hook) would stop every connection, waiter and save.
+var gitTimeout = 10 * time.Second
+
 // RunGit is GitRunner.run: stdout of `git -c core.quotepath=off --no-pager <args>` in dir, with
 // optional locks, prompts and lazy fetches off. Exit codes outside allowed (default 0) fail with
-// git's stderr; more than maxOutput bytes (0: no limit) or running past timeout (0: none) stop git.
+// git's stderr; more than maxOutput bytes (0: no limit) or running past timeout (0: gitTimeout)
+// stop git.
 func RunGit(args []string, dir string, allowed []int, maxOutput int, timeout time.Duration) ([]byte, error) {
 	gitSlots <- struct{}{}
 	defer func() { <-gitSlots }()
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+	if timeout <= 0 {
+		timeout = gitTimeout
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.quotepath=off", "--no-pager"}, args...)...)
+	// A process git started (a hook, ssh) may outlive it holding its output open; don't wait
+	// for that past the kill.
+	cmd.WaitDelay = time.Second
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1")
 	var stdout limitedBuffer

@@ -12,6 +12,7 @@ import (
 
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/store"
 )
 
 type conn struct {
@@ -54,9 +55,49 @@ func newFixture(t *testing.T) *fixture {
 	reg := board.NewRegistry(filepath.Join(dir, "boards"), time.Hour, "")
 	r := New(reg)
 	reg.Mu.Lock()
-	b := reg.Open(root)
+	b, err := reg.Open(root)
 	reg.Mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &fixture{t: t, router: r, board: b, conn: &conn{}}
+}
+
+// A board file easld can't read (a newer app's format, or one that doesn't decode) isn't opened,
+// and stays as it was through board.close and shutdown: the app would have started it empty and
+// overwritten it.
+func TestBoardFileEasldCantReadIsNeverOverwritten(t *testing.T) {
+	dir := t.TempDir()
+	reg := board.NewRegistry(filepath.Join(dir, "boards"), time.Millisecond, "")
+	f := &fixture{t: t, router: New(reg), conn: &conn{}}
+	for name, file := range map[string]string{
+		"newer":    `{"format":3,"id":"%s","root":"%s","revision":7,"objects":[],"canvasLayers":[{"id":"l1"}]}`,
+		"corrupt":  `{"format":2,"id":"%s","root":"%s","revision":7,"objects":[{"id":"obj_x","type":"hologram"}]}`,
+		"truncate": `{"format":2,"id":"%s","root":"%s","revi`,
+	} {
+		root := filepath.Join(dir, name)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		id := store.PathID(root)
+		path := reg.Store.Path(id)
+		content := fmt.Sprintf(file, id, root)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		code, message := errorOf(f.call("board.open", map[string]any{"root": root}))
+		if code != "unavailable" || !strings.Contains(message, path) || !strings.Contains(message, "left as it is") {
+			t.Errorf("%s: board.open answered %s: %s", name, code, message)
+		}
+		if name == "newer" && !strings.Contains(message, "format 3, newer than the 2") {
+			t.Errorf("newer: %s", message)
+		}
+		f.call("board.close", map[string]any{"board": id})
+		reg.Flush()
+		if data, _ := os.ReadFile(path); string(data) != content {
+			t.Errorf("%s: the board file changed:\n%s", name, data)
+		}
+	}
 }
 
 func (f *fixture) call(method string, params map[string]any) map[string]any {

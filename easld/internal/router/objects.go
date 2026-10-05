@@ -2,7 +2,6 @@ package router
 
 import (
 	"errors"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -933,9 +932,7 @@ func existingAncestor(dir string) string {
 // missingCommit is ChangeSet.missing: the `git fetch` after which ref names a commit here.
 func missingCommit(ref, toplevel string) string {
 	var remotes []string
-	cmd := exec.Command("git", "remote")
-	cmd.Dir = toplevel
-	if out, err := cmd.Output(); err == nil {
+	if out, err := measure.RunGit([]string{"remote"}, toplevel, nil, 0, 0); err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			if line != "" {
 				remotes = append(remotes, line)

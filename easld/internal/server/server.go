@@ -6,10 +6,10 @@ package server
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"os"
@@ -19,11 +19,24 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
-// maxPending is how many bytes may be queued for one client before it counts as stuck: a
-// client this far behind is dropped rather than buffered without bound.
-const maxPending = 32 << 20
+// limits bound what one connection may hold of the server's memory.
+type limits struct {
+	// pending is how many bytes may be queued for one client before it counts as stuck: a
+	// client this far behind is dropped rather than buffered without bound.
+	pending int
+	// line is the longest request line: a longer one is answered `invalid_params` and the
+	// connection closed, as the rest of what it sends can't be framed.
+	line int
+	// inbox is how many requests (and inboxBytes how many of their bytes) are read ahead of
+	// the handler; past either the connection isn't read until the handler catches up.
+	inbox, inboxBytes int
+}
+
+var defaultLimits = limits{pending: 32 << 20, line: 64 << 20, inbox: 256, inboxBytes: 64 << 20}
 
 // drainTimeout bounds how long a closing connection spends flushing what was already queued
 // to it.
@@ -41,10 +54,18 @@ var malformedLine = map[string]any{
 	"error": map[string]any{"code": "invalid_params", "message": "malformed JSON line"},
 }
 
+// lineTooLong is the reply to a line longer than the limit; the connection then closes.
+func lineTooLong(limit int) map[string]any {
+	return map[string]any{
+		"ok":    false,
+		"error": map[string]any{"code": "invalid_params", "message": fmt.Sprintf("line too long (over %d bytes); closing the connection", limit)},
+	}
+}
+
 // Conn is one client connection.
 type Conn struct {
-	nc    net.Conn
-	limit int
+	nc     net.Conn
+	limits limits
 
 	// mu guards everything below.
 	mu      sync.Mutex
@@ -61,10 +82,12 @@ type Conn struct {
 	inbox inbox
 }
 
-func newConn(nc net.Conn, limit int) *Conn {
-	c := &Conn{nc: nc, limit: limit, open: true, done: make(chan struct{}), written: make(chan struct{})}
+func newConn(nc net.Conn, l limits) *Conn {
+	c := &Conn{nc: nc, limits: l, open: true, done: make(chan struct{}), written: make(chan struct{})}
 	c.wake = sync.NewCond(&c.mu)
-	c.inbox.cond = sync.NewCond(&c.inbox.mu)
+	c.inbox.ready = sync.NewCond(&c.inbox.mu)
+	c.inbox.room = sync.NewCond(&c.inbox.mu)
+	c.inbox.max, c.inbox.maxBytes = l.inbox, l.inboxBytes
 	return c
 }
 
@@ -79,18 +102,17 @@ func (c *Conn) IsOpen() bool {
 // server closed), so holders of a Conn (event subscribers, waiters) can let go of it.
 func (c *Conn) Done() <-chan struct{} { return c.done }
 
-// Send queues one JSON line. It never blocks on the peer: lines go out in Send order from a
-// goroutine of the connection's own, so a client that stops reading can't stall the caller
+// Send queues one JSON line, encoded as the app's JSONEncoder writes it (numbers as Swift
+// formats a Double, `/` escaped). It never blocks on the peer: lines go out in Send order from
+// a goroutine of the connection's own, so a client that stops reading can't stall the caller
 // (event broadcasts, waiter replies). It returns false once the connection is closed, or when
 // this line pushed the client more than 32 MiB behind, which drops it.
 func (c *Conn) Send(v any) bool {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if enc.Encode(v) != nil {
+	data, err := swiftjson.Encode(v, false, true)
+	if err != nil {
 		return false
 	}
-	return c.write(buf.Bytes()) // Encode ends the value with the newline
+	return c.write(append(data, '\n'))
 }
 
 func (c *Conn) write(line []byte) bool {
@@ -100,7 +122,7 @@ func (c *Conn) write(line []byte) bool {
 		return false
 	}
 	c.pending += len(line)
-	if c.pending > c.limit {
+	if c.pending > c.limits.pending {
 		c.queue = nil
 		c.mu.Unlock()
 		c.close(true)
@@ -166,33 +188,46 @@ func (c *Conn) writeLoop() {
 	}
 }
 
-// inbox holds a connection's requests in arrival order; the reader never waits on the handler.
+// inbox holds a connection's requests in arrival order, so the reader seldom waits on the
+// handler: only once max requests or maxBytes of them are queued (a client pipelining faster
+// than it is answered), and then it stops reading the socket until the handler catches up.
 type inbox struct {
-	mu       sync.Mutex
-	cond     *sync.Cond
-	items    []request
-	finished bool
+	mu            sync.Mutex
+	ready         *sync.Cond // the handler waits here for a request
+	room          *sync.Cond // the reader waits here for the queue to shrink
+	items         []request
+	bytes         int // the queued requests' line lengths
+	max, maxBytes int
+	finished      bool
 }
 
 type request struct {
 	value     any
+	size      int
 	malformed bool
+	tooLong   bool
 }
 
+// push queues r, waiting while the queue is full; a request pushed after finish is dropped.
 func (b *inbox) push(r request) {
 	b.mu.Lock()
+	for len(b.items) > 0 && (len(b.items) >= b.max || b.bytes+r.size > b.maxBytes) && !b.finished {
+		b.room.Wait()
+	}
 	if !b.finished {
 		b.items = append(b.items, r)
+		b.bytes += r.size
 	}
 	b.mu.Unlock()
-	b.cond.Signal()
+	b.ready.Signal()
 }
 
 func (b *inbox) finish() {
 	b.mu.Lock()
 	b.finished = true
 	b.mu.Unlock()
-	b.cond.Broadcast()
+	b.ready.Broadcast()
+	b.room.Broadcast()
 }
 
 // next blocks for the next request; false once the connection closed and the queue emptied
@@ -201,7 +236,7 @@ func (b *inbox) next() (request, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for len(b.items) == 0 && !b.finished {
-		b.cond.Wait()
+		b.ready.Wait()
 	}
 	if len(b.items) == 0 {
 		return request{}, false
@@ -209,6 +244,8 @@ func (b *inbox) next() (request, bool) {
 	r := b.items[0]
 	b.items[0] = request{}
 	b.items = b.items[1:]
+	b.bytes -= r.size
+	b.room.Signal()
 	return r, true
 }
 
@@ -225,6 +262,11 @@ func (c *Conn) serve(h Handler) {
 		if r.malformed {
 			c.Send(malformedLine)
 			continue
+		}
+		if r.tooLong {
+			c.Send(lineTooLong(c.limits.line))
+			c.close(false)
+			return
 		}
 		if response := c.handle(h, r.value); response != nil {
 			c.Send(response)
@@ -269,7 +311,11 @@ func (c *Conn) stopReading() {
 func (c *Conn) readLoop() {
 	r := bufio.NewReaderSize(c.nc, 64<<10)
 	for {
-		line, err := r.ReadBytes('\n')
+		line, err := readLine(r, c.limits.line)
+		if errors.Is(err, errLineTooLong) {
+			c.inbox.push(request{tooLong: true}) // answered in turn; then the connection closes
+			return
+		}
 		if err != nil {
 			// EOF (or a closed socket): an unfinished last line is dropped, as it waits for its newline.
 			c.mu.Lock()
@@ -280,7 +326,6 @@ func (c *Conn) readLoop() {
 			}
 			return
 		}
-		line = line[:len(line)-1]
 		if len(line) == 0 {
 			continue
 		}
@@ -289,7 +334,36 @@ func (c *Conn) readLoop() {
 			c.inbox.push(request{malformed: true})
 			continue
 		}
-		c.inbox.push(request{value: value})
+		c.inbox.push(request{value: value, size: len(line)})
+	}
+}
+
+var errLineTooLong = errors.New("line too long")
+
+// readLine reads one line, without its newline, of at most max bytes (errLineTooLong past
+// that). The line is valid until the next read.
+func readLine(r *bufio.Reader, max int) ([]byte, error) {
+	var long []byte // a line longer than the reader's buffer, gathered
+	for {
+		chunk, err := r.ReadSlice('\n')
+		size := len(long) + len(chunk)
+		if err == nil {
+			size-- // the newline
+		}
+		if size > max {
+			return nil, errLineTooLong
+		}
+		switch {
+		case err == nil && long == nil:
+			return chunk[:len(chunk)-1], nil
+		case err == nil:
+			long = append(long, chunk...)
+			return long[:len(long)-1], nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			long = append(long, chunk...)
+		default:
+			return nil, err
+		}
 	}
 }
 
@@ -298,7 +372,7 @@ type Server struct {
 	path     string
 	listener *net.UnixListener
 	handler  Handler
-	limit    int // per-connection pending-byte cut-off (maxPending; tests lower it)
+	limits   limits
 	// bound is the socket file Listen created: instances sharing a directory bind the same
 	// path in turn, so Close removes the path only while it is still this file.
 	bound os.FileInfo
@@ -319,35 +393,75 @@ func sunPathMax() int {
 	return 104
 }
 
-// Listen binds path (mode 0600, creating its directory and replacing a stale socket file)
-// and serves h on every connection until Close.
-func Listen(path string, h Handler) (*Server, error) { return listen(path, h, maxPending) }
+// Listen binds path (mode 0600, creating its directory 0700) and serves h on every connection
+// until Close. It replaces only a stale socket (one nothing listens on, left by a crashed
+// server): a path that isn't a socket, or a socket another server answers on, is refused.
+func Listen(path string, h Handler) (*Server, error) { return listen(path, h, defaultLimits) }
 
-func listen(path string, h Handler, limit int) (*Server, error) {
+func listen(path string, h Handler, l limits) (*Server, error) {
 	if len(path) >= sunPathMax() {
 		return nil, &net.OpError{Op: "listen", Net: "unix", Addr: &net.UnixAddr{Name: path, Net: "unix"}, Err: syscall.ENAMETOOLONG}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	os.Remove(path)
-	l, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err := removeStale(path); err != nil {
+		return nil, err
+	}
+	listener, err := listenPrivate(path)
 	if err != nil {
 		return nil, err
 	}
-	l.SetUnlinkOnClose(false)
-	if err := os.Chmod(path, 0o600); err != nil {
-		l.Close()
-		os.Remove(path)
-		return nil, err
-	}
-	s := &Server{path: path, listener: l, handler: h, limit: limit, conns: map[*Conn]struct{}{}}
+	listener.SetUnlinkOnClose(false)
+	s := &Server{path: path, listener: listener, handler: h, limits: l, conns: map[*Conn]struct{}{}}
 	if info, err := os.Lstat(path); err == nil {
 		s.bound = info
 	}
 	s.wg.Add(1)
 	go s.acceptLoop()
 	return s, nil
+}
+
+// removeStale clears path for binding. Nothing there is fine, and a socket that refuses
+// connections is a crashed server's, which is removed. Anything else is refused: a socket that
+// answers is another server's (the app's, or another easld's), and a file that isn't a socket
+// is someone's data.
+func removeStale(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode().Type() != fs.ModeSocket {
+		return fmt.Errorf("%s exists and is not a socket; not replacing it", path)
+	}
+	nc, err := net.DialTimeout("unix", path, time.Second)
+	if err == nil {
+		nc.Close()
+		return fmt.Errorf("%s is already served by another process (an easl app or easld)", path)
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%s may be in use, not replacing it: %w", path, err)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// umaskMu serialises listenPrivate's umask change (the umask is the process's).
+var umaskMu sync.Mutex
+
+// listenPrivate binds path with a umask that leaves the socket 0600 from the start: a chmod
+// after bind would leave it open to others (0775 under a 002 umask) in between.
+func listenPrivate(path string) (*net.UnixListener, error) {
+	umaskMu.Lock()
+	defer umaskMu.Unlock()
+	old := syscall.Umask(0o177)
+	defer syscall.Umask(old)
+	return net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 }
 
 // Path is the socket path.
@@ -364,7 +478,7 @@ func (s *Server) acceptLoop() {
 			time.Sleep(10 * time.Millisecond) // e.g. out of descriptors: don't spin
 			continue
 		}
-		c := newConn(nc, s.limit)
+		c := newConn(nc, s.limits)
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()

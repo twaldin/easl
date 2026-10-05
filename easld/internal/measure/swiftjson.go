@@ -5,6 +5,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
 // DecodingError is a Swift JSONDecoder failure, its Error() the text `String(describing:)` gives
@@ -83,26 +85,8 @@ func keyNotFound(key string, path CodingPath) error {
 }
 
 func notRepresentable(n float64) error {
-	text := SwiftJSONNumber(n)
+	text := swiftjson.Number(n)
 	return &DecodingError{fmt.Sprintf("DecodingError.dataCorrupted: Data was corrupted. Debug description: The given data was not valid JSON.. Underlying error: Error Domain=NSCocoaErrorDomain Code=3840 \"Number %s is not representable in Swift.\" UserInfo={NSDebugDescription=Number %s is not representable in Swift.}", text, text)}
-}
-
-// SwiftJSONNumber is how Swift's JSONEncoder writes a Double: its shortest description, decimal
-// from 1e-4 up to 2^53 and exponential (`1e+16`, `1e-06`) outside that, without a `.0`.
-func SwiftJSONNumber(v float64) string {
-	if v == 0 {
-		if math.Signbit(v) {
-			return "-0"
-		}
-		return "0"
-	}
-	abs := math.Abs(v)
-	if abs >= 1<<53 || abs < 1e-4 {
-		s := strconv.FormatFloat(v, 'e', -1, 64) // 1e+16, 1.5e-07
-		return s
-	}
-	s := strconv.FormatFloat(v, 'f', -1, 64)
-	return strings.TrimSuffix(s, ".0")
 }
 
 // Keyed is a keyed decoding container over a JSON object.

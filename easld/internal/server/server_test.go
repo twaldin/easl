@@ -173,7 +173,9 @@ func TestSendKeepsOrderUnderConcurrentSenders(t *testing.T) {
 
 func TestSendNeverBlocksOnAClientThatStopsReading(t *testing.T) {
 	conns := make(chan *Conn, 1)
-	s, err := listen(socketPath(t), func(req any, c *Conn) any { conns <- c; return nil }, 1<<20)
+	l := defaultLimits
+	l.pending = 1 << 20
+	s, err := listen(socketPath(t), func(req any, c *Conn) any { conns <- c; return nil }, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,6 +326,50 @@ func TestListenReplacesStaleSocketAndCreatesItsDirectory(t *testing.T) {
 	c.write(t, `{"id":"x"}`+"\n")
 	c.read(t)
 	first.Close()
+	// The directories it made are the user's alone, like the socket.
+	for _, dir := range []string{filepath.Dir(path), filepath.Dir(filepath.Dir(path))} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o700 {
+			t.Errorf("%s: mode %v", dir, info.Mode().Perm())
+		}
+	}
+}
+
+// A socket another server answers on is never taken over: its clients would silently reach
+// this server instead.
+func TestListenRefusesASocketThatIsServed(t *testing.T) {
+	live := start(t, echo)
+	other, err := Listen(live.Path(), echo)
+	if err == nil {
+		other.Close()
+		t.Fatal("a second server took over a live socket")
+	}
+	if !strings.Contains(err.Error(), "already served") {
+		t.Fatalf("error: %v", err)
+	}
+	c := dial(t, live)
+	c.write(t, `{"id":"still mine"}`+"\n")
+	if got := c.read(t).(map[string]any)["result"]; fmt.Sprint(got) != "map[id:still mine]" {
+		t.Fatalf("the live server answered %v", got)
+	}
+}
+
+// A mistyped socket path that names a file is refused, and the file is left as it was.
+func TestListenNeverRemovesWhatIsNotASocket(t *testing.T) {
+	path := socketPath(t)
+	if err := os.WriteFile(path, []byte("notes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := Listen(path, echo); err == nil {
+		s.Close()
+		t.Fatal("Listen replaced a regular file")
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "notes" {
+		t.Fatalf("the file is gone or changed: %q %v", data, err)
+	}
 }
 
 func TestCloseRemovesOnlyItsOwnSocketFile(t *testing.T) {
@@ -332,7 +378,10 @@ func TestCloseRemovesOnlyItsOwnSocketFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Another instance takes over the path (unlinking a's file); a closing later must leave it.
+	// Someone removes a's file and another server binds the path; a closing later must leave it.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
 	b, err := Listen(path, echo)
 	if err != nil {
 		t.Fatal(err)
@@ -346,6 +395,100 @@ func TestCloseRemovesOnlyItsOwnSocketFile(t *testing.T) {
 	b.Close()
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
 		t.Fatalf("the socket file remains after its own server closed: %v", err)
+	}
+}
+
+// A line past the limit can't be framed: it is answered invalid_params, after the requests
+// before it, and the connection closes. A line of exactly the limit is a request.
+func TestOverlongLineIsAnsweredThenTheConnectionCloses(t *testing.T) {
+	l := defaultLimits
+	l.line = 1024
+	s, err := listen(socketPath(t), echo, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	c := dial(t, s)
+	exact := `{"id":"` + strings.Repeat("x", 1024-len(`{"id":""}`)) + `"}`
+	c.write(t, `{"id":"first"}`+"\n"+exact+"\n"+`{"id":"`+strings.Repeat("y", 4096)+"\n")
+	if got := c.read(t).(map[string]any)["result"]; fmt.Sprint(got) != "map[id:first]" {
+		t.Fatalf("first: %v", got)
+	}
+	if got := c.read(t).(map[string]any)["result"].(map[string]any)["id"]; len(got.(string)) != 1024-len(`{"id":""}`) {
+		t.Fatalf("a line of exactly the limit wasn't answered: %v", got)
+	}
+	failure := c.read(t).(map[string]any)["error"].(map[string]any)
+	if failure["code"] != "invalid_params" || !strings.HasPrefix(failure["message"].(string), "line too long") {
+		t.Fatalf("overlong line: %v", failure)
+	}
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if rest, err := io.ReadAll(c.lines); err != nil && !isReset(err) || len(rest) != 0 {
+		t.Fatalf("connection still open after the overlong line: %q %v", rest, err)
+	}
+}
+
+// A client that pipelines faster than it is answered is read only as fast as its requests are
+// handled, so it can't fill memory; none of its requests is lost.
+func TestReadingPausesWhileTheInboxIsFull(t *testing.T) {
+	l := defaultLimits
+	l.inbox = 4
+	release := make(chan struct{})
+	conns := make(chan *Conn, 1)
+	var once sync.Once
+	s, err := listen(socketPath(t), func(req any, c *Conn) any {
+		once.Do(func() { conns <- c; <-release })
+		return echo(req, c)
+	}, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	c := dial(t, s)
+	const requests = 2000
+	go func() {
+		for i := range requests {
+			if _, err := fmt.Fprintf(c, `{"id":%d,"pad":"%s"}`+"\n", i, strings.Repeat("z", 200)); err != nil {
+				return
+			}
+		}
+	}()
+	held := <-conns
+	queued := func() int {
+		held.inbox.mu.Lock()
+		defer held.inbox.mu.Unlock()
+		return len(held.inbox.items)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for queued() < l.inbox && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond) // the reader would have run on by now
+	if n := queued(); n != l.inbox {
+		t.Fatalf("%d requests queued while the handler was busy, want the limit %d", n, l.inbox)
+	}
+	close(release)
+	for i := range requests {
+		if got := c.read(t).(map[string]any)["result"].(map[string]any)["id"]; got != float64(i) {
+			t.Fatalf("reply %d was for %v", i, got)
+		}
+	}
+}
+
+// Replies are written as the app's JSONEncoder writes them: a client that tells integers from
+// doubles by their text (Python's json) reads the same types from both.
+func TestRepliesWriteNumbersAsTheApp(t *testing.T) {
+	s := start(t, func(req any, c *Conn) any {
+		return map[string]any{"ok": true, "result": map[string]any{"n": []any{1234567.5, 9.1e15, 1e16, 1e-7, 3.0}, "path": "a/b"}}
+	})
+	c := dial(t, s)
+	c.write(t, "{}\n")
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	line, err := c.lines.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"ok":true,"result":{"n":[1234567.5,9.1e+15,1e+16,1e-07,3],"path":"a\/b"}}` + "\n"; line != want {
+		t.Fatalf("got  %s want %s", line, want)
 	}
 }
 

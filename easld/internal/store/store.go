@@ -1,16 +1,22 @@
 package store
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
 // DefaultDebounce is how long a board's changes wait before they are written (BoardStore).
@@ -42,9 +48,17 @@ type pendingSave struct {
 }
 
 // New opens (and creates) a store directory. lock is held while a debounced save takes its
-// snapshot: the lock the boards are changed under.
+// snapshot: the lock the boards are changed under. Temporary files a crashed save left behind
+// are removed: one easld at a time uses a home (its instance lock), so none is being written.
 func New(dir string, debounce time.Duration, lock sync.Locker) *Store {
 	_ = os.MkdirAll(dir, 0o755)
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if isSaveTemp(e.Name()) {
+				os.Remove(filepath.Join(dir, e.Name()))
+			}
+		}
+	}
 	s := &Store{Dir: dir, debounce: debounce, lock: lock, pending: map[string]*pendingSave{}, written: map[string]uint64{}}
 	s.idle = sync.NewCond(&s.mu)
 	return s
@@ -53,18 +67,41 @@ func New(dir string, debounce time.Duration, lock sync.Locker) *Store {
 // Path is the board file of id.
 func (s *Store) Path(id string) string { return filepath.Join(s.Dir, id+".json") }
 
-// Read decodes a stored board; ok is false when there is none or it can't be read (the board
-// then starts empty, as Swift's `try?` decode does).
-func (s *Store) Read(id string) (*Snapshot, bool) {
-	data, err := os.ReadFile(s.Path(id))
+// Unreadable is a board file easld must not open: it doesn't decode, or it is in a newer format
+// than Format. The app's `try?` decode would start such a board empty and overwrite the file on
+// its first save; easld leaves it alone instead, so a board a newer app wrote is never lost.
+type Unreadable struct {
+	Path   string
+	Format int // the file's format when it is newer than Format, else 0
+	Err    error
+}
+
+func (e *Unreadable) Error() string {
+	if e.Format > 0 {
+		return fmt.Sprintf("board file %s is format %d, newer than the %d this easld reads; it is left as it is", e.Path, e.Format, Format)
+	}
+	return fmt.Sprintf("board file %s can't be read (%v); it is left as it is", e.Path, e.Err)
+}
+
+// Read decodes a stored board: nil and no error when there is none, an *Unreadable error when
+// there is one easld can't open.
+func (s *Store) Read(id string) (*Snapshot, error) {
+	path := s.Path(id)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil, false
+		return nil, &Unreadable{Path: path, Err: err}
 	}
 	snap, err := DecodeSnapshot(data)
 	if err != nil {
-		return nil, false
+		return nil, &Unreadable{Path: path, Err: err}
 	}
-	return snap, true
+	if snap.Format != nil && *snap.Format > Format {
+		return nil, &Unreadable{Path: path, Format: *snap.Format}
+	}
+	return snap, nil
 }
 
 // ScheduleSave writes the board `debounce` after its last change. snapshot is called with the
@@ -167,24 +204,50 @@ func (s *Store) Flush() {
 	s.mu.Unlock()
 }
 
+// writeAtomic replaces path with data as Data.write(options: .atomic) does: a temporary file
+// beside it (mode 0666 less the umask, as Foundation creates it), synced, then renamed over.
 func writeAtomic(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	var tmp *os.File
+	for {
+		var suffix [6]byte
+		rand.Read(suffix[:])
+		name := filepath.Join(filepath.Dir(path), saveTempPrefix(filepath.Base(path))+hex.EncodeToString(suffix[:]))
+		f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		tmp = f
+		break
+	}
+	_, err := tmp.Write(data)
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
 	if err != nil {
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
 		os.Remove(tmp.Name())
-		return err
 	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	return err
+}
+
+// saveTempPrefix starts the name of a save's temporary file for the file named base.
+func saveTempPrefix(base string) string { return "." + base + ".tmp-" }
+
+// isSaveTemp is whether a store entry is a save's temporary file: `.<id>.json.tmp-<hex>`.
+func isSaveTemp(name string) bool {
+	head, _, found := strings.Cut(name, ".json.tmp-")
+	return found && strings.HasPrefix(head, ".")
 }
 
 // Stored is a board as stored on disk, whether or not it is open (BoardStore.Stored).
@@ -248,7 +311,8 @@ func Export(snap Snapshot, path string) error {
 	snap.TurnErrors = nil
 	snap.LifecycleSeq = nil
 	snap.Repo = nil
-	data, err := EncodeSwift(snap.JSON(), true, false)
+	snap.Unknown = nil // the app's export writes BoardSnapshot's own keys
+	data, err := swiftjson.Encode(snap.JSON(), true, false)
 	if err != nil {
 		return err
 	}

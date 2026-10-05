@@ -11,9 +11,32 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/twaldin/easl/easld/internal/model"
 )
+
+// A git that hangs is stopped even when the caller gave no timeout (easld runs requests under
+// one lock), and a process it started that keeps its output open doesn't hold the call either.
+func TestHungGitIsStopped(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	saved := gitTimeout
+	gitTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { gitTimeout = saved })
+	started := time.Now()
+	_, err := RunGit([]string{"remote"}, t.TempDir(), nil, 0, 0)
+	var failure *GitError
+	if !errors.As(err, &failure) || failure.Kind != "timedOut" {
+		t.Fatalf("got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("returned after %v", elapsed)
+	}
+}
 
 func write(t *testing.T, root, path string, lines ...string) {
 	t.Helper()
@@ -594,10 +617,5 @@ func TestSwiftDecodingErrorTexts(t *testing.T) {
 	}
 	if _, err := k.String("n"); err == nil || err.Error() != "DecodingError.valueNotFound: Expected value of type String but found null instead. Path: n. Debug description: Cannot get value of type String -- found null value instead" {
 		t.Errorf("null: %v", err)
-	}
-	for v, want := range map[float64]string{1e16: "1e+16", 1e-6: "1e-06", 123456789.5: "123456789.5", 9223372036854775807: "9.223372036854776e+18", 0.5: "0.5", 3: "3"} {
-		if got := SwiftJSONNumber(v); got != want {
-			t.Errorf("%v → %s, want %s", v, got, want)
-		}
 	}
 }

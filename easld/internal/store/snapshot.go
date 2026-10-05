@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
 // Format is the on-disk format Board.snapshot writes. 2: a tile's frame is its whole drawn box,
@@ -32,6 +33,15 @@ type Snapshot struct {
 	TurnErrors   map[string]string
 	LifecycleSeq map[string]int
 	Repo         *RepoRecord
+	// Unknown holds the file's top-level keys easld doesn't know (written by a newer app), so a
+	// board easld rewrites keeps them.
+	Unknown map[string]any
+}
+
+// snapshotKeys are the top-level keys of BoardSnapshot.
+var snapshotKeys = map[string]bool{
+	"format": true, "id": true, "root": true, "revision": true, "objects": true, "tray": true, "attention": true,
+	"promptTarget": true, "finalAnswers": true, "turnErrors": true, "lifecycleSeq": true, "repo": true,
 }
 
 // Attention is an agent's "look here" marker on one object (Attention.swift).
@@ -115,14 +125,18 @@ func (r RepoRecord) json() map[string]any {
 	return m
 }
 
-// JSON is the snapshot as the board file holds it (dates ISO 8601).
+// JSON is the snapshot as the board file holds it (dates ISO 8601), unknown keys included.
 func (s *Snapshot) JSON() map[string]any {
 	file := func(t time.Time) any { return model.FileTime(t) }
 	objects := make([]any, len(s.Objects))
 	for i, o := range s.Objects {
 		objects[i] = o.FileJSON()
 	}
-	m := map[string]any{"id": s.ID, "root": s.Root, "revision": float64(s.Revision), "objects": objects}
+	m := make(map[string]any, len(snapshotKeys)+len(s.Unknown))
+	for k, v := range s.Unknown {
+		m[k] = v
+	}
+	m["id"], m["root"], m["revision"], m["objects"] = s.ID, s.Root, float64(s.Revision), objects
 	if s.Format != nil {
 		m["format"] = float64(*s.Format)
 	}
@@ -171,9 +185,9 @@ func stringMap(in map[string]string) map[string]any {
 }
 
 // Encode is the board file's bytes, as BoardStore.encoder writes them (sortedKeys, ISO 8601);
-// a NonFinite error when a number is NaN or infinite.
+// a swiftjson.NonFinite error when a number is NaN or infinite.
 func (s *Snapshot) Encode() ([]byte, error) {
-	return EncodeSwift(s.JSON(), false, true)
+	return swiftjson.Encode(s.JSON(), false, true)
 }
 
 // --- decoding ---
@@ -195,6 +209,14 @@ func DecodeSnapshot(data []byte) (*Snapshot, error) {
 		return nil, decodeError("not an object")
 	}
 	s := &Snapshot{}
+	for k, v := range m {
+		if !snapshotKeys[k] {
+			if s.Unknown == nil {
+				s.Unknown = map[string]any{}
+			}
+			s.Unknown[k] = v
+		}
+	}
 	if v, present := m["format"]; present && v != nil {
 		f, ok := intOf(v)
 		if !ok {
@@ -383,7 +405,19 @@ func decodeObject(v any) (model.Object, error) {
 	if _, present := m["props"]; !present {
 		return model.Object{}, fmt.Errorf("missing props")
 	}
-	return model.ObjectFromJSON(m)
+	o, err := model.ObjectFromJSON(m)
+	if err != nil {
+		return o, err
+	}
+	for k, v := range m {
+		if !model.ObjectKeys[k] {
+			if o.Unknown == nil {
+				o.Unknown = map[string]any{}
+			}
+			o.Unknown[k] = v
+		}
+	}
+	return o, nil
 }
 
 func checkActor(v any) error {

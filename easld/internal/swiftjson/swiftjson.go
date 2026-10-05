@@ -1,4 +1,9 @@
-package store
+// Package swiftjson writes JSON as Swift's JSONEncoder does, so what easld writes (board files,
+// socket replies and events) reads the same as what the app writes: keys sorted, `/` escaped as
+// `\/` (unless withoutEscapingSlashes), non-ASCII left as is, numbers as Swift formats a Double,
+// and prettyPrinted output indented by two spaces with ` : ` between a key and its value (an
+// empty container's lines are blank).
+package swiftjson
 
 import (
 	"bytes"
@@ -10,22 +15,18 @@ import (
 	"unicode/utf8"
 )
 
-// The board file is written as Swift's JSONEncoder writes it, so a board saved by easld and one
-// saved by the app read the same: keys sorted, `/` escaped as `\/` (unless withoutEscapingSlashes),
-// non-ASCII left as is, and prettyPrinted output indented by two spaces with ` : ` between a key
-// and its value (an empty container's lines are blank).
-
-type swiftJSON struct {
+type encoder struct {
 	pretty      bool
 	escapeSlash bool
 	buf         bytes.Buffer
 	err         error
 }
 
-// EncodeSwift writes v (generic JSON values) as Swift's JSONEncoder would with sortedKeys. Like
-// JSONEncoder it fails on NaN and infinities (NonFinite) and then writes nothing.
-func EncodeSwift(v any, pretty, escapeSlashes bool) ([]byte, error) {
-	e := &swiftJSON{pretty: pretty, escapeSlash: escapeSlashes}
+// Encode writes v (generic JSON values; typed ones go through encoding/json first) as Swift's
+// JSONEncoder would with sortedKeys. Like JSONEncoder it fails on NaN and infinities (NonFinite)
+// and then writes nothing.
+func Encode(v any, pretty, escapeSlashes bool) ([]byte, error) {
+	e := &encoder{pretty: pretty, escapeSlash: escapeSlashes}
 	e.value(v, 0)
 	if e.err != nil {
 		return nil, e.err
@@ -53,14 +54,14 @@ func (n NonFinite) Debug() string {
 	return "Unable to encode " + what + " directly in JSON."
 }
 
-func (e *swiftJSON) indent(depth int) {
+func (e *encoder) indent(depth int) {
 	e.buf.WriteByte('\n')
 	for range depth {
 		e.buf.WriteString("  ")
 	}
 }
 
-func (e *swiftJSON) value(v any, depth int) {
+func (e *encoder) value(v any, depth int) {
 	switch x := v.(type) {
 	case nil:
 		e.buf.WriteString("null")
@@ -75,9 +76,9 @@ func (e *swiftJSON) value(v any, depth int) {
 			e.fail(NonFinite{x})
 			return
 		}
-		e.buf.WriteString(swiftNumber(x))
+		e.number(x)
 	case int:
-		e.buf.WriteString(strconv.Itoa(x))
+		e.number(float64(x)) // Swift holds every JSON number as a Double
 	case string:
 		e.str(x)
 	case []any:
@@ -157,13 +158,13 @@ func (e *swiftJSON) value(v any, depth int) {
 	}
 }
 
-func (e *swiftJSON) fail(err error) {
+func (e *encoder) fail(err error) {
 	if e.err == nil {
 		e.err = err
 	}
 }
 
-func (e *swiftJSON) str(s string) {
+func (e *encoder) str(s string) {
 	const hex = "0123456789abcdef"
 	e.buf.WriteByte('"')
 	for i := 0; i < len(s); {
@@ -209,11 +210,49 @@ func (e *swiftJSON) str(s string) {
 	e.buf.WriteByte('"')
 }
 
-// swiftNumber formats a Double as JSONEncoder does: integral values without a fraction, others
-// in their shortest round-tripping form.
-func swiftNumber(f float64) string {
-	if f == math.Trunc(f) && math.Abs(f) < 1e16 {
-		return strconv.FormatFloat(f, 'f', -1, 64)
+func (e *encoder) number(v float64) {
+	var scratch [32]byte
+	e.buf.Write(AppendNumber(scratch[:0], v))
+}
+
+// Number is how JSONEncoder writes a Double: Double.description without a trailing `.0`, so
+// decimal (`3`, `0.5`, `1234567.5`, `9007199254740992`) from 1e-4 up to 2^53 in magnitude and
+// exponential outside that (`9.1e+15`, `1e+16`, `1e-05`), always the shortest digits that read
+// back as the same Double.
+func Number(v float64) string {
+	var scratch [32]byte
+	return string(AppendNumber(scratch[:0], v))
+}
+
+// AppendNumber appends Number(v) to dst.
+func AppendNumber(dst []byte, v float64) []byte {
+	if v == 0 {
+		if math.Signbit(v) {
+			return append(dst, "-0"...)
+		}
+		return append(dst, '0')
 	}
-	return strconv.FormatFloat(f, 'g', -1, 64)
+	if abs := math.Abs(v); abs > 1<<53 || abs < 1e-4 {
+		return strconv.AppendFloat(dst, v, 'e', -1, 64) // two exponent digits at least, as Swift
+	}
+	return strconv.AppendFloat(dst, v, 'f', -1, 64)
+}
+
+// Description is Double.description, which Swift interpolates into messages: Number with `.0`
+// on an integral decimal (`3.0`, `9007199254740992.0`), and `nan`, `inf`, `-inf`.
+func Description(v float64) string {
+	switch {
+	case math.IsNaN(v):
+		return "nan"
+	case math.IsInf(v, 1):
+		return "inf"
+	case math.IsInf(v, -1):
+		return "-inf"
+	}
+	var scratch [32]byte
+	s := AppendNumber(scratch[:0], v)
+	if bytes.IndexAny(s, ".e") < 0 {
+		s = append(s, ".0"...)
+	}
+	return string(s)
 }

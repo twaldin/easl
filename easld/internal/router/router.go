@@ -18,7 +18,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/server"
-	"github.com/twaldin/easl/easld/internal/store"
+	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
 // Failure is an API error with its code (ApiRouter.Failure).
@@ -102,12 +102,12 @@ func (r *Router) handle(req any, c Conn) any {
 }
 
 // nonFinite finds a NaN or infinite number in a result.
-func nonFinite(v any) (store.NonFinite, bool) {
+func nonFinite(v any) (swiftjson.NonFinite, bool) {
 	switch x := v.(type) {
 	case nil, bool, string, int:
 	case float64:
 		if math.IsNaN(x) || math.IsInf(x, 0) {
-			return store.NonFinite{Value: x}, true
+			return swiftjson.NonFinite{Value: x}, true
 		}
 	case []any:
 		for _, e := range x {
@@ -141,10 +141,10 @@ func nonFinite(v any) (store.NonFinite, bool) {
 		var unsupported *json.UnsupportedValueError
 		if _, err := json.Marshal(x); errors.As(err, &unsupported) {
 			f, _ := strconv.ParseFloat(unsupported.Str, 64)
-			return store.NonFinite{Value: f}, true
+			return swiftjson.NonFinite{Value: f}, true
 		}
 	}
-	return store.NonFinite{}, false
+	return swiftjson.NonFinite{}, false
 }
 
 func (r *Router) call(id any, method string, raw any, c Conn) (any, error) {
@@ -421,7 +421,7 @@ func describe(v any) string {
 	case bool:
 		return "bool(" + strconv.FormatBool(x) + ")"
 	case float64:
-		return "number(" + swiftDouble(x) + ")"
+		return "number(" + swiftjson.Description(x) + ")"
 	case string:
 		return "string(" + swiftQuoted(x) + ")"
 	case []any:
@@ -446,24 +446,6 @@ func describe(v any) string {
 		return "object([" + strings.Join(parts, ", ") + "])"
 	}
 	return fmt.Sprint(v)
-}
-
-// swiftDouble is Double.description: `1.0`, `0.5`, `1e+16`.
-func swiftDouble(f float64) string {
-	if f == float64(int64(f)) && f < 1e16 && f > -1e16 {
-		return strconv.FormatFloat(f, 'f', 1, 64)
-	}
-	s := strconv.FormatFloat(f, 'g', -1, 64)
-	if strings.Contains(s, "e") {
-		mant, exp, _ := strings.Cut(s, "e")
-		sign := exp[0]
-		digits := strings.TrimLeft(exp[1:], "0")
-		if len(digits) < 2 {
-			digits = strings.Repeat("0", 2-len(digits)) + digits
-		}
-		return mant + "e" + string(sign) + digits
-	}
-	return s
 }
 
 // swiftQuoted is String.debugDescription.

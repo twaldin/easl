@@ -211,6 +211,15 @@ type Object struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Props     map[string]any
+	// Unknown is a stored object's keys easld doesn't know (written by a newer app); FileJSON
+	// writes them back, the API doesn't report them. Never changed, so copies share it.
+	Unknown map[string]any
+}
+
+// ObjectKeys are the keys of a CanvasObject.
+var ObjectKeys = map[string]bool{
+	"id": true, "type": true, "frame": true, "z": true, "rev": true, "parent": true, "createdBy": true,
+	"updatedBy": true, "createdAt": true, "updatedAt": true, "props": true,
 }
 
 // Clone copies the object deeply (props included), so a copy can be changed freely.
@@ -275,9 +284,15 @@ func (o Object) APIJSON() map[string]any {
 	return o.encode(func(t time.Time) any { return APITime(t) })
 }
 
-// FileJSON is the object as the board file stores it.
+// FileJSON is the object as the board file stores it, keys easld doesn't know included.
 func (o Object) FileJSON() map[string]any {
-	return o.encode(func(t time.Time) any { return FileTime(t) })
+	m := o.encode(func(t time.Time) any { return FileTime(t) })
+	for k, v := range o.Unknown {
+		if !ObjectKeys[k] {
+			m[k] = v
+		}
+	}
+	return m
 }
 
 // ObjectFromJSON decodes a stored (or API-shaped) object.

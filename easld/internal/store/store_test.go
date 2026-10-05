@@ -7,9 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
 // swiftBoard is a board file as BoardStore.encoder writes it (sortedKeys, ISO 8601 dates,
@@ -23,6 +27,98 @@ func TestSwiftBoardFileRoundTripsByteForByte(t *testing.T) {
 	}
 	if got := string(encoded(t, snap)); got != swiftBoard {
 		t.Fatalf("re-encoded board differs:\n got %s\nwant %s", got, swiftBoard)
+	}
+}
+
+// Swift writes a Double decimally up to 2^53 and exponentially past it (swiftjson's tests have
+// the encoder's own output), so a board with far-away or fractional large coordinates is
+// written back as the app wrote it.
+func TestLargeNumbersRoundTripAsSwiftWritesThem(t *testing.T) {
+	file := strings.Replace(swiftBoard, `"frame":{"h":266,"w":280,"x":0,"y":0}`, `"frame":{"h":266,"w":280,"x":1234567.5,"y":9.1e+15}`, 1)
+	snap, err := DecodeSnapshot([]byte(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(encoded(t, snap)); got != file {
+		t.Fatalf("re-encoded board differs:\n got %s\nwant %s", got, file)
+	}
+}
+
+// Keys a newer app writes (top-level, and on objects) survive easld rewriting the board.
+func TestUnknownKeysSurviveARewrite(t *testing.T) {
+	file := strings.Replace(swiftBoard, `"id":"obj_01J0000000000000NOTE","props"`, `"id":"obj_01J0000000000000NOTE","locked":{"by":"tim"},"props"`, 1)
+	file = strings.TrimSuffix(file, "}") + `,"zones":[{"name":"src\/ui","x":1234567.5}]}`
+	snap, err := DecodeSnapshot([]byte(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(t.TempDir(), time.Hour, &sync.Mutex{})
+	if err := s.Write(snap); err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.Read(snap.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(encoded(t, again)); got != file {
+		t.Fatalf("rewritten board differs:\n got %s\nwant %s", got, file)
+	}
+}
+
+func TestReadRefusesBoardsItCantRead(t *testing.T) {
+	s := New(t.TempDir(), time.Hour, &sync.Mutex{})
+	if snap, err := s.Read("brd_none"); snap != nil || err != nil {
+		t.Fatalf("no file: %v %v", snap, err)
+	}
+	newer := strings.Replace(swiftBoard, `"format":2`, `"format":3`, 1)
+	for name, content := range map[string]string{"newer": newer, "truncated": swiftBoard[:200], "directory": ""} {
+		path := s.Path("brd_" + name)
+		if name == "directory" {
+			if err := os.Mkdir(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		snap, err := s.Read("brd_" + name)
+		var unreadable *Unreadable
+		if snap != nil || !errors.As(err, &unreadable) || unreadable.Path != path {
+			t.Errorf("%s: %v %v", name, snap, err)
+		}
+		if name == "newer" && unreadable != nil && unreadable.Format != 3 {
+			t.Errorf("newer: format %d", unreadable.Format)
+		}
+	}
+}
+
+// A crash between writing a save's temporary file and renaming it leaves the file behind;
+// opening the store removes such files and nothing else. Saves leave board files 0666 less the
+// umask, as Foundation's atomic write does.
+func TestStoreFilesAsTheAppLeavesThem(t *testing.T) {
+	dir := t.TempDir()
+	names := map[string]bool{".brd_x.json.tmp-0a1b2c3d4e5f": false, "brd_x.json": true, ".brd_x.json": true, "notes.json.tmp-1": true, ".DS_Store": true}
+	for name := range names {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := syscall.Umask(0o022)
+	defer syscall.Umask(old)
+	s := New(dir, time.Hour, &sync.Mutex{})
+	for name, kept := range names {
+		if _, err := os.Stat(filepath.Join(dir, name)); (err == nil) != kept {
+			t.Errorf("%s: kept %v, want %v", name, err == nil, kept)
+		}
+	}
+	if err := s.Write(&Snapshot{ID: "brd_y", Root: "/y", Revision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(s.Path("brd_y"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("board file mode %v", info.Mode())
 	}
 }
 
@@ -75,7 +171,7 @@ func TestAtlasObjectsSurviveAStoreRoundTrip(t *testing.T) {
 		objects[i] = o
 	}
 	file := map[string]any{"id": "brd_atlas", "root": "/atlas", "revision": float64(len(objects)), "objects": objects, "format": float64(2), "tray": []any{}}
-	encoded, err := EncodeSwift(file, false, true)
+	encoded, err := swiftjson.Encode(file, false, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,9 +187,9 @@ func TestAtlasObjectsSurviveAStoreRoundTrip(t *testing.T) {
 	if err := s.Write(snap); err != nil {
 		t.Fatal(err)
 	}
-	again, ok := s.Read("brd_atlas")
-	if !ok {
-		t.Fatal("not readable")
+	again, err := s.Read("brd_atlas")
+	if err != nil || again == nil {
+		t.Fatalf("not readable: %v", err)
 	}
 	if !reflect.DeepEqual(again.JSON(), snap.JSON()) {
 		t.Fatal("snapshot changed through the store")
@@ -118,9 +214,9 @@ func TestDebouncedSaveWritesOnceAndFlushWritesPending(t *testing.T) {
 		t.Fatal("saved before the debounce")
 	}
 	time.Sleep(200 * time.Millisecond)
-	got, ok := s.Read("brd_x")
-	if !ok || got.Revision != 3 {
-		t.Fatalf("debounced save: %+v %v", got, ok)
+	got, err := s.Read("brd_x")
+	if err != nil || got == nil || got.Revision != 3 {
+		t.Fatalf("debounced save: %+v %v", got, err)
 	}
 	setRevision(9)
 	s.ScheduleSave("brd_x", snap)
@@ -151,8 +247,8 @@ func TestFlushWaitsForASaveUnderWay(t *testing.T) {
 	}
 	close(release)
 	<-flushed
-	if got, ok := s.Read("brd_x"); !ok || got.Revision != 4 {
-		t.Fatalf("after Flush: %+v %v", got, ok)
+	if got, err := s.Read("brd_x"); err != nil || got == nil || got.Revision != 4 {
+		t.Fatalf("after Flush: %+v %v", got, err)
 	}
 }
 
@@ -192,7 +288,7 @@ func TestNonFiniteBoardKeepsTheFileItHad(t *testing.T) {
 	beforeExport, _ := os.ReadFile(exported)
 	bad, _ := DecodeSnapshot([]byte(swiftBoard))
 	bad.Objects[0].Frame.X = math.Inf(1)
-	var nf NonFinite
+	var nf swiftjson.NonFinite
 	if err := s.Write(bad); !errors.As(err, &nf) {
 		t.Fatalf("Write: %v", err)
 	}
