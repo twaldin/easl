@@ -212,6 +212,8 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 			result["cleared"] = list
 		}
 		return result, nil
+	case "view.open_url":
+		return r.openURL(p)
 	case "view.get":
 		if _, err := r.boardOf(p); err != nil {
 			return nil, err

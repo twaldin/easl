@@ -8,6 +8,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/weblink"
 )
 
 // render is view.render: its params are checked as the app checks them; drawing needs the app.
@@ -151,6 +152,31 @@ func (r *Router) snapshot(p map[string]any) (any, error) {
 		return nil, err
 	}
 	return nil, fail(api.CodeUnsupported, "snapshots need the app UI")
+}
+
+// openURL is view.open_url: an http(s) address shown in a browser tile beside the caller's
+// terminal (Board.OpenLink), or the tile already showing it. Revealing the tile is the window's
+// (ApiRouter.showOpenedLink), and easld has none.
+func (r *Router) openURL(p map[string]any) (any, error) {
+	b, err := r.boardOf(p)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := str(p, "url")
+	if err != nil {
+		return nil, err
+	}
+	url, ok := weblink.Parse(raw)
+	if !ok {
+		return nil, invalid("view.open_url opens http and https addresses, not %s", raw)
+	}
+	caller := r.callerOf(p)
+	source := ""
+	if _, ok := b.Objects()[caller]; ok {
+		source = caller
+	}
+	o, existing := b.OpenLink(url, source, caller, nil)
+	return map[string]any{"object": objectJSON(b.ReportedOne(o)), "existing": existing}, nil
 }
 
 const reloadTimeoutMs = 15_000

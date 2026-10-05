@@ -27,3 +27,6 @@ func hypot(x, y float64) float64 {
 	}
 	return math.Sqrt(math.FMA(y, y, float64(x*x)))
 }
+
+// Hypot is hypot for the board's own distances (Frame.centerDistance).
+func Hypot(x, y float64) float64 { return hypot(x, y) }
