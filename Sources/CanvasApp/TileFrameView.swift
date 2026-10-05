@@ -77,7 +77,7 @@ final class TileFrameView: NSView {
         // The group's label says the title (with state, range, caption); the label itself would
         // say it again, and is empty while the window isn't visible (`syncTitle`).
         titleLabel.setAccessibilityElement(false)
-        titleLabel.font = Self.titleFont
+        titleLabel.font = ChromeText.font(Self.titleFont)
         titleLabel.lineBreakMode = .byTruncatingMiddle
         badge.wantsLayer = true
         badge.layer?.cornerRadius = 5
@@ -87,7 +87,7 @@ final class TileFrameView: NSView {
         closeButton.title = "✕"
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
-        authorLabel.font = Self.authorFont
+        authorLabel.font = ChromeText.font(Self.authorFont)
         authorLabel.textColor = .secondaryLabelColor
         authorLabel.lineBreakMode = .byTruncatingTail
         authorLabel.alignment = .right
@@ -95,11 +95,15 @@ final class TileFrameView: NSView {
         titleBar.addSubview(badge)
         titleBar.addSubview(titleLabel)
         titleBar.addSubview(authorLabel)
-        statusLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        statusLabel.font = ChromeText.font(Self.statusFont)
         statusLabel.alignment = .right
         statusLabel.isHidden = true
         titleBar.addSubview(statusLabel)
         titleBar.addSubview(closeButton)
+        closeBaseFont = closeButton.font ?? .systemFont(ofSize: NSFont.systemFontSize)
+        closeButton.font = ChromeText.font(closeBaseFont)
+        zoomControl.applyScale()
+        NotificationCenter.default.addObserver(self, selector: #selector(chromeTextChanged), name: ChromeText.didChange, object: nil)
         zoomControl.onStep = { [weak self] bigger in self?.stepZoom(bigger: bigger) }
         zoomControl.onReset = { [weak self] in self?.onZoom?(1) }
         titleBar.addSubview(zoomControl)
@@ -285,8 +289,29 @@ final class TileFrameView: NSView {
 
     // MARK: Author mark
 
+    /// The title bar's text at 100% (`ChromeText` scales it; `view.render` draws these as they are).
     static let titleFont = NSFont.systemFont(ofSize: 12, weight: .medium)
     static let authorFont = NSFont.systemFont(ofSize: 11)
+    static let statusFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+    private var closeBaseFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+
+    /// Chrome text changed size (`ChromeText.didChange`): the title bar's text and the width it
+    /// takes. The bar itself stays `titleHeight` tall: that is the board's geometry.
+    @objc private func chromeTextChanged() {
+        titleLabel.font = ChromeText.font(Self.titleFont)
+        authorLabel.font = ChromeText.font(Self.authorFont)
+        statusLabel.font = ChromeText.font(Self.statusFont)
+        closeButton.font = ChromeText.font(closeBaseFont)
+        zoomControl.applyScale()
+        updateZoomControl()
+    }
+
+    /// A line of title bar text `height` points tall at 100%, as a frame centred in the bar at
+    /// `scale`.
+    private static func line(_ height: CGFloat, scale: Double) -> (y: CGFloat, height: CGFloat) {
+        let scaled = (height * CGFloat(scale)).rounded()
+        return (((titleHeight - scaled) / 2).rounded(), scaled)
+    }
 
     /// The name of the agent terminal that made the object (`AuthorMark`), nil for none.
     private(set) var author: String?
@@ -307,8 +332,9 @@ final class TileFrameView: NSView {
         zoomControl.frame = TileTitleBar.zoomControlFrame(width: width, controlWidth: zoomWidth) ?? .zero
         let trailing = zoomWidth > 0 ? zoomWidth + 4 : 0
         let status = statusLabel.isHidden ? 0 : min(statusLabel.fittingSize.width, max(0, width / 3))
-        statusLabel.frame = NSRect(x: width - 32 - trailing - status, y: 6, width: status, height: 15)
-        let frames = Self.titleFrames(width: width - (status > 0 ? status + 8 : 0) - trailing, title: titleLabel.stringValue, author: author)
+        let line = Self.line(15, scale: ChromeText.scale)
+        statusLabel.frame = NSRect(x: width - 32 - trailing - status, y: line.y, width: status, height: line.height)
+        let frames = Self.titleFrames(width: width - (status > 0 ? status + 8 : 0) - trailing, title: titleLabel.stringValue, author: author, scale: ChromeText.scale)
         titleLabel.frame = frames.title
         authorLabel.isHidden = frames.author == nil
         if let rect = frames.author { authorLabel.frame = rect }
@@ -356,24 +382,29 @@ final class TileFrameView: NSView {
     static let zoomLabelFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
 
     /// Where the title bar shows the content zoom percentage while − and + are hidden, here and
-    /// in `view.render`: just before the close button; nil at 100%.
-    static func zoomLabelFrame(width: CGFloat, zoom: Double) -> NSRect? {
+    /// in `view.render`: just before the close button; nil at 100%. `scale`: the chrome text
+    /// scale (`view.render` draws at 1, the same for every client).
+    static func zoomLabelFrame(width: CGFloat, zoom: Double, scale: Double = ChromeText.scale) -> NSRect? {
         guard abs(zoom - 1) >= 0.001 else { return nil }
-        return NSRect(x: width - 30 - TileZoomControl.percentWidth, y: 4, width: TileZoomControl.percentWidth, height: 18)
+        let percent = TileZoomControl.percentWidth(scale: scale)
+        return NSRect(x: width - 30 - percent, y: 4, width: percent, height: 18)
     }
 
     /// Where a title bar `width` wide draws the title and the author mark (nil: none), here and
     /// in `view.render`: the mark right-aligned before the close button, truncated before the
-    /// title and dropped in a narrow bar (`AuthorMark.width`).
-    static func titleFrames(width: CGFloat, title: String, author: String?) -> (title: NSRect, author: NSRect?) {
+    /// title and dropped in a narrow bar (`AuthorMark.width`). The text is `scale` times its
+    /// size; the bar's height and its left and right margins are fixed.
+    static func titleFrames(width: CGFloat, title: String, author: String?, scale: Double = ChromeText.scale) -> (title: NSRect, author: NSRect?) {
         let space = max(0, width - 60)
-        let whole = NSRect(x: 26, y: 5, width: space, height: 16)
+        let titleLine = line(16, scale: scale), markLine = line(15, scale: scale)
+        let whole = NSRect(x: 26, y: titleLine.y, width: space, height: titleLine.height)
         guard let author else { return (whole, nil) }
         // A label's cell pads its text 2 pt on either side.
         func measure(_ text: String, _ font: NSFont) -> CGFloat { ((text as NSString).size(withAttributes: [.font: font]).width + 5).rounded(.up) }
-        let shown = AuthorMark.width(natural: measure(AuthorMark.label(author), authorFont), title: measure(title, titleFont), space: space)
+        let shown = AuthorMark.width(natural: measure(AuthorMark.label(author), ChromeText.font(authorFont, scale: scale)),
+                                     title: measure(title, ChromeText.font(titleFont, scale: scale)), space: space)
         guard shown > 0 else { return (whole, nil) }
-        let mark = NSRect(x: whole.maxX - shown, y: 6, width: shown, height: 15)
+        let mark = NSRect(x: whole.maxX - shown, y: markLine.y, width: shown, height: markLine.height)
         return (NSRect(x: whole.minX, y: whole.minY, width: max(0, space - shown - AuthorMark.gap), height: whole.height), mark)
     }
 
@@ -694,9 +725,16 @@ private final class TileZoomControl: NSView {
     private let percent = NSButton()
     private let plus = NSButton()
     private var expanded = false
-    static let buttonWidth: CGFloat = 18
-    /// Room for the widest percentage ("100%", "800%") and the label's padding.
-    static let percentWidth: CGFloat = (("800%" as NSString).size(withAttributes: [.font: TileFrameView.zoomLabelFont]).width + 10).rounded(.up)
+    /// Wide enough for a − or + at the chrome text scale.
+    static var buttonWidth: CGFloat { ChromeText.scaled(18) }
+    private static var percentWidths: [Double: CGFloat] = [:]
+    /// Room for the widest percentage ("100%", "800%") and the label's padding, at `scale`.
+    static func percentWidth(scale: Double) -> CGFloat {
+        if let known = percentWidths[scale] { return known }
+        let width = (("800%" as NSString).size(withAttributes: [.font: ChromeText.font(TileFrameView.zoomLabelFont, scale: scale)]).width + 10).rounded(.up)
+        percentWidths[scale] = width
+        return width
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -724,12 +762,21 @@ private final class TileZoomControl: NSView {
     nonisolated override var isFlipped: Bool { true }
 
     /// The control's width as it shows now: the percentage, and − and + beside it when expanded.
-    var fittedWidth: CGFloat { Self.percentWidth + (expanded ? 2 * Self.buttonWidth : 0) }
+    var fittedWidth: CGFloat { Self.percentWidth(scale: ChromeText.scale) + (expanded ? 2 * Self.buttonWidth : 0) }
+
+    /// The symbols and the percentage at the chrome text scale (the percentage when `show` runs).
+    func applyScale() {
+        for (button, symbol, label) in [(minus, "minus", "Zoom content out"), (plus, "plus", "Zoom content in")] {
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+                .withSymbolConfiguration(.init(pointSize: ChromeText.size(10), weight: .semibold))
+        }
+        needsLayout = true
+    }
 
     func show(zoom: Double, expanded: Bool, canZoomOut: Bool, canZoomIn: Bool) {
         self.expanded = expanded
         let text = ObjectZoom.percent(zoom)
-        percent.attributedTitle = NSAttributedString(string: text, attributes: [.font: TileFrameView.zoomLabelFont, .foregroundColor: NSColor.secondaryLabelColor])
+        percent.attributedTitle = NSAttributedString(string: text, attributes: [.font: ChromeText.font(TileFrameView.zoomLabelFont), .foregroundColor: NSColor.secondaryLabelColor])
         percent.setAccessibilityLabel("Content zoom \(text), reset to 100%")
         minus.isHidden = !expanded
         plus.isHidden = !expanded
@@ -740,11 +787,11 @@ private final class TileZoomControl: NSView {
 
     override func layout() {
         super.layout()
-        let h = bounds.height
+        let h = bounds.height, button = Self.buttonWidth, percentWidth = Self.percentWidth(scale: ChromeText.scale)
         if expanded {
-            minus.frame = NSRect(x: 0, y: 0, width: Self.buttonWidth, height: h)
-            percent.frame = NSRect(x: Self.buttonWidth, y: 0, width: Self.percentWidth, height: h)
-            plus.frame = NSRect(x: Self.buttonWidth + Self.percentWidth, y: 0, width: Self.buttonWidth, height: h)
+            minus.frame = NSRect(x: 0, y: 0, width: button, height: h)
+            percent.frame = NSRect(x: button, y: 0, width: percentWidth, height: h)
+            plus.frame = NSRect(x: button + percentWidth, y: 0, width: button, height: h)
         } else {
             percent.frame = bounds
         }

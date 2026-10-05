@@ -17,6 +17,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let registry: BoardRegistry
     private var responderObservation: NSKeyValueObservation?
     private var drawing: ShapeLayer?
+    /// The tray is `ChromeText.scaled(34)` tall: its text scales with the chrome text size.
+    private var trayHeight: NSLayoutConstraint?
 
     /// The board in front: the frontmost visible board window, with tabs its selected tab (the
     /// others are ordered out). What menu commands and ⌘Z act on, also while a panel such as
@@ -39,8 +41,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }
         guard let worktree = GitWorktree.containing(directory.standardizedFileURL.path), worktree.commonDir == board.repo?.commonDir,
               !worktree.isMain, let region = board.region(for: worktree) else { return }
-        // On the next turn, once the window has laid the canvas out. The view opens at 100%
-        // wherever layout puts it: the board doesn't save its viewport.
+        // On the next turn, once the window has laid the canvas out and after the board's own
+        // opening view (`CanvasView.placeOpeningView`): the worktree's region wins over the saved view.
         DispatchQueue.main.async { [weak self] in self?.canvas.reveal(region) }
     }
 
@@ -66,6 +68,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         tray.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(canvas)
         container.addSubview(tray)
+        let trayHeight = tray.heightAnchor.constraint(equalToConstant: ChromeText.scaled(34))
+        self.trayHeight = trayHeight
         NSLayoutConstraint.activate([
             canvas.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             canvas.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -73,7 +77,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             canvas.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             tray.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             tray.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
-            tray.heightAnchor.constraint(equalToConstant: 34),
+            trayHeight,
             // Its natural width (`TrayBar.intrinsicContentSize`, at least `TrayLayout.minimumWidth`)
             // up to the window's: staging never widens the window.
             tray.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
@@ -174,6 +178,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         tray.onUnstage = { [weak self] id in try? self?.board.unstage(id) }
         tray.onReveal = { [weak self] mention in self?.canvas.revealMention(mention.target) }
         tray.targetMenu = { [weak self] in self?.targetMenu() }
+        NotificationCenter.default.addObserver(self, selector: #selector(chromeTextChanged), name: ChromeText.didChange, object: nil)
         canvas.onPromptTargetChange = { [weak self] in self?.refreshTray() }
         canvas.onPromptTargetTitle = { [weak self] in self?.scheduleTrayTitle() }
         responderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
@@ -187,6 +192,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    @objc private func chromeTextChanged() {
+        trayHeight?.constant = ChromeText.scaled(34)
+        refreshTray()
+    }
 
     func apply(_ event: BoardEvent) {
         canvas.apply(event)
@@ -415,6 +425,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        canvas.saveViewport()
         onClose?()
     }
 

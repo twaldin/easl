@@ -76,8 +76,6 @@ Password managers come through `WKWebExtension` (macOS 15.4 and later), which ho
 - An all-agents overview: ⌘J across every board and machine.
 - Agent supervision stats: each agent's branch, diff size and changed files, and a warning when two worktrees touch the same files.
 - Review passes: show only unstaged changes, and a "since last review" bookmark.
-- Restore each board's viewport on reopen.
-- Scale the chrome text (tray, titles, status), which stays at 1× today.
 
 ## Performance and monitoring
 

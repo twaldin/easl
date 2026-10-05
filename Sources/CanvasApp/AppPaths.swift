@@ -33,6 +33,13 @@ enum AppPaths {
     static let getStarted = support.appendingPathComponent("get-started.json")
     /// Roots of the boards open as tabs, in tab order, reopened at the next launch.
     static let openBoards = support.appendingPathComponent("open-boards.json")
+    /// Where this client left each board's view (`SavedViewport`), one `<boardId>.json` per board.
+    /// Client state, not the board's: a board is shared by every client that opens it.
+    static func viewport(of board: BoardID) -> URL {
+        support.appendingPathComponent("viewport", isDirectory: true).appendingPathComponent("\(board).json")
+    }
+    /// The app's own settings (`ChromeTextScale`).
+    static let uiSettings = support.appendingPathComponent("ui-settings.json")
 
     /// A bundled asset from the repo's `resources/` directory (copied into the app bundle by
     /// scripts/bundle.sh), e.g. `asset("kit/mermaid.min.js")`.

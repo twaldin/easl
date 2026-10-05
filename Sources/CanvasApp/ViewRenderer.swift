@@ -231,8 +231,9 @@ extension CanvasView {
         style.lineBreakMode = .byTruncatingMiddle
         let name = tiles[object.id]?.title ?? TileFrameView.title(for: object)
         let author = chrome ? tiles[object.id]?.author : nil
-        let zoomLabel = TileFrameView.zoomLabelFrame(width: rect.width, zoom: Double(zoom))
-        let frames = TileFrameView.titleFrames(width: rect.width - (zoomLabel.map { $0.width + 4 } ?? 0), title: name, author: author)
+        // At 100% whatever this client's chrome text scale is: a render is the same for every client.
+        let zoomLabel = TileFrameView.zoomLabelFrame(width: rect.width, zoom: Double(zoom), scale: 1)
+        let frames = TileFrameView.titleFrames(width: rect.width - (zoomLabel.map { $0.width + 4 } ?? 0), title: name, author: author, scale: 1)
         (name as NSString).draw(in: frames.title.offsetBy(dx: rect.minX, dy: rect.minY), withAttributes: [
             .font: TileFrameView.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
         ])
