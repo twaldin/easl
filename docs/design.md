@@ -42,9 +42,12 @@ flowchart TB
 - `measure`: code and image sizes;
 - `router`: the methods;
 - `server`: the socket framing;
+- `swiftjson`: JSON as JSONEncoder writes it (numbers as Swift formats a Double), for board files, replies and events;
 - `api`: generated from the schema by `scripts/gen-clients.ts`.
 
 The conformance suite (docs/testing.md) is the judge. `go test ./cmd/easld` replays it against easld in-process.
+
+easld and the app never share a home: easld takes the app's `instance.lock` on its `--home` and exits, naming the holder's pid, when it is held. It serves `--socket`, else `<home>/easl.sock` (never an inherited `EASL_SOCKET`, which every app terminal exports), and replaces only a stale socket file: a path that isn't a socket, or a socket another server answers on, is refused. Where the app's `try?` decode would start an unreadable board file empty and overwrite it, easld doesn't open it (`board.open` fails `unavailable`): one that doesn't decode, or is in a newer format than it reads. Keys it doesn't know, at the top level and on objects, are written back. A connection's request line may be 64 MiB, and reading pauses while 256 of its requests wait; every git it runs is stopped after 10 s unless the call sets its own limit, as requests are answered under one lock. SIGINT, SIGTERM and SIGHUP save the boards' pending changes before it exits.
 
 easld does not yet measure what AppKit lays out, so object.measure and `size: "fit"` don't work for notes, text shapes, HTML or code captions. Notes are set in SF Pro, a system font that easld can't ship; text shapes use Shantell Sans, which needs GPOS kerning. Arrow label sizes, which feed `avoid` routing and label overlaps, are measured the same way and missing for the same reason.
 
