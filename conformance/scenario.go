@@ -20,6 +20,10 @@ type Scenario struct {
 	// Files written into the scenario directory before it opens ("base64:…" for binary content).
 	Files map[string]string `json:"files,omitempty"`
 	Git   bool              `json:"git,omitempty"`
+	// Pages served over http on 127.0.0.1 while the scenario runs, by path ("/page": "<html>…"),
+	// for browser tiles that must load something real. `{{httpHost}}` is the server's host:port,
+	// recorded as `<http-host>`.
+	Serve map[string]string `json:"serve,omitempty"`
 	// Paths (as in Step.Ignore) ignored in every step, with the reason.
 	Ignore map[string]string `json:"ignore,omitempty"`
 	// Paths (as in Step.Ignore) of arrays listed in no particular order, compared sorted, with

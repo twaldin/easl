@@ -4,6 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,6 +85,22 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 
 	home, _ := os.UserHomeDir()
 	paths := []pathSubst{{root, "<root>"}, {run, "<run>"}}
+	vars := map[string]any{"root": root}
+	if len(s.Serve) > 0 {
+		pages := http.NewServeMux()
+		for path, body := range s.Serve {
+			body := body
+			pages.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				io.WriteString(w, body)
+			})
+		}
+		web := httptest.NewServer(pages)
+		defer web.Close()
+		host := strings.TrimPrefix(web.URL, "http://")
+		vars["httpHost"] = host
+		paths = append(paths, pathSubst{host, "<http-host>"})
+	}
 	if alt := strings.TrimPrefix(root, "/private"); alt != root {
 		paths = append(paths, pathSubst{alt, "<root>"})
 	}
@@ -109,7 +128,6 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 		return c, nil
 	}
 
-	vars := map[string]any{"root": root}
 	type pending struct {
 		conn, id string
 		index    int

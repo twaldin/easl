@@ -1,7 +1,7 @@
 {
   "scenario": "follow-attention",
   "description": "follow.report re-aims (creating) a terminal's follow tile, ignored with follow off and for files outside the root; view.attention raises, replaces, clears, and a new turn of the same caller clears its earlier markers.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

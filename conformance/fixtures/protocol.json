@@ -1,7 +1,7 @@
 {
   "scenario": "protocol",
   "description": "Framing and request validation: ping, malformed lines, missing method, unknown methods and params, pipelined requests answered in order.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

@@ -1,7 +1,7 @@
 {
   "scenario": "batch",
   "description": "object.batch: `$n` references to earlier creates, mixed ops in one revision, a failing op rolls everything back (and names the op), bad references.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

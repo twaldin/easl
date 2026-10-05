@@ -1,7 +1,7 @@
 {
   "scenario": "boards",
   "description": "board.open (git repository, errors), board.list (this board), board.export to the default and a given path, read back.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

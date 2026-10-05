@@ -1,7 +1,7 @@
 {
   "scenario": "tray",
   "description": "The selection tray: stage object, code, group and note mentions, list, unstage, a peek drain then commit, a plain drain, edits mark mentions edited, deleting an object removes its mentions; tray.changed events.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

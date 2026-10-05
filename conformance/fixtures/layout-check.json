@@ -1,7 +1,7 @@
 {
   "scenario": "layout-check",
   "description": "layout.check on a board with overlapping tiles, arrows crossing objects and each other, scoped by ids and by rect, and a clean board region.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

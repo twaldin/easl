@@ -1,7 +1,7 @@
 {
   "scenario": "arrows",
   "description": "Arrows bound to objects (straight and orthogonal), free point ends, labels; frames reported from the route; deleting an end detaches it to a point; graph relations.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

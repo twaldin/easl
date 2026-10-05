@@ -1,0 +1,567 @@
+{
+  "scenario": "open-url",
+  "description": "view.open_url: an http(s) address opens a browser tile beside the caller's terminal, the same address (scheme and host case, default port, empty path normalised) reuses it, other schemes and missing urls are errors; without a caller the tile is placed near the user's view.",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "view.open_url",
+      "method": "view.open_url",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:1>",
+        "url": "http://<http-host>/conformance?q=1#top"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "existing": false,
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 726,
+              "w": 1000,
+              "x": 50624,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "url": "http://<http-host>/conformance?q=1#top"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 726,
+              "w": 1000,
+              "x": 50624,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "url": "http://<http-host>/conformance?q=1#top"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "view.open_url",
+      "method": "view.open_url",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:1>",
+        "url": "HTTP://<http-host>/conformance?q=1#top"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "existing": true,
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 726,
+              "w": 1000,
+              "x": 50624,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "url": "http://<http-host>/conformance?q=1#top"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time>",
+            "z": 2
+          }
+        }
+      }
+    },
+    {
+      "step": "view.open_url",
+      "method": "view.open_url",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:1>",
+        "url": "http://<http-host>/conformance?q=2"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "existing": false,
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 726,
+              "w": 1000,
+              "x": 49600,
+              "y": 50424
+            },
+            "id": "<obj:3>",
+            "props": {
+              "url": "http://<http-host>/conformance?q=2"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 726,
+              "w": 1000,
+              "x": 49600,
+              "y": 50424
+            },
+            "id": "<obj:3>",
+            "props": {
+              "url": "http://<http-host>/conformance?q=2"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "view.open_url",
+      "method": "view.open_url",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:1>",
+        "url": "http://<http-host>/"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "existing": false,
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 726,
+              "w": 1000,
+              "x": 48976,
+              "y": 49674
+            },
+            "id": "<obj:4>",
+            "props": {
+              "url": "http://<http-host>/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 726,
+              "w": 1000,
+              "x": 48976,
+              "y": 49674
+            },
+            "id": "<obj:4>",
+            "props": {
+              "url": "http://<http-host>/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time>",
+            "z": 4
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "view.open_url",
+      "method": "view.open_url",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:1>",
+        "url": "http://<http-host>"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "existing": true,
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 726,
+              "w": 1000,
+              "x": 48976,
+              "y": 49674
+            },
+            "id": "<obj:4>",
+            "props": {
+              "url": "http://<http-host>/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time>",
+            "z": 4
+          }
+        }
+      }
+    },
+    {
+      "step": "view.open_url",
+      "method": "view.open_url",
+      "request": {
+        "board": "<board>",
+        "url": "ftp://127.0.0.1/file"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "view.open_url opens http and https addresses, not ftp://127.0.0.1/file"
+        },
+        "id": "r8",
+        "ok": false
+      }
+    },
+    {
+      "step": "view.open_url",
+      "method": "view.open_url",
+      "request": {
+        "board": "<board>",
+        "url": "not a url"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "view.open_url opens http and https addresses, not not a url"
+        },
+        "id": "r9",
+        "ok": false
+      }
+    },
+    {
+      "step": "view.open_url",
+      "method": "view.open_url",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "missing url; view.open_url takes url (required), board, caller"
+        },
+        "id": "r10",
+        "ok": false
+      }
+    },
+    {
+      "step": "view.open_url",
+      "method": "view.open_url",
+      "request": {
+        "board": "<board>",
+        "url": "http://<http-host>/other"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "existing": false,
+          "object": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 726,
+              "w": 1000
+            },
+            "id": "<obj:5>",
+            "props": {
+              "url": "http://<http-host>/other"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time>",
+            "z": 5
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 726,
+              "w": 1000
+            },
+            "id": "<obj:5>",
+            "props": {
+              "url": "http://<http-host>/other"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time>",
+            "z": 5
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "board.history",
+      "method": "board.history",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "cursor": "<cursor>",
+          "entries": [
+            {
+              "actor": "system",
+              "at": "<time>",
+              "kind": "restart",
+              "rev": "<board:1>",
+              "seq": "<seq:1>",
+              "summary": "easl started (pid <pid>); board opened with 0 objects"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:1>",
+              "kind": "created",
+              "rev": "<board:2>",
+              "seq": "<seq:2>",
+              "summary": "created terminal at (50000, 50000) 600×400",
+              "type": "terminal"
+            },
+            {
+              "actor": "agent:<obj:1>",
+              "at": "<time>",
+              "id": "<obj:2>",
+              "kind": "created",
+              "rev": "<board:3>",
+              "seq": "<seq:3>",
+              "summary": "created browser http://<http-host>/conformance?q=1#top at (50624, 50000) 1000×726",
+              "type": "browser"
+            },
+            {
+              "actor": "agent:<obj:1>",
+              "at": "<time>",
+              "id": "<obj:3>",
+              "kind": "created",
+              "rev": "<board:4>",
+              "seq": "<seq:4>",
+              "summary": "created browser http://<http-host>/conformance?q=2 at (49600, 50424) 1000×726",
+              "type": "browser"
+            },
+            {
+              "actor": "agent:<obj:1>",
+              "at": "<time>",
+              "id": "<obj:4>",
+              "kind": "created",
+              "rev": "<board:5>",
+              "seq": "<seq:5>",
+              "summary": "created browser http://<http-host>/ at (48976, 49674) 1000×726",
+              "type": "browser"
+            },
+            {
+              "actor": "user",
+              "at": "<time>",
+              "id": "<obj:5>",
+              "kind": "created",
+              "rev": "<board:6>",
+              "seq": "<seq:6>",
+              "summary": "created browser http://<http-host>/other at (50000, 49250) 1000×726",
+              "type": "browser"
+            }
+          ],
+          "restarted": false,
+          "truncated": false
+        }
+      }
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "scenario": "events",
   "description": "events.subscribe with a board filter and an event-name filter on other connections; every event kind's payload.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

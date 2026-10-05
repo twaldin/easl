@@ -1,7 +1,7 @@
 {
   "scenario": "code-tiles",
   "description": "Code tiles in a git repository: ranges, anchors, symbols, paths relative and absolute, a range re-aimed drops its anchor; object.measure of code.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

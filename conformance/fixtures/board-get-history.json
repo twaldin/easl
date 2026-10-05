@@ -1,7 +1,7 @@
 {
   "scenario": "board-get-history",
   "description": "board.get with `since` (changed ids), heavy props summarised (long note markdown, html), and board.history: cursors, limit, kinds, bad parameters.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

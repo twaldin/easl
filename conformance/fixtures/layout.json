@@ -1,7 +1,7 @@
 {
   "scenario": "layout",
   "description": "layout.place, layout.stack (rows, columns, wrapAt, align, origin), layout.translate and layout.grid with their defaults and errors.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

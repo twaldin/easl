@@ -1,7 +1,7 @@
 {
   "scenario": "agents",
   "description": "Agent lifecycle on terminal tiles: reports with seq and source (stale ones ignored), blocked tool calls, final answers, sessions, release, agent.list, agent.wait (answered, already there, timeout), lifecycle events.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

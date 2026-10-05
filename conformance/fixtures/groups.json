@@ -1,7 +1,7 @@
 {
   "scenario": "groups",
   "description": "Groups are regions fitted to their members plus padding and a title band: refit when members move, resize or go away, nested groups, a frame given for a group is ignored, translate moves members.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",

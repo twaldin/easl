@@ -1,7 +1,7 @@
 {
   "scenario": "objects-crud",
   "description": "Create, read, update and delete objects of the types that need no live surface; props merge, null deletes a prop, revisions, conflicts, warnings, and the errors of each.",
-  "recordedOn": "easl main 1a3cd87, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl main f3cf58f, dev instance (scripts/dev.sh)",
   "steps": [
     {
       "step": "board.open",
