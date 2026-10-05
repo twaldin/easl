@@ -9,6 +9,7 @@ import (
 
 	"github.com/twaldin/easl/easld/internal/api"
 	"github.com/twaldin/easl/easld/internal/board"
+	"github.com/twaldin/easl/easld/internal/clients"
 	"github.com/twaldin/easl/easld/internal/model"
 )
 
@@ -302,8 +303,8 @@ func (r *Router) expire(w *waiter) {
 
 const terminalCommandLogCapacity = 50
 
-// read is agent.read: `final` answers from the board; the screen, `since` and `block` need the
-// app's terminal surface.
+// read is agent.read: `final` answers from the board; the screen, `since` and `block` are a
+// client's to read from its terminal surface.
 func (r *Router) read(p map[string]any) (any, error) {
 	target, err := str(p, "target")
 	if err != nil {
@@ -346,7 +347,9 @@ func (r *Router) read(p map[string]any) (any, error) {
 	if requested < 1 {
 		return nil, invalid("lines must be at least 1")
 	}
-	return nil, fail(api.CodeUnsupported, "reading terminals needs the app UI")
+	params := copyParams(p)
+	params["target"] = terminal.ID
+	return r.forward("agent.read", b.ID(), params, clients.TerminalDeadline, "agent.read reads the terminal's screen through its live surface (final: true needs none)")
 }
 
 func (r *Router) finalAnswer(terminal model.Object, b *board.Board, p map[string]any) (any, error) {
@@ -386,13 +389,14 @@ func (r *Router) finalAnswer(terminal model.Object, b *board.Board, p map[string
 	return result, nil
 }
 
-// prompt is agent.prompt: its refusals are the board's; typing needs the app's terminal surface.
+// prompt is agent.prompt: its refusals and the mentions it hands over are the board's; a client
+// types it into the terminal.
 func (r *Router) prompt(p map[string]any) (any, error) {
 	target, err := str(p, "target")
 	if err != nil {
 		return nil, err
 	}
-	_, terminal, err := r.agentTile(target)
+	b, terminal, err := r.agentTile(target)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +415,72 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 	if stateOf(terminal) == "working" && lifecycle["restored"] == true && !force {
 		return nil, fail(api.CodeConflict, "%s was working when easl last closed and its agent hasn't reported since, so it may now wait on a question or approval that the prompt would answer. Read its screen (agent.read) first; force: true sends anyway", terminal.ID)
 	}
-	return nil, fail(api.CodeUnsupported, "prompting needs the app UI")
+	c, err := r.client("agent.prompt", b.ID(), "agent.prompt types through the terminal's live surface")
+	if err != nil {
+		return nil, err
+	}
+	var targets []map[string]any
+	if list, present := p["mentions"]; present && list != nil {
+		items, ok := list.([]any)
+		if !ok {
+			return nil, invalid("mentions must be a list of {object, lines?, point?}")
+		}
+		for _, item := range items {
+			t, err := promptMention(item, b)
+			if err != nil {
+				return nil, err
+			}
+			targets = append(targets, t)
+		}
+	}
+	if len(targets) > 0 && !board.Drains(terminal) {
+		return nil, fail(api.CodeUnavailable, "%s runs no agent with an easl integration, so nothing there would take the mentions; name the objects in the text instead", terminal.ID)
+	}
+	// Queued before the text goes in: the target's integration drains them with this prompt.
+	sender, _ := optStr(p, "caller")
+	name, named := "", false
+	if sender != "" {
+		if _, tile, err := r.agentTile(sender); err == nil {
+			name, named = senderName(tile), true
+		}
+	}
+	handed, err := b.HandOff(targets, terminal.ID, sender, name, named, "")
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(handed))
+	for i, m := range handed {
+		ids[i] = m.ID
+	}
+	params := copyParams(p)
+	delete(params, "mentions")
+	params["target"] = terminal.ID
+	result, err := r.await(c, "agent.prompt", params, clients.TerminalDeadline)
+	if err != nil {
+		b.Commit(ids)
+		return nil, err
+	}
+	current, ok := b.Objects()[terminal.ID]
+	if !ok {
+		b.Commit(ids)
+		return nil, fail(api.CodeNotFound, "terminal %s was closed", terminal.ID)
+	}
+	// Only a reporting agent's next report can end the pre-prompt state; one still in its turn
+	// takes the prompt into that turn, whose end answers agent.wait.
+	notifying := board.NotifyingReports(current)
+	if notifying {
+		b.NotifyingAgentSubmitted(terminal.ID)
+	} else if stateOf(current) != "unknown" && stateOf(current) != "working" {
+		r.pendingPrompts[terminal.ID] = time.Now()
+	}
+	if len(handed) > 0 {
+		list := make([]any, len(handed))
+		for i, m := range handed {
+			list[i] = m.APIJSON()
+		}
+		result["mentions"] = list
+	}
+	return result, nil
 }
 
 // drain is tray.drain. Without a window there is no prompt target, so anyone drains the tray.

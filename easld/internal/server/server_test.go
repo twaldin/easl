@@ -30,7 +30,7 @@ func socketPath(t *testing.T) string {
 
 func start(t *testing.T, h Handler) *Server {
 	t.Helper()
-	s, err := Listen(socketPath(t), h)
+	s, err := Listen(socketPath(t), h, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestSendNeverBlocksOnAClientThatStopsReading(t *testing.T) {
 	conns := make(chan *Conn, 1)
 	l := defaultLimits
 	l.pending = 1 << 20
-	s, err := listen(socketPath(t), func(req any, c *Conn) any { conns <- c; return nil }, l)
+	s, err := listen(socketPath(t), func(req any, c *Conn) any { conns <- c; return nil }, nil, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,13 +355,13 @@ func TestSocketMode(t *testing.T) {
 func TestListenReplacesStaleSocketAndCreatesItsDirectory(t *testing.T) {
 	path := filepath.Join(filepath.Dir(socketPath(t)), "sub", "dir", "s.sock")
 	// A dead server's socket file.
-	first, err := Listen(path, echo)
+	first, err := Listen(path, echo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	first.listener.SetUnlinkOnClose(false)
 	first.listener.Close() // leaves the file behind, like a crashed process
-	second, err := Listen(path, echo)
+	second, err := Listen(path, echo, nil)
 	if err != nil {
 		t.Fatalf("Listen over a stale socket: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestListenReplacesStaleSocketAndCreatesItsDirectory(t *testing.T) {
 // this server instead.
 func TestListenRefusesASocketThatIsServed(t *testing.T) {
 	live := start(t, echo)
-	other, err := Listen(live.Path(), echo)
+	other, err := Listen(live.Path(), echo, nil)
 	if err == nil {
 		other.Close()
 		t.Fatal("a second server took over a live socket")
@@ -407,7 +407,7 @@ func TestListenNeverRemovesWhatIsNotASocket(t *testing.T) {
 	if err := os.WriteFile(path, []byte("notes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if s, err := Listen(path, echo); err == nil {
+	if s, err := Listen(path, echo, nil); err == nil {
 		s.Close()
 		t.Fatal("Listen replaced a regular file")
 	}
@@ -418,7 +418,7 @@ func TestListenNeverRemovesWhatIsNotASocket(t *testing.T) {
 
 func TestCloseRemovesOnlyItsOwnSocketFile(t *testing.T) {
 	path := socketPath(t)
-	a, err := Listen(path, echo)
+	a, err := Listen(path, echo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestCloseRemovesOnlyItsOwnSocketFile(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	b, err := Listen(path, echo)
+	b, err := Listen(path, echo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestCloseRemovesOnlyItsOwnSocketFile(t *testing.T) {
 func TestOverlongLineIsAnsweredThenTheConnectionCloses(t *testing.T) {
 	l := defaultLimits
 	l.line = 1024
-	s, err := listen(socketPath(t), echo, l)
+	s, err := listen(socketPath(t), echo, nil, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +482,7 @@ func TestReadingPausesWhileTheInboxIsFull(t *testing.T) {
 	s, err := listen(socketPath(t), func(req any, c *Conn) any {
 		once.Do(func() { conns <- c; <-release })
 		return echo(req, c)
-	}, l)
+	}, nil, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,7 +561,7 @@ func TestCloseEndsConnectionsAfterFlushingWhatWasQueued(t *testing.T) {
 }
 
 func TestListenRejectsTooLongPath(t *testing.T) {
-	_, err := Listen("/tmp/"+strings.Repeat("a", 120)+".sock", echo)
+	_, err := Listen("/tmp/"+strings.Repeat("a", 120)+".sock", echo, nil)
 	if err == nil || !strings.Contains(err.Error(), "file name too long") {
 		t.Fatalf("got %v", err)
 	}

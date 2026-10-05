@@ -1,0 +1,1098 @@
+{
+  "scenario": "client-delegation",
+  "description": "A scripted Mac client (client.attach) serves every delegated method: easld checks each call as before, forwards it as the same method (board and terminal resolved to ids), and relays the client's result or error; agent.prompt's mentions stay easld's (queued, withdrawn when the client fails); text is measured by the client, so nothing is approximate. easld only: the app doesn't speak the client protocol yet.",
+  "recordedOn": "easld (the app doesn't speak the client protocol yet; a scripted client serves it)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 280,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "# Plan\n\nShip it."
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Plan\n\nShip it."
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Plan\n\nShip it."
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 400,
+          "y": 0
+        },
+        "props": {
+          "url": "https://example.com/"
+        },
+        "type": "browser"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>",
+          "name": "worker"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:3>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:3>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "omp",
+        "seq": 1,
+        "source": "main",
+        "state": "idle",
+        "tile": "<obj:3>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:3>",
+            "props": {
+              "agent": {
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:3>"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:3>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "app",
+      "request": {
+        "app": "0.2.0",
+        "boards": [
+          "<board>"
+        ],
+        "focused": "<board>",
+        "host": "studio",
+        "serves": [
+          "view.get",
+          "view.render",
+          "view.snapshot",
+          "agent.prompt",
+          "agent.read",
+          "object.reload",
+          "text.measure"
+        ],
+        "version": 1
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:1>",
+          "version": 1
+        }
+      },
+      "ignored": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "view.get",
+      "method": "view.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "appearance": "dark",
+          "board": "<board>",
+          "selection": [
+            "<obj:1>"
+          ],
+          "viewport": {
+            "rect": {
+              "h": 800,
+              "w": 1200,
+              "x": 0,
+              "y": 0
+            },
+            "zoom": 1
+          },
+          "visible": true
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "view.get",
+          "params": {
+            "board": "<board>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "scale": 2,
+        "target": "<obj:1>"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "height": 400,
+          "objects": [],
+          "path": "/tmp/easl-render.png",
+          "scale": 2,
+          "width": 560
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "view.render",
+          "params": {
+            "board": "<board>",
+            "scale": 2,
+            "target": "<obj:1>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "scale": 9,
+        "target": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "scale must be between 0.1 and 4"
+        },
+        "id": "r8",
+        "ok": false
+      }
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "h": 100,
+          "w": 100,
+          "x": 0,
+          "y": 0
+        },
+        "timeoutMs": 500
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "the board's window is closed"
+        },
+        "id": "r9",
+        "ok": false
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "view.render",
+          "params": {
+            "board": "<board>",
+            "target": {
+              "h": 100,
+              "w": 100,
+              "x": 0,
+              "y": 0
+            },
+            "timeoutMs": 500
+          }
+        }
+      ]
+    },
+    {
+      "step": "view.snapshot",
+      "method": "view.snapshot",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "objects": [],
+          "path": "/tmp/easl-snapshot.png",
+          "scale": 2,
+          "viewport": {
+            "rect": {
+              "h": 800,
+              "w": 1200,
+              "x": 0,
+              "y": 0
+            },
+            "zoom": 1
+          }
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "view.snapshot",
+          "params": {
+            "board": "<board>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "mentions": [
+          {
+            "object": "<obj:1>"
+          }
+        ],
+        "target": "worker",
+        "text": "hello"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "agent": {
+            "board": "<board>",
+            "kind": "omp",
+            "lifecycle": {
+              "state": "idle"
+            },
+            "root": "<root>",
+            "tile": "<obj:3>"
+          },
+          "mentions": [
+            {
+              "edited": false,
+              "id": "<men:1>",
+              "label": "note Plan",
+              "stagedAt": "<time:number>",
+              "target": {
+                "kind": "object",
+                "object": "<obj:1>"
+              }
+            }
+          ],
+          "submittedAt": "<time:iso>",
+          "waitable": true
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "agent.prompt",
+          "params": {
+            "target": "<obj:3>",
+            "text": "hello"
+          }
+        }
+      ]
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "mentions": [
+          {
+            "object": "<obj:2>"
+          }
+        ],
+        "target": "<obj:3>",
+        "text": "again"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "<obj:3>'s foreground program is vim, not omp: the text would go to it; force: true sends it anyway"
+        },
+        "id": "r12",
+        "ok": false
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "agent.prompt",
+          "params": {
+            "target": "<obj:3>",
+            "text": "again"
+          }
+        }
+      ]
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:3>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "context": "<canvas-mentions board=\"<board>\" root=\"<root>\">\nAttached by a script to its prompt to you (agent.prompt):\n[1] note <obj:1> \"Plan\"\n    # Plan\n    \n    Ship it.\nRead more with the easl SDK or CLI: easl get <id> --as graph; look with easl render <id>\n</canvas-mentions>",
+          "mentions": [
+            {
+              "id": "<men:1>",
+              "label": "note Plan",
+              "ref": "canvas:<men:1>@rev1",
+              "summary": "[1] note <obj:1> \"Plan\"\n    # Plan\n    \n    Ship it."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "lines": 10,
+        "target": "worker"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "agent": {
+            "board": "<board>",
+            "kind": "omp",
+            "lifecycle": {
+              "state": "idle"
+            },
+            "root": "<root>",
+            "tile": "<obj:3>"
+          },
+          "lines": 2,
+          "text": "$ omp\n> hello"
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "agent.read",
+          "params": {
+            "lines": 10,
+            "target": "<obj:3>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "since": "prompt",
+        "target": "<obj:3>"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "agent": {
+            "board": "<board>",
+            "kind": "omp",
+            "lifecycle": {
+              "state": "idle"
+            },
+            "root": "<root>",
+            "tile": "<obj:3>"
+          },
+          "lines": 2,
+          "text": "> hello\nhi there"
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "agent.read",
+          "params": {
+            "since": "prompt",
+            "target": "<obj:3>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "final": true,
+        "target": "<obj:3>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "<obj:3> is still in its turn (prompted): agent.wait for it, then read final"
+        },
+        "id": "r16",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.reload",
+      "method": "object.reload",
+      "request": {
+        "id": "<obj:2>",
+        "timeoutMs": 1000
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "loaded": true,
+          "url": "https://example.com/"
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "object.reload",
+          "params": {
+            "id": "<obj:2>",
+            "timeoutMs": 1000
+          }
+        }
+      ]
+    },
+    {
+      "step": "text.measure",
+      "method": "text.measure",
+      "request": {
+        "board": "<board>",
+        "items": [
+          {
+            "kind": "note",
+            "text": "fits\n\nits text",
+            "width": 280
+          },
+          {
+            "kind": "text",
+            "text": "Label text"
+          },
+          {
+            "kind": "label",
+            "text": "box",
+            "width": 120
+          },
+          {
+            "kind": "arrowLabel",
+            "text": "input of <board>"
+          },
+          {
+            "kind": "caption",
+            "text": "the `answer`"
+          }
+        ]
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "sizes": [
+            {
+              "h": 86,
+              "tableShortfall": 0,
+              "w": 280
+            },
+            {
+              "h": 28,
+              "w": 98
+            },
+            {
+              "h": 26,
+              "w": 61
+            },
+            {
+              "h": 20,
+              "w": 55
+            },
+            {
+              "h": 20,
+              "w": 83
+            }
+          ]
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "text.measure",
+          "params": {
+            "items": [
+              {
+                "kind": "note",
+                "root": "<root>",
+                "text": "fits\n\nits text",
+                "width": 280
+              },
+              {
+                "kind": "text",
+                "text": "Label text"
+              },
+              {
+                "kind": "label",
+                "text": "box",
+                "width": 120
+              },
+              {
+                "kind": "arrowLabel",
+                "text": "input of <board>"
+              },
+              {
+                "kind": "caption",
+                "text": "the `answer`"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "markdown": "fits"
+        },
+        "type": "note",
+        "width": 300
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "h": 72,
+          "w": 300
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "text.measure",
+          "params": {
+            "items": [
+              {
+                "kind": "note",
+                "root": "<root>",
+                "text": "fits",
+                "width": 300
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "w": 300,
+          "x": 0,
+          "y": 600
+        },
+        "props": {
+          "markdown": "a fitted note"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 90,
+              "w": 300,
+              "x": 0,
+              "y": 600
+            },
+            "id": "<obj:4>",
+            "props": {
+              "markdown": "a fitted note"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 90,
+              "w": 300,
+              "x": 0,
+              "y": 600
+            },
+            "id": "<obj:4>",
+            "props": {
+              "markdown": "a fitted note"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 4
+          },
+          "event": "object.created"
+        }
+      ],
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "text.measure",
+          "params": {
+            "items": [
+              {
+                "kind": "note",
+                "root": "<root>",
+                "text": "a fitted note",
+                "width": 300
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "from": {
+            "object": "<obj:1>"
+          },
+          "label": "ships <board>",
+          "to": {
+            "object": "<obj:2>"
+          }
+        },
+        "type": "arrow"
+      },
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 108,
+              "x": 286,
+              "y": 100
+            },
+            "id": "<obj:5>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              },
+              "label": "ships <board>",
+              "to": {
+                "object": "<obj:2>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 5
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:5>",
+            "props": {
+              "from": {
+                "object": "<obj:1>"
+              },
+              "label": "ships <board>",
+              "to": {
+                "object": "<obj:2>"
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 5
+          },
+          "event": "object.created"
+        }
+      ],
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "text.measure",
+          "params": {
+            "items": [
+              {
+                "kind": "arrowLabel",
+                "text": "ships <board>"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "step": "layout.check",
+      "method": "layout.check",
+      "request": {
+        "ids": [
+          "<obj:4>"
+        ]
+      },
+      "response": {
+        "id": "r22",
+        "ok": true,
+        "result": {
+          "arrowCrossings": [],
+          "arrowIntersections": [],
+          "arrowOverlaps": [],
+          "labelOverlaps": [],
+          "overflow": [
+            {
+              "id": "<obj:4>",
+              "x": 0,
+              "y": 310
+            }
+          ],
+          "overlaps": [],
+          "scrolls": [],
+          "truncated": [
+            {
+              "id": "<obj:4>",
+              "what": "table",
+              "x": 12
+            }
+          ]
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "text.measure",
+          "params": {
+            "items": [
+              {
+                "kind": "note",
+                "root": "<root>",
+                "text": "a fitted note",
+                "width": 300
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,7 +1,9 @@
 package conformance
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,7 +27,8 @@ type Options struct {
 	Settle time.Duration
 	// How long to wait for a reply.
 	Timeout time.Duration
-	// schema/easl-api.json, which Shape steps' results are checked against (the Suite sets it).
+	// schema/easl-api.json (the Suite sets it): Shape steps' results are checked against it, and
+	// scripted clients attach with its version and hash (`{{schemaVersion}}`, `{{schemaHash}}`).
 	Schema string
 }
 
@@ -56,6 +59,9 @@ type Record struct {
 	// transport sends event lines only after a successful events.subscribe, so any fails the
 	// step, and a recording that has them is refused.
 	Unsubscribed []any `json:"unsubscribedEvents,omitempty"`
+	// Requests the server sent scripted client connections during the step (the client
+	// protocol), each with its `conn`, `method` and `params`.
+	Forwarded []any `json:"forwarded,omitempty"`
 	// Paths left out of the comparison, with why.
 	Ignored map[string]string `json:"ignored,omitempty"`
 	// Paths whose text had a part masked (Step.Mask), with why.
@@ -97,6 +103,20 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 	home, _ := os.UserHomeDir()
 	paths := []pathSubst{{root, "<root>"}, {run, "<run>"}}
 	vars := map[string]any{"root": root}
+	if o.Schema != "" {
+		data, err := os.ReadFile(o.Schema)
+		if err != nil {
+			return nil, err
+		}
+		var schema struct {
+			Version float64 `json:"version"`
+		}
+		if err := json.Unmarshal(data, &schema); err != nil {
+			return nil, fmt.Errorf("%s: %w", o.Schema, err)
+		}
+		sum := sha256.Sum256(data)
+		vars["schemaVersion"], vars["schemaHash"] = schema.Version, hex.EncodeToString(sum[:])[:16]
+	}
 	if len(s.Serve) > 0 {
 		pages := http.NewServeMux()
 		for path, body := range s.Serve {
@@ -135,7 +155,8 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 		}
 	}()
 	get := func(name string) (*conn, error) {
-		if c, ok := conns[name]; ok {
+		// A connection that closed (a scripted client that hung up) is dialled again.
+		if c, ok := conns[name]; ok && !c.isClosed() {
 			return c, nil
 		}
 		c, err := dial(o.Socket)
@@ -166,6 +187,17 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 			connName = "main"
 		}
 		r := rawRecord{step: step, conn: connName}
+		if len(step.Replies) > 0 {
+			c, err := get(connName)
+			if err != nil {
+				return nil, err
+			}
+			replies, err := expandReplies(step.Replies, vars)
+			if err != nil {
+				return nil, fmt.Errorf("step %d (%s): %w", i, step.Label(), err)
+			}
+			c.script(replies)
+		}
 		switch {
 		case step.Call != "":
 			c, err := get(connName)
@@ -278,6 +310,8 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 			}
 		case step.SleepMs > 0:
 			time.Sleep(time.Duration(step.SleepMs) * time.Millisecond)
+		case len(step.Replies) > 0:
+			// Scripted above.
 		default:
 			return nil, fmt.Errorf("step %d does nothing", i)
 		}
@@ -286,6 +320,7 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 			settle = time.Duration(step.SettleMs) * time.Millisecond
 		}
 		r.events, r.strays = collect(conns, subscribed, settle)
+		r.forwarded = forwarded(conns)
 		if step.NoEvents {
 			r.events = nil
 		}
@@ -300,13 +335,14 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 }
 
 type rawRecord struct {
-	step     Step
-	conn     string
-	request  any
-	response map[string]any
-	events   []any
-	strays   []any
-	content  any
+	step      Step
+	conn      string
+	request   any
+	response  map[string]any
+	events    []any
+	strays    []any
+	forwarded []any
+	content   any
 }
 
 func (r rawRecord) normalized(norm *normalizer, scenarioIgnore map[string]string, unordered map[string]string) Record {
@@ -315,7 +351,7 @@ func (r rawRecord) normalized(norm *normalizer, scenarioIgnore map[string]string
 	if r.conn != "main" {
 		rec.Conn = r.conn
 	}
-	norm.learnIDs(r.request, r.response, r.events, r.strays, r.content)
+	norm.learnIDs(r.request, r.response, r.events, r.strays, r.forwarded, r.content)
 	if r.request != nil {
 		rec.Request = norm.value(r.request, "", false)
 	}
@@ -331,6 +367,9 @@ func (r rawRecord) normalized(norm *normalizer, scenarioIgnore map[string]string
 	}
 	for _, e := range r.strays {
 		rec.Unsubscribed = append(rec.Unsubscribed, norm.value(e, "", false))
+	}
+	for _, f := range r.forwarded {
+		rec.Forwarded = append(rec.Forwarded, norm.value(f, "", false))
 	}
 	if r.content != nil {
 		rec.Content = norm.value(r.content, "", false)
@@ -356,13 +395,16 @@ func (r rawRecord) normalized(norm *normalizer, scenarioIgnore map[string]string
 		ignore[p] = why
 	}
 	if len(ignore) > 0 {
-		doc := map[string]any{"request": rec.Request, "response": rec.Response, "events": toAny(rec.Events), "content": rec.Content}
+		doc := map[string]any{"request": rec.Request, "response": rec.Response, "events": toAny(rec.Events), "content": rec.Content, "forwarded": toAny(rec.Forwarded)}
 		for p := range ignore {
 			blank(doc, strings.Split(p, "."))
 		}
 		rec.Request, rec.Response, rec.Content = doc["request"], doc["response"], doc["content"]
 		if evs, ok := doc["events"].([]any); ok {
 			rec.Events = evs
+		}
+		if fs, ok := doc["forwarded"].([]any); ok {
+			rec.Forwarded = fs
 		}
 		rec.Ignored = ignore
 	}
@@ -490,6 +532,49 @@ func collect(conns map[string]*conn, subscribed map[string]bool, settle time.Dur
 		}
 	}
 	return events, strays
+}
+
+// forwarded takes the requests the server sent scripted client connections, connection by
+// connection in name order, each with its `conn`.
+func forwarded(conns map[string]*conn) []any {
+	names := make([]string, 0, len(conns))
+	for name := range conns {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var out []any
+	for _, name := range names {
+		for _, request := range conns[name].takeReceived() {
+			request["conn"] = name
+			out = append(out, request)
+		}
+	}
+	return out
+}
+
+// expandReplies resolves the templates in scripted answers.
+func expandReplies(replies map[string][]Reply, vars map[string]any) (map[string][]Reply, error) {
+	out := map[string][]Reply{}
+	for method, list := range replies {
+		for _, reply := range list {
+			if reply.Result != nil {
+				result, err := expand(reply.Result, vars)
+				if err != nil {
+					return nil, err
+				}
+				reply.Result = result
+			}
+			if reply.Error != nil {
+				e, err := expand(any(reply.Error), vars)
+				if err != nil {
+					return nil, err
+				}
+				reply.Error, _ = e.(map[string]any)
+			}
+			out[method] = append(out[method], reply)
+		}
+	}
+	return out, nil
 }
 
 // teardown deletes the scenario's terminal tiles, so their sessions end with the scenario.

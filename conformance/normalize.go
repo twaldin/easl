@@ -72,8 +72,8 @@ var (
 // two in step), and the id references the app sends that the schema leaves untyped.
 var idKeys = map[string]bool{
 	// Typed in the schema.
-	"arrow": true, "arrows": true, "board": true, "caller": true, "changed": true, "cleared": true, "crosses": true,
-	"enteredGroup": true, "exclude": true, "focused": true, "followOf": true, "id": true, "ids": true, "lines": true,
+	"arrow": true, "arrows": true, "board": true, "boards": true, "caller": true, "changed": true, "cleared": true, "client": true,
+	"crosses": true, "enteredGroup": true, "exclude": true, "focused": true, "followOf": true, "id": true, "ids": true, "lines": true,
 	"members": true, "near": true, "object": true, "objects": true, "overlaps": true, "parent": true,
 	"promptTarget": true, "region": true, "regions": true, "selection": true, "target": true, "tile": true,
 	// Untyped on the wire: an object's graph (arrowsIn/arrowsOut ends, enclosure), the terminal a

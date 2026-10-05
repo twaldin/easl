@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/mention"
 	"github.com/twaldin/easl/easld/internal/metrics"
 	"github.com/twaldin/easl/easld/internal/model"
@@ -117,6 +118,9 @@ type Board struct {
 	OnChange func()
 	// Viewport is the canvas rect a window shows; easld has none (nil), so placement ignores it.
 	Viewport func() *model.Frame
+	// Texts measures arrow captions for routing (DrawingStyle.arrowLabel); nil: arrows route
+	// without their labels.
+	Texts measure.Texts
 	// settled is the drawing layer's last routing (Board.settledRouting).
 	settled *route.Result
 
@@ -809,7 +813,8 @@ func (b *Board) ArrowPaths(ids []string) map[string][]route.Point {
 	if len(ids) == 0 {
 		return paths
 	}
-	drawn := route.Geometry{Objects: b.objects, Settled: b.settled}.DrawnRouting(nil)
+	labels, _ := b.LabelSizes()
+	drawn := route.Geometry{Objects: b.objects, LabelSizes: labels, Settled: b.settled}.DrawnRouting(nil)
 	if !b.history.isOpen() {
 		b.settled = drawn
 	}
@@ -918,6 +923,39 @@ var _ mention.BoardView = (*Board)(nil)
 // Settled is the drawing layer's routing of the board as it is now (Board.settledRouting after
 // settleArrows), which layout math routes on from.
 func (b *Board) Settled() *route.Result {
-	b.settled = route.Geometry{Objects: b.objects, Settled: b.settled}.DrawnRouting(nil)
+	labels, _ := b.LabelSizes()
+	b.settled = route.Geometry{Objects: b.objects, LabelSizes: labels, Settled: b.settled}.DrawnRouting(nil)
 	return b.settled
+}
+
+// LabelSizes is the chip of every arrow with a caption (DrawingStyle.arrowLabel: its label, else
+// its relation), measured by Texts in one batch, and which of them the glyph table approximated.
+// Nil without Texts.
+func (b *Board) LabelSizes() (sizes map[string]route.Size, approximate map[string]bool) {
+	if b.Texts == nil {
+		return nil, nil
+	}
+	var ids []string
+	var items []measure.TextItem
+	for _, id := range b.sortedIDs() {
+		o := b.objects[id]
+		if o.Type != model.Arrow {
+			continue
+		}
+		if spec, ok := route.ParseArrow(o.Props); ok && spec.Caption() != "" {
+			ids = append(ids, id)
+			items = append(items, measure.TextItem{Kind: "arrowLabel", Text: spec.Caption()})
+		}
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	sizes, approximate = map[string]route.Size{}, map[string]bool{}
+	for i, size := range b.Texts.MeasureText(items) {
+		sizes[ids[i]] = route.Size{W: size.W, H: size.H}
+		if size.Approximate {
+			approximate[ids[i]] = true
+		}
+	}
+	return sizes, approximate
 }

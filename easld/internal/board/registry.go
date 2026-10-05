@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/metrics"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/store"
@@ -40,7 +41,10 @@ type Registry struct {
 	Hook func(*Board, model.Event)
 	// AgentReports is where integrations spool reports they couldn't deliver; "" replays nothing.
 	AgentReports string
-	pid          int
+	// Texts measures text the app lays out (arrow captions, for routing) on every board opened
+	// from now on. Nil: arrows route without their labels.
+	Texts measure.Texts
+	pid   int
 }
 
 // NewRegistry opens a registry over the boards stored in dir, saving debounce after changes.
@@ -94,6 +98,7 @@ func (r *Registry) Open(root string) (*Board, error) {
 	if worktree != nil {
 		b.OpenedFrom(*worktree)
 	}
+	b.Texts = r.Texts
 	b.OnEvent = func(e model.Event) {
 		if r.Hook != nil {
 			r.Hook(b, e)

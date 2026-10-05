@@ -38,7 +38,7 @@ func (r *Router) batch(p map[string]any) (any, error) {
 		return params
 	}
 	pending := map[int]map[string]any{}
-	var sizes []*board.Size
+	var sizes []*fit
 	plan := keyPlan{given: map[string]plannedHolder{}}
 	upserts := map[int]upsertPlan{}
 	updating := map[int]string{}
@@ -226,7 +226,7 @@ func (r *Router) batch(p map[string]any) (any, error) {
 	}
 	for i := range results {
 		if sizes[i] != nil {
-			results[i] = r.withOverlaps(results[i], nil)
+			results[i] = withApproximate(r.withOverlaps(results[i], nil), sizes[i])
 		}
 	}
 	var arrows []model.Object

@@ -1,0 +1,116 @@
+{
+  "description": "A scripted Mac client (client.attach) serves every delegated method: easld checks each call as before, forwards it as the same method (board and terminal resolved to ids), and relays the client's result or error; agent.prompt's mentions stay easld's (queued, withdrawn when the client fails); text is measured by the client, so nothing is approximate. easld only: the app doesn't speak the client protocol yet.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "# Plan\n\nShip it." }, "frame": { "x": 0, "y": 0, "w": 280, "h": 200 } },
+      "save": "n"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "browser", "props": { "url": "https://example.com/" }, "frame": { "x": 400, "y": 0, "w": 600, "h": 400 } },
+      "save": "web"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "worker" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } },
+      "save": "t"
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "seq": 1, "source": "main" }
+    },
+    {
+      "call": "client.attach",
+      "conn": "app",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "{{schemaHash}}",
+        "app": "0.2.0",
+        "host": "studio",
+        "serves": ["view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "object.reload", "text.measure"],
+        "boards": ["{{board}}"],
+        "focused": "{{board}}"
+      },
+      "replies": {
+        "view.get": [
+          { "result": { "board": "{{board}}", "viewport": { "rect": { "x": 0, "y": 0, "w": 1200, "h": 800 }, "zoom": 1 }, "selection": ["{{n.object.id}}"], "visible": true, "appearance": "dark" } }
+        ],
+        "view.render": [
+          { "result": { "path": "/tmp/easl-render.png", "width": 560, "height": 400, "scale": 2, "objects": [] } },
+          { "error": { "code": "unavailable", "message": "the board's window is closed" } }
+        ],
+        "view.snapshot": [
+          { "result": { "path": "/tmp/easl-snapshot.png", "viewport": { "rect": { "x": 0, "y": 0, "w": 1200, "h": 800 }, "zoom": 1 }, "scale": 2, "objects": [] } }
+        ],
+        "agent.prompt": [
+          { "result": { "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "kind": "omp", "lifecycle": { "state": "idle" } }, "submittedAt": "2026-10-05T12:00:00Z", "waitable": true } },
+          { "error": { "code": "conflict", "message": "{{t.object.id}}'s foreground program is vim, not omp: the text would go to it; force: true sends it anyway" } }
+        ],
+        "agent.read": [
+          { "result": { "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "kind": "omp", "lifecycle": { "state": "idle" } }, "text": "$ omp\n> hello", "lines": 2 } },
+          { "result": { "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "kind": "omp", "lifecycle": { "state": "idle" } }, "text": "> hello\nhi there", "lines": 2 } }
+        ],
+        "object.reload": [
+          { "result": { "loaded": true, "url": "https://example.com/" } }
+        ],
+        "text.measure": [
+          { "result": { "sizes": [{ "w": 280, "h": 86, "tableShortfall": 0 }, { "w": 98, "h": 28 }, { "w": 61, "h": 26 }, { "w": 55, "h": 20 }, { "w": 83, "h": 20 }] } },
+          { "result": { "sizes": [{ "w": 300, "h": 72, "tableShortfall": 0 }] } },
+          { "result": { "sizes": [{ "w": 300, "h": 90, "tableShortfall": 0 }] } },
+          { "result": { "sizes": [{ "w": 52, "h": 20 }] } },
+          { "result": { "sizes": [{ "w": 300, "h": 400, "tableShortfall": 12 }] } }
+        ]
+      },
+      "ignore": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    { "call": "view.get", "params": { "board": "{{board}}" } },
+    { "call": "view.render", "params": { "board": "{{board}}", "target": "{{n.object.id}}", "scale": 2 } },
+    { "call": "view.render", "params": { "board": "{{board}}", "target": "{{n.object.id}}", "scale": 9 }, "note": "easld's own checks come first: nothing is forwarded" },
+    { "call": "view.render", "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 }, "timeoutMs": 500 }, "note": "the client's error is the caller's" },
+    { "call": "view.snapshot", "params": { "board": "{{board}}" } },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "worker", "text": "hello", "mentions": [{ "object": "{{n.object.id}}" }] },
+      "note": "the target named, forwarded as its id; the mention queued by easld and not forwarded"
+    },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "{{t.object.id}}", "text": "again", "mentions": [{ "object": "{{web.object.id}}" }] },
+      "note": "the client refuses: the mention it queued is withdrawn"
+    },
+    { "call": "tray.drain", "params": { "board": "{{board}}", "caller": "{{t.object.id}}" }, "note": "the terminal's integration drains the first prompt's mention only" },
+    { "call": "agent.read", "params": { "target": "worker", "lines": 10 } },
+    { "call": "agent.read", "params": { "target": "{{t.object.id}}", "since": "prompt" } },
+    { "call": "agent.read", "params": { "target": "{{t.object.id}}", "final": true }, "note": "final is easld's: not forwarded" },
+    { "call": "object.reload", "params": { "id": "{{web.object.id}}", "timeoutMs": 1000 } },
+    {
+      "call": "text.measure",
+      "params": {
+        "board": "{{board}}",
+        "items": [
+          { "kind": "note", "text": "fits\n\nits text", "width": 280 },
+          { "kind": "text", "text": "Label text" },
+          { "kind": "label", "text": "box", "width": 120 },
+          { "kind": "arrowLabel", "text": "input of {{board}}" },
+          { "kind": "caption", "text": "the `answer`" }
+        ]
+      }
+    },
+    { "call": "object.measure", "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "fits" }, "width": 300 } },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "a fitted note" }, "frame": { "x": 0, "y": 600, "w": 300 } },
+      "save": "f"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "arrow", "props": { "from": { "object": "{{n.object.id}}" }, "to": { "object": "{{web.object.id}}" }, "label": "ships {{board}}" }, "frame": { "x": 0, "y": 0, "w": 0, "h": 0 } },
+      "note": "routing measures the caption through the client once; easld keeps exact arrow label sizes for the server's life, so the labels name the board to stay first-seen on every run"
+    },
+    { "call": "layout.check", "params": { "ids": ["{{f.object.id}}"] }, "note": "an overflow and a cut table from the client's sizes: not approximate" }
+  ]
+}

@@ -11,7 +11,9 @@ import (
 )
 
 // conn is one client connection speaking the socket protocol (schema "transport"):
-// newline-delimited JSON, requests answered by id, event lines once subscribed.
+// newline-delimited JSON, requests answered by id, event lines once subscribed. A connection
+// that attached as a client (client.attach) also gets requests from the server, which it answers
+// from its script (Step.Replies) and records.
 type conn struct {
 	c       net.Conn
 	mu      sync.Mutex
@@ -22,7 +24,10 @@ type conn struct {
 	// Lines that carry no id: event lines, and replies to lines that weren't JSON.
 	events []map[string]any
 	loose  []map[string]any
-	// When the last event line arrived; settling waits for a quiet stretch.
+	// The scripted answers left, by method, and the requests the server sent, in order.
+	replies  map[string][]Reply
+	received []map[string]any
+	// When the last event or server request arrived; settling waits for a quiet stretch.
 	lastEvent time.Time
 	closed    bool
 	done      chan struct{}
@@ -49,6 +54,10 @@ func (k *conn) read() {
 		}
 		k.mu.Lock()
 		switch {
+		case line["method"] != nil:
+			k.received = append(k.received, map[string]any{"method": line["method"], "params": line["params"]})
+			k.lastEvent = time.Now()
+			k.answer(line)
 		case line["event"] != nil:
 			k.events = append(k.events, line)
 			k.lastEvent = time.Now()
@@ -72,6 +81,65 @@ func (k *conn) read() {
 		delete(k.waiting, id)
 	}
 	k.mu.Unlock()
+}
+
+// answer replies to a request the server sent with the next scripted answer for its method (an
+// `internal` error when the script has none left). Called with k.mu held.
+func (k *conn) answer(request map[string]any) {
+	method := fmt.Sprint(request["method"])
+	script := k.replies[method]
+	reply := Reply{Error: map[string]any{"code": "internal", "message": "the scripted client has no reply left for " + method}}
+	if len(script) > 0 {
+		reply, k.replies[method] = script[0], script[1:]
+	}
+	switch {
+	case reply.Silent:
+		return
+	case reply.HangUp:
+		k.c.Close()
+		return
+	}
+	line := map[string]any{"id": request["id"], "ok": reply.Error == nil}
+	if reply.Error != nil {
+		line["error"] = reply.Error
+	} else {
+		result := reply.Result
+		if result == nil {
+			result = map[string]any{}
+		}
+		line["result"] = result
+	}
+	data, err := json.Marshal(line)
+	if err == nil {
+		k.writeLine(data)
+	}
+}
+
+// script adds scripted answers.
+func (k *conn) script(replies map[string][]Reply) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.replies == nil {
+		k.replies = map[string][]Reply{}
+	}
+	for method, list := range replies {
+		k.replies[method] = append(k.replies[method], list...)
+	}
+}
+
+// takeReceived returns and clears the requests the server sent so far.
+func (k *conn) takeReceived() []map[string]any {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	received := k.received
+	k.received = nil
+	return received
+}
+
+func (k *conn) isClosed() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.closed
 }
 
 // send writes one request and returns its id.

@@ -414,7 +414,7 @@ func (r Report) Print(w io.Writer) {
 	printTallies(w, families)
 
 	if len(r.Delegated) > 0 {
-		fmt.Fprintf(w, "\nClient-delegated (not replayed):\n")
+		fmt.Fprintf(w, "\nClient-delegated (served by an attached client; the client-* scenarios replay them through a scripted one):\n")
 		names := make([]string, 0, len(r.Delegated))
 		for m := range r.Delegated {
 			names = append(names, m)
