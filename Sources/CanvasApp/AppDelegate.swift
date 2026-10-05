@@ -167,6 +167,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let temporary = report.repos.flatMap(\.legacy).filter { $0.temporary && $0.region != nil }.map { "\($0.label) (\($0.worktree ?? ""))" }
             NSLog("easl: merged \(report.repos.reduce(0) { $0 + $1.legacy.count }) per-branch boards into \(report.repos.count) repository boards (\(report.unresolved.count) left as they were)\(temporary.isEmpty ? "" : "; regions from temporary worktrees: " + temporary.joined(separator: ", ")); report in \(AppPaths.boards.path)/\(RepoBoardMigration.backupFolder)/\(RepoBoardMigration.reportFile)")
         }
+        // Before boards open, so their pages load with the extensions' content scripts.
+        BrowserExtensions.start()
         let initial = open(root: Self.initialRoot())
         // The other boards that were open as tabs come back behind the initial one (one tab per
         // board: two saved worktrees of one repository are one board).
@@ -431,6 +433,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         submenu("easl", [
             // Every browser tile's cookies, storage and caches (`BrowserProfile`), after a sheet.
             item("Clear Browsing Data…", #selector(clearBrowsingData(_:)), ""),
+            // Safari web extensions in browser tiles (`BrowserExtensions`), filled as it opens.
+            BrowserExtensions.menuItem(),
             .separator(),
             item("Quit easl", #selector(NSApplication.terminate(_:)), "q"),
         ])

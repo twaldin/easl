@@ -55,6 +55,18 @@ The agent points back the same way: it opens the exact code it means beside its 
 
 A browser tile is Safari's engine on the board: sign-in popups, downloads (to ~/Downloads, shown in the address bar), uploads, logins, camera and microphone prompts, ⌘F to find in the page, File › Print Page…, and fullscreen video work as in Safari. Right-click a tile for **Profile** (a second set of cookies and logins, e.g. a work account; tiles with the same profile name share it) and, for a page served from your Mac, **Reload When Files Change**. ⌥-click a link to open it in your default browser instead.
 
+## Password managers and other Safari extensions
+
+On macOS 15.4 or later, browser tiles run Safari web extensions, so your password manager can unlock and fill in them.
+
+1. Install the password manager's Mac app with its Safari extension. Bitwarden from the App Store, for example, puts a Safari extension inside Bitwarden.app; other password managers with a Safari extension ship it inside an app the same way.
+2. In easl, choose easl › Browser Extensions › Add Extension… and pick the app. easl shows what the extension asks for (its permissions and the sites it runs on); Add allows it.
+3. The extension's icon appears at the right end of every browser tile's address bar. Click it to open its popup on that page: sign in or unlock there, then fill.
+
+With more than one extension, the address bar shows a puzzle piece that lists them. easl › Browser Extensions lists each one with Enabled, Options… and Remove… (removing one deletes what it stored in easl; its app stays installed). You can also add an `.appex` or an unpacked extension folder with a `manifest.json`, such as one you're developing.
+
+What doesn't work yet: passkeys. Passkeys for arbitrary websites need an entitlement Apple grants to browsers on request, which easl doesn't have, so sign in with your saved password instead. Extensions can't open windows of their own, and an extension's own pages (its options, a full-page vault) open in a separate window, not a tile.
+
 ## Credits
 
 Terminals are [Ghostty](https://ghostty.org)'s, through [libghostty-spm](https://github.com/Lakr233/libghostty-spm); code tiles highlight with [tree-sitter](https://tree-sitter.github.io) and notes parse Markdown with [swift-markdown](https://github.com/swiftlang/swift-markdown); sessions are [zmx](https://github.com/neurosnap/zmx)'s (installed separately, not part of the app). Every third-party component in the app and its license is in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md), which ships inside `easl.app` too. One of them, GNU libintl (inside libghostty), is under the LGPL 2.1: the notices say where its source is and how to relink easl with a modified copy.
