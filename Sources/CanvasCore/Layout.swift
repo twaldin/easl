@@ -686,7 +686,7 @@ extension BoardGeometry {
     /// Pairs (sorted ids) of objects that overlap by accident, involving `scope` (every object
     /// when nil): `countsForOverlaps` objects, a group and its (nested) members never.
     public func overlaps(scope: Set<ObjectID>? = nil) -> [[ObjectID]] {
-        let solid = objects.values.filter(Self.countsForOverlaps).sorted { $0.id < $1.id }
+        let solid = objects.values.filter(Self.countsForOverlaps)
         var groupMembers: [ObjectID: Set<ObjectID>] = [:]
         func members(of group: CanvasObject) -> Set<ObjectID> {
             if let cached = groupMembers[group.id] { return cached }
@@ -701,12 +701,24 @@ extension BoardGeometry {
             groupMembers[group.id] = all
             return all
         }
+        func separate(_ a: CanvasObject, _ b: CanvasObject) -> Bool {
+            (a.type == .group && members(of: a).contains(b.id)) || (b.type == .group && members(of: b).contains(a.id))
+        }
         var overlaps: [[ObjectID]] = []
-        for (index, a) in solid.enumerated() {
-            for b in solid[(index + 1)...] {
-                guard scope == nil || scope!.contains(a.id) || scope!.contains(b.id), a.frame.intersects(b.frame) else { continue }
-                if a.type == .group, members(of: a).contains(b.id) { continue }
-                if b.type == .group, members(of: b).contains(a.id) { continue }
+        if let scope {
+            // Only pairs with a scoped object (a write's response checks one object: the
+            // board's other pairs are never looked at).
+            var found: Set<[ObjectID]> = []
+            for a in solid where scope.contains(a.id) {
+                for b in solid where b.id != a.id && a.frame.intersects(b.frame) && !separate(a, b) {
+                    found.insert(a.id < b.id ? [a.id, b.id] : [b.id, a.id])
+                }
+            }
+            return found.sorted { ($0[0], $0[1]) < ($1[0], $1[1]) }
+        }
+        let sorted = solid.sorted { $0.id < $1.id }
+        for (index, a) in sorted.enumerated() {
+            for b in sorted[(index + 1)...] where a.frame.intersects(b.frame) && !separate(a, b) {
                 overlaps.append([a.id, b.id])
             }
         }
