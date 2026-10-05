@@ -157,6 +157,20 @@ final class CanvasView: NSScrollView {
     /// Who the activity log credits for viewport moves: the user, except while the app moves it.
     private var viewportMover: ActivityActor = .user
     private var activitySettle: DispatchWorkItem?
+    /// This client's record of where the view was left (`SavedViewport`), not the board's.
+    private let viewportStore: SavedViewport.Store
+    /// Whether the opening view is in place: nothing is saved before it, or a board closed in its
+    /// first turn would record the unplaced view over the real one.
+    private var viewPlaced = false
+    private var viewportSave: DispatchWorkItem?
+    private var savedViewport: SavedViewport?
+    /// The saved view this board opened with, held until the user first moves the view: the
+    /// window can still change size after the board opens (a tab joining the group, the saved
+    /// frame, a hidden tab shown), and the view shows that centre through it, not the corner
+    /// AppKit keeps fixed.
+    private var openedAtSavedView: SavedViewport?
+    private var restoringView = false
+    private var restoredView = (origin: CGPoint.zero, zoom: CGFloat(1))
     private lazy var seen = SeenTracker { [weak self] id in self?.didSee(id) }
 
     /// Where the tray drains and Superwhisper pastes (`PromptTarget`; the window controller
@@ -209,6 +223,7 @@ final class CanvasView: NSScrollView {
 
     init(board: Board) {
         self.board = board
+        viewportStore = SavedViewport.Store(url: AppPaths.viewport(of: board.id))
         super.init(frame: .zero)
         documentView = document
         document.canvas = self
@@ -249,7 +264,7 @@ final class CanvasView: NSScrollView {
         for marker in board.attention.values { showMarker(marker.object, message: marker.message) }
         restack()
         refreshGroups()
-        DispatchQueue.main.async { [weak self] in self?.centerOnContent() }
+        DispatchQueue.main.async { [weak self] in self?.placeOpeningView() }
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -1523,6 +1538,85 @@ final class CanvasView: NSScrollView {
         scroll(to: NSPoint(x: target.midX - clear.midX / zoom, y: target.minY - Self.jumpPadding - clear.minY / zoom))
     }
 
+    /// The view a board opens with: where this client left it (zoom and centre), else the top of
+    /// its content (`centerOnContent`), as every board's first open.
+    private func placeOpeningView() {
+        if let saved = viewportStore.load() {
+            restoreView(saved)
+            openedAtSavedView = saved
+        } else {
+            centerOnContent()
+        }
+        savedViewport = currentViewport
+        viewPlaced = true
+    }
+
+    /// The zoom and the board point at the centre of the view now, to come back to (`restoreView`):
+    /// the centre rather than a corner, so a window of another size shows what the user was
+    /// looking at, and of the whole view rather than the part clear of the chrome, so a tray of
+    /// another size doesn't move it.
+    private var currentViewport: SavedViewport {
+        let size = contentView.frame.size, zoom = magnification, origin = contentView.bounds.origin
+        return SavedViewport(zoom: Double(zoom), x: Double(origin.x + size.width / 2 / zoom - CanvasDocumentView.origin.x),
+                             y: Double(origin.y + size.height / 2 / zoom - CanvasDocumentView.origin.y))
+    }
+
+    private func restoreView(_ saved: SavedViewport) {
+        restoringView = true
+        viewportMover = .system
+        defer {
+            viewportMover = .user
+            restoringView = false
+        }
+        let zoom = min(maxMagnification, max(minMagnification, CGFloat(saved.zoom)))
+        let centre = NSRect(x: CGFloat(saved.x) + CanvasDocumentView.origin.x, y: CGFloat(saved.y) + CanvasDocumentView.origin.y, width: 0, height: 0)
+        apply(Layout.center(centre, in: CGRect(origin: .zero, size: contentView.frame.size), zoom: zoom, padding: 0))
+        restoredView = (contentView.bounds.origin, magnification)
+    }
+
+    /// Whether the view is still exactly where `restoreView` put it: a resize scales the clip
+    /// view's bounds around an unchanged origin, within rounding.
+    private var isAtRestoredView: Bool {
+        let origin = contentView.bounds.origin
+        return abs(origin.x - restoredView.origin.x) < 0.01 && abs(origin.y - restoredView.origin.y) < 0.01
+            && abs(magnification - restoredView.zoom) < 1e-6
+    }
+
+    /// While the board is still at the saved view it opened with and only the window changed
+    /// size, shows the saved centre again; a change of origin or zoom is the user's (or a
+    /// jump's), and the view is theirs from then on.
+    private func keepOpenedViewCentred() {
+        guard let opened = openedAtSavedView, !restoringView else { return }
+        guard isAtRestoredView else {
+            openedAtSavedView = nil
+            return
+        }
+        let now = currentViewport
+        if abs(now.x - opened.x) > 0.5 || abs(now.y - opened.y) > 0.5 { restoreView(opened) }
+    }
+
+    /// Records the view once it has stopped moving (every pan and pinch step calls this).
+    private func scheduleViewportSave() {
+        guard viewPlaced else { return }
+        viewportSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.saveViewport() }
+        }
+        viewportSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    /// Writes the view now if it moved since it was last written: when the board's tab closes and
+    /// the app quits.
+    func saveViewport() {
+        viewportSave?.cancel()
+        guard viewPlaced else { return }
+        let current = currentViewport
+        guard current != savedViewport else { return }
+        savedViewport = current
+        try? viewportStore.save(current)
+    }
+
     private func scroll(to origin: NSPoint) {
         contentView.scroll(to: origin)
         reflectScrolledClipView(contentView)
@@ -2111,11 +2205,13 @@ final class CanvasView: NSScrollView {
     @objc private func boundsChanged() {
         let perfStart = DevPerf.mark()
         defer { DevPerf.record("scene.boundsChanged", since: perfStart) }
+        keepOpenedViewCentred()
         // Every pan and pinch step, not coalesced: the grid is one layer move, markers a few.
         updateGrid()
         layoutPills()
         if !selection.isEmpty { placeHandles() }
         board.activity.viewportChanged(viewport, actor: viewportMover, rev: board.revision)
+        scheduleViewportSave()
         scheduleActivitySettle()
         scheduleLiveness()
     }

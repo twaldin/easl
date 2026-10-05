@@ -201,6 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        for controller in controllers.values { controller.canvas.saveViewport() }
         registry.store.flush(Array(registry.boards.values))
         server?.stop()
         cmuxServer?.stop()
@@ -329,6 +330,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyController?.canvas.openForUser(.html, props: .object(["html": .string(HtmlKit.emptyTemplate), "title": .string("HTML")]))
     }
     @objc func zoomToActual(_ sender: Any?) { keyController?.zoomToActual(sender) }
+    @objc func increaseChromeText(_ sender: Any?) { ChromeText.step(bigger: true) }
+    @objc func decreaseChromeText(_ sender: Any?) { ChromeText.step(bigger: false) }
+    @objc func resetChromeText(_ sender: Any?) { ChromeText.reset() }
     @objc func zoomOut(_ sender: Any?) { keyController?.zoomOut(sender) }
     @objc func zoomIn(_ sender: Any?) { keyController?.zoomIn(sender) }
     @objc func zoomToFit(_ sender: Any?) { keyController?.zoomToFit(sender) }
@@ -540,6 +544,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Zoom Out", #selector(zoomOut(_:)), "-"),
             item("Zoom to Fit", #selector(zoomToFit(_:)), "9"),
             .separator(),
+            // The app's own text (tray, tile title bars), separate from the board's zoom (⌘= ⌘-)
+            // and a tile's content zoom (⌃⌘=). ⌥⌘ so no terminal's font-size key or zoom claims them.
+            item("Increase Chrome Text Size", #selector(increaseChromeText(_:)), "=", [.option, .command]),
+            item("Decrease Chrome Text Size", #selector(decreaseChromeText(_:)), "-", [.option, .command]),
+            item("Reset Chrome Text Size", #selector(resetChromeText(_:)), "0", [.option, .command]),
+            .separator(),
             item("Clear Attention Markers", #selector(clearAttentionMarkers(_:)), ""),
             // ⌘R and ⌥⌘I as in Safari: the focused or selected browser tile's page. Disabled
             // otherwise, so the key goes on to whoever has the keyboard.
@@ -573,7 +583,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuItemValidation {
     /// Menu items that don't apply now are disabled (the board window decides).
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        keyController?.validate(item) ?? false
+        switch item.action {
+        case #selector(increaseChromeText(_:)): return ChromeText.canStep(bigger: true)
+        case #selector(decreaseChromeText(_:)): return ChromeText.canStep(bigger: false)
+        case #selector(resetChromeText(_:)): return ChromeText.scale != ChromeTextScale.normal
+        default: return keyController?.validate(item) ?? false
+        }
     }
 }
 

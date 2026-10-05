@@ -39,8 +39,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }
         guard let worktree = GitWorktree.containing(directory.standardizedFileURL.path), worktree.commonDir == board.repo?.commonDir,
               !worktree.isMain, let region = board.region(for: worktree) else { return }
-        // On the next turn, once the window has laid the canvas out. The view opens at 100%
-        // wherever layout puts it: the board doesn't save its viewport.
+        // On the next turn, once the window has laid the canvas out and after the board's own
+        // opening view (`CanvasView.placeOpeningView`): the worktree's region wins over the saved view.
         DispatchQueue.main.async { [weak self] in self?.canvas.reveal(region) }
     }
 
@@ -415,6 +415,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        canvas.saveViewport()
         onClose?()
     }
 
