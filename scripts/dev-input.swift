@@ -18,6 +18,8 @@
 //                                                    --lines: a mouse wheel's notches (dy 1 = one line up)
 //   dev-input <pid> magnify <x> <y> <amount>         pinch at x,y: zoom × (1 + amount) per step (0.05 in, -0.05 out)
 //   dev-input <pid> perf [ms]                        an idle DevPerf span (EASL_DEV_PERF=1), default 5000 ms
+//   dev-input <pid> panel <path>                     choose <path> in the window's open panel (a page's file
+//                                                    upload), which runs out of process where no click reaches
 //   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the longest gap
 //   scroll --repeat N --gesture                      the burst as one phased trackpad gesture: began and ended
 //                                                    without movement, the steps between as changed
@@ -73,6 +75,9 @@ case "magnify":
     info["x"] = rest[0]; info["y"] = rest[1]; info["amount"] = rest[2]
 case "perf":
     info["ms"] = rest.first ?? "5000"
+case "panel":
+    guard !rest.isEmpty else { exit(2) }
+    info["path"] = rest.joined(separator: " ")
 default:
     FileHandle.standardError.write(Data("unknown kind \(args[1])\n".utf8))
     exit(2)

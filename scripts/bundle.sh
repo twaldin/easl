@@ -59,6 +59,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>NSAppleEventsUsageDescription</key><string>A program running in easl wants to control another app.</string>
   <key>NSMicrophoneUsageDescription</key><string>A program or page running in easl wants to use the microphone.</string>
   <key>NSCameraUsageDescription</key><string>A program or page running in easl wants to use the camera.</string>
+  <key>NSLocationUsageDescription</key><string>A page in a browser tile wants to know your location.</string>
+  <key>NSLocationWhenInUseUsageDescription</key><string>A page in a browser tile wants to know your location.</string>
 </dict>
 </plist>
 PLIST

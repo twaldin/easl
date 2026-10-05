@@ -872,6 +872,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// File ▸ Snapshot Page to Image: the focused, else the one selected, browser tile's page.
     @objc func snapshotPage(_ sender: Any?) { keyboardBrowser.map { canvas.snapshotPage($0.id) } }
 
+    /// File ▸ Print Page…: the focused, else the one selected, browser tile's page.
+    @objc func printPage(_ sender: Any?) { keyboardBrowser?.tile.printPage() }
+
+    /// Edit ▸ Find in Page… (⌘F): the find bar of the focused, else the one selected, browser tile.
+    @objc func findInPage(_ sender: Any?) {
+        guard let browser = keyboardBrowser, canvas.tiles[browser.id]?.isLive == true else { return }
+        browser.tile.showFind()
+    }
+
     private var inspectableBrowser: BrowserTile? {
         keyboardBrowser.flatMap { $0.tile.canShowInspector ? $0.tile : nil }
     }
@@ -954,6 +963,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return inspectableBrowser != nil
         case #selector(reloadPage(_:)): return keyboardBrowser != nil
         case #selector(snapshotPage(_:)): return keyboardBrowser != nil
+        case #selector(printPage(_:)): return keyboardBrowser?.tile.canPrint == true
+        case #selector(findInPage(_:)):
+            guard let browser = keyboardBrowser else { return false }
+            return canvas.tiles[browser.id]?.isLive == true
         case #selector(toggleFollowFiles(_:)):
             guard let terminal = canvas.followTerminal else {
                 item.state = .off
@@ -1060,9 +1073,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     /// Menu items a focused terminal keeps: editing (Copy, Paste, Select All), ⌘⌫, which
     /// Ghostty sends as "delete line" and which must never delete the canvas selection, and ⌘Z /
-    /// ⇧⌘Z, which are the terminal's (a Stage undone from inside nvim was a silent git change).
+    /// ⇧⌘Z, which are the terminal's (a Stage undone from inside nvim was a silent git change),
+    /// and ⌘F (Find in Page), which is the terminal's own search.
     private static let terminalMenuActions: Set<Selector> = [#selector(NSText.copy(_:)), #selector(NSText.paste(_:)), #selector(NSText.selectAll(_:)), #selector(AppDelegate.deleteSelection(_:)),
-                                                             #selector(AppDelegate.undoCanvas(_:)), #selector(AppDelegate.redoCanvas(_:))]
+                                                             #selector(AppDelegate.undoCanvas(_:)), #selector(AppDelegate.redoCanvas(_:)), #selector(AppDelegate.findInPage(_:))]
 
     /// The main-menu item `event` is the key equivalent of.
     static func menuItem(for event: NSEvent, in menu: NSMenu?) -> NSMenuItem? {

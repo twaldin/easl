@@ -100,6 +100,21 @@ final class BrowserTile: NSView, TileContent {
     private let failureView = BrowserFailureView()
     private var failedInRow = 0
     private var retryTask: Task<Void, Never>?
+    /// The canvas's browser tile view for an object: the tile made for a page's popup builds its
+    /// web view from the configuration WebKit passes (`adoptPopup`), so the popup keeps its
+    /// `window.opener`.
+    var browserTile: ((ObjectID) -> BrowserTile?)?
+    /// The tile whose page opened this one as a popup the user asked for: shown again when the
+    /// popup's page closes it.
+    private var popupOpener: ObjectID?
+    /// The profile the web view was built with (`BrowserProfile`); a changed `props.profile`
+    /// rebuilds it.
+    private var webViewProfile: String?
+    /// The find bar (⌘F, Edit ▸ Find in Page…), and who had the keyboard before it.
+    private var findBar: CodeFindBar?
+    private weak var findPreviousResponder: NSResponder?
+    /// The files behind a local page, while `props.reloadOnChange` is on (`LocalPageWatch`).
+    private var pageWatch: (directory: URL, watch: LocalPageWatch)?
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
@@ -122,6 +137,7 @@ final class BrowserTile: NSView, TileContent {
         }
         chrome.onEscape = { [weak self] in self?.leave() }
         chrome.onProblems = { [weak self] in self?.toggleProblems() }
+        chrome.onDownload = { [weak self] in self?.revealDownload() }
         chrome.onReload = { [weak self] in
             guard let self else { return }
             self.credit.user()
@@ -203,6 +219,7 @@ final class BrowserTile: NSView, TileContent {
         pageHost.frame = pageFrame
         webView?.frame = webViewFrame
         placeProblems()
+        placeFindBar()
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -251,14 +268,26 @@ final class BrowserTile: NSView, TileContent {
         return view
     }
 
-    private func makeWebView() -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = BrowserProfile.store
-        configuration.applicationNameForUserAgent = "Version/18.0 Safari/605.1.15"
+    /// The tile's web view: a fresh one in the tile's profile, or for a popup (`adoptPopup`) one
+    /// from the configuration WebKit passed, which carries the opener (`window.opener`), its
+    /// profile's store and settings. The popup gets a user content controller of its own: the
+    /// one it inherits answers to the opener's tile (its page log, its activity).
+    private func makeWebView(popup: WKWebViewConfiguration? = nil) -> WKWebView {
+        let configuration = popup ?? WKWebViewConfiguration()
+        // A popup's tile names its opener's profile (`openPopup`), whose store it carries.
+        webViewProfile = BrowserProfile.name(in: object.props)
+        if popup == nil {
+            configuration.websiteDataStore = BrowserProfile.store(named: webViewProfile)
+        } else {
+            configuration.userContentController = WKUserContentController()
+        }
+        configuration.applicationNameForUserAgent = BrowserProfile.applicationName
         // The page's context menu offers Inspect Element (Web Inspector), as in Safari with
         // its Develop menu on.
         configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
         configuration.preferences.setValue(true, forKey: "hiddenPageDOMTimerThrottlingAutoIncreases")
+        // A video's or game's fullscreen button: WebKit's own fullscreen window, Esc leaves it.
+        configuration.preferences.isElementFullscreenEnabled = true
         WebMentions.install(on: configuration)
         let controller = configuration.userContentController
         controller.addUserScript(WKUserScript(source: BrowserScripts.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: BrowserScripts.world))
@@ -317,7 +346,17 @@ final class BrowserTile: NSView, TileContent {
         if !isLive { scheduleRelease() }
         // A page back after a release: the chrome says it reloaded.
         if previousLoad != nil { problemsChanged() }
+        updatePageWatch()
         return view
+    }
+
+    /// A page's popup lands in this new tile: its web view is built from `configuration` and
+    /// returned to WebKit, which loads the popup into it. Nil when the tile has a page already.
+    /// When its page closes it (`webViewDidClose`), a popup the user opened shows `opener` again.
+    func adoptPopup(_ configuration: WKWebViewConfiguration, opener: ObjectID, returnsToOpener: Bool) -> WKWebView? {
+        guard webView == nil else { return nil }
+        popupOpener = returnsToOpener ? opener : nil
+        return makeWebView(popup: configuration)
     }
 
     /// Shows the web view in the tile, creating it on first use.
@@ -428,6 +467,8 @@ final class BrowserTile: NSView, TileContent {
         // crashes the app while its window is minimized; letting the stop settle first doesn't.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeDelay) { _ = webView }
         self.webView = nil
+        pageWatch = nil
+        closeFind()
         pendingNavigations = []
         uncommittedNavigations = []
         hover = nil
@@ -631,9 +672,9 @@ final class BrowserTile: NSView, TileContent {
         failureView.isHidden = true
     }
 
-    /// A new tile beside this one (⌘-click, `target=_blank`, `window.open`), credited like a
-    /// navigation. One the user opened (`onOpenedTile`) is shown and selected, since it may land
-    /// outside the view; the same address asked for again within `reopenInterval` (a second
+    /// A new tile beside this one (⌘-click, `target=_blank`), credited like a navigation, in this
+    /// tile's profile. One the user opened (`onOpenedTile`) is shown and selected, since it may
+    /// land outside the view; the same address asked for again within `reopenInterval` (a second
     /// click while the first tile appears) gets the first tile instead of a duplicate.
     private func openTile(_ url: URL) {
         let address = url.absoluteString
@@ -644,10 +685,32 @@ final class BrowserTile: NSView, TileContent {
         }
         let size = Board.defaultSize(.browser)
         let caller: ObjectID? = if case .agent(let tile) = actor { tile } else { nil }
-        let opened = board.create(type: .browser, props: .object(["url": .string(address)]),
+        let opened = board.create(type: .browser, props: .object(["url": .string(address)].merging(profileProps) { $1 }),
                                   frame: board.place(width: size.w, height: size.h, near: objectID), caller: caller)
         lastOpened = (address, opened.id, Date())
         if actor == .user { onOpenedTile?(opened.id) }
+    }
+
+    /// `props.profile` for the tiles this page opens: they share its cookies and logins.
+    private var profileProps: [String: JSONValue] {
+        webViewProfile.map { ["profile": .string($0)] } ?? [:]
+    }
+
+    /// A page's `window.open` (a sign-in popup, a share dialog): a new tile beside this one
+    /// whose web view WebKit opens the popup in, so the popup's `window.opener` is this page and
+    /// its `postMessage` reaches it; the popup's `window.close()` closes the tile
+    /// (`webViewDidClose`). Nil (the popup loads as a plain tile, without an opener) when the
+    /// canvas has no tile view for it.
+    private func openPopup(_ url: URL?, configuration: WKWebViewConfiguration) -> WKWebView? {
+        let actor = credit.actor()
+        let size = Board.defaultSize(.browser)
+        let caller: ObjectID? = if case .agent(let tile) = actor { tile } else { nil }
+        let address = url.map(\.absoluteString).flatMap { $0.isEmpty ? nil : $0 } ?? "about:blank"
+        let opened = board.create(type: .browser, props: .object(["url": .string(address)].merging(profileProps) { $1 }),
+                                  frame: board.place(width: size.w, height: size.h, near: objectID), caller: caller)
+        NSLog("easl: browser %@ opened popup %@ (%@)", objectID, opened.id, address)
+        if actor == .user { onOpenedTile?(opened.id) }
+        return browserTile?(opened.id)?.adoptPopup(configuration, opener: objectID, returnsToOpener: actor == .user)
     }
 
     /// Puts keyboard focus in the address field (a new, empty tile the user made; ⌘L).
@@ -927,6 +990,7 @@ final class BrowserTile: NSView, TileContent {
     var takesKeyboardFocus: Bool { true }
 
     /// Someone else changed `props.url` (an agent's object.update): go there, credited to them.
+    /// Another `profile` builds the page again in that profile's store (from `props.url`).
     func update(_ object: CanvasObject) {
         let previous = self.object.props["url"]?.string
         self.object = object
@@ -934,12 +998,129 @@ final class BrowserTile: NSView, TileContent {
             zoom = CGFloat(object.zoom)
             layoutParts()
         }
+        if webView != nil, BrowserProfile.name(in: object.props) != webViewProfile {
+            NSLog("easl: browser %@ now in profile %@", objectID, BrowserProfile.name(in: object.props) ?? "default")
+            release()
+            if isLive, window != nil { attach() }
+            return
+        }
+        updatePageWatch()
         guard let url = object.props["url"]?.string, url != previous else { return }
         // A released page reloads from props.url when it comes back.
         guard let webView else { return chrome.setAddress(url) }
         guard url != webView.url?.absoluteString else { return }
         if case .agent(let tile) = object.updatedBy { credit.agent(tile) } else { credit.user() }
         load(url)
+    }
+
+    // MARK: Reload when files change
+
+    /// Whether the page is one `props.reloadOnChange` can apply to (`LocalPage`).
+    var servedLocally: Bool {
+        pageURL.flatMap(URL.init(string:)).map(LocalPage.isLocal) ?? false
+    }
+
+    /// Watches the files behind the page while it has a web view and `props.reloadOnChange` is
+    /// on; any change reloads it. A page that leaves for another address follows the address.
+    private func updatePageWatch() {
+        let wanted = webView != nil && object.props["reloadOnChange"]?.bool == true
+            ? pageURL.flatMap(URL.init(string:)).flatMap { LocalPage.directory(for: $0, boardRoot: board.root) } : nil
+        guard wanted != pageWatch?.directory else { return }
+        pageWatch = nil
+        guard let wanted else { return }
+        guard let watch = LocalPageWatch(directory: wanted, onChange: { [weak self] in self?.filesChanged() }) else { return }
+        pageWatch = (wanted, watch)
+        NSLog("easl: browser %@ reloads when files in %@ change", objectID, wanted.path)
+    }
+
+    private func filesChanged() {
+        guard let webView, pageWatch != nil, !webView.isLoading else { return }
+        NSLog("easl: browser %@ reloading: files changed", objectID)
+        credit.user()
+        track(webView.reload())
+    }
+
+    // MARK: Print, find
+
+    var canPrint: Bool { webView?.url != nil && window != nil }
+
+    /// File ▸ Print Page…: the page through the print panel, as a sheet on the board window.
+    func printPage() {
+        guard let webView, let window else { return }
+        let operation = webView.printOperation(with: NSPrintInfo.shared)
+        // WKWebView's operation view starts with an empty frame and prints blank pages.
+        operation.view?.frame = webView.bounds
+        operation.jobTitle = webView.title ?? pageURL ?? "Page"
+        operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+    }
+
+    /// Edit ▸ Find in Page… (⌘F): a find bar at the top right of the page, with the selection or
+    /// the last query; Return / ⇧Return go to the next or previous match (WebKit selects it and
+    /// scrolls it into view), Esc closes it and gives the keyboard back.
+    func showFind() {
+        let bar = findBar ?? makeFindBar()
+        if !bar.holdsKeyboard { findPreviousResponder = window?.firstResponder }
+        bar.isHidden = false
+        placeFindBar()
+        window?.makeFirstResponder(bar.field)
+        bar.field.selectText(nil)
+        if !bar.field.stringValue.isEmpty { find(backward: false) }
+    }
+
+    private func makeFindBar() -> CodeFindBar {
+        let bar = CodeFindBar(frame: NSRect(origin: .zero, size: CodeFindBar.size))
+        bar.onChange = { [weak self] in self?.find(backward: false) }
+        bar.onStep = { [weak self] backward in self?.find(backward: backward) }
+        bar.onClose = { [weak self] in self?.closeFind() }
+        addSubview(bar, positioned: .above, relativeTo: cover)
+        findBar = bar
+        return bar
+    }
+
+    private func placeFindBar() {
+        guard let findBar else { return }
+        let size = CodeFindBar.size
+        findBar.frame = NSRect(x: max(0, bounds.width - size.width - 8), y: chromeExtent + 4, width: min(size.width, bounds.width), height: size.height)
+    }
+
+    private func find(backward: Bool) {
+        guard let findBar, let webView else { return }
+        let query = findBar.field.stringValue
+        guard !query.isEmpty else { return findBar.show(status: "") }
+        let configuration = WKFindConfiguration()
+        configuration.backwards = backward
+        configuration.wraps = true
+        configuration.caseSensitive = false
+        webView.find(query, configuration: configuration) { [weak findBar] result in
+            MainActor.assumeIsolated {
+                guard let findBar, findBar.field.stringValue == query else { return }
+                findBar.show(status: result.matchFound ? "" : "No results")
+            }
+        }
+    }
+
+    private func closeFind() {
+        guard let findBar, !findBar.isHidden else { return }
+        let hadKeyboard = findBar.holdsKeyboard
+        findBar.isHidden = true
+        if hadKeyboard, let window { CanvasView.returnKeyboard(to: findPreviousResponder, in: window) }
+    }
+
+    // MARK: Downloads
+
+    /// The address bar's download pill (`BrowserDownloads`).
+    func showDownload(_ status: BrowserDownloads.Status) {
+        chrome.download = status
+    }
+
+    /// The pill clicked: a finished download shown in Finder; a failed one's pill goes.
+    private func revealDownload() {
+        guard let status = chrome.download else { return }
+        switch status.state {
+        case .finished: if let file = status.file { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+        case .failed: chrome.download = nil
+        case .running: break
+        }
     }
 
     /// File > New Browser Tile: asks for an address and hands it to `open` (which places the
@@ -964,23 +1145,52 @@ final class BrowserTile: NSView, TileContent {
 }
 
 extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
+    /// Schemes a page loads itself; anything else is another app's link (`openInOtherApp`).
+    static let pageSchemes: Set<String> = ["http", "https", "about", "file", "data", "blob", "javascript", "webkit-extension", "safari-web-extension"]
+
+    /// ⌥-click on a web link: the default browser (Safari, Chrome), as everywhere on the board.
+    /// ⌘-click: a tile beside this one. A link marked `download`: a download. Another app's
+    /// link (`zoommtg:`): that app, after asking.
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
-        if navigationAction.navigationType == .linkActivated, navigationAction.modifierFlags.contains(.command), let url = navigationAction.request.url {
+        guard let url = navigationAction.request.url else { return decisionHandler(.allow) }
+        let scheme = url.scheme?.lowercased() ?? ""
+        let web = scheme == "http" || scheme == "https"
+        if navigationAction.navigationType == .linkActivated, web, navigationAction.modifierFlags.contains(.option) {
+            ExternalOpen.open(url, because: "browser \(objectID) link (⌥-click)")
+            return decisionHandler(.cancel)
+        }
+        if navigationAction.navigationType == .linkActivated, navigationAction.modifierFlags.contains(.command) {
             openTile(url)
             return decisionHandler(.cancel)
         }
-        decisionHandler(.allow)
+        if !scheme.isEmpty, !Self.pageSchemes.contains(scheme) {
+            // A subframe's (a tracking iframe's) never leaves the page.
+            if navigationAction.targetFrame?.isMainFrame != false { openInOtherApp(url, from: navigationAction.sourceFrame) }
+            if NSWorkspace.shared.urlForApplication(toOpen: url) != nil { return decisionHandler(.cancel) }
+        }
+        decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow)
     }
 
     /// The page's own document with an HTTP error status is its first problem (`PageLog`), once
-    /// its navigation commits (`DocumentFailureTracker`).
+    /// its navigation commits (`DocumentFailureTracker`). A response the page can't show (a zip,
+    /// a dmg) or one the server sends as an attachment downloads (`BrowserDownloads`).
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
+        let disposition = (navigationResponse.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition") ?? ""
+        let attachment = disposition.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("attachment")
+        if !navigationResponse.canShowMIMEType || attachment { return decisionHandler(.download) }
         if navigationResponse.isForMainFrame {
             let status = (navigationResponse.response as? HTTPURLResponse)?.statusCode ?? 0
             documentStatus.responded(url: navigationResponse.response.url?.absoluteString ?? "", status: status)
         }
-        // What WebKit does without this method: show what it can, never download.
-        decisionHandler(navigationResponse.canShowMIMEType ? .allow : .cancel)
+        decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        BrowserDownloads.shared.start(download, from: self)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        BrowserDownloads.shared.start(download, from: self)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -1031,9 +1241,31 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         signalChange()
     }
 
+    /// A link with `target=_blank` opens a tile beside this one, as a ⌘-click does (no opener,
+    /// as Safari gives such links); ⌥-click on one goes to the default browser. A script's
+    /// `window.open` (a sign-in popup) gets a real web view in a new tile (`openPopup`), so the
+    /// popup can talk back to this page.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = navigationAction.request.url { openTile(url) }
-        return nil
+        let url = navigationAction.request.url
+        if navigationAction.navigationType == .linkActivated, let url {
+            let scheme = url.scheme?.lowercased()
+            if navigationAction.modifierFlags.contains(.option), scheme == "http" || scheme == "https" {
+                ExternalOpen.open(url, because: "browser \(objectID) link (⌥-click)")
+            } else {
+                openTile(url)
+            }
+            return nil
+        }
+        return openPopup(url, configuration: configuration)
+    }
+
+    /// The page closed its own window (`window.close()` in a popup it was opened as): its tile goes.
+    func webViewDidClose(_ webView: WKWebView) {
+        guard webView === self.webView, board.objects[objectID] != nil else { return }
+        NSLog("easl: browser %@ closed by its page", objectID)
+        let caller: ObjectID? = if case .agent(let tile) = credit.actor() { tile } else { nil }
+        try? board.delete(objectID, caller: caller)
+        if let popupOpener, board.objects[popupOpener] != nil { onOpenedTile?(popupOpener) }
     }
 
     private func finished(_ navigation: WKNavigation?) {
@@ -1104,7 +1336,35 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
     /// loaded again, or "Released" while it hasn't); clicking it lists that page's errors too.
     private let releaseNote = NSButton(title: "", target: nil, action: nil)
     var onProblems: (() -> Void)?
+    /// The page's latest download: "↓ build.zip 42%", "↓ build.zip" once done (clicking shows
+    /// it in Finder), "Download failed" in red.
+    private let downloadNote = NSButton(title: "", target: nil, action: nil)
+    var onDownload: (() -> Void)?
     private(set) var isEditing = false
+
+    var download: BrowserDownloads.Status? {
+        didSet {
+            guard download != oldValue else { return }
+            downloadNote.isHidden = download == nil
+            if let download {
+                let text: String
+                var color = NSColor.secondaryLabelColor
+                switch download.state {
+                case .running(let fraction): text = "↓ \(download.name)" + (fraction.map { " \(Int(($0 * 100).rounded()))%" } ?? "…")
+                case .finished: text = "↓ \(download.name)"
+                case .failed: (text, color) = ("Download failed: \(download.name)", .systemRed)
+                }
+                downloadNote.attributedTitle = NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: color])
+                downloadNote.toolTip = switch download.state {
+                case .finished: "Downloaded to \(download.file?.path ?? "Downloads"). Click to show it in Finder."
+                case .running: "Downloading to \(download.file?.deletingLastPathComponent().path ?? "Downloads")"
+                case .failed(let reason): reason
+                }
+                downloadNote.setAccessibilityLabel(text)
+            }
+            resizeSubviews(withOldSize: bounds.size)
+        }
+    }
 
     var errorCount = 0 {
         didSet {
@@ -1184,7 +1444,15 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
         releaseNote.target = self
         releaseNote.action = #selector(problemsClicked)
         releaseNote.isHidden = true
-        [back, forward, reload, address, releaseNote, problems].forEach(addSubview)
+        downloadNote.isBordered = false
+        downloadNote.wantsLayer = true
+        downloadNote.layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.1).cgColor
+        downloadNote.layer?.cornerRadius = 9
+        downloadNote.lineBreakMode = .byTruncatingMiddle
+        downloadNote.target = self
+        downloadNote.action = #selector(downloadClicked)
+        downloadNote.isHidden = true
+        [back, forward, reload, address, downloadNote, releaseNote, problems].forEach(addSubview)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -1198,8 +1466,8 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
         forward.frame = NSRect(x: 32, y: y, width: side, height: side)
         reload.frame = NSRect(x: 58, y: y, width: side, height: side)
         var trailing: CGFloat = 8
-        for pill in [problems, releaseNote] where !pill.isHidden {
-            let width = ceil(pill.attributedTitle.size().width) + 14
+        for pill in [problems, releaseNote, downloadNote] where !pill.isHidden {
+            let width = min(ceil(pill.attributedTitle.size().width) + 14, 220)
             pill.frame = NSRect(x: bounds.width - trailing + 2 - width, y: (bounds.height - 18) / 2, width: width, height: 18)
             trailing += width + 4
         }
@@ -1229,6 +1497,7 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
     @objc private func forwardClicked() { onForward?() }
     @objc private func reloadClicked() { onReload?() }
     @objc private func problemsClicked() { onProblems?() }
+    @objc private func downloadClicked() { onDownload?() }
 
     @objc private func addressSubmitted() {
         isEditing = false
