@@ -531,19 +531,48 @@ public final class ApiRouter {
     private func prompt(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"))
         let text = try string(p, "text")
-        if Self.state(of: terminal) == LifecycleState.blocked.rawValue, p["force"]?.bool != true {
+        let mentions = p["mentions"]?.array ?? []
+        return try await submitPrompt(text, to: terminal, on: board, attached: .agent { try mentions.map { try HandoffMention(json: $0).target(on: board) } },
+                                      caller: p["caller"]?.string, force: p["force"]?.bool == true)
+    }
+
+    /// What goes with a prompt: an agent's `mentions` (`Board.handOff`), or the composer's.
+    private enum Attached {
+        case agent(() throws -> [MentionTarget])
+        case composer([Mention], answer: Bool)
+    }
+
+    /// The composer's send to one terminal (docs/design.md, Composer): `agent.prompt` from the
+    /// user, with every check it makes. For a terminal whose integration drains, a prompt with
+    /// mentions is queued with its own copies of them (`Board.queueComposerPrompt`): the
+    /// integration's submission drain of that text (`Board.drain`, compared folded) takes them,
+    /// numbered from 1, and never the tray. A prompt without mentions queues nothing and drains
+    /// as any prompt does. A text the integration doesn't drain for (`PromptTarget.skipsDrain`)
+    /// queues nothing and takes no mentions. `answer`: the agent is blocked on a question or
+    /// approval and the text is the user's answer, which only the user gives: it passes the
+    /// blocked check alone, unlike `force`, carries no mentions, and is queued as an answer only
+    /// where the integration submits answers as prompts (`PromptTarget.answersAsPrompt`).
+    public func composerPrompt(_ text: String, to terminal: ObjectID, on board: Board, mentions: [Mention], answer: Bool) async throws {
+        guard let tile = board.objects[terminal], tile.type == .terminal else { throw Failure("not_found", "terminal \(terminal) was closed") }
+        _ = try await submitPrompt(text, to: tile, on: board, attached: .composer(answer ? [] : mentions, answer: answer), caller: nil, force: false)
+    }
+
+    private func submitPrompt(_ text: String, to terminal: CanvasObject, on board: Board, attached: Attached, caller sender: ObjectID?, force: Bool) async throws -> JSONValue {
+        let answering: Bool
+        if case .composer(_, let answer) = attached { answering = answer } else { answering = false }
+        if Self.state(of: terminal) == LifecycleState.blocked.rawValue, !force, !answering {
             let blocker = terminal.props["lifecycle"]?["message"]?.string.map { " (“\($0)”)" } ?? ""
             throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Leave it to the user. force: true types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow), so never force an answer to an approval")
         }
         // `working` saved before easl last closed, with no report since (an agent whose
         // integration predates the spool, or that ended meanwhile): it may be sitting in a
         // question or approval now, which the text and Return would answer.
-        if Self.state(of: terminal) == LifecycleState.working.rawValue, terminal.props["lifecycle"]?["restored"]?.bool == true, p["force"]?.bool != true {
+        if Self.state(of: terminal) == LifecycleState.working.rawValue, terminal.props["lifecycle"]?["restored"]?.bool == true, !force {
             throw Failure("conflict", "\(terminal.id) was working when easl last closed and its agent hasn't reported since, so it may now wait on a question or approval that the prompt would answer. Read its screen (agent.read) first; force: true sends anyway")
         }
         // An agent reporting from inside tmux (or an editor it started) isn't what the typing
         // reaches, unless it runs in tmux's active pane.
-        if PromptTarget.runsAgent(terminal), p["force"]?.bool != true {
+        if PromptTarget.runsAgent(terminal), !force {
             let kind = terminal.props["agent"]?["kind"]?.string
             if let program = PromptTarget.foreignProgram(kind: kind, program: terminalStatus?(board, terminal.id).program) {
                 let pane = await tmuxPane?(board, terminal.id)
@@ -555,18 +584,34 @@ public final class ApiRouter {
             }
         }
         guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
-        let mentions = try (p["mentions"]?.array ?? []).map { try HandoffMention(json: $0).target(on: board) }
+        let mentions: [MentionTarget]
+        switch attached {
+        case .agent(let parse): mentions = try parse()
+        case .composer(let given, _): mentions = given.map(\.target)
+        }
         if !mentions.isEmpty, !PromptTarget.drains(terminal) {
             throw Failure("unavailable", "\(terminal.id) runs no agent with an easl integration, so nothing there would take the mentions; name the objects in the text instead")
+        }
+        if case .composer(let given, _) = attached, !given.isEmpty, PromptTarget.skipsDrain(text, in: terminal) {
+            throw Failure("invalid_params", "a slash command or shell escape takes no mentions: its agent drains nothing for it")
         }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
         // Queued before the text goes in: the target's integration drains them with this prompt.
-        let sender = p["caller"]?.string
-        let senderName = sender.flatMap { try? agentTile($0) }.map { PromptTarget.label($0.1, shownTitle: terminalStatus?($0.0, $0.1.id).title) }
-        let handed = try board.handOff(mentions, to: terminal.id, from: sender, fromName: senderName)
+        var handed: [Mention] = []
+        var queued: String?
+        switch attached {
+        case .agent:
+            let senderName = sender.flatMap { try? agentTile($0) }.map { PromptTarget.label($0.1, shownTitle: terminalStatus?($0.0, $0.1.id).title) }
+            handed = try board.handOff(mentions, to: terminal.id, from: sender, fromName: senderName)
+        case .composer(let given, let answer):
+            if PromptTarget.drains(current), !PromptTarget.skipsDrain(text, in: current), answer ? PromptTarget.answersAsPrompt(current) : !given.isEmpty {
+                queued = board.queueComposerPrompt(text, to: terminal.id, mentions: given, answer: answer)
+            }
+        }
         guard await submitToTerminal(board, terminal.id, text) else {
             board.commit(handed.map { $0.id })
+            if let queued { board.withdrawComposerPrompt(queued) }
             throw Failure("unavailable", "terminal \(terminal.id) has no attached surface")
         }
         // Only a reporting agent's next report can end the pre-prompt state. An agent reporting
@@ -611,13 +656,15 @@ public final class ApiRouter {
     /// `tray.drain`: the tray's mentions go to the terminal the tray shows (the board's prompt
     /// target), so a caller tile gets them only when it is that terminal; any other caller gets
     /// only what agents handed to it (`agent.prompt` `mentions`), and the tray stays as it is.
-    /// Without a caller (a script) or a window, anyone drains the tray.
+    /// Without a caller (a script) or a window, anyone drains the tray. A caller's submission
+    /// drain (with `prompt`) of a text the composer typed there takes that prompt's own mentions
+    /// instead (`Board.drain`).
     private func drain(_ p: JSONValue) async throws -> JSONValue {
         let board = try board(p)
         let caller = p["caller"]?.string
         let state = caller == nil ? nil : viewState?(board)
         let showsTray = state.map { $0.promptTarget == caller } ?? true
-        let drained = await board.drain(peek: p["peek"]?.bool ?? false, caller: caller, tray: showsTray)
+        let drained = await board.drain(peek: p["peek"]?.bool ?? false, caller: caller, prompt: p["prompt"]?.string, tray: showsTray)
         var result: [String: JSONValue] = ["mentions": try JSONValue.encode(drained.mentions), "context": .string(drained.context)]
         if !showsTray {
             result["held"] = .number(Double(board.tray.count))

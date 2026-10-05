@@ -194,11 +194,11 @@ final class GetStartedPanel: NSVisualEffectView {
         switch step {
         case .point(let unstaged):
             stepOne.set(done: false, active: true, unstaged
-                ? "It came off the tray: a second Hyper-click on something staged, or its \u{2715}, takes it back off. Hyper-click the practice note once more."
+                ? "It came off the tray: a second Hyper-click on something staged, or deleting its token, takes it back off. Hyper-click the practice note once more."
                 : "Hyper-click a paragraph of the practice note, or select it and press ⇧⌘M. A purple chip appears in the tray at the bottom.")
             stepTwo.set(done: false, active: false, "Send it: ask your agent anything, and the chip goes with your prompt.")
         case .send:
-            stepOne.set(done: true, active: false, "Staged. The purple chip in the tray is your mention; its \u{2715} takes it back off.")
+            stepOne.set(done: true, active: false, "Staged. The purple token in the tray is your mention; deleting it takes it back off.")
             stepTwo.set(done: false, active: true, Self.sendText(target))
         case .done:
             stepOne.set(done: true, active: false, "Staged. The purple chip in the tray was your mention.")
@@ -226,7 +226,7 @@ final class GetStartedPanel: NSVisualEffectView {
         case .choose:
             "Click \u{201C}\u{2192} choose a terminal\u{201D} at the right of the tray to pick your agent's terminal, then ask it something there."
         case .agent:
-            "Type a question in your agent's terminal, like \u{201C}what does this note say?\u{201D}, and press Return. The chip goes with that prompt, to the terminal the tray's \u{2192} names; answering the agent's own questions doesn't use it."
+            "Press ⌘I and type a question after the token, like \u{201C}what does this note say?\u{201D}, then ⌘↩. Or ask in your agent's terminal and press Return: the mention goes with that prompt, to the terminal the tray's \u{2192} names; answering the agent's own questions doesn't use it."
         case .plain:
             "In the terminal, run claude, codex, omp or opencode and ask it something, like \u{201C}what does this note say?\u{201D}. The chip goes with your prompt. Any other program: ⌃⌥⇧⌘V pastes it in."
         }

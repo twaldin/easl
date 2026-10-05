@@ -33,14 +33,9 @@ Server-side features (the all-agents overview, supervision stats, review passes,
 
 ## The composer
 
-A prompt box outside the terminal. It sends to an agent from anywhere on the board, so pointing at things no longer means panning back to the terminal to type.
+Shipped on the Swift app (docs/design.md, Composer). Still open:
 
-- **It lives in the tray bar**, which grows to several lines while focused. A shortcut focuses it from anywhere, and ⌘↩ sends. The target is the tray's "→ terminal" menu, which becomes multi-select: one prompt and its mentions go to every chosen terminal.
-- **Mentions are inline tokens.** A Hyper-click drops its `[n]` at the cursor (or at the end, when the composer isn't focused), and the text after a token is that item's note: `[1] make this green [2] drop this row`. A prompt with no tokens is just a prompt. Deleting a token unstages its mention.
-- **Sending reuses `agent.prompt`**: the text and Return go into the terminal, and the agent's integration drains the tray with that prompt. A terminal without an easl integration gets the text, with the tokens' context pasted the way Hyper-V pastes it.
-- **↑** in an empty composer recalls the board's earlier prompts with their tokens, which also answers "what did I send".
-- **A blocked target** (a question or approval) shows its question in the composer, and the text answers it.
-- **Drafts**, tokens included, are kept per board across board switches and restarts.
+- **On easld**: the composer sends in process (`ApiRouter.composerPrompt`, `Board.queueComposerPrompt`, `Board.withdraw`, `Board.arrangeTray`), and no schema method exposes that. Once the Mac app is easld's client it needs it over the API: `agent.prompt` from the user (answering a blocked target past the blocked check alone; the prompt's own mentions given as staged `MentionTarget`s and queued per terminal for the submission drain whose folded text contains the prompt's, numbered from 1, instead of the tray; prompts without mentions and texts the target's integration skips queue nothing; Codex answers queued as such), a way to take mentions out of the tray without an undo step, a way to set the tray's order to the tokens', and a way to learn that a queued prompt's mentions came back (agent released or exited, terminal deleted, the 2 h cap). easld's `tray.drain` must keep the composer-prompt drain semantics exactly: only a drain carrying `prompt` claims, it claims the oldest prompt whose folded text (letters and digits, case-folded) its folded `prompt` contains (equals, under 3 characters), a peek never takes a prompt with mentions, a Codex answer goes 2 s after Codex reports past the question, and drains without `prompt` never see the queue (docs/contracts.md, Agent prompts and replies). easld accepts `prompt` today (generated params) and drains as without it, which is right while no composer prompt can be queued there. Drafts, sent prompts, extra targets and drafts still on their way stay with the client (`composer/<boardId>.json` in the easl home).
 
 ## Links
 

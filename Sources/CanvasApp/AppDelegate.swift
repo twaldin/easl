@@ -206,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         for controller in controllers.values { controller.canvas.saveViewport() }
         registry.store.flush(Array(registry.boards.values))
+        for controller in controllers.values { controller.saveComposer() }
         server?.stop()
         cmuxServer?.stop()
     }
@@ -228,6 +229,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let board = registry.open(root: root)
         let controller = controllers[board.id] ?? CanvasWindowController(board: board, registry: registry)
         controllers[board.id] = controller
+        let router = router
+        controller.sendPrompt = { [weak board] text, terminal, mentions, answer in
+            guard let board else { return }
+            try await router.composerPrompt(text, to: terminal, on: board, mentions: mentions, answer: answer)
+        }
         controller.showWorktree(openedAt: root)
         controller.onClose = { [weak self, weak controller] in self?.saveOpenBoards(closing: controller?.window) }
         guard let window = controller.window else { return board }
@@ -355,6 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func sendToBack(_ sender: Any?) { keyController?.sendToBack(sender) }
     @objc func pasteMentions(_ sender: Any?) { keyController?.pasteMentions(sender) }
     @objc func mentionCurrent(_ sender: Any?) { keyController?.mentionCurrent(sender) }
+    @objc func focusComposer(_ sender: Any?) { keyController?.focusComposer(sender) }
     @objc func removeLastMention(_ sender: Any?) { keyController?.removeLastMention(sender) }
     @objc func clearMentions(_ sender: Any?) { keyController?.clearMentions(sender) }
     @objc func goToNextNeedsYou(_ sender: Any?) { keyController?.goToNextNeedsYou(sender) }
@@ -491,6 +498,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             TrayMenu.item("Remove Mention"),
             item("Clear Mentions", #selector(clearMentions(_:)), ""),
             TrayMenu.item("Send Mentions To"),
+            // ⌘I as Cursor's composer: no shell sees ⌘, Ghostty binds nothing to it, and the
+            // board window takes it ahead of a focused terminal or page
+            // (CanvasWindowController.handleKeyEquivalent).
+            item("Write Prompt", #selector(focusComposer(_:)), "i"),
         ])
         // Content Zoom: how big a tile's content draws inside its frame, in place (View ▸ Zoom
         // In/Out, ⌘= / ⌘-, zoom the board); the selection, else the tile holding the keyboard

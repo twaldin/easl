@@ -102,6 +102,12 @@ public final class Board {
     /// Mentions agents attached to their `agent.prompt` for each terminal, waiting for its next
     /// drained prompt (Handoff.swift); in memory only.
     public internal(set) var handoffs: [ObjectID: [Handoff]] = [:]
+    /// The composer's prompts to each terminal, oldest first, each waiting for the drain of the
+    /// text it typed (`queueComposerPrompt`, Composer.swift); in memory only.
+    public internal(set) var composerPrompts: [ObjectID: [ComposerPrompt]] = [:]
+    /// Mentions the composer sent to a terminal that never took them (its agent went, the
+    /// prompt expired) are staged again: the terminal, and the tray's mentions for them.
+    public var onComposerMentionsReturned: ((ObjectID, [Mention]) -> Void)?
     /// Each terminal's last answer: the final assistant message of its agent's last finished
     /// turn, as its integration reported it with `idle` (`agent.read` `final`). A new turn clears
     /// it; saved with the board.
@@ -392,6 +398,7 @@ public final class Board {
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
         forgetHandoffs(of: id)
+        forgetComposerPrompts(of: id)
         let marked = attention.removeValue(forKey: id) != nil
         onChange?()
         onEvent?(.objectDeleted(id))
@@ -769,14 +776,17 @@ public final class Board {
     /// `peek` leaves the tray intact for a later `commit` of exactly these ids. `caller` is the
     /// terminal the context goes to: mentions of it say so, other terminals are named. The
     /// mentions other agents handed to `caller` (`handOff`) follow the tray's, one block per
-    /// sender; `tray` false leaves the tray out (it shows another terminal).
+    /// sender; `tray` false leaves the tray out (it shows another terminal). `prompt` is the text
+    /// the caller's integration is about to submit: its submission drain. When it contains the
+    /// text of a prompt the composer typed into `caller` (folded, `ComposerPrompt.isClaimed`; the
+    /// oldest such), this drain is that prompt's and takes its own mentions, numbered from 1,
+    /// instead of the tray (none for an answer), so a retarget, a new mention or a second prompt
+    /// meanwhile never changes what its `[n]` mean. Any other drain takes the tray as always.
     /// Old-side and pinned code excerpts are read from git, hence async.
-    public func drain(peek: Bool = false, caller: ObjectID? = nil, tray includeTray: Bool = true) async -> (mentions: [MentionContext.Resolved], context: String) {
-        var resolved: [MentionContext.Resolved] = []
-        let staged = includeTray ? tray : []
-        for (index, mention) in staged.enumerated() {
-            resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self, caller: caller))
-        }
+    public func drain(peek: Bool = false, caller: ObjectID? = nil, prompt: String? = nil, tray includeTray: Bool = true) async -> (mentions: [MentionContext.Resolved], context: String) {
+        let sent = caller.flatMap { caller in prompt.flatMap { claimComposerPrompt(for: caller, submitted: $0) } }
+        let staged = sent?.mentions ?? (includeTray ? tray : [])
+        var resolved = await resolve(staged, caller: caller)
         var blocks = resolved.isEmpty ? [] : [MentionContext.render(resolved, board: self, targets: staged.map(\.target))]
         if let caller {
             let handed = await resolveHandoffs(for: caller, from: resolved.count + 1)
@@ -787,18 +797,59 @@ public final class Board {
         return (resolved, blocks.joined(separator: "\n"))
     }
 
+    /// The context block for `mentions`, numbered from 1 as a drain numbers the tray: what the
+    /// composer pastes ahead of its prompt into a terminal without an agent integration, as
+    /// Hyper-V would. Leaves the tray as it is.
+    public func context(for mentions: [Mention], caller: ObjectID?) async -> String {
+        let resolved = await resolve(mentions, caller: caller)
+        return resolved.isEmpty ? "" : MentionContext.render(resolved, board: self, targets: mentions.map(\.target))
+    }
+
+    private func resolve(_ mentions: [Mention], caller: ObjectID?) async -> [MentionContext.Resolved] {
+        var resolved: [MentionContext.Resolved] = []
+        for (index, mention) in mentions.enumerated() {
+            resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self, caller: caller))
+        }
+        return resolved
+    }
+
+    /// Puts the tray in `order` (the composer's tokens), so the n-th token's mention is the one a
+    /// drain numbers `[n]`; mentions `order` doesn't name keep their order after the rest. Not an
+    /// undo step.
+    public func arrangeTray(_ order: [MentionID]) {
+        let rank = Dictionary(order.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        let arranged = tray.enumerated().sorted { a, b in
+            (rank[a.element.id] ?? order.count + a.offset) < (rank[b.element.id] ?? order.count + b.offset)
+        }.map(\.element)
+        guard arranged != tray else { return }
+        tray = arranged
+        trayChanged()
+    }
+
     /// Remove exactly these mentions (the ones whose context was delivered), from the tray and
     /// from what agents handed to terminals. Unknown ids are ignored. `pastedInto`: the user
     /// pasted them into that terminal (Hyper-V), an undo step that puts the chips back; a
     /// prompt's drain is the agent's delivery, never undone.
     public func commit(_ ids: [MentionID], pastedInto terminal: ObjectID? = nil) {
         commitHandoffs(ids)
+        delivered += commitComposerPrompts(ids)
         let removed = tray.enumerated().filter { ids.contains($0.element.id) }.map { PlacedMention(index: $0.offset, mention: $0.element) }
         guard !removed.isEmpty else { return }
         tray.removeAll { ids.contains($0.id) }
         delivered += removed.count
         if let terminal { history.record(.unstaged(removed, pastedInto: terminal)) }
         trayChanged()
+    }
+
+    /// The composer took these mentions out of the tray to send them (`ComposerController`): no
+    /// undo step, and not delivered yet. Returns them in tray order.
+    @discardableResult
+    public func withdraw(_ ids: [MentionID]) -> [Mention] {
+        let taken = tray.filter { ids.contains($0.id) }
+        guard !taken.isEmpty else { return [] }
+        tray.removeAll { ids.contains($0.id) }
+        trayChanged()
+        return taken
     }
 
     /// Undo of a step that took these mentions out of the tray: each goes back to its place
@@ -910,6 +961,7 @@ public final class Board {
         if state == .unknown { lifecycle["via"] = .string(NotifyingAgent.via) }
         let agent = (terminal.props["agent"] ?? .object([:])).merging(.object(["kind": .string(kind)]))
         try update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
+        composerAgentReported(tile, state: state)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .object(lifecycle)))
     }
 
@@ -981,11 +1033,13 @@ public final class Board {
     }
 
     /// The agent exited (`agent.release`): the tile is a plain shell again. Its lifecycle and the
-    /// recorded session go, so a reboot restores a shell instead of resuming a session the user quit.
+    /// recorded session go, so a reboot restores a shell instead of resuming a session the user quit,
+    /// and the composer's prompts it never drained return their mentions to the tray.
     public func releaseAgent(tile: ObjectID) throws {
         _ = try object(tile)
         pendingApprovals[tile] = nil
         try update(tile, props: .object(["lifecycle": .null, "agent": .null]), caller: tile)
+        dropComposerPrompts(of: tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
     }
 

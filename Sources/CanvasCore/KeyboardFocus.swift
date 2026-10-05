@@ -78,7 +78,7 @@ public enum KeyboardFocus {
         }
     }
 
-    /// What the tray's target line names (`TrayBar`, after "→"): the target, and, while the
+    /// What the tray's target line names (`ComposerBar`, after "→"): the target, and, while the
     /// keyboard is in another terminal (a plain shell never takes the target from an agent),
     /// that one too, so where typing goes and where the mentions go never disagree silently (a
     /// prompt typed into a shell while the tray said "→ codex" ran as a shell command). Nil

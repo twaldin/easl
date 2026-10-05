@@ -3,9 +3,8 @@ import Foundation
 import Testing
 import CanvasCore
 
-/// The mention tray: chips numbered as the context numbers them, a chip's click revealing
-/// what it points at, a tray that fits the window instead of widening it, and chips that
-/// come back with ⌘Z.
+/// The mention tray: chips numbered as the context numbers them, a chip's click revealing what
+/// it points at, and chips that come back with ⌘Z.
 @MainActor
 struct TrayTests {
     let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-tray-\(UUID().uuidString)")
@@ -87,8 +86,8 @@ struct TrayTests {
         #expect(fitted(CGFloat("checkout.ts:10-45 checkout10".count) * 7) == "checkout.ts:10-45 checkout10", "the directory goes first")
         #expect(fitted(CGFloat("checkout.ts:10-45".count) * 7) == "checkout.ts:10-45", "then the symbol")
         #expect(fitted(CGFloat("chec…t.ts:10-45".count) * 7) == "chec…t.ts:10-45", "then the middle of the file name")
-        // The label's room in a chip shrunk to the 128 pt floor: insets, number, gaps and ✕ take the rest.
-        let floor = TrayLayout.minimumChip - 58
+        // A tight label's room: the token's number and insets take the rest.
+        let floor: CGFloat = 70
         #expect(fitted(floor).hasSuffix(":10-45") && !fitted(floor).contains("src/"), "at the floor the lines still show: \(fitted(floor))")
         #expect(measure(fitted(floor)) <= floor)
         #expect(fitted(10).hasSuffix(":10-45"), "however narrow, the lines stay")
@@ -163,60 +162,6 @@ struct TrayTests {
         let fitted = Layout.revealMention(wide, readable: nil, from: Layout.Jump(zoom: 1, origin: .zero), clear: clear, padding: 20, zoom: limits)
         #expect(fitted.zoom < 1, "a group too big to show whole zooms out to fit")
         #expect(shown(fitted).contains(wide))
-    }
-
-    // MARK: Width
-
-    /// Chip widths as eight real chips measure (code lines, a DOM element with its selector, a
-    /// terminal command, a note block), each within the 260 pt label cap.
-    let eightChips: [CGFloat] = [170, 190, 330, 214, 262, 180, 300, 236]
-    /// "→ codex · works in ledger-fix-split ▾ · ⌃⌥⇧⌘V pastes"
-    let target: CGFloat = 318
-
-    @Test func theTrayNeverAsksForMoreThanTheWindowAndGivesTheWidthBack() {
-        let available: CGFloat = 1492 - 40
-        var added: [TrayLayout] = []
-        for count in 0...eightChips.count {
-            let chips = count == 0 ? [CGFloat(520)] : Array(eightChips.prefix(count))
-            let fit = TrayLayout.fit(chips: chips.map { .init(natural: $0) }, target: target, available: available)
-            #expect(fit.width <= available, "\(count) chips fit the 1492 pt window")
-            added.append(fit)
-        }
-        for count in (0...eightChips.count).reversed() {
-            let chips = count == 0 ? [CGFloat(520)] : Array(eightChips.prefix(count))
-            #expect(TrayLayout.fit(chips: chips.map { .init(natural: $0) }, target: target, available: available) == added[count], "unstaging back to \(count) chips gives the width back")
-        }
-        let empty = TrayLayout.fit(chips: [.init(natural: 520)], target: target, available: available)
-        #expect(empty.width < available, "the empty tray is its own width, not the widest it ever was")
-    }
-
-    @Test func theTargetLabelKeepsItsWidthAndTheChipsShrinkThenScroll() {
-        let fit = TrayLayout.fit(chips: eightChips.map { .init(natural: $0) }, target: target, available: 1452)
-        #expect(fit.target == target, "the label stays whole: it says where the prompt goes")
-        #expect(fit.chips.allSatisfy { $0 >= TrayLayout.minimumChip })
-        #expect(fit.content <= fit.strip, "eight chips shrink to fit beside it")
-        let cap = fit.chips.max() ?? 0
-        #expect(fit.chips == eightChips.map { min($0, cap) }, "the widest chips are cut to one width")
-        let mixed = TrayLayout.fit(chips: [110, 400, 400].map { .init(natural: $0) }, target: target, available: 800)
-        #expect(mixed.chips[0] == 110 && mixed.chips[1] < 400, "a narrow chip keeps its width while the wide ones shrink")
-        #expect(mixed.content <= mixed.strip)
-
-        var noted = eightChips.map { TrayLayout.Chip(natural: $0) }
-        noted[3] = TrayLayout.Chip(natural: 330, minimum: TrayLayout.minimumChip + 90)
-        let withNote = TrayLayout.fit(chips: noted, target: target, available: 1452)
-        #expect(withNote.chips[3] >= TrayLayout.minimumChip + 90, "\"· page changed\" never eats the chip's label")
-        #expect(withNote.target == target)
-
-        let twenty = Array(repeating: CGFloat(240), count: 20)
-        let crowded = TrayLayout.fit(chips: twenty.map { .init(natural: $0) }, target: target, available: 1452)
-        #expect(crowded.target == target, "however many chips")
-        #expect(crowded.chips.allSatisfy { $0 == TrayLayout.minimumChip })
-        #expect(crowded.content > crowded.strip, "past their minimum the chips scroll")
-        #expect(crowded.width <= 1452)
-
-        let narrow = TrayLayout.fit(chips: eightChips.map { .init(natural: $0) }, target: target, available: 500)
-        #expect(narrow.target == target, "a narrow window still shows the whole label beside one shrunk chip")
-        #expect(narrow.width <= 500)
     }
 
     // MARK: Undo

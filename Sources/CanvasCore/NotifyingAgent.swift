@@ -94,9 +94,11 @@ extension Board {
     /// plain shell again (`releaseAgent`). A program it runs meanwhile (an editor) doesn't end it.
     /// So does an integrated agent still said to be `working` or `blocked` (killed, or exited
     /// while easl was away, without the `agent.release` its integration sends at exit): the
-    /// shell holds the terminal, so nothing there is in a turn.
+    /// shell holds the terminal, so nothing there is in a turn, and nothing there drains the
+    /// composer's prompts.
     public func terminalProgram(_ tile: ObjectID, is program: String?) {
         guard program == nil, let terminal = objects[tile] else { return }
+        dropComposerPrompts(of: tile)
         let state = terminal.props["lifecycle"]?["state"]?.string
         let busy = state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue
         guard NotifyingAgent.reports(terminal) || busy else { return }

@@ -80,6 +80,34 @@ public enum PromptTarget {
         runsAgent(terminal) && !NotifyingAgent.reports(terminal)
     }
 
+    /// `text` isn't a prompt to `terminal`'s integration, which drains nothing when it is
+    /// submitted, by that integration's own rule:
+    /// - Claude Code, Codex and Gemini CLI (extensions/agent-hooks/hook.ts, `UserPromptSubmit`):
+    ///   a slash command or shell escape, `/…` or `!…`;
+    /// - omp (extensions/omp/easl.ts, `input`): `/…`, `!…` and `$…`;
+    /// - opencode (extensions/opencode/easl.ts, `chat.message`): nothing. Its shell mode is only
+    ///   the `!` key binding, so pasted `!…` text is an ordinary prompt, and a `/command` expands
+    ///   into one; both reach `chat.message`
+    ///   (https://github.com/anomalyco/opencode/blob/v1.14.46/packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx#L1136-L1198).
+    /// Any other integration: nothing.
+    public static func skipsDrain(_ text: String, in terminal: CanvasObject) -> Bool {
+        guard let first = text.trimmingCharacters(in: .whitespacesAndNewlines).first else { return true }
+        switch terminal.props["agent"]?["kind"]?.string {
+        case "claude", "codex", "gemini": return first == "/" || first == "!"
+        case "omp": return first == "/" || first == "!" || first == "$"
+        default: return false
+        }
+    }
+
+    /// `terminal`'s integration submits the user's answer to a question as a prompt, which its
+    /// submission drain then takes: Codex answers a question it queued (`request_user_input_async`)
+    /// with a prompt, `UserPromptSubmit` included (extensions/agent-hooks/hook.ts). Claude Code's
+    /// questions and approvals, omp's selects and opencode's question replies take the answer in
+    /// a dialog, without any drain.
+    public static func answersAsPrompt(_ terminal: CanvasObject) -> Bool {
+        terminal.props["agent"]?["kind"]?.string == "codex"
+    }
+
     /// Where Hyper-V (Paste Mentions into Terminal) pastes: the terminal holding the keyboard,
     /// where the user is typing; else the tray's target.
     public static func pasteTarget(keyboard: ObjectID?, target: ObjectID?, objects: [ObjectID: CanvasObject]) -> ObjectID? {
