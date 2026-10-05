@@ -14,7 +14,7 @@ What easl builds after 0.1.0, and the decisions behind it. Each section is a lan
 ### Getting there without breaking anything
 
 1. An **API conformance suite** (`conformance/`, docs/testing.md): scripted scenarios recorded from a development instance of the app, normalised for ids, times, revisions and paths, that replay against any socket and diff. The methods that need the Mac client (view.*, agent.prompt/read, object.reload) are marked as delegated. Still open: scenarios for what easld adds beyond today's API (several clients on one board, render delegation).
-2. **easld passes the suite** (`easld/`, docs/design.md "Architecture"): 16 of 18 scenarios today. The ports still to do, in order:
+2. **easld passes the suite** (`easld/`, docs/design.md "Architecture"): 17 of 19 scenarios today. The ports still to do, in order:
    1. AppKit text measurement: note and text-shape heights for object.measure and `size: "fit"`, code captions, and arrow label sizes for `avoid` routing and label overlaps. No fonts ship with easld. A connected Mac client measures, as it draws `render`, so the text is pixel-identical to what the user sees. With no client online, easld falls back to an approximation from data: per-glyph advance widths of the fonts in use, extracted once on a Mac into a checked-in JSON table (no font files). A reply measured that way says `approximate: true`;
    2. changes-tile measurement (the git diff engine: `ChangeSet`, `ChangesMetrics`);
    3. terminals: zmx sessions, and agent.read's live modes (the screen, `lines`, `since`, `block`; `final` is ported).
@@ -57,10 +57,11 @@ Shipped (docs/design.md, Browser): popups with `window.opener`, downloads, uploa
 
 ## Performance and monitoring
 
-The benchmark (`scripts/perf-loop.py`, docs/testing.md), burst-coalesced off-main routing, the API activity hold, direct `board.get` JSON, parked HTML pages and the monitoring (`app.metrics`, `easl metrics`, the HUD, signposts, the 250 ms log line) shipped; docs/design.md "Performance" has them. Still open, against the targets (139-write burst under 3 s of CPU, no main-thread stretch over 100 ms, at most 2 board routings per burst, idle poll hitch under 16 ms, hidden within 2× of visible), measured on the sanitized replica of the real board:
+The benchmark (`scripts/perf-loop.py`, docs/testing.md), burst-coalesced off-main routing, the API activity hold, direct `board.get` JSON, parked HTML pages and the monitoring (`app.metrics`, `easl metrics`, the HUD, signposts, the 250 ms log line) shipped; docs/design.md "Performance" has them. Against the targets (139-write burst under 3 s of CPU, no main-thread stretch over 100 ms, at most 2 board routings per burst, idle poll hitch under 16 ms, hidden within 2× of visible), on the sanitized replica of the real board with the window shown on a virtual screen, medians of 3 interleaved runs, before (f3cf58f) → after:
 
-- **Burst CPU**: 15.0 → 5.1 s for the serial burst; what's left is `object.measure`, which builds a WKWebView per page (76 measures ≈ 22 s of measuring wall time, ~4 s of the app's CPU). Reusing a pool of measuring web views is the next step. The batch burst stays at 4.2 s for the same reason.
-- **Stretches**: the serial burst's longest main-thread stretch is 70–105 ms (median 85); the batch's 160–281 ms, in the batch's own turn (its 101 writes, events and refits) plus measure teardown.
-- **Hidden vs visible**: a minimized dev instance ran as fast as a shown one before the fixes too (ratio 1.00), so the 4–6× slowdown seen on Tim's machine didn't reproduce here; the activity hold is in place regardless.
-- **Label placement** is still global per board routing (now twice per burst, off the main thread, ~150–190 ms each); incremental placement for only the affected arrows isn't done.
-- **A terminal's display link** is still released after 30 idle frames and recreated (a new CVDisplayLink thread per output gap). The fix is a vendor patch: a paused `NSView.displayLink` per terminal view instead of MSDisplayLink's shared CVDisplayLink.
+- **Serial burst**: CPU 15.1 → 5.3 s, longest main-thread stretch 224 → 84 ms, board routings 78 → 2. The CPU left is mostly `object.measure`, which builds a WKWebView per page (76 measures); a pool of measuring web views is the next step.
+- **Batch burst**: CPU 4.3 → 4.3 s (the same measures), longest stretch 293 → 134 ms, in the batch's own turn (its 101 writes, events, refits and the arrows following them) plus measure teardown.
+- **Idle poll** (`board.get` every 10 s): longest stretch 33 → 8.7 ms. **Pan and zoom**: 0.1 ms; HTML pages still loaded 11 times and were reused 0 times in that scenario.
+- **Hidden vs visible**: 1.00× before and after, so the 4–6× slowdown seen on Tim's machine didn't reproduce here; the activity hold is in place regardless.
+- **Label placement** is still global per board routing (twice per burst, off the main thread, ~150–190 ms each); incremental placement for only the affected arrows isn't done.
+- **A terminal's display link** is still released after 30 idle frames and recreated (a new CVDisplayLink thread per output gap: 30 in 5 s for a shell printing every 400 ms). The fix is a vendor patch: a paused `NSView.displayLink` per terminal view instead of MSDisplayLink's shared CVDisplayLink.

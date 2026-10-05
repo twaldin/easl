@@ -1,0 +1,44 @@
+{
+  "description": "app.metrics: the server's own counters, levels and process figures, checked against the schema's shape (their values are measurements): a first read, a read with reset and watch, a read after a write; and a param it doesn't take.",
+  "steps": [
+    {
+      "call": "app.metrics",
+      "shape": "counters, levels and process figures are the server's own measurements"
+    },
+    {
+      "call": "app.metrics",
+      "params": {
+        "reset": true,
+        "watch": true
+      },
+      "shape": "counters, levels and process figures are the server's own measurements"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": {
+          "kind": "rect"
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 40,
+          "h": 40
+        }
+      },
+      "save": "made"
+    },
+    {
+      "call": "app.metrics",
+      "shape": "counters, levels and process figures are the server's own measurements"
+    },
+    {
+      "call": "app.metrics",
+      "params": {
+        "bogus": true
+      }
+    }
+  ]
+}

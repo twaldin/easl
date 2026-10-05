@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/twaldin/easl/easld/internal/metrics"
 )
 
 // socketPath is a short path (unix socket paths are limited to ~104 bytes; t.TempDir is long on macOS).
@@ -139,6 +141,48 @@ func TestDeferredReplyAndLaterEvents(t *testing.T) {
 	}
 	if got := c.read(t).(map[string]any)["event"]; got != "x" {
 		t.Fatalf("event: %v", got)
+	}
+}
+
+func TestRequestCountsCloseOnTheirReplyWhicheverPathSendsIt(t *testing.T) {
+	conns := make(chan *Conn, 1)
+	s := start(t, func(req any, c *Conn) any {
+		m := req.(map[string]any)
+		if m["method"] == "acct.wait" {
+			conns <- c
+			return nil // answered later, like agent.wait
+		}
+		return map[string]any{"id": m["id"], "ok": true}
+	})
+	c := dial(t, s)
+	waitLine := `{"id":"w","method":"acct.wait"}`
+	c.write(t, waitLine+"\n")
+	held := <-conns
+	c.write(t, `{"id":"p","method":"acct.ping"}`+"\n")
+	c.read(t)
+	time.Sleep(30 * time.Millisecond)
+	// An event isn't a reply: the deferred request stays open until its answer goes out.
+	held.Send(map[string]any{"event": "x"})
+	held.Send(map[string]any{"id": "w", "ok": true})
+	c.read(t)
+	c.read(t)
+	counters := metrics.Shared.Snapshot()["counters"].(map[string]any)
+	total := func(name string) map[string]any {
+		counter, ok := counters[name].(map[string]any)
+		if !ok {
+			t.Fatalf("no counter %s in %v", name, counters)
+		}
+		return counter["total"].(map[string]any)
+	}
+	if ping := total("api.acct.ping"); ping["n"] != 1.0 {
+		t.Errorf("api.acct.ping %v, want one request", ping)
+	}
+	wait := total("api.acct.wait")
+	if wait["n"] != 1.0 || wait["ms"].(float64) < 30 || wait["bytes"] != float64(len(`{"id":"w","ok":true}`)+1) {
+		t.Errorf("api.acct.wait %v, want one request answered after 30 ms or more with its reply's bytes", wait)
+	}
+	if in := total("api.in.acct.wait"); in["n"] != 1.0 || in["bytes"] != float64(len(waitLine)+1) {
+		t.Errorf("api.in.acct.wait %v, want one request of %d bytes", in, len(waitLine)+1)
 	}
 }
 
