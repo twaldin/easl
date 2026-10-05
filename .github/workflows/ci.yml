@@ -44,3 +44,26 @@ jobs:
       - name: gofmt
         working-directory: conformance
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+  easld:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: easld/go.mod
+      - name: Vet
+        working-directory: easld
+        run: go vet ./...
+      - name: Test
+        working-directory: easld
+        run: go test ./...
+      - name: Build for Linux
+        working-directory: easld
+        run: GOOS=linux GOARCH=amd64 go build ./...
+      - name: Build for macOS
+        working-directory: easld
+        run: GOOS=darwin GOARCH=arm64 go build ./...
+      - name: gofmt
+        working-directory: easld
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }

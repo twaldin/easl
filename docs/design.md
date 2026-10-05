@@ -32,6 +32,22 @@ flowchart TB
   C --> L
 ```
 
+`easld/` is the Go server the app will become a client of (docs/design/next.md). Today it is a separate binary that serves the same socket API from the same board files, and the app doesn't use it yet. Its packages follow CanvasCore, and the Swift code is the reference wherever behaviour is ambiguous:
+
+- `model`: objects and mentions;
+- `store`: board files, repository ids and worktrees;
+- `board`: revisions, events, keys, groups, placement, layout, tray, lifecycle, attention, follow and the activity log;
+- `route` and `check`: arrow routing and layout.check, bit-identical to ConnectorRouter;
+- `mention`: tray labels and the drain context;
+- `measure`: code and image sizes;
+- `router`: the methods;
+- `server`: the socket framing;
+- `api`: generated from the schema by `scripts/gen-clients.ts`.
+
+The conformance suite (docs/testing.md) is the judge. `go test ./cmd/easld` replays it against easld in-process.
+
+easld does not yet measure what AppKit lays out, so object.measure and `size: "fit"` don't work for notes, text shapes, HTML or code captions. Notes are set in SF Pro, a system font that easld can't ship; text shapes use Shantell Sans, which needs GPOS kerning. Arrow label sizes, which feed `avoid` routing and label overlaps, are measured the same way and missing for the same reason.
+
 ## Decisions
 
 ### Interaction

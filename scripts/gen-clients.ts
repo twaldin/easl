@@ -17,11 +17,12 @@ type Schema = {
   items?: Schema;
   description?: string;
   default?: unknown;
+  additionalProperties?: Schema | boolean;
 };
 
 // `resend`: a read the clients re-send after the connection drops mid-call (see RESEND_METHODS).
 type Method = { description: string; params: Schema; result: Schema; resend?: boolean };
-type Catalog = { version: number; definitions: Record<string, Schema>; methods: Record<string, Method> };
+type Catalog = { version: number; errors: Record<string, string>; definitions: Record<string, Schema>; methods: Record<string, Method> };
 
 const root = join(import.meta.dir, "..");
 const catalog: Catalog = JSON.parse(readFileSync(join(root, "schema/easl-api.json"), "utf8"));
@@ -256,6 +257,149 @@ function genSwift(): string {
   return out.join("\n");
 }
 
+// ---------- Go (easld's param table, error codes and record types) ----------
+
+const GO_INITIALISMS = new Set(["id", "url", "html", "json", "uri"]);
+/** `zmxSession` → `ZmxSession`, `id` → `ID`, `objectId` → `ObjectID`. */
+function goName(key: string): string {
+  const words = key.match(/[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])/g) ?? [];
+  const name = words.map((w) => (GO_INITIALISMS.has(w.toLowerCase()) ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1))).join("");
+  if (!/^[A-Z][A-Za-z0-9]*$/.test(name)) throw new Error(`cannot derive a Go name from ${JSON.stringify(key)}`);
+  return name;
+}
+
+const goComment = (text: string, indent = "") => text.split("\n").map((l) => `${indent}// ${l}`.trimEnd());
+
+/** Pads the cells of each run of consecutive rows to common widths, as gofmt aligns them; a comment (string) row ends a run. */
+function goAlign(rows: Array<string | string[]>, indent = "\t"): string[] {
+  const out: string[] = [];
+  let run: string[][] = [];
+  const flush = () => {
+    const widths: number[] = [];
+    for (const cells of run) cells.forEach((c, i) => i < cells.length - 1 && (widths[i] = Math.max(widths[i] ?? 0, c.length)));
+    for (const cells of run) out.push(indent + cells.map((c, i) => (i < cells.length - 1 ? c.padEnd(widths[i]) : c)).join(" "));
+    run = [];
+  };
+  for (const row of rows) {
+    if (typeof row === "string") {
+      flush();
+      out.push(row);
+    } else run.push(row);
+  }
+  flush();
+  return out;
+}
+
+function genGo(): string {
+  const types: string[][] = [];
+  const typeNames = new Set<string>();
+  const claim = (name: string) => {
+    if (typeNames.has(name)) throw new Error(`Go type name ${name} is used twice`);
+    typeNames.add(name);
+  };
+  const allObjects = (s: Schema) => (s.oneOf ?? []).every((o) => o.type === "object" || (o.$ref && resolveGo(o).type === "object"));
+  const resolveGo = (s: Schema): Schema => (s.$ref ? resolveGo(catalog.definitions[refName(s.$ref)]) : s);
+
+  /** How a value of this schema is held: a scalar or struct takes a pointer when optional or nullable. */
+  const pointable = (s: Schema): boolean => {
+    const r = resolveGo(s);
+    if (r.const !== undefined || r.enum) return true;
+    if (r.oneOf) return false;
+    const type = Array.isArray(r.type) ? r.type.find((t) => t !== "null") : r.type;
+    return type === "string" || type === "number" || type === "integer" || type === "boolean" || (type === "object" && Object.keys(r.properties ?? {}).length > 0);
+  };
+
+  /** The Go type for `s`; inline records become structs named `name`, emitted into `types`. */
+  function goType(s: Schema, name: string): string {
+    if (s.$ref) return refName(s.$ref);
+    if (s.const !== undefined) return typeof s.const === "string" ? "string" : typeof s.const === "boolean" ? "bool" : "float64";
+    if (s.enum) return "string";
+    if (s.oneOf) return allObjects(s) ? "map[string]any" : "any";
+    const type = Array.isArray(s.type) ? s.type.find((t) => t !== "null") : s.type;
+    switch (type) {
+      case "string":
+        return "string";
+      case "number":
+        return "float64";
+      case "integer":
+        return "int";
+      case "boolean":
+        return "bool";
+      case "array":
+        return `[]${goType(s.items ?? {}, name)}`;
+      case "object": {
+        if (Object.keys(s.properties ?? {}).length === 0) {
+          const extra = s.additionalProperties;
+          return typeof extra === "object" ? `map[string]${goType(extra, name)}` : "map[string]any";
+        }
+        claim(name);
+        types.push(goStruct(name, s));
+        return name;
+      }
+      default:
+        return "any";
+    }
+  }
+
+  function goStruct(name: string, s: Schema): string[] {
+    const req = new Set(s.required ?? []);
+    const rows: Array<string | string[]> = [];
+    const seen = new Set<string>();
+    for (const [key, prop] of Object.entries(s.properties ?? {})) {
+      const field = goName(key);
+      if (seen.has(field)) throw new Error(`${name}: two properties map to Go field ${field}`);
+      seen.add(field);
+      const nullable = Array.isArray(prop.type) && prop.type.includes("null");
+      let type = goType(prop, name + field);
+      if ((!req.has(key) || nullable) && pointable(prop)) type = `*${type}`;
+      const notes = [prop.description, prop.enum ? `One of ${prop.enum.map((v) => JSON.stringify(v)).join(", ")}.` : undefined].filter((n) => n);
+      if (notes.length > 0) rows.push(...goComment(notes.join(" "), "\t"));
+      rows.push([field, type, `\`json:"${key}${req.has(key) ? "" : ",omitempty"}"\``]);
+    }
+    return [...(s.description ? goComment(`${name}: ${s.description}`) : []), `type ${name} struct {`, ...goAlign(rows), "}"];
+  }
+
+  for (const [name, def] of Object.entries(catalog.definitions)) {
+    const doc = def.description ? goComment(`${name}: ${def.description}`) : [];
+    if (def.oneOf) {
+      claim(name);
+      const kinds = def.oneOf.map((o) => JSON.stringify(resolveGo(o).properties?.kind?.const ?? refName(o.$ref ?? "")));
+      const note = allObjects(def) ? `${name} is a union of JSON objects (variants: ${kinds.join(", ")}); decode it as a generic map.` : `${name} is a union.`;
+      types.push([...(doc.length > 0 ? [...doc, "//"] : []), ...goComment(note), `type ${name} = ${allObjects(def) ? "map[string]any" : "any"}`]);
+    } else if (def.enum) {
+      claim(name);
+      if (!def.enum.every((v) => typeof v === "string")) throw new Error(`${name}: only string enums are generated`);
+      const consts = (def.enum as string[]).map((v) => [`${name}${v.split(/[^A-Za-z0-9]+/).map((w) => w[0].toUpperCase() + w.slice(1)).join("")}`, name, `= ${JSON.stringify(v)}`]);
+      types.push([...doc, `type ${name} string`, "", "const (", ...goAlign(consts), ")"]);
+    } else if (def.type === "object" && Object.keys(def.properties ?? {}).length > 0) {
+      claim(name);
+      types.push(goStruct(name, def));
+    } else {
+      claim(name);
+      types.push([...doc, `type ${name} = ${goType(def, name)}`]);
+    }
+  }
+
+  const list = (keys: string[]) => (keys.length === 0 ? "nil" : `[]string{${keys.map((k) => JSON.stringify(k)).join(", ")}}`);
+  const out: string[] = [`// ${HEADER}`, "", "package api", ""];
+  out.push("// SchemaVersion is the `version` of the schema this build was generated from.", `const SchemaVersion = ${catalog.version}`, "");
+  out.push("// Error codes of a failed response's `error.code`, with what each means.", "const (");
+  const errorRows: Array<string | string[]> = [];
+  for (const [code, description] of Object.entries(catalog.errors)) {
+    errorRows.push(...goComment(`${description}.`, "\t"));
+    errorRows.push([`Code${goName(code.split("_").map((w, i) => (i === 0 ? w : w[0].toUpperCase() + w.slice(1))).join(""))}`, `= ${JSON.stringify(code)}`]);
+  }
+  out.push(...goAlign(errorRows), ")", "");
+  out.push("// ParamSpec is a method's params: every name it accepts (`params.properties`, in schema order) and the required ones.", "type ParamSpec struct {", "\tAccepted []string", "\tRequired []string", "}", "");
+  out.push("// Methods is each method's ParamSpec: what the server checks every request against, and names in its `invalid_params` errors.", "var Methods = map[string]ParamSpec{");
+  for (const [method, m] of Object.entries(catalog.methods)) {
+    out.push(`\t${JSON.stringify(method)}: {`, `\t\tAccepted: ${list(Object.keys(m.params.properties ?? {}))},`, `\t\tRequired: ${list(m.params.required ?? [])},`, "\t},");
+  }
+  out.push("}", "");
+  for (const t of types) out.push(...t, "");
+  return out.join("\n");
+}
+
 // ---------- Package versions (from VERSION, which scripts/bundle.sh also reads) ----------
 
 const version = readFileSync(join(root, "VERSION"), "utf8").trim();
@@ -272,6 +416,7 @@ const targets: Array<[string, string]> = [
   ["clients/ts/src/generated.ts", genTs()],
   ["clients/python/easl_sdk/_generated.py", genPy()],
   ["Sources/CanvasCore/ApiParams.swift", genSwift()],
+  ["easld/internal/api/api_gen.go", genGo()],
   ["clients/python/pyproject.toml", withVersion("clients/python/pyproject.toml", /^version = "([^"]+)"$/m)],
   ["clients/ts/package.json", withVersion("clients/ts/package.json", /^  "version": "([^"]+)",$/m)],
   ["extensions/claude/.claude-plugin/plugin.json", withVersion("extensions/claude/.claude-plugin/plugin.json", /^  "version": "([^"]+)",$/m)],
