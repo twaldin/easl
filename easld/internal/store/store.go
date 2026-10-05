@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/twaldin/easl/easld/internal/metrics"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
@@ -165,18 +166,22 @@ func (s *Store) Write(snap *Snapshot) error {
 
 // save writes snapshot number n of its board unless a later one is on disk already.
 func (s *Store) save(snap *Snapshot, n uint64) error {
+	start := time.Now()
 	data, err := snap.Encode()
 	if err != nil {
 		return err
 	}
+	metrics.Shared.Record("save.encode", metrics.Since(start), 0)
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if n <= s.written[snap.ID] {
 		return nil
 	}
+	start = time.Now()
 	if err := writeAtomic(s.Path(snap.ID), data); err != nil {
 		return err
 	}
+	metrics.Shared.Record("save.write", metrics.Since(start), len(data))
 	s.written[snap.ID] = n
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/api"
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/mention"
+	"github.com/twaldin/easl/easld/internal/metrics"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/store"
 )
@@ -19,6 +20,15 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 	switch method {
 	case "system.ping":
 		return map[string]any{"version": float64(api.SchemaVersion), "app": "easl"}, nil
+	case "app.metrics":
+		if boolParam(p, "watch") {
+			metrics.Shared.Watching()
+		}
+		snapshot := metrics.Shared.Snapshot()
+		if boolParam(p, "reset") {
+			metrics.Shared.Reset()
+		}
+		return snapshot, nil
 	case "board.get":
 		return r.boardGet(p)
 	case "board.history":

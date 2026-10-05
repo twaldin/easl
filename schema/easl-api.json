@@ -693,6 +693,27 @@
         "cause": { "type": "string", "description": "set on cascades of another change, saying why: a group `fit to its members` (one entry per group per revision, at its net change), an arrow's end freed because its `bound object obj_… deleted`" }
       },
       "additionalProperties": false
+    },
+    "MetricsTally": {
+      "type": "object",
+      "description": "one window of a counter: how many, how long (ms, and the longest) and how many bytes; ms and bytes only when the counter has them",
+      "required": ["n"],
+      "properties": {
+        "n": { "type": "integer" },
+        "ms": { "type": "number" },
+        "maxMs": { "type": "number" },
+        "bytes": { "type": "integer" }
+      }
+    },
+    "MetricsCounter": {
+      "type": "object",
+      "description": "a counter since launch (or the last reset), over the last 60 s, and over the last 10 min",
+      "required": ["total", "last60s", "last10m"],
+      "properties": {
+        "total": { "$ref": "#/definitions/MetricsTally" },
+        "last60s": { "$ref": "#/definitions/MetricsTally" },
+        "last10m": { "$ref": "#/definitions/MetricsTally" }
+      }
     }
   },
   "methods": {
@@ -700,6 +721,38 @@
       "description": "Liveness and schema version.",
       "params": { "type": "object", "properties": {}, "additionalProperties": false },
       "result": { "type": "object", "required": ["version"], "properties": { "version": { "type": "integer" }, "app": { "type": "string" } } }
+    },
+    "app.metrics": {
+      "description": "What easl's own work costs, for finding what makes it slow: main-thread busy time and stretches (with the longest one's cause), per-method API requests (`api.<method>`: requests answered, time from arrival to the queued reply, waiting behind earlier requests on the connection included, and reply bytes; `api.in.<method>` requests arrived and their bytes; `api.main.<method>` the main-thread part of its dispatches), events sent, board writes and group refits (top writers), arrow routings (`route.board` the whole board, `route.arrow` one arrow following its ends; top triggering objects), saves, live tiles per kind, HTML page loads, reuses, measures and renders, and the process's CPU, wakeups, memory and energy with its WebKit helpers'. Counters cover three windows: since launch or the last reset, the last 60 s, the last 10 min. `easl metrics [--watch] [--reset]` prints them as text.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "reset": { "type": "boolean", "description": "after reading, clear every counter and the longest stretch (levels such as live tiles stay)" },
+          "watch": { "type": "boolean", "description": "sample the process every second for the next 3 s instead of every 10 (a client polling each second)" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["uptimeS", "sinceS", "counters", "gauges", "top", "process"],
+        "properties": {
+          "uptimeS": { "type": "number" },
+          "sinceS": { "type": "number", "description": "seconds since launch or the last reset: the `total` window" },
+          "counters": { "type": "object", "description": "by name, e.g. `main.busy`, `main.stretch50`, `main.stretch250`, `api.object.update`, `api.main.board.get`, `event.object.updated`, `board.write` (creates, updates, deletes), `board.refit`, `board.undo`, `board.bookkeeping`, `route.board`, `route.arrow`, `save.encode`, `save.write`, `card.call.HtmlTile`, `flip.live.TerminalTile`, `html.load`, `html.reuse`, `html.measure`", "additionalProperties": { "$ref": "#/definitions/MetricsCounter" } },
+          "gauges": { "type": "object", "description": "current levels: `live.<Tile>` (tiles showing live content, by kind), `html.webviews`, `events.subscribers`", "additionalProperties": { "type": "number" } },
+          "top": { "type": "object", "description": "top offenders since the reset: `writers` (`agent:<tile>` or `user`), `routingTriggers` (the object whose change routed the board; ms the routings took)", "additionalProperties": { "type": "array", "items": { "type": "object", "required": ["key", "n"], "properties": { "key": { "type": "string" }, "n": { "type": "integer" }, "ms": { "type": "number" } } } } },
+          "longest": { "type": "object", "description": "the longest main-thread stretch since the reset", "required": ["ms", "cause", "agoS"], "properties": { "ms": { "type": "number" }, "cause": { "type": "string", "description": "the work it did, longest first, e.g. `api.main.object.update obj_… 1790 ms (route.board 84 arrows 1500 ms)`" }, "agoS": { "type": "number" } } },
+          "process": {
+            "type": "object",
+            "properties": {
+              "footprintMB": { "type": "number" },
+              "peakFootprintMB": { "type": "number" },
+              "windows": { "type": "object", "description": "`total`, `last60s`, `last10m`, each with cpuPercent, interruptWakeupsPerS, idleWakeupsPerS, energyMJPerS", "additionalProperties": { "type": "object", "additionalProperties": { "type": "number" } } },
+              "helpers": { "type": "array", "description": "WebKit processes easl is responsible for", "items": { "type": "object", "properties": { "pid": { "type": "integer" }, "name": { "type": "string" }, "footprintMB": { "type": "number" }, "cpuPercent": { "type": "number" } } } }
+            }
+          }
+        }
+      }
     },
     "board.get": {
       "description": "Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged.",

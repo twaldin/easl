@@ -14,12 +14,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/twaldin/easl/easld/internal/metrics"
 	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
@@ -80,6 +82,17 @@ type Conn struct {
 	written chan struct{} // closed when the writer has finished and the socket is closed
 
 	inbox inbox
+
+	// unanswered are the requests handed to the handler whose reply hasn't been sent yet, in
+	// arrival order (guarded by mu): a reply from any path (the handler's return, a direct
+	// Send, a deferred agent.wait) closes its request's `api.<method>` accounting.
+	unanswered []unanswered
+}
+
+type unanswered struct {
+	id      any
+	method  string
+	arrived time.Time
 }
 
 func newConn(nc net.Conn, l limits) *Conn {
@@ -112,7 +125,38 @@ func (c *Conn) Send(v any) bool {
 	if err != nil {
 		return false
 	}
+	c.answered(v, len(data)+1)
 	return c.write(append(data, '\n'))
+}
+
+// expect starts a request's accounting: `api.<method>` counts it when its reply is sent, with
+// the time since it arrived (waiting behind earlier requests on the connection included) and
+// the reply's bytes.
+func (c *Conn) expect(id any, method string, arrived time.Time) {
+	c.mu.Lock()
+	c.unanswered = append(c.unanswered, unanswered{id, method, arrived})
+	c.mu.Unlock()
+}
+
+// answered closes the accounting of the oldest unanswered request a reply line answers.
+func (c *Conn) answered(v any, bytes int) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return
+	}
+	if _, reply := m["ok"]; !reply {
+		return
+	}
+	c.mu.Lock()
+	for i, u := range c.unanswered {
+		if reflect.DeepEqual(u.id, m["id"]) {
+			c.unanswered = append(c.unanswered[:i], c.unanswered[i+1:]...)
+			c.mu.Unlock()
+			metrics.Shared.Record("api."+u.method, metrics.Since(u.arrived), bytes)
+			return
+		}
+	}
+	c.mu.Unlock()
 }
 
 func (c *Conn) write(line []byte) bool {
@@ -206,6 +250,8 @@ type request struct {
 	size      int
 	malformed bool
 	tooLong   bool
+	method    string
+	arrived   time.Time
 }
 
 // push queues r, waiting while the queue is full; a request pushed after finish is dropped.
@@ -267,6 +313,9 @@ func (c *Conn) serve(h Handler) {
 			c.Send(lineTooLong(c.limits.line))
 			c.close(false)
 			return
+		}
+		if r.method != "" {
+			c.expect(r.value.(map[string]any)["id"], r.method, r.arrived)
 		}
 		if response := c.handle(h, r.value); response != nil {
 			c.Send(response)
@@ -334,7 +383,12 @@ func (c *Conn) readLoop() {
 			c.inbox.push(request{malformed: true})
 			continue
 		}
-		c.inbox.push(request{value: value, size: len(line)})
+		m, _ := value.(map[string]any)
+		method, _ := m["method"].(string)
+		if method != "" {
+			metrics.Shared.Record("api.in."+method, 0, len(line)+1)
+		}
+		c.inbox.push(request{value: value, size: len(line), method: method, arrived: time.Now()})
 	}
 }
 

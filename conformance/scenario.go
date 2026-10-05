@@ -66,6 +66,10 @@ type Step struct {
 	// (templates expanded): `{"result.boards": {"board": "{{board}}"}}` keeps this scenario's
 	// board out of a list that holds every board the server ever stored.
 	Keep map[string]map[string]any `json:"keep,omitempty"`
+	// The result is the server's own measurements (app.metrics): instead of being compared,
+	// it is checked against the method's result schema, and the transcript keeps the verdict.
+	// The value says why.
+	Shape string `json:"shape,omitempty"`
 	// Drop the step's events (a step whose events depend on timing the scenario can't control).
 	NoEvents bool   `json:"noEvents,omitempty"`
 	Note     string `json:"note,omitempty"`

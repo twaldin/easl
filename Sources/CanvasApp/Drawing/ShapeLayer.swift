@@ -74,8 +74,20 @@ final class ShapeLayer: NSView {
     /// Arrows bound to each object, so a move re-routes only those.
     private var arrowsBound: [ObjectID: Set<ObjectID>] = [:]
     /// The board's routing is due (`ConnectorRouter`: `avoid` arrows routed together, every label
-    /// placed with the rest); it runs once per burst of changes (see `scheduleRouting`).
+    /// placed with the rest); it runs once per burst of changes, off the main thread (see
+    /// `scheduleRouting`).
     private var routingStale = false
+    /// Arrows created or changed since the board last routed. They hold a provisional route that
+    /// is never drawn or reported: the board routes on the main thread first (`settleProvisional`).
+    private var provisional: Set<ObjectID> = []
+    /// Bumped by every change the board's routing depends on, so a routing that finishes after
+    /// more changes knows its inputs are older.
+    private var routingGeneration = 0
+    /// A routing is running on `routingQueue`; when it lands, a routing due since starts.
+    private var routingInFlight = false
+    /// The object whose change last made the board's routing due (`app.metrics` top triggers).
+    private var routingTrigger: ObjectID?
+    private static let routingQueue = DispatchQueue(label: "easl.routing", qos: .userInitiated)
     /// A live change (a tile dragged or its code scrolled) routes only the arrows it moves; the
     /// board routes again once the change pauses for `routingPause` (`routeAfterPause`).
     private var routingPaused = false
@@ -162,7 +174,9 @@ final class ShapeLayer: NSView {
     @objc private func viewFrameChanged(_ note: Notification) {
         guard let tile = note.object as? TileFrameView, tile.superview === canvas.document else { return }
         reroute(boundTo: tile.objectID)
-        routeAfterPause()
+        // A frame the API wrote is a board change (`apply` schedules its routing for the burst's
+        // end); anything else is live (a drag, a resize) and routes when it pauses.
+        if ApiActivity.shared.dispatching == 0 { routeAfterPause() }
     }
 
     /// A code tile's rows or a diagram's nodes moved inside it: arrows bound to its lines or
@@ -225,7 +239,7 @@ final class ShapeLayer: NSView {
             refresh(object)
             if object.type != .arrow, routedAs[object.id] != RoutingKey(object) {
                 routedAs[object.id] = RoutingKey(object)
-                scheduleRouting()
+                scheduleRouting(trigger: object.id)
             }
             reroute(boundTo: object.id)
         case .objectDeleted(let id):
@@ -235,7 +249,8 @@ final class ShapeLayer: NSView {
                 if let spec = item.arrow?.spec { unbind(arrow: id, spec) }
             }
             routedAs.removeValue(forKey: id)
-            scheduleRouting()
+            provisional.remove(id)
+            scheduleRouting(trigger: id)
             // Arrows bound to a deleted object keep their last route; undo re-binds them.
         default:
             break
@@ -260,7 +275,11 @@ final class ShapeLayer: NSView {
             } else {
                 items[object.id] = routed(object, spec, previous: old, style: spec.route == .avoid ? .orthogonal : nil)
             }
-            scheduleRouting()
+            // Only a new arrow or a changed spec moves routes (a restack doesn't).
+            if old?.arrow?.spec != spec {
+                provisional.insert(object.id)
+                scheduleRouting(trigger: object.id)
+            }
         default:
             return
         }
@@ -281,11 +300,13 @@ final class ShapeLayer: NSView {
         for arrowID in arrows { reroute(arrow: arrowID) }
     }
 
-    /// Routes one arrow alone, following a live change; while the board's routing is due it
-    /// waits for that instead.
+    /// Routes one arrow alone, following a change to what it is bound to (a drag, a scroll, an
+    /// agent's write), so it stays attached until the board's routing places it with the rest. A
+    /// provisional arrow waits for that routing instead.
     private func reroute(arrow id: ObjectID) {
-        guard !routingStale, let old = items[id], let spec = old.arrow?.spec else { return }
+        guard !provisional.contains(id), let old = items[id], let spec = old.arrow?.spec else { return }
         let item = routed(old.object, spec, previous: old)
+        Metrics.shared.record("route.arrow")
         guard item.arrow?.path != old.arrow?.path || item.labelRect != old.labelRect || item.labelLeader != old.labelLeader else { return }
         invalidate(old)
         items[id] = item
@@ -293,14 +314,24 @@ final class ShapeLayer: NSView {
     }
 
     /// The board's routing looks at every arrow and tile, and any change may change it, so it
-    /// runs once per burst of changes (a batch, a multi-tile move), after it: on the next
-    /// main-queue turn, before the layer draws or renders, or before the API reports an arrow
-    /// (`Board.settleArrows`), whichever comes first. Until then arrows keep the routes the user
-    /// sees (a new arrow a provisional one, never drawn or reported).
-    private func scheduleRouting() {
-        guard !routingStale else { return }
-        routingStale = true
-        DispatchQueue.main.async { [weak self] in self?.settleRouting() }
+    /// runs once per burst of changes, after it, off the main thread: a change the API made waits
+    /// until the API is quiet (`ApiActivity`: an agent writing tile after tile routes the board
+    /// once, when it stops), any other on the next main-queue turn. Meanwhile arrows bound to a
+    /// changed object follow it alone (`reroute`). A new or changed arrow is never drawn or
+    /// reported with its provisional route: drawing and the API route the board first, on the
+    /// main thread (`settleProvisional`).
+    private func scheduleRouting(trigger: ObjectID?) {
+        routingGeneration += 1
+        if let trigger { routingTrigger = trigger }
+        if ApiActivity.shared.dispatching > 0 {
+            guard !routingStale else { return }
+            routingStale = true
+            ApiActivity.shared.whenQuiet { [weak self] in self?.startRouting() }
+        } else {
+            // Not the API's: no waiting for a burst to end (`startRouting` runs one at a time).
+            routingStale = true
+            DispatchQueue.main.async { [weak self] in self?.startRouting() }
+        }
     }
 
     /// A live change routes the board once it pauses (a drag held still, a drop, a scroll that
@@ -311,27 +342,54 @@ final class ShapeLayer: NSView {
         let generation = pauseGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.routingPause) { [weak self] in
             guard let self, self.pauseGeneration == generation, self.routingPaused else { return }
-            self.scheduleRouting()
+            self.routingPaused = false
+            self.scheduleRouting(trigger: nil)
         }
     }
 
-    /// Routes now whatever is due, a live change's pending routing included, so what the API
-    /// reports or renders is the settled routing.
+    /// Before the API reports arrows (`Board.settleArrows`): new or changed arrows get their
+    /// place in the board's routing now. Others report the route they are drawn on, which
+    /// follows their ends; the board's routing catches up when the burst of changes ends.
     func settleArrows() {
-        if routingPaused { routingStale = true }
-        settleRouting()
+        settleProvisional()
     }
 
-    /// Routes every arrow on the board together (`ConnectorRouter`) from what is shown, in
-    /// canvas coordinates like `layout.check`, and redraws those whose route or label moved.
-    func settleRouting() {
-        guard routingStale else { return }
-        routingStale = false
-        routingPaused = false
-        let perfStart = DevPerf.mark()
-        defer { DevPerf.record("route.board", since: perfStart) }
+    /// Routes the board on the main thread when an arrow is still provisional.
+    private func settleProvisional() {
+        guard !provisional.isEmpty else { return }
+        guard let inputs = routingInputs() else {
+            provisional = []
+            return
+        }
+        let started = Metrics.now()
+        let result = Metrics.shared.span("route", "route.board", detail: "\(inputs.connectors.count) arrows, \(inputs.obstacles.count) obstacles (main)") {
+            ConnectorRouter(connectors: inputs.connectors, obstacles: inputs.obstacles, regions: inputs.regions).route(previous: routing)
+        }
+        routed(result, inputs, ms: (Metrics.now() - started) * 1000)
+    }
+
+    /// What the board's routing is given, from what is shown, in canvas coordinates like
+    /// `layout.check`: every arrow's ends, every tile and blocking shape, and the groups.
+    private struct RoutingInputs {
+        var connectors: [ConnectorRouter.Connector]
+        var obstacles: [ConnectorRouter.Obstacle]
+        var regions: [ConnectorRouter.Region]
+        /// Each routed arrow's spec and ends (document coordinates) as given.
+        var given: [ObjectID: (spec: ArrowSpec, from: DrawingGeometry.ArrowEnd, to: DrawingGeometry.ArrowEnd)]
+        /// The arrows that were provisional when the inputs were taken.
+        var provisional: Set<ObjectID>
+        var generation: Int
+        /// Routings in the order their inputs were taken: an older one never replaces a newer one.
+        var sequence: Int
+        var trigger: ObjectID?
+    }
+
+    private var routingSequence = 0
+    private var appliedSequence = 0
+
+    private func routingInputs() -> RoutingInputs? {
         let arrows = items.values.compactMap { item in item.arrow.map { (item, $0.spec) } }.sorted { $0.0.object.id < $1.0.object.id }
-        guard !arrows.isEmpty else { return }
+        guard !arrows.isEmpty else { return nil }
         let origin = CanvasDocumentView.origin
         func canvasRect(_ rect: CGRect) -> CGRect { rect.offsetBy(dx: -origin.x, dy: -origin.y) }
         func canvasEnd(_ end: DrawingGeometry.ArrowEnd) -> DrawingGeometry.ArrowEnd {
@@ -343,12 +401,15 @@ final class ShapeLayer: NSView {
             }
         }
         var connectors: [ConnectorRouter.Connector] = []
+        var given: [ObjectID: (spec: ArrowSpec, from: DrawingGeometry.ArrowEnd, to: DrawingGeometry.ArrowEnd)] = [:]
         for (item, spec) in arrows {
             let id = item.object.id
-            guard let from = arrowEnd(spec.from, of: id).map(canvasEnd), let to = arrowEnd(spec.to, of: id).map(canvasEnd) else { continue }
+            guard let fromDoc = arrowEnd(spec.from, of: id), let toDoc = arrowEnd(spec.to, of: id) else { continue }
+            let from = canvasEnd(fromDoc), to = canvasEnd(toDoc)
             let path = spec.route == .avoid ? nil : DrawingGeometry.path(from: from, to: to, style: spec.route, offset: parallelOffset(id, spec))
             connectors.append(.init(id: id, from: from, to: to, fromObject: spec.from.objectID, toObject: spec.to.objectID,
                                     label: DrawingStyle.arrowLabel(spec)?.size, path: path))
+            given[id] = (spec, fromDoc, toDoc)
         }
         var obstacles = canvas.tiles.map { id, tile in ConnectorRouter.Obstacle(id: id, rect: canvasRect(tile.frame)) }
         for (id, item) in items where canvas.tiles[id] == nil {
@@ -359,22 +420,88 @@ final class ShapeLayer: NSView {
         // Groups as shown: a tile held mid-drag has moved but its groups commit only on drop.
         let shown = Dictionary(obstacles.map { ($0.id, $0.rect) }, uniquingKeysWith: { first, _ in first })
         let regions = BoardGeometry(objects: board.objects, labelSizes: [:]).regions(shown: shown)
-        let result = ConnectorRouter(connectors: connectors, obstacles: obstacles, regions: regions).route(previous: routing)
-        routing = result
-        for (item, spec) in arrows {
-            let id = item.object.id
-            guard let path = result.paths[id] else { continue }
-            let label = result.labels[id].map { ConnectorRouter.Label(rect: $0.rect.offsetBy(dx: origin.x, dy: origin.y), leader: $0.leader?.map(Self.docPoint)) }
-            let routed = DrawnItem.arrow(item.object, spec, path: path.map(Self.docPoint), label: label)
-            guard routed.arrow?.path != item.arrow?.path || routed.labelRect != item.labelRect || routed.labelLeader != item.labelLeader else { continue }
-            invalidate(item)
-            items[id] = routed
-            invalidate(routed)
+        let trigger = routingTrigger
+        routingTrigger = nil
+        routingSequence += 1
+        return RoutingInputs(connectors: connectors, obstacles: obstacles, regions: regions, given: given, provisional: provisional,
+                             generation: routingGeneration, sequence: routingSequence, trigger: trigger)
+    }
+
+    /// Starts the board's routing on `routingQueue` when it is due and none is running.
+    private func startRouting() {
+        guard routingStale, !routingInFlight, !routingPaused else { return }
+        routingStale = false
+        guard let inputs = Metrics.shared.span("route", "route.inputs", { routingInputs() }) else {
+            provisional = []
+            return
+        }
+        routingInFlight = true
+        let previous = routing
+        let detail = "\(inputs.connectors.count) arrows, \(inputs.obstacles.count) obstacles"
+        let router = ConnectorRouter(connectors: inputs.connectors, obstacles: inputs.obstacles, regions: inputs.regions)
+        Self.routingQueue.async { [weak self] in
+            let started = Metrics.now()
+            let result = Metrics.shared.span("route", "route.board", detail: detail) { router.route(previous: previous) }
+            let ms = (Metrics.now() - started) * 1000
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.routingInFlight = false
+                    self.routed(result, inputs, ms: ms)
+                    if self.routingStale {
+                        if ApiActivity.shared.isQuiet {
+                            self.startRouting()
+                        } else {
+                            ApiActivity.shared.whenQuiet { [weak self] in self?.startRouting() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Takes a finished routing: every arrow whose spec and ends are still what the routing was
+    /// given moves to its route and label and redraws if they changed. An arrow that changed
+    /// since keeps what it shows (its own route) for the routing that change made due. Ends are
+    /// compared even when no routing was scheduled since: a drag, a resize, a scroll or a
+    /// selection-drag preview moves them before its pause schedules one.
+    private func routed(_ result: ConnectorRouter.Result, _ inputs: RoutingInputs, ms: Double) {
+        DevPerf.record("route.board", ms: ms)
+        if let trigger = inputs.trigger { Metrics.shared.offender("routingTriggers", trigger, ms: ms) }
+        guard inputs.sequence > appliedSequence else {
+            // A routing on the main thread (`settleProvisional`) overtook this one.
+            Metrics.shared.record("route.superseded")
+            return
+        }
+        appliedSequence = inputs.sequence
+        Metrics.shared.span("route", "route.apply") {
+            let current = inputs.generation == routingGeneration
+            if current { routingStale = false } else { Metrics.shared.record("route.stale") }
+            routing = result
+            let origin = CanvasDocumentView.origin
+            var changedSince: Set<ObjectID> = []
+            for (id, given) in inputs.given {
+                guard let item = items[id], let spec = item.arrow?.spec else { continue }
+                if spec != given.spec || arrowEnd(spec.from, of: id) != given.from || arrowEnd(spec.to, of: id) != given.to {
+                    changedSince.insert(id)
+                    continue
+                }
+                guard let path = result.paths[id] else { continue }
+                let label = result.labels[id].map { ConnectorRouter.Label(rect: $0.rect.offsetBy(dx: origin.x, dy: origin.y), leader: $0.leader?.map(Self.docPoint)) }
+                let routed = DrawnItem.arrow(item.object, spec, path: path.map(Self.docPoint), label: label)
+                guard routed.arrow?.path != item.arrow?.path || routed.labelRect != item.labelRect || routed.labelLeader != item.labelLeader else { continue }
+                invalidate(item)
+                items[id] = routed
+                invalidate(routed)
+            }
+            // Arrows provisional when the routing started are settled now (routed, or left on
+            // their last route when an end is gone), unless they changed again since.
+            provisional.subtract(inputs.provisional.subtracting(changedSince))
         }
     }
 
     override func viewWillDraw() {
-        settleRouting()
+        settleProvisional()
         super.viewWillDraw()
     }
 
@@ -384,7 +511,7 @@ final class ShapeLayer: NSView {
         return (arrowsBound[a] ?? []).intersection(arrowsBound[b] ?? [])
     }
 
-    // The board's routing (`settleRouting`) moves siblings between the same two objects apart.
+    // The board's routing (`startRouting`) moves siblings between the same two objects apart.
 
     /// This arrow's sideways offset among the arrows between the same two objects.
     private func parallelOffset(_ id: ObjectID, _ spec: ArrowSpec) -> CGFloat {

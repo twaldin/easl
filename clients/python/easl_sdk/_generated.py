@@ -336,6 +336,19 @@ class HistoryEntry(TypedDict):
     selection: NotRequired[list["Id"]]
     cause: NotRequired[str]
 
+class MetricsTally(TypedDict):
+    """one window of a counter: how many, how long (ms, and the longest) and how many bytes; ms and bytes only when the counter has them"""
+    n: Required[int]
+    ms: NotRequired[float]
+    maxMs: NotRequired[float]
+    bytes: NotRequired[int]
+
+class MetricsCounter(TypedDict):
+    """a counter since launch (or the last reset), over the last 60 s, and over the last 10 min"""
+    total: Required["MetricsTally"]
+    last60s: Required["MetricsTally"]
+    last10m: Required["MetricsTally"]
+
 @_snake_case_hints
 class SystemApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
@@ -345,6 +358,16 @@ class SystemApi:
         """Liveness and schema version."""
         params = {}
         return self._call("system.ping", params, [])
+
+@_snake_case_hints
+class AppApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def metrics(self, *, reset: bool | None = None, watch: bool | None = None) -> dict[str, Any]:
+        """What easl's own work costs, for finding what makes it slow: main-thread busy time and stretches (with the longest one's cause), per-method API requests (`api.<method>`: requests answered, time from arrival to the queued reply, waiting behind earlier requests on the connection included, and reply bytes; `api.in.<method>` requests arrived and their bytes; `api.main.<method>` the main-thread part of its dispatches), events sent, board writes and group refits (top writers), arrow routings (`route.board` the whole board, `route.arrow` one arrow following its ends; top triggering objects), saves, live tiles per kind, HTML page loads, reuses, measures and renders, and the process's CPU, wakeups, memory and energy with its WebKit helpers'. Counters cover three windows: since launch or the last reset, the last 60 s, the last 10 min. `easl metrics [--watch] [--reset]` prints them as text."""
+        params = {"reset": reset, "watch": watch}
+        return self._call("app.metrics", params, [])
 
 @_snake_case_hints
 class BoardApi:
@@ -579,6 +602,7 @@ class EventsApi:
 class GeneratedApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self.system = SystemApi(call)
+        self.app = AppApi(call)
         self.board = BoardApi(call)
         self.object = ObjectApi(call)
         self.layout = LayoutApi(call)
@@ -588,7 +612,7 @@ class GeneratedApi:
         self.view = ViewApi(call)
         self.events = EventsApi(call)
 
-METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","events.subscribe"]
+METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","events.subscribe"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

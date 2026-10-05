@@ -11,6 +11,20 @@ struct BoardTests {
         return Board(id: "brd_test", root: root)
     }
 
+    /// The API reports objects (`board.get`, write results, events) without encoding them; what
+    /// it reports must be exactly their encoded form, optional fields and dates included.
+    @Test func objectsReportAsTheirEncodedForm() throws {
+        let board = makeBoard()
+        let group = board.create(type: .group, props: .object(["members": .array([]), "title": .string("lane")]))
+        let props: JSONValue = .object(["markdown": .string("hi"), "nested": .object(["a": .array([.number(1.5), .bool(true), .null, .number(3)])])])
+        let note = board.create(type: .note, props: props, frame: Frame(x: 1.25, y: -3, w: 200, h: 100), parent: group.id, caller: "obj_agent")
+        let byUser = try board.update(note.id, props: .object(["markdown": .string("bye")]))
+        let byAgent = try board.update(note.id, frame: Frame(x: 0.1, y: 7, w: 320, h: 90.5), caller: "obj_agent")
+        for object in [group, note, byUser, byAgent] {
+            #expect(JSONValue(object) == (try JSONValue.encode(object)))
+        }
+    }
+
     @Test func peekDrainKeepsTrayUntilCommit() async throws {
         let board = makeBoard()
         let note = board.create(type: .note, props: .object(["markdown": .string("hypothesis")]))

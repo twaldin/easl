@@ -664,10 +664,63 @@ export type HistoryEntry = {
   cause?: string;
 };
 
+/** one window of a counter: how many, how long (ms, and the longest) and how many bytes; ms and bytes only when the counter has them */
+export type MetricsTally = {
+  n: number;
+  ms?: number;
+  maxMs?: number;
+  bytes?: number;
+};
+
+/** a counter since launch (or the last reset), over the last 60 s, and over the last 10 min */
+export type MetricsCounter = {
+  total: MetricsTally;
+  last60s: MetricsTally;
+  last10m: MetricsTally;
+};
+
 export type SystemPingParams = Record<string, unknown>;
 export type SystemPingResult = {
   version: number;
   app?: string;
+};
+
+export type AppMetricsParams = {
+  /** after reading, clear every counter and the longest stretch (levels such as live tiles stay) */
+  reset?: boolean;
+  /** sample the process every second for the next 3 s instead of every 10 (a client polling each second) */
+  watch?: boolean;
+};
+export type AppMetricsResult = {
+  uptimeS: number;
+  /** seconds since launch or the last reset: the `total` window */
+  sinceS: number;
+  /** by name, e.g. `main.busy`, `main.stretch50`, `main.stretch250`, `api.object.update`, `api.main.board.get`, `event.object.updated`, `board.write` (creates, updates, deletes), `board.refit`, `board.undo`, `board.bookkeeping`, `route.board`, `route.arrow`, `save.encode`, `save.write`, `card.call.HtmlTile`, `flip.live.TerminalTile`, `html.load`, `html.reuse`, `html.measure` */
+  counters: Record<string, unknown>;
+  /** current levels: `live.<Tile>` (tiles showing live content, by kind), `html.webviews`, `events.subscribers` */
+  gauges: Record<string, unknown>;
+  /** top offenders since the reset: `writers` (`agent:<tile>` or `user`), `routingTriggers` (the object whose change routed the board; ms the routings took) */
+  top: Record<string, unknown>;
+  /** the longest main-thread stretch since the reset */
+  longest?: {
+    ms: number;
+    /** the work it did, longest first, e.g. `api.main.object.update obj_… 1790 ms (route.board 84 arrows 1500 ms)` */
+    cause: string;
+    agoS: number;
+  };
+  process: {
+    footprintMB?: number;
+    peakFootprintMB?: number;
+    /** `total`, `last60s`, `last10m`, each with cpuPercent, interruptWakeupsPerS, idleWakeupsPerS, energyMJPerS */
+    windows?: Record<string, unknown>;
+    /** WebKit processes easl is responsible for */
+    helpers?: {
+      pid?: number;
+      name?: string;
+      footprintMB?: number;
+      cpuPercent?: number;
+    }[];
+  };
 };
 
 export type BoardGetParams = {
@@ -1389,6 +1442,10 @@ export interface CanvasApi {
     /** Liveness and schema version. */
     ping(params?: SystemPingParams): Promise<SystemPingResult>;
   };
+  app: {
+    /** What easl's own work costs, for finding what makes it slow: main-thread busy time and stretches (with the longest one's cause), per-method API requests (`api.<method>`: requests answered, time from arrival to the queued reply, waiting behind earlier requests on the connection included, and reply bytes; `api.in.<method>` requests arrived and their bytes; `api.main.<method>` the main-thread part of its dispatches), events sent, board writes and group refits (top writers), arrow routings (`route.board` the whole board, `route.arrow` one arrow following its ends; top triggering objects), saves, live tiles per kind, HTML page loads, reuses, measures and renders, and the process's CPU, wakeups, memory and energy with its WebKit helpers'. Counters cover three windows: since launch or the last reset, the last 60 s, the last 10 min. `easl metrics [--watch] [--reset]` prints them as text. */
+    metrics(params?: AppMetricsParams): Promise<AppMetricsResult>;
+  };
   board: {
     /** Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged. */
     get(params?: BoardGetParams): Promise<BoardGetResult>;
@@ -1492,6 +1549,9 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
     system: {
       ping: (params?: SystemPingParams) => call("system.ping", params ?? {}, []) as Promise<SystemPingResult>,
     },
+    app: {
+      metrics: (params?: AppMetricsParams) => call("app.metrics", params ?? {}, []) as Promise<AppMetricsResult>,
+    },
     board: {
       get: (params?: BoardGetParams) => call("board.get", params ?? {}, ["board"]) as Promise<BoardGetResult>,
       history: (params?: BoardHistoryParams) => call("board.history", params ?? {}, ["board"]) as Promise<BoardHistoryResult>,
@@ -1549,7 +1609,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","events.subscribe"] as const;
+export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","events.subscribe"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

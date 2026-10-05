@@ -35,6 +35,10 @@ var Methods = map[string]ParamSpec{
 		Accepted: nil,
 		Required: nil,
 	},
+	"app.metrics": {
+		Accepted: []string{"reset", "watch"},
+		Required: nil,
+	},
 	"board.get": {
 		Accepted: []string{"board", "since", "branch"},
 		Required: nil,
@@ -835,4 +839,19 @@ type HistoryEntry struct {
 	Selection []Id      `json:"selection,omitempty"`
 	// set on cascades of another change, saying why: a group `fit to its members` (one entry per group per revision, at its net change), an arrow's end freed because its `bound object obj_… deleted`
 	Cause *string `json:"cause,omitempty"`
+}
+
+// MetricsTally: one window of a counter: how many, how long (ms, and the longest) and how many bytes; ms and bytes only when the counter has them
+type MetricsTally struct {
+	N     int      `json:"n"`
+	Ms    *float64 `json:"ms,omitempty"`
+	MaxMs *float64 `json:"maxMs,omitempty"`
+	Bytes *int     `json:"bytes,omitempty"`
+}
+
+// MetricsCounter: a counter since launch (or the last reset), over the last 60 s, and over the last 10 min
+type MetricsCounter struct {
+	Total   MetricsTally `json:"total"`
+	Last60s MetricsTally `json:"last60s"`
+	Last10m MetricsTally `json:"last10m"`
 }

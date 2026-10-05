@@ -89,7 +89,11 @@ public final class BoardStore {
     }
 
     public func scheduleSave(_ board: Board) {
-        pendingSaves[board.id]?.cancel()
+        Metrics.shared.record("save.scheduled")
+        if let pending = pendingSaves[board.id] {
+            pending.cancel()
+            Metrics.shared.record("save.coalesced")
+        }
         let work = DispatchWorkItem { [weak self, weak board] in
             guard let self, let board else { return }
             self.save(board)
@@ -100,8 +104,8 @@ public final class BoardStore {
 
     public func save(_ board: Board) {
         pendingSaves.removeValue(forKey: board.id)?.cancel()
-        guard let data = try? Self.encoder.encode(board.snapshot) else { return }
-        try? data.write(to: url(for: board.id), options: .atomic)
+        guard let data = Metrics.shared.span("save", "save.encode", detail: board.id, { try? Self.encoder.encode(board.snapshot) }) else { return }
+        Metrics.shared.span("save", "save.write", detail: board.id, bytes: data.count) { _ = try? data.write(to: url(for: board.id), options: .atomic) }
     }
 
     public func flush(_ boards: [Board]) {

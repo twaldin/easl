@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/twaldin/easl/easld/internal/metrics"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/store"
 )
@@ -182,6 +183,7 @@ func (r *Registry) Subscribe(sink Sink, board string, events []string) {
 		}
 	}
 	r.subscribers = append(r.subscribers, subscriber{sink, board, filter})
+	metrics.Shared.Gauge("events.subscribers", float64(len(r.subscribers)))
 }
 
 func (r *Registry) broadcast(e model.Event, board string) {
@@ -193,10 +195,12 @@ func (r *Registry) broadcast(e model.Event, board string) {
 	}
 	clear(r.subscribers[len(kept):])
 	r.subscribers = kept
+	metrics.Shared.Gauge("events.subscribers", float64(len(kept)))
 	if len(kept) == 0 {
 		return
 	}
 	message := map[string]any{"event": e.Name, "board": board, "data": e.Data}
+	sent := false
 	for _, s := range kept {
 		if s.board != "" && s.board != board {
 			continue
@@ -204,7 +208,10 @@ func (r *Registry) broadcast(e model.Event, board string) {
 		if s.events != nil && !s.events[e.Name] {
 			continue
 		}
-		s.sink.Send(message)
+		sent = s.sink.Send(message) || sent
+	}
+	if sent {
+		metrics.Shared.Record("event."+e.Name, 0, 0)
 	}
 }
 

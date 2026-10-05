@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/mention"
+	"github.com/twaldin/easl/easld/internal/metrics"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/route"
 	"github.com/twaldin/easl/easld/internal/store"
@@ -422,6 +423,7 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 		o.Frame = b.Place(w, h, caller, nil, true)
 	}
 	b.commit(o)
+	b.countWrite(caller, "")
 	b.history.record(change{kind: changeCreated, object: o})
 	b.log(KindCreated, o, ActorFor(caller), "created "+Describe(o)+" at "+Position(b.ReportedOne(o).Frame), "", nil)
 	b.emit(EventObjectCreated, o.APIJSON())
@@ -489,6 +491,7 @@ func (b *Board) commitBookkeeping(before model.Object, props map[string]any) {
 		return
 	}
 	b.commit(o)
+	metrics.Shared.Record("board.bookkeeping", 0, 0)
 	b.emit(EventObjectUpdated, o.APIJSON())
 }
 
@@ -536,6 +539,7 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 	b.history.begin()
 	defer b.endStep()
 	b.commit(o)
+	b.countWrite(caller, cause)
 	b.history.record(change{kind: changeUpdated, before: before, object: o})
 	if changes, ok := Changes(before, o); ok {
 		b.log(KindUpdated, o, credited, Describe(o)+": "+changes, cause, &before)
@@ -574,6 +578,7 @@ func (b *Board) Delete(id, caller string) error {
 	delete(b.changedAt, id)
 	b.reindexKey(id, removed.Props, nil)
 	b.bumpRevision()
+	b.countWrite(caller, "")
 	var unstaged []placedMention
 	for i, m := range b.tray {
 		if contains(model.MentionObjects(m.Target), id) {
@@ -680,6 +685,7 @@ func (b *Board) restore(o model.Object) {
 	}
 	o.Rev = high + 1
 	b.commit(o)
+	metrics.Shared.Record("board.undo", 0, 0)
 	if existed {
 		if changes, ok := Changes(previous, o); ok {
 			b.log(KindUpdated, o, b.replayActor, Describe(o)+": "+changes, "", nil)
@@ -705,6 +711,25 @@ func (b *Board) commit(o model.Object) {
 		b.revHighWater[o.ID] = o.Rev
 	}
 	b.changed()
+}
+
+// countWrite counts a change to the board's objects for `app.metrics`: `board.write` (and the
+// caller among `writers`) for a create, update or delete; `board.refit` for a group re-fit
+// around its members; `board.undo` for undo and redo.
+func (b *Board) countWrite(caller, cause string) {
+	switch {
+	case b.history.replaying:
+		metrics.Shared.Record("board.undo", 0, 0)
+	case cause == GroupRefitCause:
+		metrics.Shared.Record("board.refit", 0, 0)
+	default:
+		metrics.Shared.Record("board.write", 0, 0)
+		writer := "user"
+		if caller != "" {
+			writer = "agent:" + caller
+		}
+		metrics.Shared.Offender("writers", writer, 0)
+	}
 }
 
 func (b *Board) bumpRevision() {

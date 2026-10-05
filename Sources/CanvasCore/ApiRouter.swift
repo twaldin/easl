@@ -90,13 +90,16 @@ public final class BoardRegistry {
 
     private func broadcast(_ event: BoardEvent, board: BoardID) {
         subscribers.removeAll { !$0.connection.isOpen }
-        guard !subscribers.isEmpty else { return }
-        let message: JSONValue = .object(["event": .string(event.name), "board": .string(board), "data": event.data])
-        for subscriber in subscribers {
-            if let filter = subscriber.board, filter != board { continue }
-            if let events = subscriber.events, !events.contains(event.name) { continue }
-            subscriber.connection.send(message)
+        Metrics.shared.gauge("events.subscribers", Double(subscribers.count))
+        let receivers = subscribers.filter { subscriber in
+            (subscriber.board == nil || subscriber.board == board) && (subscriber.events?.contains(event.name) ?? true)
         }
+        guard !receivers.isEmpty else { return }
+        // Encoded once for every subscriber (an html tile's update carries its whole page).
+        let message: JSONValue = .object(["event": .string(event.name), "board": .string(board), "data": event.data])
+        guard let line = try? JSONEncoder().encode(message) else { return }
+        Metrics.shared.record("event.\(event.name)", bytes: (line.count + 1) * receivers.count)
+        for subscriber in receivers { subscriber.connection.send(encoded: line) }
     }
 }
 
@@ -207,6 +210,8 @@ public final class ApiRouter {
         guard let method = request["method"]?.string else {
             return Self.error(id, Failure("invalid_params", "missing method"))
         }
+        ApiActivity.shared.began(method)
+        defer { ApiActivity.shared.ended(method) }
         let params = request["params"] ?? .object([:])
         do {
             try Self.checkParams(method, params)
@@ -775,10 +780,24 @@ public final class ApiRouter {
         ]
     }
 
+    /// The synchronous part of a method, on the main actor: timed as `api.main.<method>` (what a
+    /// long main-thread stretch names, `Metrics`).
     func dispatch(_ method: String, _ p: JSONValue) throws -> JSONValue {
+        try Metrics.shared.span("api", "api.main.\(method)", detail: p["id"]?.string ?? "") {
+            try ApiActivity.shared.dispatch { try dispatchMethod(method, p) }
+        }
+    }
+
+    private func dispatchMethod(_ method: String, _ p: JSONValue) throws -> JSONValue {
         switch method {
         case "system.ping":
             return .object(["version": .number(Double(Self.schemaVersion)), "app": .string("easl")])
+
+        case "app.metrics":
+            if p["watch"]?.bool == true { Metrics.shared.watching() }
+            let snapshot = Metrics.shared.snapshot()
+            if p["reset"]?.bool == true { Metrics.shared.reset() }
+            return snapshot
 
         case "board.get":
             let board = try board(p)
@@ -793,7 +812,7 @@ public final class ApiRouter {
             let objects = board.reported(snapshot).map(summarized)
             var result: [String: JSONValue] = [
                 "board": .string(board.id), "root": .string(board.root.path),
-                "revision": .number(Double(board.revision)), "objects": try JSONValue.encode(objects),
+                "revision": .number(Double(board.revision)), "objects": .array(objects.map(JSONValue.init)),
             ]
             if let regions { result["regions"] = .array(regions.map(JSONValue.string)) }
             if let since = p["since"]?.int { result["changed"] = .array(board.changed(since: since).map(JSONValue.string)) }
@@ -884,7 +903,7 @@ public final class ApiRouter {
             let id = try string(p, "id")
             let board = try board(forObject: id)
             let object = try board.object(id)
-            var result: [String: JSONValue] = ["object": try JSONValue.encode(board.reported(object))]
+            var result: [String: JSONValue] = ["object": JSONValue(board.reported(object))]
             switch p["as"]?.string ?? "raw" {
             case "graph": result["graph"] = graph(of: object, on: board)
             case "raw": break
@@ -909,7 +928,7 @@ public final class ApiRouter {
             try board.checkKey(props, for: nil)
             if type == .diagram, let problem = DiagramSpec.problem(props) { throw Failure("invalid_params", problem) }
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p))
-            return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], type.unknownPropWarnings(props))
+            return Self.withWarnings(["object": JSONValue(board.reported(object))], type.unknownPropWarnings(props))
 
         case "object.update":
             let id = try string(p, "id")
@@ -921,7 +940,7 @@ public final class ApiRouter {
                 throw Failure("invalid_params", problem)
             }
             let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: p["props"], caller: caller(p))
-            return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
+            return Self.withWarnings(["object": JSONValue(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
         case "object.delete":
             let id = try string(p, "id")
@@ -1199,7 +1218,7 @@ public final class ApiRouter {
             if let view = p["as"] { params["as"] = view }
             return try await get(.object(params))
         case (nil, let prefix?):
-            return .object(["objects": try JSONValue.encode(board.reported(board.objects(keyPrefix: prefix)).map(summarized))])
+            return .object(["objects": .array(board.reported(board.objects(keyPrefix: prefix)).map(summarized).map(JSONValue.init))])
         default:
             throw Failure("invalid_params", "object.find takes key or keyPrefix, one of them")
         }
@@ -1426,7 +1445,7 @@ public final class ApiRouter {
         let origin = p["frame"]?["x"]?.number.flatMap { x in p["frame"]?["y"]?.number.map { (x: x, y: $0) } }
         if let origin {
             let size = Board.defaultSize(.diagram)
-            params["frame"] = try JSONValue.encode(Frame(x: origin.x, y: origin.y, w: size.w, h: size.h))
+            params["frame"] = JSONValue(Frame(x: origin.x, y: origin.y, w: size.w, h: size.h))
         } else {
             params.removeValue(forKey: "frame")
         }
@@ -1452,7 +1471,7 @@ public final class ApiRouter {
         if now == nil { warning = "\(id) was deleted while its graph was computed" }
         if let warning { result["warnings"] = .array((result["warnings"]?.array ?? []) + [.string(warning)]) }
         guard let now else { return .object(result) }
-        result["object"] = try JSONValue.encode(board.reported(now))
+        result["object"] = JSONValue(board.reported(now))
         return withOverlaps(.object(result))
     }
 
@@ -1474,7 +1493,7 @@ public final class ApiRouter {
             let id = try string(p, "id")
             let board = try board(forObject: id)
             guard p["frame"]?["x"]?.number != nil || p["frame"]?["y"]?.number != nil else {
-                params["frame"] = try JSONValue.encode(try board.refitFrame(id, to: size))
+                params["frame"] = JSONValue(try board.refitFrame(id, to: size))
                 return .object(params)
             }
             let current = try board.object(id).frame
@@ -1486,7 +1505,7 @@ public final class ApiRouter {
             let placed = board.place(width: size.width, height: size.height, near: caller(p), stacking: true)
             origin = (placed.x, placed.y)
         }
-        params["frame"] = try JSONValue.encode(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))
+        params["frame"] = JSONValue(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))
         return .object(params)
     }
 
@@ -1625,7 +1644,7 @@ public final class ApiRouter {
             let frames = Dictionary(board.reported(arrows).map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
             for index in results.indices {
                 guard let object = results[index]["object"], let id = object["id"]?.string, let frame = frames[id] else { continue }
-                results[index] = results[index].merging(.object(["object": object.merging(.object(["frame": try JSONValue.encode(frame)]))]))
+                results[index] = results[index].merging(.object(["object": object.merging(.object(["frame": JSONValue(frame)]))]))
             }
         }
         return .object(["results": .array(results), "revision": .number(Double(board.revision))])

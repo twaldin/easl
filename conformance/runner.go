@@ -25,6 +25,8 @@ type Options struct {
 	Settle time.Duration
 	// How long to wait for a reply.
 	Timeout time.Duration
+	// schema/easl-api.json, which Shape steps' results are checked against (the Suite sets it).
+	Schema string
 }
 
 func (o Options) withDefaults() Options {
@@ -58,6 +60,8 @@ type Record struct {
 	Ignored map[string]string `json:"ignored,omitempty"`
 	// Paths whose text had a part masked (Step.Mask), with why.
 	Masked map[string]string `json:"masked,omitempty"`
+	// Why the result was checked against its schema instead of compared (Step.Shape).
+	Shape string `json:"shape,omitempty"`
 }
 
 // Fixture is a scenario's recorded transcript.
@@ -149,6 +153,7 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 	asyncs := map[string]pending{}
 	var records []Record
 	var raw []rawRecord
+	var schema map[string]any
 
 	steps := append([]Step{
 		{Call: "board.open", Params: map[string]any{"root": "{{root}}"}, Save: "open"},
@@ -200,6 +205,14 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 				if !isOK(resp) {
 					vars[step.Save] = resp["error"]
 				}
+			}
+			if step.Shape != "" && isOK(resp) {
+				if schema == nil {
+					if schema, err = loadSchema(o.Schema); err != nil {
+						return nil, fmt.Errorf("step %d (%s): %w", i, step.Label(), err)
+					}
+				}
+				resp["result"] = shapeVerdict(schema, step.Call, resp["result"])
 			}
 			if i == 0 {
 				result, _ := resp["result"].(map[string]any)
@@ -297,7 +310,7 @@ type rawRecord struct {
 }
 
 func (r rawRecord) normalized(norm *normalizer, scenarioIgnore map[string]string, unordered map[string]string) Record {
-	rec := Record{Step: r.step.Label(), Method: r.step.Call}
+	rec := Record{Step: r.step.Label(), Method: r.step.Call, Shape: r.step.Shape}
 	norm.method = r.step.Call
 	if r.conn != "main" {
 		rec.Conn = r.conn

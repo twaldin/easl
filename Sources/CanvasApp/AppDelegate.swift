@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         termination.resume()
         terminationSignal = termination
         DevInput.install()
+        // app.metrics: main-thread stretches (and the app.log line naming a long one's cause).
+        Metrics.shared.monitorMainThread()
         // easl's own leftovers: dead sessions' zmx logs, read Ghostty configs, old renders.
         Housekeeping.pruneAtLaunch()
         if let url = AppPaths.asset(DrawingStyle.fontAsset) { DrawingStyle.registerFonts(url) }
@@ -351,6 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleCanvasChrome(_ sender: Any?) { keyController?.toggleCanvasChrome(sender) }
     @objc func toggleLassoSelection(_ sender: Any?) { keyController?.toggleLassoSelection(sender) }
     @objc func exitGroup(_ sender: Any?) { keyController?.exitGroup(sender) }
+    @objc func togglePerformanceHUD(_ sender: Any?) { MetricsHUD.shared.toggle() }
     @objc func undoCanvas(_ sender: Any?) { keyController?.undoCanvas(sender) }
     @objc func redoCanvas(_ sender: Any?) { keyController?.redoCanvas(sender) }
     @objc func deleteSelection(_ sender: Any?) { keyController?.deleteSelection(sender) }
@@ -587,6 +590,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Hide Board Chrome", #selector(toggleCanvasChrome(_:)), "t", [.option, .command]),
             lasso,
             item("Exit Group", #selector(exitGroup(_:)), ""),
+            .separator(),
+            // `app.metrics` at a glance, redrawn each second while shown.
+            item("Performance HUD", #selector(togglePerformanceHUD(_:)), ""),
         ])
         // AppKit lists the board windows and tabs here (and the tab commands) itself.
         NSApp.windowsMenu = submenu("Window", [
@@ -613,6 +619,9 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(increaseChromeText(_:)): return ChromeText.canStep(bigger: true)
         case #selector(decreaseChromeText(_:)): return ChromeText.canStep(bigger: false)
         case #selector(resetChromeText(_:)): return ChromeText.scale != ChromeTextScale.normal
+        case #selector(togglePerformanceHUD(_:)):
+            item.state = MetricsHUD.shared.isShown ? .on : .off
+            return true
         default: return keyController?.validate(item) ?? false
         }
     }

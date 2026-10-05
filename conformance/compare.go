@@ -96,6 +96,7 @@ func Select(all []Scenario, names []string) ([]Scenario, error) {
 
 // RecordAll runs scenarios and writes their fixtures.
 func (s Suite) RecordAll(scenarios []Scenario, o Options, recordedOn string, log io.Writer) error {
+	o.Schema = s.Schema
 	if err := os.MkdirAll(filepath.Join(s.Dir, "fixtures"), 0o755); err != nil {
 		return err
 	}
@@ -127,6 +128,7 @@ func (s Suite) RecordAll(scenarios []Scenario, o Options, recordedOn string, log
 // ReplayAll runs scenarios and compares each with its fixture.
 func (s Suite) ReplayAll(scenarios []Scenario, o Options) (Report, error) {
 	report := Report{Socket: o.Socket}
+	o.Schema = s.Schema
 	delegated, err := s.Delegated()
 	if err != nil {
 		return report, err
