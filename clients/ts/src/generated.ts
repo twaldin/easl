@@ -1502,18 +1502,28 @@ export type EventsSubscribeParams = {
 export type EventsSubscribeResult = Record<string, unknown>;
 
 export type ClientAttachParams = {
-  /** the methods this client answers */
-  serves: ("view.get" | "view.render" | "view.snapshot" | "agent.prompt" | "agent.read" | "object.reload" | "text.measure")[];
+  /** the schema `version` the client was built from; it must equal the server's */
+  version: number;
+  /** the client's schema hash: the first 16 hex digits of the SHA-256 of its schema/easl-api.json (generated: ApiParams.schemaHash) */
+  schema: string;
+  /** the client's easl version, e.g. "0.2.0", for messages */
+  app?: string;
+  /** the machine it runs on, for messages */
+  host?: string;
+  /** the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, object.reload, text.measure (others are ignored) */
+  serves: string[];
   /** the boards it shows (open in one of its windows or tabs), each open on the server; default none */
   boards?: Id[];
   /** the board its user is looking at now (the key window's selected tab), one of `boards`; the client focused last on a board serves that board first */
   focused?: Id;
-  /** how messages name the client, e.g. "easl 0.2.0" */
-  name?: string;
 };
 export type ClientAttachResult = {
   /** this client, cli_… */
   client: Id;
+  /** the server's schema version */
+  version: number;
+  /** the server's schema hash */
+  schema: string;
 };
 
 export type TextMeasureParams = {
@@ -1645,7 +1655,7 @@ export interface CanvasApi {
     subscribe(params?: EventsSubscribeParams): Promise<EventsSubscribeResult>;
   };
   client: {
-    /** Make this connection a client that serves what only the Mac app can answer: the window (view.get, view.snapshot), drawing (view.render), live terminal surfaces (agent.prompt, agent.read's screen modes), WebKit and language servers (object.reload), and AppKit text measurement (text.measure). From then on the server sends this connection requests for the methods in `serves` (transport `clients`): a call that needs a client goes, after the server's own checks, to one that serves its method and shows its board (text.measure: any that serves it), the one whose user focused that board last, else the one focused most recently, else the one attached last. The call is forwarded as the same method with the caller's params (`board` and agent `target` resolved to ids; agent.prompt without `mentions`, which the server queues), and the client's result or error is the caller's. The server waits for object.reload's and view.render's `timeoutMs` plus 5 s and 30 s, else 5 s (view.get), 30 s (view.snapshot), 10 s (agent.prompt, agent.read), 2 s (text.measure); past that, or when the client disconnects first, the call fails `unavailable` (text.measure falls back to the glyph table). With no client for its board a delegated call fails `unavailable` saying what it needs. Attach again whenever `serves`, `boards` or `focused` change: each call replaces the last; closing the connection detaches. Answer text.measure without waiting on the server, which may hold a board while it measures. For the Mac app; agents never need it. */
+    /** Make this connection a client that serves what only the Mac app can answer: the window (view.get, view.snapshot), drawing (view.render), live terminal surfaces (agent.prompt, agent.read's screen modes; interim: easld takes them over with zmx sessions, behind the same methods and errors), WebKit and language servers (object.reload), and AppKit text measurement (text.measure). A client whose schema `version` differs from the server's is refused `unavailable` ("easl 0.1.0 on studio is older than this board's server …; update it"); with the same `version` the two work together whatever their `schema` hashes, using what both know: params and `serves` names the server doesn't know are ignored. From then on the server sends this connection requests for the methods in `serves` (transport `clients`): a call that needs a client goes, after the server's own checks, to one that serves its method and shows its board (text.measure: any that serves it), the one whose user focused that board last, else the one focused most recently, else the one attached last. The call is forwarded as the same method with the caller's params (`board` and agent `target` resolved to ids; agent.prompt without `mentions`, which the server queues), and the client's result or error is the caller's. The server waits for object.reload's and view.render's `timeoutMs` plus 5 s and 30 s, else 5 s (view.get), 30 s (view.snapshot), 10 s (agent.prompt, agent.read), 2 s (text.measure); past that, or when the client disconnects first, the call fails `unavailable` (text.measure falls back to the glyph table). With no client for its board a delegated call fails `unavailable` saying what it needs. Attach again whenever `serves`, `boards` or `focused` change: each call replaces the last; closing the connection detaches. Answer text.measure without waiting on the server, which may hold a board while it measures. For the Mac app; agents never need it. */
     attach(params: ClientAttachParams): Promise<ClientAttachResult>;
   };
   text: {

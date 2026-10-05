@@ -3,6 +3,10 @@
 /// Each method's params (`params.properties`, in schema order) and the required ones: what
 /// `ApiRouter` checks every request against, and names in its `invalid_params` errors.
 enum ApiParams {
+    /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
+    static let schemaVersion = 1
+    static let schemaHash = "d30f958e2e99ecfe"
+
     static let methods: [String: (accepted: [String], required: [String])] = [
         "system.ping": ([], []),
         "app.metrics": (["reset", "watch"], []),
@@ -44,7 +48,7 @@ enum ApiParams {
         "view.render": (["board", "target", "scale", "full", "exclude", "padding", "out", "format", "timeoutMs"], ["target"]),
         "view.snapshot": (["board", "out", "format"], []),
         "events.subscribe": (["board", "events"], []),
-        "client.attach": (["serves", "boards", "focused", "name"], ["serves"]),
+        "client.attach": (["version", "schema", "app", "host", "serves", "boards", "focused"], ["version", "schema", "serves"]),
         "text.measure": (["items", "board"], ["items"]),
     ]
 }
