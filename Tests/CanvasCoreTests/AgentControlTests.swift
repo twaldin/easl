@@ -210,7 +210,7 @@ final class AgentControlTests {
         let restart = { try await self.call("agent.restart", ["target": "worker", "mode": "resume"]) }
         #expect(try await call("agent.prompt", ["target": "worker", "text": "run the tests"])["result"]?["delivery"] == "typed")
         #expect(try await restart()["error"]?["message"]
-                == "\(tile) was just prompted and hasn't started that turn: restarting would lose the prompt. Wait for it (agent.wait), or force: true restarts anyway")
+                == .string("\(tile) was just prompted and hasn't started that turn: restarting would lose the prompt. Wait for it (agent.wait), or force: true restarts anyway"))
         try await report(tile, "working", seq: 2, ["draft": .bool(false)])
         #expect(try await restart()["error"]?["code"] == "conflict")
         try await report(tile, "idle", seq: 3, ["draft": .bool(false)])
@@ -236,9 +236,9 @@ final class AgentControlTests {
         var during: [String: JSONValue] = [:]
         router.restartTerminal = { [unowned self] _, tile, argv, killing, ended in
             during["message"] = try await call("agent.prompt", ["target": "worker", "text": "Also this.", "from": "machine-watch"])
-            during["composer"] = try await call("agent.prompt", ["target": "worker", "text": "and this", "composer": true])
+            during["composer"] = try await call("agent.prompt", ["target": "worker", "text": "and this", "composer": .bool(true)])
             during["inbox"] = try await call("agent.inbox", ["tile": .string(tile)])
-            during["restart"] = try await call("agent.restart", ["target": "worker", "mode": "fresh", "force": true])
+            during["restart"] = try await call("agent.restart", ["target": "worker", "mode": "fresh", "force": .bool(true)])
             try killing()
             ended()
             restarted.append((tile, argv))
