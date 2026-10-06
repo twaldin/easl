@@ -1434,7 +1434,9 @@
           "text": { "type": "string" },
           "mentions": { "type": "array", "items": { "$ref": "#/definitions/PromptMention" }, "description": "objects on the target's board to attach, e.g. [{\"object\": \"obj_…\"}, {\"object\": \"obj_…\", \"lines\": {\"start\": 41, \"end\": 48}}]" },
           "caller": { "$ref": "#/definitions/Id", "description": "the prompting terminal, named to the receiver with the mentions; clients fill from EASL_TILE_ID" },
-          "force": { "type": "boolean", "default": false, "description": "send even though the target is `blocked` or runs another foreground program than its agent (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" }
+          "force": { "type": "boolean", "default": false, "description": "send even though the target is `blocked` or runs another foreground program than its agent (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" },
+          "composer": { "type": "boolean", "default": false, "description": "the user's own prompt from a composer that isn't in this app (a remote board's viewer, docs/design.md \"Client mode\"): sent exactly as this app's composer sends it, typed into the terminal; `mentions` wait for that prompt's own drain, numbered from 1, never the tray and never a hand-off. Takes no `caller`" },
+          "answer": { "type": "boolean", "default": false, "description": "with `composer`: the text is the user's answer to the question or approval the target is blocked on, so it passes the blocked check (only the user answers; `force` is for agents and scripts). Takes no mentions" }
         },
         "additionalProperties": false
       },
@@ -1582,16 +1584,18 @@
           "exclude": { "type": "array", "items": { "anyOf": [{ "$ref": "#/definitions/ObjectType" }, { "$ref": "#/definitions/Id" }] }, "description": "object types and/or object ids to leave out (e.g. [\"terminal\", \"obj_…\"]); a group id takes its members with it; targets are always drawn" },
           "padding": { "type": "number", "default": 0, "description": "board points added around the target" },
           "out": { "type": "string", "description": "absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/easl-renders/ (out of the repo)" },
-          "format": { "enum": ["png", "jpeg"], "default": "png", "description": "format of the temporary file when no `out` is given" },
+          "inline": { "type": "boolean", "default": false, "description": "return the image in the reply (`data`, base64) and write no file: for a client on another machine, such as a remote board's viewer, which can't read the host's files. Doesn't combine with `out`" },
+          "format": { "enum": ["png", "jpeg"], "default": "png", "description": "format of the temporary file, or of `data` with `inline`, when no `out` is given" },
           "timeoutMs": { "type": "integer", "minimum": 0, "maximum": 60000, "default": 8000, "description": "how long to wait for content (HTML pages, browser pages including loading one that isn't loaded, file reads) before drawing placeholders" }
         },
         "additionalProperties": false
       },
       "result": {
         "type": "object",
-        "required": ["path", "format", "width", "height", "canvasRect", "scale", "objects"],
+        "required": ["format", "width", "height", "canvasRect", "scale", "objects"],
         "properties": {
-          "path": { "type": "string", "description": "absolute path written: `out`, or the temporary file" },
+          "path": { "type": "string", "description": "absolute path written: `out`, or the temporary file; absent with `inline`" },
+          "data": { "type": "string", "description": "with `inline`: the image, base64-encoded, in `format`" },
           "format": { "enum": ["png", "jpeg"] },
           "width": { "type": "integer", "description": "pixels" },
           "height": { "type": "integer", "description": "pixels" },

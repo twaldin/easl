@@ -155,7 +155,7 @@ var Methods = map[string]ParamSpec{
 		Required: nil,
 	},
 	"agent.prompt": {
-		Accepted: []string{"target", "text", "mentions", "caller", "force"},
+		Accepted: []string{"target", "text", "mentions", "caller", "force", "composer", "answer"},
 		Required: []string{"target", "text"},
 	},
 	"agent.wait": {
@@ -183,7 +183,7 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"url"},
 	},
 	"view.render": {
-		Accepted: []string{"board", "target", "scale", "full", "exclude", "padding", "out", "format", "timeoutMs"},
+		Accepted: []string{"board", "target", "scale", "full", "exclude", "padding", "out", "inline", "format", "timeoutMs"},
 		Required: []string{"target"},
 	},
 	"view.snapshot": {
