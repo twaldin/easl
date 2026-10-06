@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Google Docs text is sharp in browser tiles. A browser tile now tells its page the size and place of its "window" (`window.outerWidth`, `outerHeight`, `screenX`, `screenY`, and where a `window.open` popup is centred), as Safari does. Before, outerWidth was 0, and Docs, taking outerWidth / innerWidth for the browser's zoom, drew its text at a quarter of the screen's resolution.
+
 ## 0.2.1
 
 - **agent control for supervisors.** `agent.list` now covers every board, closed ones included (`open: false`, with `live` from their terminal sessions), and says for each agent its `pid`, whether the user's keyboard is in it (`focused`), whether its omp editor holds an unsent `draft` (a draft omp restores counts), and its `model` and `thinking` setting (`auto` stays `auto`); a terminal on another machine gets `live` from that machine's easld and no `pid`. `agent.restart` relaunches an agent in place, same tile and name, resuming its session (`--mode resume`) or starting fresh (`--mode fresh`) with the same model and thinking setting, on the machine its terminal runs on; it won't while the agent works, has a prompt or message it hasn't started, or waits on you, while you're typing in it, or while its editor may hold an unsent draft (agents other than omp don't say, so they need force), unless forced. Nothing else reaches the agent while it restarts, nothing is relaunched until the old session is confirmed gone, and messages still queued for the killed agent (only a forced restart has any) bounce back to their senders rather than reach the relaunched one. `easl agent spawn` makes a named agent terminal and prompts it once it's ready. A board's note keyed `rules` is its standing orders: every omp agent on the board gets it in its system prompt each turn. Schema: new `agent.restart` (easld forwards it to the board's client, `client.attach` `serves`); `Agent` gains `open`, `focused` (required), `live`, `pid`, `draft`, `model`, `thinking`; `agent.report` takes `draft` and `pid`, `agent.report_session` `model` and `thinking`.
