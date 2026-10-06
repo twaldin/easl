@@ -73,6 +73,12 @@ public struct BoardSnapshot: Codable, Sendable {
     /// on a board for a directory outside git, and on boards saved before boards were per
     /// repository (legacy boards, `RepoBoardMigration`).
     public var repo: RepoRecord?
+    /// Old names of renamed terminals that still address them (`Board.aliases`); optional so
+    /// older board files still load.
+    public var aliases: [String: ObjectID]?
+    /// Peer messages their integrations haven't acked yet (`Board.messages`); optional so older
+    /// board files still load.
+    public var messages: [ObjectID: [AgentMessage]]?
 }
 
 /// One canvas: all objects for one root directory, the selection tray, and agent lifecycle.
@@ -116,6 +122,22 @@ public final class Board {
     /// as its integration reported it with `idle`: that turn's `finalAnswers` entry is cut off.
     /// A new turn clears it; saved with the board.
     public internal(set) var turnErrors: [ObjectID: String] = [:]
+    /// Names terminals had before a rename, each still addressing its terminal (AgentAddress)
+    /// until another terminal on this board takes it; saved with the board.
+    public internal(set) var aliases: [String: ObjectID] = [:]
+    /// Out-of-band messages queued for each terminal, oldest first, until its integration acks
+    /// them (AgentMessages.swift); saved with the board.
+    public internal(set) var messages: [ObjectID: [AgentMessage]] = [:]
+    /// Each terminal's agent session generation (`agentSession(of:)`); in memory: what a restart
+    /// keeps queued belongs to the session there now.
+    var agentSessions: [ObjectID: Int] = [:]
+    /// Terminals whose message-taking integration died without its release (`agentExited`); in memory.
+    var exitedAgents: Set<ObjectID> = []
+    /// Messages bounced in the open step, handed on when it closes (`flushBounces`).
+    var bouncing: [MessageBounce] = []
+    /// Messages whose receiver's agent session ended before its integration took them: the
+    /// registry's router sends them back or logs them (`ApiRouter.bounce`).
+    public var onMessagesBounced: ((MessageBounce) -> Void)?
 
     /// Board revision at which each object last changed (for `board.get since`).
     private var changedAt: [ObjectID: Int] = [:]
@@ -279,6 +301,8 @@ public final class Board {
         finalAnswers = (snapshot.finalAnswers ?? [:]).filter { objects[$0.key] != nil }
         turnErrors = (snapshot.turnErrors ?? [:]).filter { objects[$0.key] != nil }
         lifecycleSeq = (snapshot.lifecycleSeq ?? [:]).filter { objects[String($0.key.prefix { $0 != "|" })] != nil }
+        aliases = (snapshot.aliases ?? [:]).filter { objects[$0.value]?.type == .terminal }
+        messages = (snapshot.messages ?? [:]).filter { objects[$0.key]?.type == .terminal && !$0.value.isEmpty }
         repo = snapshot.repo
     }
 
@@ -287,7 +311,8 @@ public final class Board {
                       attention: attention.isEmpty ? nil : attention.values.sorted { $0.object < $1.object },
                       promptTarget: promptTarget == PromptTarget.State() ? nil : promptTarget,
                       finalAnswers: finalAnswers.isEmpty ? nil : finalAnswers, turnErrors: turnErrors.isEmpty ? nil : turnErrors,
-                      lifecycleSeq: lifecycleSeq.isEmpty ? nil : lifecycleSeq, repo: repo)
+                      lifecycleSeq: lifecycleSeq.isEmpty ? nil : lifecycleSeq, repo: repo, aliases: aliases.isEmpty ? nil : aliases,
+                      messages: messages.isEmpty ? nil : messages)
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {
@@ -450,6 +475,7 @@ public final class Board {
         guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
         reindexKey(id, from: removed.props, to: nil)
+        forgetAliases(of: id)
         bumpRevision()
         countWrite(caller: caller)
         // Before the delete, so undo brings the object back first and then its chips.
@@ -461,6 +487,7 @@ public final class Board {
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
         forgetHandoffs(of: id)
+        forgetMessages(of: removed)
         forgetComposerPrompts(of: id)
         let marked = attention.removeValue(forKey: id) != nil
         onChange?()
@@ -548,6 +575,7 @@ public final class Board {
     private func commit(_ object: CanvasObject) {
         bumpRevision()
         reindexKey(object.id, from: objects[object.id]?.props, to: object.props)
+        renamed(object.id, from: objects[object.id]?.props, to: object.props, type: object.type)
         objects[object.id] = object
         changedAt[object.id] = revision
         revHighWater[object.id] = max(revHighWater[object.id] ?? 0, object.rev)
@@ -570,25 +598,28 @@ public final class Board {
     }
 
     /// Closes a step opened with `history.begin()`. When the outermost one closes, terminals it
-    /// deleted that are still gone (a failed batch puts its deletes back) are reported ended.
+    /// deleted that are still gone (a failed batch puts its deletes back) are reported ended, and
+    /// the messages it bounced are handed on (`flushBounces`).
     func endStep() {
         history.end()
-        guard !history.isOpen, !removedTerminals.isEmpty else { return }
+        guard !history.isOpen else { return }
+        flushBounces()
+        guard !removedTerminals.isEmpty else { return }
         let ended = removedTerminals.filter { objects[$0.id] == nil }
         removedTerminals = []
         if !ended.isEmpty { onTerminalsEnded?(ended) }
     }
 
     /// Runs `body` as one undo step and one board revision; when it throws, every change it
-    /// made is reverted (announced as normal changes), the hand-offs waiting for terminals are put
-    /// back as they were (an answer it handed off withdrawn, one a delete took restored), and the
-    /// error rethrown.
+    /// made is reverted (announced as normal changes), the hand-offs, messages and aliases of
+    /// terminals are put back as they were (an answer it handed off withdrawn, the queue, mentions
+    /// and old names a delete took restored), and the error rethrown.
     public func atomically<T>(_ body: () throws -> T) throws -> T {
         let outermost = pinnedRevision == nil
         if outermost { pinnedRevision = revision + 1 }
         history.begin()
         let mark = history.mark()
-        let handed = handoffs
+        let (handed, queued, named) = (handoffs, messages, aliases)
         defer {
             endStep()
             if outermost { pinnedRevision = nil }
@@ -604,6 +635,8 @@ public final class Board {
             }
             revert(history.discard(from: mark))
             handoffs = handed
+            messages = queued
+            aliases = named
             throw error
         }
     }
@@ -1047,8 +1080,12 @@ public final class Board {
     /// the error as its message, and the answer is known to be cut off (`turnErrors`). `unknown`:
     /// an agent without a lifecycle integration runs here (`bin/aider` says so as aider starts);
     /// its terminal notifications report when it waits (`NotifyingAgent`, `via: "notifications"`).
+    /// `protocol`: the integration's protocol version (`props.agent.protocol`; 1 takes
+    /// out-of-band messages, `PromptTarget.takesMessages`); a report without it says 0. A report
+    /// of another agent kind, or of no protocol where it took messages, ends the agent session its
+    /// messages were queued for (`endAgentSession`).
     public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil,
-                                serial: Bool = false, error: String? = nil) throws {
+                                serial: Bool = false, error: String? = nil, protocol version: Int? = nil) throws {
         let terminal = try object(tile)
         guard terminal.type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
         guard final == nil || state == .idle else { throw BoardError.invalidParams("final comes only with state idle: the answer of the turn that just ended") }
@@ -1100,8 +1137,11 @@ public final class Board {
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message { lifecycle["message"] = .string(message) }
         if state == .unknown { lifecycle["via"] = .string(NotifyingAgent.via) }
-        let agent = (terminal.props["agent"] ?? .object([:])).merging(.object(["kind": .string(kind)]))
+        let before = terminal.props["agent"]
+        let agent = (before ?? .object([:])).merging(.object(["kind": .string(kind), "protocol": (version ?? 0) > 0 ? .number(Double(version!)) : .null]))
         try update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
+        exitedAgents.remove(tile)
+        if (before?["protocol"]?.int ?? 0) >= 1, before?["kind"]?.string != kind || (version ?? 0) < 1 { endAgentSession(tile) }
         composerAgentReported(tile, state: state)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .object(lifecycle)))
     }
@@ -1154,13 +1194,18 @@ public final class Board {
         onEvent?(.agentLifecycle(tile: tile, lifecycle: lifecycle))
     }
 
+    /// The agent's session (`agent.report_session`). Another session where one was recorded (a
+    /// new conversation, or a replacement agent) ends the agent session its messages were queued
+    /// for (`endAgentSession`).
     public func reportSession(tile: ObjectID, kind: String, sessionId: String?, sessionPath: String?) throws {
         let terminal = try object(tile)
         var agent = terminal.props["agent"]?.object ?? [:]
+        let previous = agent["sessionId"]?.string
         agent["kind"] = .string(kind)
         if let sessionId { agent["sessionId"] = .string(sessionId) }
         if let sessionPath { agent["sessionPath"] = .string(sessionPath) }
         try update(tile, props: .object(["agent": .object(agent)]), caller: tile)
+        if let previous, let sessionId, sessionId != previous { endAgentSession(tile) }
     }
 
     /// `agent.report` as its params (schema `agent.report`): a report over the socket, or one an
@@ -1171,17 +1216,20 @@ public final class Board {
         }
         guard let state = LifecycleState(rawValue: name) else { throw BoardError.invalidParams("unknown state") }
         try reportLifecycle(tile: tile, kind: kind, state: state, message: p["message"]?.string, seq: p["seq"]?.int, source: p["source"]?.string,
-                            call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string)
+                            call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string, protocol: p["protocol"]?.int)
     }
 
     /// The agent exited (`agent.release`): the tile is a plain shell again. Its lifecycle and the
     /// recorded session go, so a reboot restores a shell instead of resuming a session the user quit,
-    /// and the composer's prompts it never drained return their mentions to the tray.
+    /// the composer's prompts it never drained return their mentions to the tray, and the
+    /// messages its integration never took bounce (`endAgentSession`).
     public func releaseAgent(tile: ObjectID) throws {
         _ = try object(tile)
         pendingApprovals[tile] = nil
+        exitedAgents.remove(tile)
         try update(tile, props: .object(["lifecycle": .null, "agent": .null]), caller: tile)
         dropComposerPrompts(of: tile)
+        endAgentSession(tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
     }
 

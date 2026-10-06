@@ -338,7 +338,7 @@ Every agent change is undoable with ⌘Z, but that is a safety net, not a licens
 
 ## Other agents
 
-Agents in other terminal tiles (any board in the app) are reachable by tile id or tile name:
+Agents in other terminal tiles (any board in the app) are reachable by tile id, tile name, or `name@board` (board = its folder's name, or its id). A bare name is looked up on your board first, then every open board; a name on two boards is `ambiguous`: say `name@board`. A renamed tile still answers to its old name.
 
 ```sh
 easl agent.list                                    # every terminal: tile, kind, name, lifecycle, board, root, `program` (foreground program) and `title` (its OSC title)
@@ -346,6 +346,8 @@ easl agent.prompt --target reviewer --text "Review the diff in src/store.ts"   #
 easl agent.wait --target reviewer --timeoutMs 600000   # until idle/done/blocked; `--until working` (or `working,blocked`) narrows it
 easl agent.read --target reviewer --since prompt   # only what came after your last agent.prompt
 ```
+
+`easl tell <name[@board]> "text" [--when next-turn] [--from <label>]` is `agent.prompt` for a message: an agent whose integration takes messages (omp with easl's extension) gets it out of band as a message naming you, without touching its draft or an open question (a working one is steered; `--when next-turn` waits for its turn to end), and replies with `write agent://<your address>`. Others are typed into as before (the result's `delivery` says `message` or `typed`). From a script with no tile, `--from machine-watch` names the sender and the message counts as the user's. If that agent exits, is killed or starts another session before it takes your message, the message bounces: you get a message from `easl` saying `undelivered to <address>: <its first line>` (a script's lands in the board's history, kind `message`). `unavailable` means nothing there takes it now (its agent was killed, or ended while you sent): check `easl agent.list` before sending again. Hosts aren't part of an address yet.
 
 When `agent.prompt` returns `waitable`, call `agent.wait` right away: it waits for the work you just asked for, not the previous idle.
 Then `agent.read --since prompt` returns what followed your prompt (its echo, then the reply), and `agent.read --final true` only its last answer (`unavailable` mid-turn or for opencode: use `--since prompt`; `cutOff` means the turn died on that error: say so, don't treat it as done).

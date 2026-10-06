@@ -293,12 +293,24 @@ class Agent(TypedDict):
     board: Required["Id"]
     root: Required[str]
     name: NotRequired[str]
+    address: Required[str]
+    aliases: NotRequired[list[str]]
+    protocol: NotRequired[int]
     kind: Required[str]
     title: NotRequired[str]
     program: NotRequired[str]
     sessionId: NotRequired[str]
     lifecycle: Required["Lifecycle"]
     lastCommand: NotRequired["TerminalCommand"]
+
+AgentMessage = TypedDict("AgentMessage", {"id": Required["Id"], "text": Required[str], "from": Required["MessageSender"], "attribution": Required[Literal["agent", "user"]], "when": Required[Literal["now", "next-turn"]], "queuedAt": Required[str], "mentions": NotRequired[list["Mention"]], "context": NotRequired[str]})
+
+class MessageSender(TypedDict):
+    """Who sent a message, resolved when it is taken (agent.inbox): a renamed sender shows its new name"""
+    tile: NotRequired["Id"]
+    name: Required[str]
+    address: NotRequired[str]
+    board: NotRequired["Id"]
 
 class TerminalCommand(TypedDict):
     command: NotRequired[str]
@@ -343,7 +355,7 @@ class HistoryEntry(TypedDict):
     rev: Required[int]
     at: Required[str]
     actor: Required[str]
-    kind: Required[Literal["created", "updated", "deleted", "viewport", "selection", "follow", "restart"]]
+    kind: Required[Literal["created", "updated", "deleted", "viewport", "selection", "follow", "restart", "message"]]
     id: NotRequired["Id"]
     type: NotRequired["ObjectType"]
     summary: Required[str]
@@ -394,8 +406,8 @@ class BoardApi:
         params = {"board": board, "since": since, "branch": branch}
         return self._call("board.get", params, ["board"])
 
-    def history(self, *, board: "Id" | None = None, since: Union[int, str] | None = None, limit: int | None = None, kinds: list[Literal["created", "updated", "deleted", "viewport", "selection", "follow", "restart"]] | None = None) -> dict[str, Any]:
-        """Activity log: who created, changed, or deleted what (including objects that existed only for seconds), where the user's viewport settled, what they selected, follow-tile re-aims, and app starts. Plain request/response, cheap to poll: pass the returned `cursor` as `since` next time. In memory, newest 2000 entries per board; an app restart starts a new log with a `restart` entry."""
+    def history(self, *, board: "Id" | None = None, since: Union[int, str] | None = None, limit: int | None = None, kinds: list[Literal["created", "updated", "deleted", "viewport", "selection", "follow", "restart", "message"]] | None = None) -> dict[str, Any]:
+        """Activity log: who created, changed, or deleted what (including objects that existed only for seconds), where the user's viewport settled, what they selected, follow-tile re-aims, app starts, and peer messages that bounced (`message`: its receiver's agent ended before taking it, and the sender was a script or takes no messages; the entry's `id` is the receiver). Plain request/response, cheap to poll: pass the returned `cursor` as `since` next time. In memory, newest 2000 entries per board; an app restart starts a new log with a `restart` entry."""
         params = {"board": board, "since": since, "limit": limit, "kinds": kinds}
         return self._call("board.history", params, ["board"])
 
@@ -529,18 +541,18 @@ class AgentApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
-    def report(self, *, tile: "Id", kind: str, state: Literal["working", "blocked", "idle", "unknown"], message: str | None = None, seq: int | None = None, source: str | None = None, call: str | None = None, final: str | None = None, serial: bool | None = None, error: str | None = None) -> dict[str, Any]:
+    def report(self, *, tile: "Id", kind: str, state: Literal["working", "blocked", "idle", "unknown"], message: str | None = None, seq: int | None = None, source: str | None = None, call: str | None = None, final: str | None = None, serial: bool | None = None, error: str | None = None, protocol: int | None = None) -> dict[str, Any]:
         """Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. With `call`, `blocked` means that tool call waits for the user's approval and `working` that it finished: while any reported call waits, the tile stays `blocked` (with the oldest waiting call's message) whatever other calls finish; finishing it re-raises the next one. With `serial`, a `blocked` call replaces every earlier wait (agents that ask one approval at a time), so the message always names the request on screen. `working` without `call` (a new prompt) and `idle` end every wait. `unknown`: an agent without a lifecycle integration runs in the tile (a wrapper such as `bin/aider` reports it as the agent starts): the tile counts as an agent for the tray and `agent.wait`, and its terminal notifications report when it waits (lifecycle `via: "notifications"`)."""
-        params = {"tile": tile, "kind": kind, "state": state, "message": message, "seq": seq, "source": source, "call": call, "final": final, "serial": serial, "error": error}
+        params = {"tile": tile, "kind": kind, "state": state, "message": message, "seq": seq, "source": source, "call": call, "final": final, "serial": serial, "error": error, "protocol": protocol}
         return self._call("agent.report", params, [])
 
     def report_session(self, *, tile: "Id", kind: str, session_id: str | None = None, session_path: str | None = None) -> dict[str, Any]:
-        """Report the agent's native session identity so the tile can resume it after a reboot."""
+        """Report the agent's native session identity so the tile can resume it after a reboot. Another session where one was recorded (a new conversation, or another agent) ends the one before: the messages still queued for it bounce (agent.inbox)."""
         params = {"tile": tile, "kind": kind, "sessionId": session_id, "sessionPath": session_path}
         return self._call("agent.report_session", params, [])
 
     def release(self, *, tile: "Id", kind: str, source: str | None = None) -> dict[str, Any]:
-        """The agent in this tile exited; clear its lifecycle authority and its recorded session (`agent.report_session`), so after a reboot the tile runs its `command` (a plain shell when it has none) instead of resuming that session."""
+        """The agent in this tile exited; clear its lifecycle authority and its recorded session (`agent.report_session`), so after a reboot the tile runs its `command` (a plain shell when it has none) instead of resuming that session. The messages its integration never took bounce (agent.inbox)."""
         params = {"tile": tile, "kind": kind, "source": source}
         return self._call("agent.release", params, [])
 
@@ -549,20 +561,25 @@ class AgentApi:
         params = {}
         return self._call("agent.list", params, [])
 
-    def prompt(self, *, target: str, text: str, mentions: list["PromptMention"] | None = None, caller: "Id" | None = None, force: bool | None = None, composer: bool | None = None, answer: bool | None = None) -> dict[str, Any]:
-        """Paste a prompt into another agent's terminal (bracketed paste; a one-line command into a shell at its prompt is typed) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A prompt that lands while the agent is `working` joins that turn (omp and Codex take it before the turn ends and answer it in the same turn): the wait answers when that turn ends, and `final` is that turn's answer. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a `working` target whose state is `restored` (from before the app last closed, unconfirmed since: it may wait on a question now). So does a target whose agent reports from behind another foreground program (`program` nvim, less: the text would go to that program), and one in tmux whose active pane runs something else (vim, a shell): the text goes to the active pane, so it is sent when that pane runs the agent. Into a shell at its prompt (no agent), a one-line text is typed rather than pasted. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must run an agent with an easl integration (its lifecycle not `via: "notifications"`), else `unavailable`. An agent reporting by notification goes `unknown` with this prompt, and `agent.wait` answers at its next notification (none comes when the text needed no model reply, e.g. aider's `/add`: give such waits a `timeoutMs`)."""
-        params = {"target": target, "text": text, "mentions": mentions, "caller": caller, "force": force, "composer": composer, "answer": answer}
+    def prompt(self, *, target: str, text: str, mentions: list["PromptMention"] | None = None, caller: "Id" | None = None, from_: str | None = None, when: Literal["now", "next-turn"] | None = None, force: bool | None = None, composer: bool | None = None, answer: bool | None = None) -> dict[str, Any]:
+        """Prompt another agent. To a terminal whose integration takes messages (agent.report `protocol` ≥ 1: omp's extension) the text goes out of band: it is queued for that terminal and its integration delivers it as a message (agent.inbox), never touching the terminal, so a half-typed draft, an open question or an approval dialog stays as it is. The receiver gets a header naming the sender and how to reply (`write agent://<address>` in omp, `easl tell <address>`). `when: "now"` (the default): a working agent gets it as a steer (at its next step; a wait is cut short), an idle one starts a turn with it, one waiting on a question or approval gets it after the answer. `when: "next-turn"`: never into a running turn; it starts a turn once the running one has ended. Messages arriving together are delivered as one, and each sender wakes a receiver at most 20 times an hour (past that, messages wait for its next turn). A message from a terminal (`caller`) is attributed to an agent; one from a script (`from`, or no `caller`) to the user, named by `from`. A message is for the agent session there as it is sent: when that session ends before its integration takes the message (the agent released, exited, or replaced by another session), the message bounces, back to a sending terminal whose integration takes messages as a message from `easl` (`undelivered to <address>: <its first line>…`), else into the receiver's board.history (`message`); a session that ends while the message is being sent fails the call `unavailable`, and so does a target whose message integration died without releasing its terminal (killed: its shell is back at the prompt), typed or not. Any other target gets the text typed: pasted (bracketed paste; a one-line command into a shell at its prompt is typed) and Enter pressed once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it); the composer always types. The terminal's text just before submitting (or queueing) is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first; while a message waits to be delivered it doesn't answer at all. A prompt that lands while the agent is `working` (typed, or a `now` message delivered as a steer) joins that turn (omp and Codex take it before the turn ends and answer it in the same turn): the wait answers when that turn ends, and `final` is that turn's answer. For typing only: a `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a `working` target whose state is `restored` (from before the app last closed, unconfirmed since: it may wait on a question now). So does a target whose agent reports from behind another foreground program (`program` nvim, less: the text would go to that program), and one in tmux whose active pane runs something else (vim, a shell): the text goes to the active pane, so it is sent when that pane runs the agent. A typed `next-turn` prompt to a `working` target fails with `conflict` (typed text would join the turn). Into a shell at its prompt (no agent), a one-line text is typed rather than pasted. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray) and arrive resolved, as hidden context with a typed prompt (its integration's next submitted prompt, this one) or with the message, in a block naming your terminal (`caller`). The target must run an agent with an easl integration (its lifecycle not `via: "notifications"`), else `unavailable`. An agent reporting by notification goes `unknown` with this prompt, and `agent.wait` answers at its next notification (none comes when the text needed no model reply, e.g. aider's `/add`: give such waits a `timeoutMs`)."""
+        params = {"target": target, "text": text, "mentions": mentions, "caller": caller, "from": from_, "when": when, "force": force, "composer": composer, "answer": answer}
         return self._call("agent.prompt", params, ["caller"])
 
-    def wait(self, *, target: str, until: list[Literal["working", "blocked", "idle", "done", "unknown"]] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
+    def wait(self, *, target: str, caller: "Id" | None = None, until: list[Literal["working", "blocked", "idle", "done", "unknown"]] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
         """Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt); one that starts no turn within 60 s (its agent reports neither `working` nor `blocked`: a `/` command or `!` escape is no turn) fails it with `unavailable`, so read what followed with `agent.read` `since: "prompt"`. A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`; an agent reporting by notification (lifecycle `via: "notifications"`) waits for its next notification instead. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited."""
-        params = {"target": target, "until": until, "timeoutMs": timeout_ms}
-        return self._call("agent.wait", params, [])
+        params = {"target": target, "caller": caller, "until": until, "timeoutMs": timeout_ms}
+        return self._call("agent.wait", params, ["caller"])
 
-    def read(self, *, target: str, lines: int | None = None, since: Literal["prompt"] | None = None, block: Union[Literal["last"], int] | None = None, final: bool | None = None) -> dict[str, Any]:
+    def read(self, *, target: str, caller: "Id" | None = None, lines: int | None = None, since: Literal["prompt"] | None = None, block: Union[Literal["last"], int] | None = None, final: bool | None = None) -> dict[str, Any]:
         """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line: on the live screen by the terminal's own wrap flags; above it (where the history carries none) a row that fills the terminal's width and ends in text joins the next, unless it is a separator padded to the width, such as pytest's `==== FAILURES ====`, or the next row starts with the same word (pytest's `FAILED …` rows, cut at the width). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block`: the output of a command the terminal's shell finished (`"last"` or -1, -2 the one before; from Ghostty's shell-integration prompt marks and the commands easl saw finish since it attached), with `command` saying what ran; a command-block mention names the `block` that reads it whole. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, or the turn was interrupted. Answers are saved with the board, so they outlast a restart."""
-        params = {"target": target, "lines": lines, "since": since, "block": block, "final": final}
-        return self._call("agent.read", params, [])
+        params = {"target": target, "caller": caller, "lines": lines, "since": since, "block": block, "final": final}
+        return self._call("agent.read", params, ["caller"])
+
+    def inbox(self, *, tile: "Id", ack: list["Id"] | None = None, started: bool | None = None, wait_ms: int | None = None) -> dict[str, Any]:
+        """A terminal's agent integration takes the messages queued for it (agent.prompt to a target whose integration reports `protocol` ≥ 1) and delivers them to its agent, without touching the terminal. `ack` first drops the messages it delivered (`started`: that delivery started a new turn, so agent.wait now waits for that turn as after a prompt to an idle agent; otherwise it joined the running turn). Then it answers the messages waiting that no open connection holds, oldest first, each sender's name and each message's mentions resolved now; they are held by this connection until it acks them or closes, and offered again then. With `waitMs`, when none waits, it answers as soon as one arrives (at most that long, then with none). An integration acks a message once its agent has recorded it, never before, and dedupes by id (one comes again after a lost connection or a restart). Messages are saved with the board, so an app restart keeps them; when the agent session they were queued for ends first (agent.release, its integration dying, another session reported, the terminal deleted) they bounce, as agent.prompt says."""
+        params = {"tile": tile, "ack": ack, "started": started, "waitMs": wait_ms}
+        return self._call("agent.inbox", params, [])
 
 @_snake_case_hints
 class FollowApi:
@@ -681,7 +698,7 @@ class GeneratedApi:
         self.client = ClientApi(call)
         self.text = TextApi(call)
 
-METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"]
+METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

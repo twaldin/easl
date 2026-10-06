@@ -19,8 +19,8 @@ import (
 // that starts passing is reported, so it can join the list.
 var passing = []string{
 	"agents", "arrows", "batch", "board-get-history", "boards", "client-delegation", "client-failures", "client-mode", "client-versions",
-	"code-tiles", "events", "follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "metrics",
-	"no-client", "objects-crud", "open-url", "placement", "protocol", "questions", "tray",
+	"code-tiles", "events", "follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "messages",
+	"metrics", "no-client", "objects-crud", "open-url", "placement", "protocol", "questions", "tray",
 }
 
 // Not passing, and why:

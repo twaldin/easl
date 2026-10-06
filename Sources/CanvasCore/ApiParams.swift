@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 1
-    static let schemaHash = "59bdc6ad51bb03b1"
+    static let schemaHash = "41682b25da41a75b"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "system.ping": ([], []),
@@ -34,13 +34,14 @@ enum ApiParams {
         "tray.unstage": (["id"], ["id"]),
         "tray.drain": (["board", "caller", "peek", "prompt"], []),
         "tray.commit": (["board", "ids"], ["ids"]),
-        "agent.report": (["tile", "kind", "state", "message", "seq", "source", "call", "final", "serial", "error"], ["tile", "kind", "state"]),
+        "agent.report": (["tile", "kind", "state", "message", "seq", "source", "call", "final", "serial", "error", "protocol"], ["tile", "kind", "state"]),
         "agent.report_session": (["tile", "kind", "sessionId", "sessionPath"], ["tile", "kind"]),
         "agent.release": (["tile", "kind", "source"], ["tile", "kind"]),
         "agent.list": ([], []),
-        "agent.prompt": (["target", "text", "mentions", "caller", "force", "composer", "answer"], ["target", "text"]),
-        "agent.wait": (["target", "until", "timeoutMs"], ["target"]),
-        "agent.read": (["target", "lines", "since", "block", "final"], ["target"]),
+        "agent.prompt": (["target", "text", "mentions", "caller", "from", "when", "force", "composer", "answer"], ["target", "text"]),
+        "agent.wait": (["target", "caller", "until", "timeoutMs"], ["target"]),
+        "agent.read": (["target", "caller", "lines", "since", "block", "final"], ["target"]),
+        "agent.inbox": (["tile", "ack", "started", "waitMs"], ["tile"]),
         "follow.report": (["tile", "path", "range", "changes", "action"], ["tile", "path", "action"]),
         "view.attention": (["id", "message", "clear", "caller"], ["id"]),
         "view.get": (["board"], []),

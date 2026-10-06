@@ -16,7 +16,8 @@
     "unsupported": "method known but not implemented by this build",
     "unavailable": "target exists but cannot act right now (e.g. a terminal tile without an attached surface), or the app is not running: no attached client (client.attach) serves the call, it didn't answer in time, or it disconnected before answering",
     "timeout": "agent.wait deadline passed before the agent reached a requested state",
-    "internal": "unexpected server failure"
+    "internal": "unexpected server failure",
+    "ambiguous": "an address (a terminal's name, `name@board`, a board's name) matches more than one terminal or open board; the message lists each candidate as `name@board (tile id)`, so the caller can name one"
   },
   "definitions": {
     "Id": { "type": "string", "pattern": "^[a-z]+_[0-9A-Za-z]+$", "description": "Prefixed id, e.g. obj_01H…, men_…" },
@@ -89,12 +90,12 @@
         "zmxSession": { "type": "string" },
         "host": { "type": "string", "description": "an ssh target (`deckbox`): the terminal's session runs on that machine under its easld (`session.spawn`), and the tile attaches to it over ssh with this app's socket forwarded back, so the agent's integration and the `easl` CLI there reach this board (docs/contracts.md \"Hosted terminals\"). `cwd` is a directory on that machine. Absent: this Mac. Fixed at creation: an update that changes or removes it is `invalid_params`" },
         "title": { "type": "string" },
-        "name": { "type": "string", "description": "a name other agents address this terminal by (agent.prompt/wait/read `target`)" },
+        "name": { "type": "string", "description": "a name other agents address this terminal by: `name` or `name@board` as agent.prompt/wait/read `target` (docs/contracts.md, Agent addresses). Unique within its board is enough; renaming keeps the old name as an alias until another terminal on the board takes it" },
         "agent": {
           "type": "object",
           "required": ["kind"],
           "description": "the agent reporting in this tile. When the tile's session is gone (a reboot) it resumes `sessionId` (`omp --resume`, `claude --resume`, `codex resume`). Removed when the agent exits (agent.release)",
-          "properties": { "kind": { "type": "string" }, "sessionId": { "type": "string" }, "sessionPath": { "type": "string" } },
+          "properties": { "kind": { "type": "string" }, "sessionId": { "type": "string" }, "sessionPath": { "type": "string" }, "protocol": { "type": "integer", "description": "the integration protocol version it reports (agent.report `protocol`)" } },
           "additionalProperties": false
         },
         "lifecycle": { "$ref": "#/definitions/Lifecycle" },
@@ -662,12 +663,15 @@
     },
     "Agent": {
       "type": "object",
-      "required": ["tile", "board", "root", "kind", "lifecycle"],
+      "required": ["tile", "board", "root", "address", "kind", "lifecycle"],
       "properties": {
         "tile": { "$ref": "#/definitions/Id" },
         "board": { "$ref": "#/definitions/Id", "description": "the board the terminal is on" },
         "root": { "type": "string", "description": "that board's root directory" },
         "name": { "type": "string" },
+        "address": { "type": "string", "description": "how to reach this terminal as a `target` from any board, resolving to it alone: `name@board` (the board's name is its root folder's name) for a named terminal, `name@<board id>` while another open board's folder has that name too (or its own is gone), its tile id when it has no name or another terminal on its board has the same one" },
+        "aliases": { "type": "array", "items": { "type": "string" }, "description": "names it had before a rename that still reach it on its board (until another terminal there takes them); absent when none" },
+        "protocol": { "type": "integer", "description": "the integration protocol version its agent's integration last reported (agent.report `protocol`); 1 and later take out-of-band messages (agent.inbox). Absent: none reported, or the integration died without releasing the terminal (killed: its shell came back to the prompt)" },
         "kind": { "type": "string", "description": "the integrated agent that reported (omp, claude, codex, gemini, opencode), or the program of an agent reporting by notification (aider; lifecycle `via: \"notifications\"`), else unknown" },
         "title": { "type": "string", "description": "the title the program in the terminal set (OSC 0/2), e.g. Gemini CLI's \"✋ Action Required (glow)\"; absent when none" },
         "program": { "type": "string", "description": "what runs in the terminal's foreground, named the way a person would (`gemini`, `opencode`, `cargo test`); absent at the shell's prompt" },
@@ -676,6 +680,34 @@
         "lastCommand": { "$ref": "#/definitions/TerminalCommand", "description": "the last command the terminal's shell finished (Ghostty's shell integration reports it); absent until one did" }
       },
       "additionalProperties": false
+    },
+    "AgentMessage": {
+      "type": "object",
+      "required": ["id", "text", "from", "attribution", "when", "queuedAt"],
+      "properties": {
+        "id": { "$ref": "#/definitions/Id", "description": "`msg_…`; ack it (agent.inbox `ack`) once the agent has it" },
+        "text": { "type": "string", "description": "as the sender wrote it" },
+        "from": { "$ref": "#/definitions/MessageSender" },
+        "attribution": { "enum": ["agent", "user"], "description": "agent: a terminal sent it (`caller`); user: a script with no tile (its `from` label), on the user's behalf" },
+        "when": { "enum": ["now", "next-turn"], "description": "now: into the running turn (a steer) or a new turn when idle; next-turn: never into a running turn, only once it has ended" },
+        "queuedAt": { "type": "string", "format": "date-time" },
+        "mentions": { "type": "array", "items": { "$ref": "#/definitions/Mention" }, "description": "the board objects the sender attached (agent.prompt `mentions`); absent when none" },
+        "context": { "type": "string", "description": "those mentions resolved now, as the hand-off block a drain gives (`<canvas-mentions …>` naming the sender); absent when none" }
+      },
+      "additionalProperties": false,
+      "description": "An out-of-band message queued for a terminal whose integration takes messages (agent.report `protocol` ≥ 1)"
+    },
+    "MessageSender": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "tile": { "$ref": "#/definitions/Id", "description": "the sending terminal; absent for a script" },
+        "name": { "type": "string", "description": "the sending terminal's name as the tray shows it now (its `name`, else its title, else `Terminal`), or the script's `from` label (default `script`)" },
+        "address": { "type": "string", "description": "where a reply goes: the sending terminal's address (as Agent's: `name@board`, `name@<board id>` or its tile id); absent for a script (nothing to reply to)" },
+        "board": { "$ref": "#/definitions/Id", "description": "the sending terminal's board" }
+      },
+      "additionalProperties": false,
+      "description": "Who sent a message, resolved when it is taken (agent.inbox): a renamed sender shows its new name"
     },
     "TerminalCommand": {
       "type": "object",
@@ -743,7 +775,7 @@
         "rev": { "type": "integer", "description": "board revision right after the entry (viewport/selection entries don't change it)" },
         "at": { "type": "string", "description": "ISO 8601 time" },
         "actor": { "type": "string", "description": "`user`, `system`, or `agent:<terminal tile id>`; a cascade is credited to whoever made the change that caused it" },
-        "kind": { "enum": ["created", "updated", "deleted", "viewport", "selection", "follow", "restart"] },
+        "kind": { "enum": ["created", "updated", "deleted", "viewport", "selection", "follow", "restart", "message"] },
         "id": { "$ref": "#/definitions/Id", "description": "the object (for follow: the follow tile)" },
         "type": { "$ref": "#/definitions/ObjectType" },
         "summary": { "type": "string", "description": "one human-readable line" },
@@ -838,14 +870,14 @@
       }
     },
     "board.history": {
-      "description": "Activity log: who created, changed, or deleted what (including objects that existed only for seconds), where the user's viewport settled, what they selected, follow-tile re-aims, and app starts. Plain request/response, cheap to poll: pass the returned `cursor` as `since` next time. In memory, newest 2000 entries per board; an app restart starts a new log with a `restart` entry.",
+      "description": "Activity log: who created, changed, or deleted what (including objects that existed only for seconds), where the user's viewport settled, what they selected, follow-tile re-aims, app starts, and peer messages that bounced (`message`: its receiver's agent ended before taking it, and the sender was a script or takes no messages; the entry's `id` is the receiver). Plain request/response, cheap to poll: pass the returned `cursor` as `since` next time. In memory, newest 2000 entries per board; an app restart starts a new log with a `restart` entry.",
       "params": {
         "type": "object",
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "since": { "oneOf": [{ "type": "integer" }, { "type": "string" }], "description": "entries after this `seq` cursor, or after this ISO 8601 time" },
           "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 100, "description": "newest entries returned when more match" },
-          "kinds": { "type": "array", "items": { "enum": ["created", "updated", "deleted", "viewport", "selection", "follow", "restart"] }, "description": "only these kinds" }
+          "kinds": { "type": "array", "items": { "enum": ["created", "updated", "deleted", "viewport", "selection", "follow", "restart", "message"] }, "description": "only these kinds" }
         },
         "additionalProperties": false
       },
@@ -1389,14 +1421,15 @@
           "call": { "type": "string", "description": "identifies the tool call the report is about, the same for its approval request and its completion (the hooks hash the tool and its input)" },
           "final": { "type": "string", "description": "only with `idle`: the final assistant message of the turn that just ended (the text `agent.read` `final` returns until the next turn starts)" },
           "serial": { "type": "boolean", "default": false, "description": "with `blocked` and `call`: the agent asks one approval at a time (Codex), so this request ends every earlier wait (an approval answered whose completion never matched or hasn't arrived yet)" },
-          "error": { "type": "string", "description": "only with `idle`: the turn ended on this error instead of finishing (an API error such as `overloaded_error`, an abort, the output token limit). The tile goes `idle` with it as its message, never `done`, and `agent.read` `final` reports the answer as cut off (`cutOff`)" }
+          "error": { "type": "string", "description": "only with `idle`: the turn ended on this error instead of finishing (an API error such as `overloaded_error`, an abort, the output token limit). The tile goes `idle` with it as its message, never `done`, and `agent.read` `final` reports the answer as cut off (`cutOff`)" },
+          "protocol": { "type": "integer", "minimum": 0, "description": "the integration protocol version (kept as `props.agent.protocol`; every report says it, a report without it means 0). 1: the integration takes out-of-band messages (agent.inbox), so agent.prompt queues for it instead of typing into the terminal" }
         },
         "additionalProperties": false
       },
       "result": { "type": "object", "properties": {} }
     },
     "agent.report_session": {
-      "description": "Report the agent's native session identity so the tile can resume it after a reboot.",
+      "description": "Report the agent's native session identity so the tile can resume it after a reboot. Another session where one was recorded (a new conversation, or another agent) ends the one before: the messages still queued for it bounce (agent.inbox).",
       "params": {
         "type": "object",
         "required": ["tile", "kind"],
@@ -1411,7 +1444,7 @@
       "result": { "type": "object", "properties": {} }
     },
     "agent.release": {
-      "description": "The agent in this tile exited; clear its lifecycle authority and its recorded session (`agent.report_session`), so after a reboot the tile runs its `command` (a plain shell when it has none) instead of resuming that session.",
+      "description": "The agent in this tile exited; clear its lifecycle authority and its recorded session (`agent.report_session`), so after a reboot the tile runs its `command` (a plain shell when it has none) instead of resuming that session. The messages its integration never took bounce (agent.inbox).",
       "params": {
         "type": "object",
         "required": ["tile", "kind"],
@@ -1426,27 +1459,31 @@
       "result": { "type": "object", "required": ["agents"], "properties": { "agents": { "type": "array", "items": { "$ref": "#/definitions/Agent" } } } }
     },
     "agent.prompt": {
-      "description": "Paste a prompt into another agent's terminal (bracketed paste; a one-line command into a shell at its prompt is typed) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A prompt that lands while the agent is `working` joins that turn (omp and Codex take it before the turn ends and answer it in the same turn): the wait answers when that turn ends, and `final` is that turn's answer. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a `working` target whose state is `restored` (from before the app last closed, unconfirmed since: it may wait on a question now). So does a target whose agent reports from behind another foreground program (`program` nvim, less: the text would go to that program), and one in tmux whose active pane runs something else (vim, a shell): the text goes to the active pane, so it is sent when that pane runs the agent. Into a shell at its prompt (no agent), a one-line text is typed rather than pasted. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must run an agent with an easl integration (its lifecycle not `via: \"notifications\"`), else `unavailable`. An agent reporting by notification goes `unknown` with this prompt, and `agent.wait` answers at its next notification (none comes when the text needed no model reply, e.g. aider's `/add`: give such waits a `timeoutMs`).",
+      "description": "Prompt another agent. To a terminal whose integration takes messages (agent.report `protocol` ≥ 1: omp's extension) the text goes out of band: it is queued for that terminal and its integration delivers it as a message (agent.inbox), never touching the terminal, so a half-typed draft, an open question or an approval dialog stays as it is. The receiver gets a header naming the sender and how to reply (`write agent://<address>` in omp, `easl tell <address>`). `when: \"now\"` (the default): a working agent gets it as a steer (at its next step; a wait is cut short), an idle one starts a turn with it, one waiting on a question or approval gets it after the answer. `when: \"next-turn\"`: never into a running turn; it starts a turn once the running one has ended. Messages arriving together are delivered as one, and each sender wakes a receiver at most 20 times an hour (past that, messages wait for its next turn). A message from a terminal (`caller`) is attributed to an agent; one from a script (`from`, or no `caller`) to the user, named by `from`. A message is for the agent session there as it is sent: when that session ends before its integration takes the message (the agent released, exited, or replaced by another session), the message bounces, back to a sending terminal whose integration takes messages as a message from `easl` (`undelivered to <address>: <its first line>…`), else into the receiver's board.history (`message`); a session that ends while the message is being sent fails the call `unavailable`, and so does a target whose message integration died without releasing its terminal (killed: its shell is back at the prompt), typed or not. Any other target gets the text typed: pasted (bracketed paste; a one-line command into a shell at its prompt is typed) and Enter pressed once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it); the composer always types. The terminal's text just before submitting (or queueing) is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first; while a message waits to be delivered it doesn't answer at all. A prompt that lands while the agent is `working` (typed, or a `now` message delivered as a steer) joins that turn (omp and Codex take it before the turn ends and answer it in the same turn): the wait answers when that turn ends, and `final` is that turn's answer. For typing only: a `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a `working` target whose state is `restored` (from before the app last closed, unconfirmed since: it may wait on a question now). So does a target whose agent reports from behind another foreground program (`program` nvim, less: the text would go to that program), and one in tmux whose active pane runs something else (vim, a shell): the text goes to the active pane, so it is sent when that pane runs the agent. A typed `next-turn` prompt to a `working` target fails with `conflict` (typed text would join the turn). Into a shell at its prompt (no agent), a one-line text is typed rather than pasted. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray) and arrive resolved, as hidden context with a typed prompt (its integration's next submitted prompt, this one) or with the message, in a block naming your terminal (`caller`). The target must run an agent with an easl integration (its lifecycle not `via: \"notifications\"`), else `unavailable`. An agent reporting by notification goes `unknown` with this prompt, and `agent.wait` answers at its next notification (none comes when the text needed no model reply, e.g. aider's `/add`: give such waits a `timeoutMs`).",
       "params": {
         "type": "object",
         "required": ["target", "text"],
         "properties": {
-          "target": { "type": "string", "description": "agent name or tile id" },
+          "target": { "type": "string", "description": "a tile id, `name` or `name@board` (the board's name is its root folder's name): a bare name is looked up on the caller's board first, then on every open board; more than one match is `ambiguous`" },
           "text": { "type": "string" },
           "mentions": { "type": "array", "items": { "$ref": "#/definitions/PromptMention" }, "description": "objects on the target's board to attach, e.g. [{\"object\": \"obj_…\"}, {\"object\": \"obj_…\", \"lines\": {\"start\": 41, \"end\": 48}}]" },
-          "caller": { "$ref": "#/definitions/Id", "description": "the prompting terminal, named to the receiver with the mentions; clients fill from EASL_TILE_ID" },
-          "force": { "type": "boolean", "default": false, "description": "send even though the target is `blocked` or runs another foreground program than its agent (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" },
-          "composer": { "type": "boolean", "default": false, "description": "the user's own prompt from a composer that isn't in this app (a remote board's viewer, docs/design.md \"Client mode\"): sent exactly as this app's composer sends it, typed into the terminal; `mentions` wait for that prompt's own drain, numbered from 1, never the tray and never a hand-off. Takes no `caller`" },
+          "caller": { "$ref": "#/definitions/Id", "description": "the prompting terminal: the sender a message names (its address for replies, resolved at delivery), and whose board a bare `target` name is looked up on first; clients fill from EASL_TILE_ID" },
+          "from": { "type": "string", "minLength": 1, "description": "a sender label for a caller with no tile (a script, a launchd job): `machine-watch`. The message is then the user's (attribution `user`), names this label and has no reply address, even when a `caller` is given (clients fill it inside a terminal; it still decides which board a bare `target` is looked up on first)" },
+          "when": { "enum": ["now", "next-turn"], "default": "now", "description": "now: a steer into the running turn, or a new turn when idle; next-turn: never into a running turn, delivered once it has ended" },
+          "force": { "type": "boolean", "default": false, "description": "typing only: send even though the target is `blocked` or runs another foreground program than its agent (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" },
+          "composer": { "type": "boolean", "default": false, "description": "the user's own prompt from a composer that isn't in this app (a remote board's viewer, docs/design.md \"Client mode\"): sent exactly as this app's composer sends it, typed into the terminal, also into one whose integration takes messages; `mentions` wait for that prompt's own drain, numbered from 1, never the tray and never a hand-off. Takes no `caller`, `from` or `when`" },
           "answer": { "type": "boolean", "default": false, "description": "with `composer`: the text is the user's answer to the question or approval the target is blocked on, so it passes the blocked check (only the user answers; `force` is for agents and scripts). Takes no mentions" }
         },
         "additionalProperties": false
       },
       "result": {
         "type": "object",
-        "required": ["agent", "submittedAt", "waitable"],
+        "required": ["agent", "submittedAt", "waitable", "delivery"],
         "properties": {
           "agent": { "$ref": "#/definitions/Agent", "description": "as it was when the prompt was submitted (its lifecycle is still the previous turn's)" },
-          "submittedAt": { "type": "string", "format": "date-time" },
+          "submittedAt": { "type": "string", "format": "date-time", "description": "when it was typed, or queued as a message" },
+          "delivery": { "enum": ["message", "typed"], "description": "message: queued for the target's integration (`message` is its id); typed: pasted or typed into the terminal" },
+          "message": { "$ref": "#/definitions/Id", "description": "with delivery `message`: the queued message's id" },
           "waitable": { "type": "boolean", "description": "the agent reports a lifecycle (an integration, or by notification), so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: \"prompt\"`" },
           "mentions": { "type": "array", "items": { "$ref": "#/definitions/Mention" }, "description": "present with `mentions`: what waits for the target's prompt (an object already waiting there is not attached twice)" }
         }
@@ -1459,7 +1496,8 @@
         "type": "object",
         "required": ["target"],
         "properties": {
-          "target": { "type": "string" },
+          "target": { "type": "string", "description": "a tile id, `name` or `name@board`, as agent.prompt's" },
+          "caller": { "$ref": "#/definitions/Id", "description": "the asking terminal, whose board a bare `target` name is looked up on first; clients fill from EASL_TILE_ID" },
           "until": { "type": "array", "items": { "enum": ["working", "blocked", "idle", "done", "unknown"] }, "default": ["idle", "done", "blocked"] },
           "timeoutMs": { "type": "integer" }
         },
@@ -1473,7 +1511,8 @@
         "type": "object",
         "required": ["target"],
         "properties": {
-          "target": { "type": "string", "description": "agent name or tile id" },
+          "target": { "type": "string", "description": "a tile id, `name` or `name@board`, as agent.prompt's" },
+          "caller": { "$ref": "#/definitions/Id", "description": "the asking terminal, whose board a bare `target` name is looked up on first; clients fill from EASL_TILE_ID" },
           "lines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 100, "description": "tail length; larger values are capped at 2000. With `since`: the last this many lines of the reply (default 2000)" },
           "since": { "const": "prompt", "description": "only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started" },
           "block": { "oneOf": [{ "const": "last" }, { "type": "integer", "maximum": -1, "minimum": -200 }], "description": "the output of a command the shell finished instead of the tail (its last `lines` lines, default 2000): `\"last\"` or -1 the last one, -2 the one before, back to the oldest easl saw finish since it attached to the session (`not_found` past it); `unavailable` when there is none (no shell integration) or its rows are gone (cleared, trimmed from the scrollback, reflowed by a width change). Doesn't combine with `since` or `final`" },
@@ -1493,6 +1532,21 @@
           "cutOff": { "type": "string", "description": "with `final`: the turn ended on this error (its agent reported it), so `text` is the answer as far as it got" }
         }
       }
+    },
+    "agent.inbox": {
+      "description": "A terminal's agent integration takes the messages queued for it (agent.prompt to a target whose integration reports `protocol` ≥ 1) and delivers them to its agent, without touching the terminal. `ack` first drops the messages it delivered (`started`: that delivery started a new turn, so agent.wait now waits for that turn as after a prompt to an idle agent; otherwise it joined the running turn). Then it answers the messages waiting that no open connection holds, oldest first, each sender's name and each message's mentions resolved now; they are held by this connection until it acks them or closes, and offered again then. With `waitMs`, when none waits, it answers as soon as one arrives (at most that long, then with none). An integration acks a message once its agent has recorded it, never before, and dedupes by id (one comes again after a lost connection or a restart). Messages are saved with the board, so an app restart keeps them; when the agent session they were queued for ends first (agent.release, its integration dying, another session reported, the terminal deleted) they bounce, as agent.prompt says.",
+      "params": {
+        "type": "object",
+        "required": ["tile"],
+        "properties": {
+          "tile": { "$ref": "#/definitions/Id", "description": "the integration's own terminal (EASL_TILE_ID)" },
+          "ack": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "messages this integration has handed to its agent" },
+          "started": { "type": "boolean", "default": false, "description": "with `ack`: their delivery started a new turn (the agent was idle), rather than joining the running one" },
+          "waitMs": { "type": "integer", "minimum": 0, "maximum": 60000, "default": 0, "description": "wait this long for a message when none waits" }
+        },
+        "additionalProperties": false
+      },
+      "result": { "type": "object", "required": ["messages"], "properties": { "messages": { "type": "array", "items": { "$ref": "#/definitions/AgentMessage" } } } }
     },
     "follow.report": {
       "description": "Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile, creating it in a free spot near the terminal (unless the user is working in it, which holds re-aims for ~10 s). Ignored while the terminal's `props.follow` is false, and for files outside the board root, the terminal's cwd, and the other worktrees of their repositories (a worktree file keeps its absolute path and its own gutter), scratch files in the temp directory, missing files, images, PDFs, archives, and other binaries: the tile keeps its last real file.",

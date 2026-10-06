@@ -242,33 +242,44 @@ func (b *Board) resolveHandoffs(caller string, index int) ([]mention.Resolved, [
 	var resolved []mention.Resolved
 	var blocks []string
 	for _, s := range senders {
-		var group []Handoff
-		for _, h := range waiting {
+		var group []model.Mention
+		var first *Handoff
+		for i, h := range waiting {
 			if h.From == s.from && h.Header == s.header {
-				group = append(group, h)
+				if first == nil {
+					first = &waiting[i]
+				}
+				group = append(group, h.Mention)
 			}
 		}
-		var part []mention.Resolved
-		targets := make([]map[string]any, len(group))
-		for i, h := range group {
-			part = append(part, mention.Resolve(h.Mention, index+len(resolved)+len(part), b, caller))
-			targets[i] = h.Mention.Target
-		}
+		part, block := b.handoffBlock(group, s.from, first.FromName, first.HasName, s.header, caller, index+len(resolved))
 		resolved = append(resolved, part...)
-		name := ""
-		if group[0].HasName {
-			name = " \"" + group[0].FromName + "\""
-		}
-		header := s.header
-		if header == "" {
-			header = "Attached by a script to its prompt to you (agent.prompt):"
-			if s.from != "" {
-				header = "Attached by terminal " + s.from + name + " to its prompt to you (agent.prompt):"
-			}
-		}
-		blocks = append(blocks, mention.Render(part, b, targets, s.from, header))
+		blocks = append(blocks, block)
 	}
 	return resolved, blocks
+}
+
+// handoffBlock is one sender's mentions for caller, resolved now and numbered from index, under
+// the block header naming that sender (or header, a board's own; "" for none): what a drain
+// gives a hand-off and agent.inbox a message.
+func (b *Board) handoffBlock(mentions []model.Mention, sender, fromName string, hasName bool, header, caller string, index int) ([]mention.Resolved, string) {
+	part := make([]mention.Resolved, 0, len(mentions))
+	targets := make([]map[string]any, len(mentions))
+	for i, m := range mentions {
+		part = append(part, mention.Resolve(m, index+len(part), b, caller))
+		targets[i] = m.Target
+	}
+	if header == "" {
+		name := ""
+		if hasName {
+			name = " \"" + fromName + "\""
+		}
+		header = "Attached by a script to its prompt to you (agent.prompt):"
+		if sender != "" {
+			header = "Attached by terminal " + sender + name + " to its prompt to you (agent.prompt):"
+		}
+	}
+	return part, mention.Render(part, b, targets, sender, header)
 }
 
 func (b *Board) commitHandoffs(ids []string) {

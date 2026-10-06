@@ -95,14 +95,18 @@ extension Board {
     /// So does an integrated agent still said to be `working` or `blocked` (killed, or exited
     /// while easl was away, without the `agent.release` its integration sends at exit): the
     /// shell holds the terminal, so nothing there is in a turn, and nothing there drains the
-    /// composer's prompts.
+    /// composer's prompts. One idle or done keeps its answer and dot, but if its integration took
+    /// messages it takes none any more: what was queued for it bounces (`messageIntegrationDied`).
     public func terminalProgram(_ tile: ObjectID, is program: String?) {
         guard program == nil, let terminal = objects[tile] else { return }
         dropComposerPrompts(of: tile)
         let state = terminal.props["lifecycle"]?["state"]?.string
         let busy = state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue
-        guard NotifyingAgent.reports(terminal) || busy else { return }
-        try? releaseAgent(tile: tile)
+        if NotifyingAgent.reports(terminal) || busy {
+            try? releaseAgent(tile: tile)
+        } else if PromptTarget.takesMessages(terminal) {
+            messageIntegrationDied(tile)
+        }
     }
 
     private func setNotifiedLifecycle(_ tile: ObjectID, kind: String, state: LifecycleState, message: String?, seen: Bool?) {

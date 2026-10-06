@@ -1,7 +1,7 @@
 {
   "scenario": "client-mode",
-  "description": "What a remote board's viewer sends (docs/design.md \"Client mode\"), checked before anything else on both servers: view.render `inline` doesn't combine with `out`; agent.prompt `answer` needs `composer`, and a composer's prompt takes no `caller` and never forces. Drawing and typing are the Mac client's (delegated), so only the refusals are replayed.",
-  "recordedOn": "easl client/mode d06c693, dev instance",
+  "description": "What a remote board's viewer sends (docs/design.md \"Client mode\"), checked before anything else on both servers: view.render `inline` doesn't combine with `out`; agent.prompt `answer` needs `composer`, and a composer's prompt takes no `caller`, `from` or `when` and never forces. Drawing and typing are the Mac client's (delegated), so only the refusals are replayed.",
+  "recordedOn": "easl peer/messages (a composer's prompt takes no from or when), dev instance",
   "steps": [
     {
       "step": "board.open",
@@ -203,6 +203,42 @@
       "step": "agent.prompt",
       "method": "agent.prompt",
       "request": {
+        "composer": true,
+        "from": "machine-watch",
+        "target": "<obj:1>",
+        "text": "hello"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a composer's prompt is the user's: it takes no from"
+        },
+        "id": "r8",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "target": "nobody-here",
+        "text": "hello",
+        "when": "next-turn"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a composer's prompt is typed as the user sends it: it takes no when"
+        },
+        "id": "r9",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
         "answer": true,
         "composer": true,
         "force": true,
@@ -214,7 +250,7 @@
           "code": "invalid_params",
           "message": "a composer's prompt never forces: answer: true answers a blocked target"
         },
-        "id": "r8",
+        "id": "r10",
         "ok": false
       }
     }

@@ -187,7 +187,7 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 			}
 			sort.Strings(ids)
 			for _, id := range ids {
-				agents = append(agents, agentEntry(b.Objects()[id], b))
+				agents = append(agents, r.agentEntry(b.Objects()[id], b))
 			}
 		}
 		return map[string]any{"agents": agents}, nil

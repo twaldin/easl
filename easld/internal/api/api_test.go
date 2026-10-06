@@ -47,7 +47,7 @@ func TestMethodsAndErrorCodesFollowTheSchema(t *testing.T) {
 		}
 	}
 	codes := map[string]bool{}
-	for _, code := range []string{CodeInvalidParams, CodeNotFound, CodeConflict, CodeUnsupported, CodeUnavailable, CodeTimeout, CodeInternal} {
+	for _, code := range []string{CodeInvalidParams, CodeNotFound, CodeConflict, CodeUnsupported, CodeUnavailable, CodeTimeout, CodeInternal, CodeAmbiguous} {
 		codes[code] = true
 	}
 	if len(codes) != len(schema.Errors) {
