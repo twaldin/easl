@@ -61,6 +61,8 @@ export type TerminalProps = {
   /** argv run inside the zmx session */
   command: string[];
   zmxSession?: string;
+  /** an ssh target (`deckbox`): the terminal's session runs on that machine under its easld (`session.spawn`), and the tile attaches to it over ssh with this app's socket forwarded back, so the agent's integration and the `easl` CLI there reach this board (docs/contracts.md "Hosted terminals"). `cwd` is a directory on that machine. Absent: this Mac. Fixed at creation: an update that changes or removes it is `invalid_params` */
+  host?: string;
   title?: string;
   /** a name other agents address this terminal by (agent.prompt/wait/read `target`) */
   name?: string;
@@ -1503,6 +1505,68 @@ export type ViewSnapshotResult = {
   objects: RenderedObject[];
 };
 
+export type SessionSpawnParams = {
+  /** the terminal tile: the session is `canvas-<tile>` */
+  tile: Id;
+  /** argv run in the login shell; absent or empty: just the login shell */
+  command?: string[];
+  /** an existing directory on easld's machine (default: the user's home) */
+  cwd?: string;
+  /** variables the session gets over easld's own environment (`EASL_SOCKET`, `EASL_TILE_ID`, `EASL_BOARD_ID`, …); `PATH` goes before easld's own */
+  env?: Record<string, unknown>;
+  /** zmx labels the session is created with (`canvas.board`, `canvas.tile`, `canvas.home`); keys and values in [A-Za-z0-9._-] */
+  labels?: Record<string, unknown>;
+};
+export type SessionSpawnResult = {
+  /** `canvas-<tile>` */
+  session: string;
+  /** false: the session was already running */
+  created: boolean;
+};
+
+export type SessionListParams = Record<string, unknown>;
+export type SessionListResult = {
+  sessions: {
+    session: string;
+    /** the session name without `canvas-` */
+    tile: string;
+    /** the session's process (zmx's), absent while it doesn't answer */
+    pid?: number;
+    /** attached clients */
+    clients?: number;
+    labels: Record<string, unknown>;
+    /** zmx lists the session but it doesn't answer (its daemon stopped or wedged) */
+    unreachable?: boolean;
+  }[];
+};
+
+export type SessionKillParams = {
+  tile: Id;
+  /** the caller's `canvas.home` label: only a session with this one is ended (without `home`, any) */
+  home?: string;
+};
+export type SessionKillResult = {
+  /** false: there was no such session */
+  killed: boolean;
+};
+
+export type RelayOpenParams = {
+  /** the client instance, [A-Za-z0-9._-], at most 64 characters */
+  instance: string;
+  /** the loopback port the client's ssh forwards to it */
+  port: number;
+  /** 16–128 letters and digits: the secret both ends prove on every connection, new for each of the client's connections */
+  token: string;
+};
+export type RelayOpenResult = {
+  /** the socket for the easl API (a hosted terminal's `EASL_SOCKET`; integrations spool undelivered reports in `agent-reports/` beside it) */
+  easl: string;
+  /** the socket for the cmux browser subset (`CMUX_SOCKET_PATH`) */
+  cmux: string;
+  /** reports may have been spooled meanwhile (fetch and replay them): the sockets were bound now, or a disarmed relay re-armed; false for the same token and an armed relay */
+  opened: boolean;
+};
+
 export type EventsSubscribeParams = {
   board?: Id;
   events?: string[];
@@ -1658,6 +1722,18 @@ export interface CanvasApi {
     /** The board's window as the user sees it right now (viewport, tiles, toolbar, tray), with the viewport it shows. Terminal tiles are drawn from their session text. To look at something regardless of where the user is, use view.render. */
     snapshot(params?: ViewSnapshotParams): Promise<ViewSnapshotResult>;
   };
+  session: {
+    /** easld only (the Mac app answers `unsupported`): start terminal tile `tile`'s zmx session, `canvas-<tile>`, on the machine easld runs on, as easld's own child, so the session and everything it runs stay in easld's cgroup (a hosted terminal's session: docs/contracts.md "Hosted terminals"). `command` runs in the user's login shell, which stays when it exits (`$SHELL -l -c '<command>; exec $SHELL -l'`); without one the session is the login shell. zmx keeps its sockets and logs in `<easld home>/zmx`, the user's own (a symlink, another user's directory or one others can write to is `unavailable`). A session that exists already is left as it is (`created: false`), unless one of its `canvas.home`, `canvas.board` and `canvas.tile` labels isn't the one `labels` gives (`conflict`, naming it). zmx's dead sessions (`status=cleaning up`) don't exist. Clients attach to it with `zmx attach canvas-<tile>` in that directory, once they have checked its labels. */
+    spawn(params: SessionSpawnParams): Promise<SessionSpawnResult>;
+    /** easld only (the Mac app answers `unsupported`): the terminal tiles' zmx sessions on easld's machine (`canvas-…`, whoever started them). */
+    list(params?: SessionListParams): Promise<SessionListResult>;
+    /** easld only (the Mac app answers `unsupported`): end terminal tile `tile`'s zmx session on easld's machine and delete zmx's log of it. A session not labelled with `home` is left alone (`conflict`). */
+    kill(params: SessionKillParams): Promise<SessionKillResult>;
+  };
+  relay: {
+    /** easld only (the Mac app answers `unsupported`): serve a client's sockets to the programs on easld's machine, so a hosted terminal's integration and the `easl` CLI there reach the board that shows it (docs/contracts.md "Hosted terminals"). easld listens on `<home>/run/<instance>/easl.sock` and `cmux.sock` (the user's only) and passes each connection on to `127.0.0.1:<port>`, the client's ssh forward of a loopback port back to itself. Every user of the machine can reach that port, and anyone can listen on it once the forward is gone, so neither end sends the token: easld sends `<socket name> <nonce>`, the client's end answers `<nonce> <proof>` and easld `<proof>`, each proof the hex HMAC-SHA256, keyed by the token, of `easl-relay <gate|easld> <socket name> <easld's nonce> <the client's nonce>`; nothing passes until both check. A connection the client's end doesn't take (refused, or no proof) closes at once, the integration spooling its report, and disarms the relay until the client opens it again. Opening it again with the same token takes the port; with a new one (the client's app restarted, or it reconnected) the sockets are bound anew at the same paths, so integrations watching them report again. */
+    open(params: RelayOpenParams): Promise<RelayOpenResult>;
+  };
   events: {
     /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}). */
     subscribe(params?: EventsSubscribeParams): Promise<EventsSubscribeResult>;
@@ -1735,6 +1811,14 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       render: (params: ViewRenderParams) => call("view.render", params ?? {}, ["board"]) as Promise<ViewRenderResult>,
       snapshot: (params?: ViewSnapshotParams) => call("view.snapshot", params ?? {}, ["board"]) as Promise<ViewSnapshotResult>,
     },
+    session: {
+      spawn: (params: SessionSpawnParams) => call("session.spawn", params ?? {}, []) as Promise<SessionSpawnResult>,
+      list: (params?: SessionListParams) => call("session.list", params ?? {}, []) as Promise<SessionListResult>,
+      kill: (params: SessionKillParams) => call("session.kill", params ?? {}, []) as Promise<SessionKillResult>,
+    },
+    relay: {
+      open: (params: RelayOpenParams) => call("relay.open", params ?? {}, []) as Promise<RelayOpenResult>,
+    },
     events: {
       subscribe: (params?: EventsSubscribeParams) => call("events.subscribe", params ?? {}, ["board"]) as Promise<EventsSubscribeResult>,
     },
@@ -1747,7 +1831,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","events.subscribe","client.attach","text.measure"] as const;
+export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

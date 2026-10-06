@@ -12,8 +12,9 @@ public final class BoardRegistry {
     public var onEvent: ((Board, BoardEvent) -> Void)?
     /// The router's own observer (agent.wait), kept apart from the app-level hook.
     var routerHook: ((Board, BoardEvent) -> Void)?
-    /// Terminal tiles deleted for good on any open board (`Board.onTerminalsEnded`): the app ends their sessions.
-    public var onTerminalsEnded: ((Board, [ObjectID]) -> Void)?
+    /// Terminal tiles deleted for good on any open board (`Board.onTerminalsEnded`), as they last
+    /// were: the app ends their sessions.
+    public var onTerminalsEnded: ((Board, [CanvasObject]) -> Void)?
     /// Where agent integrations spool the reports they couldn't deliver (`AgentReportSpool`);
     /// nil replays nothing.
     public let agentReports: URL?
@@ -42,9 +43,9 @@ public final class BoardRegistry {
             self.routerHook?(board, event)
             self.broadcast(event, board: board.id)
         }
-        board.onTerminalsEnded = { [weak self, weak board] ids in
+        board.onTerminalsEnded = { [weak self, weak board] ended in
             guard let self, let board else { return }
-            self.onTerminalsEnded?(board, ids)
+            self.onTerminalsEnded?(board, ended)
         }
         boards[id] = board
         board.activity.record(.restart, actor: .system, rev: board.revision,
@@ -1113,6 +1114,11 @@ public final class ApiRouter {
             if let focused = state.focused { result["focused"] = .string(focused) }
             if let group = state.enteredGroup { result["enteredGroup"] = .string(group) }
             return .object(result)
+
+        case "session.spawn", "session.list", "session.kill", "relay.open":
+            // A hosted terminal's session runs under the host's easld, which relays its way back
+            // here (docs/contracts.md "Hosted terminals"); the app's own sessions are its tiles'.
+            throw Failure("unsupported", "\(method) is easld's: the app runs its terminals' sessions itself")
 
         default:
             throw Failure("invalid_params", "unknown method \(method)")

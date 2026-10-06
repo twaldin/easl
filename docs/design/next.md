@@ -57,7 +57,7 @@ Server-side features (the all-agents overview, supervision stats, review passes,
 - **File › Open Remote…** picks a machine and then one of that host's boards (repository, path, agent count), or Browse… for a new directory over ssh. If easl isn't running on the host, the viewer starts the installed app over ssh (`open -g /Applications/easl.app`, which needs a logged-in GUI session there; never a development instance, whose launcher isn't known). An unreachable host shows as offline.
 - **The viewer draws the board natively.** It reads the snapshot and events over the host's socket, forwarded by ssh (`EASL_SOCKET` already accepts any socket path). Terminals attach with `ssh <host> zmx attach <session>`, and the host serves files, git and language servers.
 - **Browser tiles run where the user is.** A browser tile executes on the Mac the user is sitting at, and the host routes the agent's `easl browser` calls to it over the same ssh link, so the user and the agent see one page. When that Mac disconnects, the host takes the tile over and reloads its last URL. Browser cookies are shared between the machines over ssh, so logins carry over; in-page state doesn't.
-- **Offload**: a terminal tile can have a host of its own, such as a Linux machine with more cores. Its agent works on a clone there, with the board's socket forwarded back (`ssh -R`) so the hooks and the `easl` CLI work. Code and changes tiles it opens read that host's files, so every file-bound tile carries a host.
+- **Offload**: shipped for terminals (docs/contracts.md "Hosted terminals"): `props.host`, sessions under the host's easld in its capped slice, one ssh connection per host, easld relaying the board's sockets back (`relay.open`), reconnect, the spool replayed, `scripts/offload-setup.sh`. Still open: the agent's clone on the host (today it works in whatever `cwd` names there); code and changes tiles reading the host's files (a hosted agent's follow tile and `path:line` references name files the Mac doesn't have), so every file-bound tile carries a host; the foreground program of a hosted terminal (the host's process table); the first easld call after a reconnect sometimes waits out its 20 s timeout (seen once against deckbox) before the relay opens.
 
 ## Client mode
 
@@ -68,6 +68,7 @@ Shipped on the Swift app (docs/design.md "Client mode (remote boards)", docs/con
 - Attention markers raised before the window opened aren't shown (`board.get` has none); markers the viewer clears and agents it sees (`markSeen`) stay unseen on the host.
 - On easld with a client attached, `agent.prompt` `composer` mentions are queued as hand-offs, not as the composer's own (easld's `prompt` queues before forwarding).
 - A remote terminal's ⌘-clicked file references open nothing (a notice says the file is the host's): resolving them on the host needs an API call that resolves a reference against the host's checkout.
+- A remote board's hosted terminal (`props.host`, docs/contracts.md "Hosted terminals") never attaches: the viewer looks for its session on the easl's Mac, but it runs on the terminal's host, so the tile waits for the host. The viewer would attach through that host instead (or through the easl's own link to it).
 
 ## The composer
 

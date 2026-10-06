@@ -54,11 +54,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controllers[board.id]?.apply(event)
             self?.notifier.observe(event, on: board)
         }
-        // Every delete of a terminal (UI close, API, batch, undo/redo) ends its zmx session, and
-        // with it any report its agent spooled (`AgentReportSpool`), which nothing would replay.
-        registry.onTerminalsEnded = { _, tiles in
-            for tile in tiles { TerminalTile.killSession(tile: tile) }
-            let spooled = tiles.map { AppPaths.agentReports.appendingPathComponent($0, isDirectory: true) }
+        // Every delete of a terminal (UI close, API, batch, undo/redo) ends its zmx session (a
+        // hosted one's on its host), and with it any report its agent spooled here
+        // (`AgentReportSpool`), which nothing would replay.
+        registry.onTerminalsEnded = { _, ended in
+            for terminal in ended { TerminalTile.killSession(terminal) }
+            let spooled = ended.map { AppPaths.agentReports.appendingPathComponent($0.id, isDirectory: true) }
             Task.detached { for folder in spooled { try? FileManager.default.removeItem(at: folder) } }
         }
         // object.measure, size: "fit", and layout.check lay HTML pages out in WebKit.
@@ -135,8 +136,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // screen's by Ghostty's own wrap flags.
             let terminal = self?.content(of: tile, on: board) as? TerminalTile
             let columns = terminal?.columns, screen = terminal?.screenRows() ?? []
+            // A hosted terminal's session is on its host (`zmx history` over ssh).
+            let host = board.objects[tile].flatMap(HostedTerminal.host(of:)).map { TerminalHost.named($0).route }
             // A blocking subprocess read (`offPool`).
-            return await offPool { TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines, columns: columns, screen: screen) }
+            return await offPool { TerminalTile.history(session: TerminalTile.sessionName(tile), on: host, lines: lines, columns: columns, screen: screen) }
         }
         let router = router
         let server = SocketServer(path: AppPaths.apiSocket) { request, connection in
@@ -222,6 +225,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // may outlive the app (an `nc` without `-N`): end every ssh before exiting, and wait.
         OpenRemotePanel.shutdown()
         RemoteProcesses.shared.terminateAll()
+        // Hosted terminals' connections; their sessions keep running on their hosts.
+        TerminalHost.closeAll()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

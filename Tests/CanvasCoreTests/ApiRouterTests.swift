@@ -671,7 +671,7 @@ final class ApiRouterTests {
 
     @Test func deletingATerminalThroughTheApiEndsItsSessionUnlessTheBatchFails() async throws {
         var ended: [ObjectID] = []
-        registry.onTerminalsEnded = { _, ids in ended += ids }
+        registry.onTerminalsEnded = { _, objects in ended += objects.map(\.id) }
         let client = try connect()
 
         let deleted = terminal()

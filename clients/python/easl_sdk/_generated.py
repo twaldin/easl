@@ -75,6 +75,7 @@ class TerminalProps(TypedDict):
     cwd: Required[str]
     command: Required[list[str]]
     zmxSession: NotRequired[str]
+    host: NotRequired[str]
     title: NotRequired[str]
     name: NotRequired[str]
     agent: NotRequired[dict[str, Any]]
@@ -604,6 +605,36 @@ class ViewApi:
         return self._call("view.snapshot", params, ["board"])
 
 @_snake_case_hints
+class SessionApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def spawn(self, *, tile: "Id", command: list[str] | None = None, cwd: str | None = None, env: dict[str, Any] | None = None, labels: dict[str, Any] | None = None) -> dict[str, Any]:
+        """easld only (the Mac app answers `unsupported`): start terminal tile `tile`'s zmx session, `canvas-<tile>`, on the machine easld runs on, as easld's own child, so the session and everything it runs stay in easld's cgroup (a hosted terminal's session: docs/contracts.md "Hosted terminals"). `command` runs in the user's login shell, which stays when it exits (`$SHELL -l -c '<command>; exec $SHELL -l'`); without one the session is the login shell. zmx keeps its sockets and logs in `<easld home>/zmx`, the user's own (a symlink, another user's directory or one others can write to is `unavailable`). A session that exists already is left as it is (`created: false`), unless one of its `canvas.home`, `canvas.board` and `canvas.tile` labels isn't the one `labels` gives (`conflict`, naming it). zmx's dead sessions (`status=cleaning up`) don't exist. Clients attach to it with `zmx attach canvas-<tile>` in that directory, once they have checked its labels."""
+        params = {"tile": tile, "command": command, "cwd": cwd, "env": env, "labels": labels}
+        return self._call("session.spawn", params, [])
+
+    def list(self) -> dict[str, Any]:
+        """easld only (the Mac app answers `unsupported`): the terminal tiles' zmx sessions on easld's machine (`canvas-…`, whoever started them)."""
+        params = {}
+        return self._call("session.list", params, [])
+
+    def kill(self, *, tile: "Id", home: str | None = None) -> dict[str, Any]:
+        """easld only (the Mac app answers `unsupported`): end terminal tile `tile`'s zmx session on easld's machine and delete zmx's log of it. A session not labelled with `home` is left alone (`conflict`)."""
+        params = {"tile": tile, "home": home}
+        return self._call("session.kill", params, [])
+
+@_snake_case_hints
+class RelayApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def open(self, *, instance: str, port: int, token: str) -> dict[str, Any]:
+        """easld only (the Mac app answers `unsupported`): serve a client's sockets to the programs on easld's machine, so a hosted terminal's integration and the `easl` CLI there reach the board that shows it (docs/contracts.md "Hosted terminals"). easld listens on `<home>/run/<instance>/easl.sock` and `cmux.sock` (the user's only) and passes each connection on to `127.0.0.1:<port>`, the client's ssh forward of a loopback port back to itself. Every user of the machine can reach that port, and anyone can listen on it once the forward is gone, so neither end sends the token: easld sends `<socket name> <nonce>`, the client's end answers `<nonce> <proof>` and easld `<proof>`, each proof the hex HMAC-SHA256, keyed by the token, of `easl-relay <gate|easld> <socket name> <easld's nonce> <the client's nonce>`; nothing passes until both check. A connection the client's end doesn't take (refused, or no proof) closes at once, the integration spooling its report, and disarms the relay until the client opens it again. Opening it again with the same token takes the port; with a new one (the client's app restarted, or it reconnected) the sockets are bound anew at the same paths, so integrations watching them report again."""
+        params = {"instance": instance, "port": port, "token": token}
+        return self._call("relay.open", params, [])
+
+@_snake_case_hints
 class EventsApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -644,11 +675,13 @@ class GeneratedApi:
         self.agent = AgentApi(call)
         self.follow = FollowApi(call)
         self.view = ViewApi(call)
+        self.session = SessionApi(call)
+        self.relay = RelayApi(call)
         self.events = EventsApi(call)
         self.client = ClientApi(call)
         self.text = TextApi(call)
 
-METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","events.subscribe","client.attach","text.measure"]
+METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

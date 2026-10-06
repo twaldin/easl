@@ -544,6 +544,11 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 			}
 		}
 	}
+	if o.Type == model.Terminal {
+		if was, now := TerminalHost(before), TerminalHost(o); was != now {
+			return before, InvalidParams("terminal %s runs on %s: a terminal's host can't change (create a terminal on %s instead)", id, hostName(was), hostName(now))
+		}
+	}
 	if fitted, ok := b.fittedFrame(o); ok {
 		o.Frame = fitted
 	}
@@ -574,6 +579,22 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 		b.refitGroups(id, credited, caller, refitting)
 	}
 	return o, nil
+}
+
+// TerminalHost is the machine terminal `o`'s session runs on (`props.host`, an ssh target); ""
+// for the local one (HostedTerminal.host). It is fixed for the terminal's life: the live terminal
+// stays attached where its session started, so a board naming another host (or none) would read
+// its history from, and end, a session elsewhere.
+func TerminalHost(o model.Object) string {
+	host, _ := o.Props["host"].(string)
+	return strings.Trim(host, " \t")
+}
+
+func hostName(host string) string {
+	if host == "" {
+		return "the local machine"
+	}
+	return host
 }
 
 func jsonEqualKey(a, b map[string]any, key string) bool {

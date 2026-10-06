@@ -96,6 +96,10 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         return host
     }
 
+    /// A shell condition: the host's `nc` has OpenBSD's `-N` (shut the socket down at the end of
+    /// stdin), as its `nc -h` offers it; Apple's `-N` takes a probe count.
+    public static let ncHasShutdown = #"nc -h 2>&1 | grep -q '^[[:space:]]*-N[[:space:]].*EOF'"#
+
     /// POSIX sh, so the host's login shell doesn't matter. One `key=value` per line.
     public static let discoveryScript = """
         echo "os=$(uname -s)"
@@ -108,7 +112,7 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         for e in "$(command -v easl)" "$HOME/.local/bin/easl"; do
           if [ -n "$e" ] && [ -x "$e" ]; then echo "easl=$e"; break; fi
         done
-        if nc -h 2>&1 | grep -q '^[[:space:]]*-N[[:space:]].*EOF'; then echo "ncshutdown=1"; fi
+        if \(ncHasShutdown); then echo "ncshutdown=1"; fi
         """
 
     /// The host the discovery script's `output` describes: a Mac's easl lives in its app bundle
