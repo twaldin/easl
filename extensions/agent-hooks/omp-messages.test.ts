@@ -170,13 +170,24 @@ function fakeOmp(easl: { socketPath: string }, entries: Params[] = [], sessionId
     entries,
     delivered: [] as { text: string; deliverAs?: string; attribution?: string }[],
     notices: [] as string[],
+    /** Each session's branch, root first (`grow`). */
+    branches: {} as Record<string, Params[]>,
+    /** The branch of the session omp runs now. */
+    branch(): Params[] {
+      return (omp.branches[state.sessionId] ??= []);
+    },
     ctx: {
       hasUI: true,
       /** What `ctx.model` says now; the extension reads it as it reconciles. */
       model: undefined as { provider: string; id: string } | undefined,
       isIdle: () => !state.streaming,
       hasPendingMessages: () => state.pending,
-      sessionManager: { getEntries: () => entries, getSessionId: () => state.sessionId, getSessionFile: () => `/tmp/${state.sessionId}.jsonl` },
+      sessionManager: {
+        getEntries: () => entries,
+        getSessionId: () => state.sessionId,
+        getSessionFile: () => `/tmp/${state.sessionId}.jsonl`,
+        getBranch: (): Params[] => omp.branch(),
+      },
       ui: { notify: (text: string) => omp.notices.push(text), select: async () => undefined },
     },
     async emit(event: string, payload: Params = {}): Promise<void> {
@@ -346,9 +357,14 @@ test("messages arriving while omp reports a session switch were the old session'
   expect(omp.delivered[0].text).toContain(`[message ${fresh.id} from`);
 });
 
-/** The models the extension sent with agent.report_session, in order. */
-function reportedModels(easl: { calls: { method: string; params: Params }[] }): unknown[] {
-  return easl.calls.filter((call) => call.method === "agent.report_session").map((call) => call.params.model);
+/** What the extension sent as `field` with each agent.report_session, in order. */
+function reported(easl: { calls: { method: string; params: Params }[] }, field: "model" | "thinking"): unknown[] {
+  return easl.calls.filter((call) => call.method === "agent.report_session").map((call) => call.params[field]);
+}
+
+/** Appends entries to a session's branch, each a child of the one before, dated before this omp started. */
+function grow(branch: Params[], ...added: Params[]): void {
+  for (const entry of added) branch.push({ id: `e${branch.length + 1}`, parentId: branch.at(-1)?.id ?? null, timestamp: "2020-01-01T00:00:00.000Z", ...entry });
 }
 
 test("a model easl may have taken without answering is sent again when the user switches back", async () => {
@@ -356,13 +372,39 @@ test("a model easl may have taken without answering is sent again when the user 
   const omp = fakeOmp(easl);
   omp.ctx.model = { provider: "anthropic", id: "opus" };
   await omp.emit("session_start");
-  await until(() => reportedModels(easl).length === 1);
+  await until(() => reported(easl, "model").length === 1);
   // /model while idle: sent with no turn; easl applies it, but its answer is lost.
   easl.failingSession = () => true;
   omp.ctx.model = { provider: "openai", id: "gpt" };
-  await until(() => reportedModels(easl).length === 2);
+  await until(() => reported(easl, "model").length === 2);
   // Back to the model easl acknowledged before: easl may hold the other one now.
   omp.ctx.model = { provider: "anthropic", id: "opus" };
-  await until(() => reportedModels(easl).length === 3);
-  expect(reportedModels(easl)).toEqual(["anthropic/opus", "openai/gpt", "anthropic/opus"]);
+  await until(() => reported(easl, "model").length === 3);
+  expect(reported(easl, "model")).toEqual(["anthropic/opus", "openai/gpt", "anthropic/opus"]);
+});
+
+test("the --thinking omp was launched with is the launch session's until the agent switches sessions", async () => {
+  const argv = process.argv;
+  const launch = Symbol.for("canvas-omp.launch");
+  const global = globalThis as unknown as Record<symbol, unknown>;
+  process.argv = [...argv, "--thinking=auto"];
+  delete global[launch];
+  cleanups.push(() => {
+    process.argv = argv;
+    delete global[launch];
+  });
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  // The launch session last recorded high, before this omp started; it runs auto, as launched.
+  grow(omp.branch(), { type: "thinking_level_change", thinkingLevel: "high", configured: "high" });
+  await omp.emit("session_start");
+  await until(() => reported(easl, "thinking").length === 1);
+  omp.state.sessionId = "ses_2";
+  await omp.emit("session_switch");
+  await until(() => reported(easl, "thinking").length === 2);
+  // Back to the launch session: omp restores what it recorded there, not the launch option.
+  omp.state.sessionId = "ses_1";
+  await omp.emit("session_switch");
+  await until(() => reported(easl, "thinking").length === 3);
+  expect(reported(easl, "thinking")).toEqual(["auto", undefined, "high"]);
 });

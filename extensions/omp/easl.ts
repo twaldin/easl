@@ -36,9 +36,12 @@ const RECONCILE_MS = 500;
 const SESSION_RETRY_MS = 10_000;
 // When this omp process started: thinking selectors it recorded itself are later than this.
 const STARTED_AT = Date.now() - process.uptime() * 1000;
-// The `--thinking` omp was launched with (`--thinking=<v>` or `--thinking <v>`), which the session
-// it launched with runs until a change is recorded.
-const LAUNCH_THINKING = launchOption(process.argv, "--thinking");
+// Process-wide, so it outlives an extension reload: the `--thinking` omp was launched with
+// (`--thinking=<v>` or `--thinking <v>`), the session it launched with, and whether the tile's
+// agent has switched sessions since. omp runs that option until a change is recorded, and only in
+// that first activation: a session switched to (back to the launch one too) runs what it recorded.
+const LAUNCH = Symbol.for("canvas-omp.launch");
+type Launch = { thinking?: string; session?: string; switched: boolean };
 // The board's standing orders: its note with this key, injected up to this many UTF-8 bytes.
 const RULES_KEY = "rules";
 const RULES_MAX_BYTES = 8192;
@@ -131,8 +134,7 @@ export default function canvas(pi: ExtensionAPI): void {
   let acked: RunsWith | undefined;
   let tried: RunsWith | undefined;
   let triedAt = 0;
-  // The session omp launched with, which LAUNCH_THINKING applies to.
-  let launchedSession: string | undefined;
+  const launch = ((globalThis as unknown as Record<symbol, Launch | undefined>)[LAUNCH] ??= { thinking: launchOption(process.argv, "--thinking"), switched: false });
 
   function reportSession(ctx: ExtensionContext): Promise<unknown> {
     if (!reporting) return Promise.resolve();
@@ -201,9 +203,10 @@ export default function canvas(pi: ExtensionAPI): void {
   // effort auto chose, which as `--thinking` would turn auto off. omp records each change of
   // selector on the session's branch (`thinking_level_change`: `configured`, else
   // `thinkingLevel`), auto's choices included, but not the one a session starts with: the
-  // `--thinking` omp launched with for the session it launched with, else the session's last
-  // recorded one. Undefined when nothing says (a new session at omp's default auto, before its
-  // first turn): easl keeps what it had, and a relaunch what its command gave.
+  // `--thinking` omp was launched with while the launch session is the first one the agent runs
+  // (`launch`), else the session's last recorded one. Undefined when nothing says (a new session
+  // at omp's default auto, before its first turn): easl keeps what it had, and a relaunch what
+  // its command gave.
   function thinkingSelector(ctx: ExtensionContext): string | undefined {
     let last: { timestamp: string; thinkingLevel?: string | null; configured?: string | null } | undefined;
     try {
@@ -213,7 +216,7 @@ export default function canvas(pi: ExtensionAPI): void {
     }
     const recorded = last ? (last.configured ?? last.thinkingLevel ?? undefined) : undefined;
     if (last && Date.parse(last.timestamp) >= STARTED_AT) return recorded;
-    if (LAUNCH_THINKING && ctx.sessionManager.getSessionId() === launchedSession) return LAUNCH_THINKING;
+    if (launch.thinking && !launch.switched && ctx.sessionManager.getSessionId() === launch.session) return launch.thinking;
     return recorded;
   }
 
@@ -253,7 +256,7 @@ export default function canvas(pi: ExtensionAPI): void {
     blockers.clear();
     staged = [];
     if (reporting) watchApprovals(ctx.ui);
-    launchedSession ??= ctx.sessionManager.getSessionId();
+    if (reporting) launch.session ??= ctx.sessionManager.getSessionId();
     watchSession(ctx);
     void reportSession(ctx);
     publish();
@@ -266,6 +269,7 @@ export default function canvas(pi: ExtensionAPI): void {
   pi.on("session_switch", async (_event, ctx) => {
     // A new or switched-to session starts settled; the old one's pending continuation is gone.
     active = !ctx.isIdle();
+    if (reporting) launch.switched = true;
     watchSession(ctx);
     const reported = reportSession(ctx);
     publish();
