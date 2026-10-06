@@ -6,7 +6,8 @@ import Foundation
 /// up on the caller's board first, then on every open board; on a board a current name wins over
 /// an alias (`Board.aliases`: names a renamed terminal had, until another terminal takes them).
 public enum AgentAddress {
-    /// A board's name in addresses: its root folder's name, as its window title shows it.
+    /// A board's name in addresses: its root folder's name, as its window title shows it. Only a
+    /// board whose root folder still exists is found by name (an archived one by its id alone).
     public static func boardName(_ root: URL) -> String { root.lastPathComponent }
 
     /// A terminal's name for addressing: its `props.name`, when it has one.
@@ -30,9 +31,10 @@ public enum AgentAddress {
         }
         if let at = target.lastIndex(of: "@") {
             let name = String(target[..<at]), boardPart = String(target[target.index(after: at)...])
-            let named = boards.filter { $0.id == boardPart || boardName($0.root) == boardPart }
+            let live = boards.filter { BoardStore.isDirectory($0.root.path) }
+            let named = boards.filter { $0.id == boardPart || (boardName($0.root) == boardPart && live.contains { other in other === $0 }) }
             guard let board = named.first else {
-                let open = boards.map { boardName($0.root) }.sorted().joined(separator: ", ")
+                let open = live.map { boardName($0.root) }.sorted().joined(separator: ", ")
                 throw ApiRouter.Failure("not_found", "no open board named \(boardPart) (open boards: \(open.isEmpty ? "none" : open))")
             }
             guard named.count == 1 else {

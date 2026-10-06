@@ -3,17 +3,24 @@
 //    prompt omp never prepares loses nothing; steering prompts each get their own)
 //  - reports lifecycle (working / blocked / idle), each turn's final answer, and session identity for resume
 //  - follow mode: forwards files the agent reads, edits, and writes to its follow tile
+//  - takes the messages other agents and scripts send this tile (agent.prompt, agent.inbox) and
+//    hands them to omp without touching the editor; `write agent://<name>` that omp doesn't know
+//    is delivered through easl (docs/contracts.md, Peer messages)
 //  - provides the shipped `easl` skill (skills/easl) to the agent, only inside easl
 // Load explicitly with `omp -e /path/to/easl.ts`, or install into ~/.omp/agent/extensions.
 import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-import { CanvasClient } from "../../clients/ts/src/index";
+import { type AgentMessage, CanvasClient, CanvasError } from "../../clients/ts/src/index";
 import { numberedDiffChanges } from "../agent-hooks/follow";
+import { COALESCE_MS, deliveryText, PROTOCOL, peerAddress, plan, senderKey, WakeBudget } from "../agent-hooks/messages";
 import { release, report, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
 const SOURCE = "canvas-omp";
 const IDLE_DEBOUNCE_MS = 250;
+// The inbox's long poll (agent.inbox `waitMs`), and how long a failed poll waits to try again.
+const INBOX_WAIT_MS = 55_000;
+const INBOX_RETRY_MS = 2_000;
 // Marks our wrapper of omp's UI select with the function it wraps (process-wide, across reloads).
 const OMP_SELECT = Symbol.for("canvas-omp.select");
 
@@ -47,6 +54,8 @@ export default function canvas(pi: ExtensionAPI): void {
   // and the error that turn stopped on, if it didn't finish (an API error, an abort).
   let final: string | undefined;
   let failure: string | undefined;
+  // The tile's root session (the one with a UI), for `isIdle` when a held message may go in.
+  let session: ExtensionContext | undefined;
 
   const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
@@ -57,7 +66,17 @@ export default function canvas(pi: ExtensionAPI): void {
     const state = blockers.size > 0 ? "blocked" : active ? "working" : "idle";
     const settled = state === "idle";
     const send = () =>
-      report(client, { tile: tile!, kind: "omp", state, message: firstBlocker, seq: ++seq, source: SOURCE, final: settled ? final : undefined, error: settled ? failure : undefined });
+      report(client, {
+        tile: tile!,
+        kind: "omp",
+        state,
+        message: firstBlocker,
+        seq: ++seq,
+        source: SOURCE,
+        final: settled ? final : undefined,
+        error: settled ? failure : undefined,
+        protocol: PROTOCOL,
+      });
     // Debounce idle so retries and tool-only continuations don't flicker the badge.
     if (state === "idle") idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
     else void send();
@@ -110,6 +129,10 @@ export default function canvas(pi: ExtensionAPI): void {
     if (reporting) watchApprovals(ctx.ui);
     reportSession(ctx);
     publish();
+    if (reporting) {
+      session = ctx;
+      void pollInbox();
+    }
   });
 
   pi.on("session_switch", (_event, ctx) => {
@@ -125,6 +148,8 @@ export default function canvas(pi: ExtensionAPI): void {
     if (reporting) void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
     // Nothing reports for the released tile again (an easl coming back) until a session starts.
     reporting = false;
+    // Ends the long poll; easl offers what this session held but never delivered to the next one.
+    inbox.close();
   });
 
   pi.on("agent_start", () => {
@@ -133,6 +158,10 @@ export default function canvas(pi: ExtensionAPI): void {
     failure = undefined;
     staged = staged.filter((entry) => !entry.committed);
     publish();
+    // Messages over their senders' wake bound ride this turn, without interrupting it.
+    const riding = nextStart;
+    nextStart = [];
+    send(riding, "aside");
   });
 
   // willContinue: omp already scheduled the next run (retry, compaction, todo or session_stop
@@ -144,6 +173,136 @@ export default function canvas(pi: ExtensionAPI): void {
       failure = turnError(event.messages);
     }
     publish();
+    if (!active) setTimeout(releaseAfterTurn, 0);
+  });
+
+  // Out-of-band messages (docs/contracts.md, Peer messages): easl queues `agent.prompt` for this
+  // tile instead of typing into it, and the root session takes them with one long poll and hands
+  // them to omp as user messages, so the editor (a half-typed draft) and an open question or
+  // approval stay as they are. Messages are acked once handed over; until then easl keeps them.
+  const inbox = new CanvasClient({ timeoutMs: INBOX_WAIT_MS + 15_000, reconnectTimeoutMs: 0 });
+  const wakes = new WakeBudget();
+  // Ids received, so a message easl offers again (a new poll connection) isn't delivered twice.
+  const received = new Set<string>();
+  // `next-turn` messages that came while a turn ran, delivered once it has ended.
+  let afterTurn: AgentMessage[] = [];
+  // Messages over their senders' wake bound while idle, riding the next turn that starts.
+  let nextStart: AgentMessage[] = [];
+  // Acks easl didn't take (it was away): sent with the next poll.
+  let unacked: string[] = [];
+  let polling = false;
+
+  async function pollInbox(): Promise<void> {
+    if (polling) return;
+    polling = true;
+    while (reporting) {
+      const ack = unacked;
+      unacked = [];
+      try {
+        const first = await inbox.api.agent.inbox({ tile: tile!, waitMs: INBOX_WAIT_MS, ack: ack.length ? ack : undefined });
+        if (first.messages.length === 0) continue;
+        // A burst (several senders, or one sending several) goes in as one delivery.
+        await Bun.sleep(COALESCE_MS);
+        const more = await inbox.api.agent.inbox({ tile: tile! });
+        receive([...first.messages, ...more.messages]);
+      } catch {
+        unacked.push(...ack);
+        if (reporting) await Bun.sleep(INBOX_RETRY_MS);
+      }
+    }
+    polling = false;
+  }
+
+  function receive(messages: readonly AgentMessage[]): void {
+    const fresh = messages.filter((message) => !received.has(message.id));
+    for (const message of fresh) received.add(message.id);
+    deliver(fresh);
+  }
+
+  // `now`: a steer while omp works (a question or approval keeps waiting, the message comes after
+  // it), else a new turn; `next-turn`: held until the running turn ends. A sender past its wake
+  // bound joins a running turn without interrupting it, or waits for the next one to start.
+  function deliver(messages: readonly AgentMessage[]): void {
+    const steer: AgentMessage[] = [];
+    const turn: AgentMessage[] = [];
+    const aside: AgentMessage[] = [];
+    for (const message of messages) {
+      switch (plan(message.when, active, wakes.allows([senderKey(message)]))) {
+        case "steer":
+          steer.push(message);
+          break;
+        case "turn":
+          turn.push(message);
+          break;
+        case "aside":
+          aside.push(message);
+          break;
+        case "after-turn":
+          afterTurn.push(message);
+          break;
+        case "next-start":
+          nextStart.push(message);
+          break;
+      }
+    }
+    send(steer, "steer");
+    send(turn, "turn");
+    send(aside, "aside");
+  }
+
+  function send(messages: readonly AgentMessage[], how: "steer" | "turn" | "aside"): void {
+    if (messages.length === 0) return;
+    if (how !== "aside") wakes.spend(new Set(messages.map(senderKey)));
+    // A script's message is on the user's behalf: with one among them, the delivery is the user's.
+    const attribution = messages.some((message) => message.attribution === "user") ? "user" : "agent";
+    // `aside` at an idle omp starts a turn (and stays non-interrupting should a run start meanwhile).
+    pi.sendUserMessage(deliveryText(messages), { deliverAs: how === "steer" ? "steer" : "aside", attribution });
+    const ids = messages.map((message) => message.id);
+    client.api.agent.inbox({ tile: tile!, ack: ids, started: how === "turn" }).then(
+      (reply) => receive(reply.messages),
+      () => unacked.push(...ids),
+    );
+  }
+
+  // The turn ended: held `next-turn` messages go in as a new turn once omp is idle, unless another
+  // turn started first (they wait for that one's end).
+  function releaseAfterTurn(): void {
+    if (active || afterTurn.length === 0) return;
+    if (session && !session.isIdle()) {
+      setTimeout(releaseAfterTurn, 100);
+      return;
+    }
+    const held = afterTurn;
+    afterTurn = [];
+    deliver(held);
+  }
+
+  // omp's own `write agent://<name>` reaches only agents in this process. One it doesn't know is
+  // resolved through easl (a terminal's name, `name@board`, or tile id) and sent as a message;
+  // the result then says delivered, receipts included, so omp's card doesn't show a failure.
+  pi.on("tool_result", async (event) => {
+    if (event.toolName !== "write" || !event.isError) return;
+    const target = peerAddress(String(event.input?.path ?? ""));
+    const text = typeof event.input?.content === "string" ? event.input.content.trim() : "";
+    if (!target || !text) return;
+    const native = event.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+    if (!native.includes("Unknown agent")) return;
+    try {
+      const sent = await client.api.agent.prompt({ target, text, caller: tile });
+      const address = sent.agent.address;
+      const message = (event.details as Details | undefined)?.message;
+      const details = Array.isArray(message?.receipts)
+        ? { ...(event.details as Details), message: { ...message, receipts: message.receipts.map((receipt: Details) => ({ to: receipt.to, outcome: "injected" })) } }
+        : event.details;
+      const how =
+        sent.delivery === "message"
+          ? `It arrives as a message from you; replies come back as messages from ${address}.`
+          : `Its agent takes no messages, so the text was typed into its terminal.`;
+      return { isError: false, details, content: [{ type: "text", text: `Delivered to ${address}, an agent on an easl board. ${how}` }] };
+    } catch (error) {
+      const reason = error instanceof CanvasError ? `${error.code}: ${error.message}` : String(error);
+      return { content: [{ type: "text", text: `${native}\nNo easl delivery to ${target} either: ${reason}` }] };
+    }
   });
 
   // Tray drain, phase 1: peek the tray when the user actually submits prose. With `prompt`, this
