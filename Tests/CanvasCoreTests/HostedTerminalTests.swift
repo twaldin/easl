@@ -206,7 +206,8 @@ struct HostedTerminalTests {
                     break
                 os.write(1, data)
         """#)
-        let env = ["HOME=\(home.path)", "PATH=\(bin.path):/usr/bin:/bin", "FAKE_NC_PIDS=\(pids.path)"]
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        let env = ["HOME=\(home.path)", "PATH=\(bin.path):\(path)", "FAKE_NC_PIDS=\(pids.path)"]
         let start = Date()
         let reply = await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
@@ -236,6 +237,9 @@ struct HostedTerminalTests {
     /// challenge, then (when that came) the API's reply to a ping, nil when the gate closed instead.
     func throughGate(_ gate: RelayGate, token: String, name: String = "easl") async throws -> (answer: String?, reply: String?) {
         let client = try LineClient(path: gate.path)
+        // The gate closes on a wrong proof, before the ping that follows it: a failed write, not SIGPIPE.
+        var on: Int32 = 1
+        setsockopt(client.fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         let nonce = "00112233445566778899aabbccddeeff"
         client.send("\(name) \(nonce)")
         guard let answer = try? await client.nextText(timeout: 5) else { return (nil, nil) }

@@ -78,6 +78,9 @@ public enum HostedTerminal {
         let deadline = DispatchWorkItem { process.terminate() }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
         defer { deadline.cancel() }
+        // A process that already ended (ssh couldn't connect) makes the write fail, not raise
+        // SIGPIPE, which would end the app.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         try? input.fileHandleForWriting.write(contentsOf: line)
         var reply = Data()
         let reader = output.fileHandleForReading
