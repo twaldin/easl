@@ -151,17 +151,18 @@ public struct NeedsYou: Equatable, Sendable {
 }
 
 /// One thing on a board that needs the user, for Go to Next Needs-You (⌘J) and the top of Go to:
-/// a blocked agent's terminal (waiting on an approval or answer), an object with an attention
-/// marker, or a done agent's terminal (finished, its result not seen yet).
+/// a blocked agent's terminal (waiting on an approval or answer), an open question tile (an ask
+/// waiting on the user's answer: Question.swift), an object with an attention marker, or a done
+/// agent's terminal (finished, its result not seen yet).
 public struct NeedsYouItem: Equatable, Sendable {
     public enum Reason: Int, Comparable, Sendable {
-        case blocked, marked, done
+        case blocked, question, marked, done
         public static func < (lhs: Reason, rhs: Reason) -> Bool { lhs.rawValue < rhs.rawValue }
     }
 
     public var id: ObjectID
     public var reason: Reason
-    /// The lifecycle's or the marker's message.
+    /// The lifecycle's or the marker's message; a question's question.
     public var message: String?
     public var frame: Frame
 
@@ -172,20 +173,25 @@ public struct NeedsYouItem: Equatable, Sendable {
         self.frame = frame
     }
 
-    /// Blocked terminals first, then marked objects, then done terminals, each in reading order
-    /// (top to bottom, then left to right).
+    /// Blocked terminals first, then open questions, then marked objects, then done terminals,
+    /// each in reading order (top to bottom, then left to right).
     static func precedes(_ lhs: NeedsYouItem, _ rhs: NeedsYouItem) -> Bool {
         (lhs.reason.rawValue, lhs.frame.y, lhs.frame.x, lhs.id) < (rhs.reason.rawValue, rhs.frame.y, rhs.frame.x, rhs.id)
     }
 
-    /// What needs the user on a board, in visiting order; a terminal is listed once: blocked,
-    /// else marked, else done. A done agent stops being listed once seen (it turns `idle`).
-    public static func all(_ objects: [ObjectID: CanvasObject], attention: [ObjectID: Attention]) -> [NeedsYouItem] {
+    /// What needs the user on a board at `now`, in visiting order; an object is listed once:
+    /// blocked, else an open question (not past its `expiresAt`), else marked, else done. A done
+    /// agent stops being listed once seen (it turns `idle`), a question once it is answered,
+    /// cancelled or expired.
+    public static func all(_ objects: [ObjectID: CanvasObject], attention: [ObjectID: Attention], now: Date = Date()) -> [NeedsYouItem] {
         var items: [NeedsYouItem] = []
         for object in objects.values {
             let state = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
+            let question = object.type == .question ? QuestionSpec(object.props) : nil
             if state == LifecycleState.blocked.rawValue {
                 items.append(NeedsYouItem(id: object.id, reason: .blocked, message: object.props["lifecycle"]?["message"]?.string, frame: object.frame))
+            } else if let question, question.isWaiting(at: now) {
+                items.append(NeedsYouItem(id: object.id, reason: .question, message: question.question, frame: object.frame))
             } else if let marker = attention[object.id] {
                 items.append(NeedsYouItem(id: object.id, reason: .marked, message: marker.message, frame: object.frame))
             } else if state == LifecycleState.done.rawValue, object.props["lifecycle"]?["seen"]?.bool != true {

@@ -149,7 +149,8 @@ final class TileFrameView: NSView {
     private var accessibilityDetail: String?
 
     /// An agent terminal's lifecycle ("done", "blocked: approve Bash?"), a code tile's lines and
-    /// caption ("lines 1321–1331, Step 1/4 · …"), an image's caption; nil for anything else.
+    /// caption ("lines 1321–1331, Step 1/4 · …"), an image's caption, a question's status
+    /// ("open", "answered"); nil for anything else.
     static func accessibilityDetail(for object: CanvasObject) -> String? {
         let props = object.props
         func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }
@@ -166,6 +167,7 @@ final class TileFrameView: NSView {
             if let caption = nonEmpty(props["caption"]) { parts.append(CodeCaption.plain(caption)) }
             return parts.isEmpty ? nil : parts.joined(separator: ", ")
         case .image: return nonEmpty(props["caption"])
+        case .question: return QuestionSpec.status(of: props).rawValue
         default: return nil
         }
     }
@@ -434,6 +436,10 @@ final class TileFrameView: NSView {
         // The file name wherever the file is (`ImageProps.title`); the path is the tooltip's.
         case .image: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["path"].flatMap(\.string).map { ($0 as NSString).lastPathComponent } ?? "Image"
         case .diagram: return DiagramSpec.title(props)
+        // Who asks; a terminal asking is named in the body (its header's name).
+        case .question:
+            let asker = QuestionSpec(props).asker
+            return asker?.name.map { name in "Question from \(asker?.host.map { "\(name)@\($0)" } ?? name)" } ?? "Question"
         case .changes:
             let spec = ChangesSpec(props)
             if let title = props["title"]?.string { return title }

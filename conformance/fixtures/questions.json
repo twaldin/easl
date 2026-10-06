@@ -1,0 +1,2331 @@
+{
+  "scenario": "questions",
+  "description": "Question objects: create (asker defaulting to the calling terminal, sized by its options, size fit), each validation rule's invalid_params, object.find by type and status, answering through object.update (answer stamped, tile shrunk, the answer handed to the asking terminal's next drain), a closed question taking only archived, cancel, and expiry (a question created or updated past its expiresAt expires right after, announced as object.updated).",
+  "recordedOn": "easl question/tile (07d309a+#24 e07d9dd + question lane), dev instance",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:1>",
+        "frame": {
+          "h": 324,
+          "w": 460,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "context": [
+            {
+              "lines": {
+                "end": 20,
+                "start": 1
+              },
+              "path": "Sources/CanvasCore/Question.swift"
+            },
+            {
+              "url": "https://github.com/twaldin/easl/pull/28"
+            }
+          ],
+          "options": [
+            {
+              "id": "now",
+              "label": "Ship now",
+              "why": "it is done and green"
+            },
+            {
+              "id": "later",
+              "label": "After #28"
+            }
+          ],
+          "question": "Ship the question tile before the perf lane?",
+          "recommended": "now"
+        },
+        "type": "question"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 324,
+              "w": 460,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "asker": {
+                "tile": "<obj:1>"
+              },
+              "context": [
+                {
+                  "lines": {
+                    "end": 20,
+                    "start": 1
+                  },
+                  "path": "Sources/CanvasCore/Question.swift"
+                },
+                {
+                  "url": "https://github.com/twaldin/easl/pull/28"
+                }
+              ],
+              "options": [
+                {
+                  "id": "now",
+                  "label": "Ship now",
+                  "why": "it is done and green"
+                },
+                {
+                  "id": "later",
+                  "label": "After #28"
+                }
+              ],
+              "question": "Ship the question tile before the perf lane?",
+              "recommended": "now",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 324,
+              "w": 460,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "asker": {
+                "tile": "<obj:1>"
+              },
+              "context": [
+                {
+                  "lines": {
+                    "end": 20,
+                    "start": 1
+                  },
+                  "path": "Sources/CanvasCore/Question.swift"
+                },
+                {
+                  "url": "https://github.com/twaldin/easl/pull/28"
+                }
+              ],
+              "options": [
+                {
+                  "id": "now",
+                  "label": "Ship now",
+                  "why": "it is done and green"
+                },
+                {
+                  "id": "later",
+                  "label": "After #28"
+                }
+              ],
+              "question": "Ship the question tile before the perf lane?",
+              "recommended": "now",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "x": 600,
+          "y": 0
+        },
+        "props": {
+          "asker": {
+            "host": "mini",
+            "name": "cos"
+          },
+          "expiresAt": "2099-01-01T00:00:00Z",
+          "options": [
+            {
+              "id": "a",
+              "label": "ask"
+            },
+            {
+              "id": "b",
+              "label": "question"
+            },
+            {
+              "id": "c",
+              "label": "pick"
+            }
+          ],
+          "question": "Which name?"
+        },
+        "size": "fit",
+        "type": "question"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 344,
+              "w": 460,
+              "x": 600,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "asker": {
+                "host": "mini",
+                "name": "cos"
+              },
+              "expiresAt": "2099-01-01T00:00:00Z",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "ask"
+                },
+                {
+                  "id": "b",
+                  "label": "question"
+                },
+                {
+                  "id": "c",
+                  "label": "pick"
+                }
+              ],
+              "question": "Which name?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 344,
+              "w": 460,
+              "x": 600,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "asker": {
+                "host": "mini",
+                "name": "cos"
+              },
+              "expiresAt": "2099-01-01T00:00:00Z",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "ask"
+                },
+                {
+                  "id": "b",
+                  "label": "question"
+                },
+                {
+                  "id": "c",
+                  "label": "pick"
+                }
+              ],
+              "question": "Which name?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "props": {
+          "context": [
+            {
+              "object": "<obj:1>"
+            }
+          ],
+          "options": [
+            {
+              "id": "a",
+              "label": "A"
+            }
+          ],
+          "question": "Q?"
+        },
+        "type": "question",
+        "width": 500
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "h": 274,
+          "w": 500
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "options": [],
+          "question": "Q?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a question needs props.asker, {name, host?}, when no terminal asks it (no caller)"
+        },
+        "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "options": [],
+          "question": " "
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a question needs props.question, a non-empty string"
+        },
+        "id": "r7",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "options": {
+            "a": "A"
+          },
+          "question": "Q?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a question needs props.options, an array of {id, label, why?}"
+        },
+        "id": "r8",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "options": [
+            {
+              "description": "x",
+              "id": "a",
+              "label": "A"
+            }
+          ],
+          "question": "Q?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "options[0] has unknown key \"description\" (an option is {id, label, why?})"
+        },
+        "id": "r9",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "options": [
+            {
+              "id": "a",
+              "label": "A"
+            },
+            {
+              "id": "a",
+              "label": "B"
+            }
+          ],
+          "question": "Q?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "option id \"a\" is used twice"
+        },
+        "id": "r10",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "options": [
+            {
+              "id": "a",
+              "label": "A"
+            }
+          ],
+          "question": "Q?",
+          "recommended": "b"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "recommended \"b\" is not an option id (a)"
+        },
+        "id": "r11",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "context": [
+            {
+              "object": "not an id"
+            }
+          ],
+          "options": [
+            {
+              "id": "a",
+              "label": "A"
+            }
+          ],
+          "question": "Q?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "context[0] must be {object: \"obj_…\"}, {url: \"…\"}, or {path: \"…\", lines?: {start, end}}"
+        },
+        "id": "r12",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "asker": {
+            "host": "mini"
+          },
+          "options": [
+            {
+              "id": "a",
+              "label": "A"
+            }
+          ],
+          "question": "Q?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "asker must be {tile: \"obj_…\"} or {name, host?}"
+        },
+        "id": "r13",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "answer": {
+            "option": "a"
+          },
+          "asker": {
+            "name": "cos"
+          },
+          "options": [
+            {
+              "id": "a",
+              "label": "A"
+            }
+          ],
+          "question": "Q?",
+          "status": "answered"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a question is created open, not answered"
+        },
+        "id": "r14",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "expiresAt": "in an hour",
+          "options": [
+            {
+              "id": "a",
+              "label": "A"
+            }
+          ],
+          "question": "Q?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "expiresAt must be an ISO 8601 date-time, e.g. <time:iso>"
+        },
+        "id": "r15",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "archived": true,
+          "asker": {
+            "name": "cos"
+          },
+          "options": [
+            {
+              "id": "a",
+              "label": "A"
+            }
+          ],
+          "question": "Q?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "an open question can't be archived: answer or cancel it first"
+        },
+        "id": "r16",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "status": "open",
+        "type": "question"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "agent",
+                "tile": "<obj:1>"
+              },
+              "frame": {
+                "h": 324,
+                "w": 460,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "asker": {
+                  "tile": "<obj:1>"
+                },
+                "context": [
+                  {
+                    "lines": {
+                      "end": 20,
+                      "start": 1
+                    },
+                    "path": "Sources/CanvasCore/Question.swift"
+                  },
+                  {
+                    "url": "https://github.com/twaldin/easl/pull/28"
+                  }
+                ],
+                "options": [
+                  {
+                    "id": "now",
+                    "label": "Ship now",
+                    "why": "it is done and green"
+                  },
+                  {
+                    "id": "later",
+                    "label": "After #28"
+                  }
+                ],
+                "question": "Ship the question tile before the perf lane?",
+                "recommended": "now",
+                "status": "open"
+              },
+              "rev": "<rev:1>",
+              "type": "question",
+              "updatedAt": "<time:number>",
+              "z": 2
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 344,
+                "w": 460,
+                "x": 600,
+                "y": 0
+              },
+              "id": "<obj:3>",
+              "props": {
+                "asker": {
+                  "host": "mini",
+                  "name": "cos"
+                },
+                "expiresAt": "2099-01-01T00:00:00Z",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "ask"
+                  },
+                  {
+                    "id": "b",
+                    "label": "question"
+                  },
+                  {
+                    "id": "c",
+                    "label": "pick"
+                  }
+                ],
+                "question": "Which name?",
+                "status": "open"
+              },
+              "rev": "<rev:1>",
+              "type": "question",
+              "updatedAt": "<time:number>",
+              "z": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "key": "x",
+        "status": "open"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "object.find takes status only with type (e.g. type question, status open)"
+        },
+        "id": "r18",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "keyPrefix": "x",
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "object.find takes one of key, keyPrefix, or type"
+        },
+        "id": "r19",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "type": "questions"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown object type"
+        },
+        "id": "r20",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "props": {
+          "status": "answered"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "an answered question needs answer: {option, note?} or {note}"
+        },
+        "id": "r21",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "props": {
+          "answer": {
+            "option": "soon"
+          },
+          "status": "answered"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "answer.option \"soon\" is not an option id (now, later)"
+        },
+        "id": "r22",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "props": {
+          "answer": {
+            "note": "x"
+          },
+          "status": "cancelled"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "answer goes with status answered"
+        },
+        "id": "r23",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "props": {
+          "answer": {
+            "note": "after the perf lane lands",
+            "option": "later"
+          },
+          "status": "answered"
+        }
+      },
+      "response": {
+        "id": "r24",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 188,
+              "w": 460,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "answer": {
+                "at": "<time:iso>",
+                "by": {
+                  "kind": "user"
+                },
+                "note": "after the perf lane lands",
+                "option": "later"
+              },
+              "asker": {
+                "tile": "<obj:1>"
+              },
+              "context": [
+                {
+                  "lines": {
+                    "end": 20,
+                    "start": 1
+                  },
+                  "path": "Sources/CanvasCore/Question.swift"
+                },
+                {
+                  "url": "https://github.com/twaldin/easl/pull/28"
+                }
+              ],
+              "options": [
+                {
+                  "id": "now",
+                  "label": "Ship now",
+                  "why": "it is done and green"
+                },
+                {
+                  "id": "later",
+                  "label": "After #28"
+                }
+              ],
+              "question": "Ship the question tile before the perf lane?",
+              "recommended": "now",
+              "status": "answered"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 188,
+              "w": 460,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "answer": {
+                "at": "<time:iso>",
+                "by": {
+                  "kind": "user"
+                },
+                "note": "after the perf lane lands",
+                "option": "later"
+              },
+              "asker": {
+                "tile": "<obj:1>"
+              },
+              "context": [
+                {
+                  "lines": {
+                    "end": 20,
+                    "start": 1
+                  },
+                  "path": "Sources/CanvasCore/Question.swift"
+                },
+                {
+                  "url": "https://github.com/twaldin/easl/pull/28"
+                }
+              ],
+              "options": [
+                {
+                  "id": "now",
+                  "label": "Ship now",
+                  "why": "it is done and green"
+                },
+                {
+                  "id": "later",
+                  "label": "After #28"
+                }
+              ],
+              "question": "Ship the question tile before the perf lane?",
+              "recommended": "now",
+              "status": "answered"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:1>",
+        "peek": true
+      },
+      "response": {
+        "id": "r25",
+        "ok": true,
+        "result": {
+          "context": "<canvas-mentions board=\"<board>\" root=\"<root>\">\nYour question <obj:2> was answered (easl ask):\n[1] question <obj:2> \"Ship the question tile before the perf lane?\"\n    question: Ship the question tile before the perf lane?\n    asked by terminal <obj:1> · answered\n    [now] Ship now (recommended): it is done and green\n    [later] After #28\n    context: Sources/CanvasCore/Question.swift:1-20, https://github.com/twaldin/easl/pull/28\n    answer: [later] After #28 · note: \"after the perf lane lands\" · by the user at <time:iso>\nRead more with the easl SDK or CLI: easl get <id> --as graph; look with easl render <id>\n</canvas-mentions>",
+          "mentions": [
+            {
+              "id": "<men:1>",
+              "label": "question Ship the question tile befo…",
+              "ref": "canvas:<men:1>@rev2",
+              "summary": "[1] question <obj:2> \"Ship the question tile before the perf lane?\"\n    question: Ship the question tile before the perf lane?\n    asked by terminal <obj:1> · answered\n    [now] Ship now (recommended): it is done and green\n    [later] After #28\n    context: Sources/CanvasCore/Question.swift:1-20, https://github.com/twaldin/easl/pull/28\n    answer: [later] After #28 · note: \"after the perf lane lands\" · by the user at <time:iso>"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "props": {
+          "question": "Something else?"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "question <obj:2> is answered: only archived can change"
+        },
+        "id": "r26",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "props": {
+          "archived": true,
+          "status": "answered"
+        }
+      },
+      "response": {
+        "id": "r27",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 188,
+              "w": 460,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "answer": {
+                "at": "<time:iso>",
+                "by": {
+                  "kind": "user"
+                },
+                "note": "after the perf lane lands",
+                "option": "later"
+              },
+              "archived": true,
+              "asker": {
+                "tile": "<obj:1>"
+              },
+              "context": [
+                {
+                  "lines": {
+                    "end": 20,
+                    "start": 1
+                  },
+                  "path": "Sources/CanvasCore/Question.swift"
+                },
+                {
+                  "url": "https://github.com/twaldin/easl/pull/28"
+                }
+              ],
+              "options": [
+                {
+                  "id": "now",
+                  "label": "Ship now",
+                  "why": "it is done and green"
+                },
+                {
+                  "id": "later",
+                  "label": "After #28"
+                }
+              ],
+              "question": "Ship the question tile before the perf lane?",
+              "recommended": "now",
+              "status": "answered"
+            },
+            "rev": "<rev:3>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 188,
+              "w": 460,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "answer": {
+                "at": "<time:iso>",
+                "by": {
+                  "kind": "user"
+                },
+                "note": "after the perf lane lands",
+                "option": "later"
+              },
+              "archived": true,
+              "asker": {
+                "tile": "<obj:1>"
+              },
+              "context": [
+                {
+                  "lines": {
+                    "end": 20,
+                    "start": 1
+                  },
+                  "path": "Sources/CanvasCore/Question.swift"
+                },
+                {
+                  "url": "https://github.com/twaldin/easl/pull/28"
+                }
+              ],
+              "options": [
+                {
+                  "id": "now",
+                  "label": "Ship now",
+                  "why": "it is done and green"
+                },
+                {
+                  "id": "later",
+                  "label": "After #28"
+                }
+              ],
+              "question": "Ship the question tile before the perf lane?",
+              "recommended": "now",
+              "status": "answered"
+            },
+            "rev": "<rev:3>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:3>",
+        "props": {
+          "status": "cancelled"
+        }
+      },
+      "response": {
+        "id": "r28",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 148,
+              "w": 460,
+              "x": 600,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "asker": {
+                "host": "mini",
+                "name": "cos"
+              },
+              "expiresAt": "2099-01-01T00:00:00Z",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "ask"
+                },
+                {
+                  "id": "b",
+                  "label": "question"
+                },
+                {
+                  "id": "c",
+                  "label": "pick"
+                }
+              ],
+              "question": "Which name?",
+              "status": "cancelled"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 148,
+              "w": 460,
+              "x": 600,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "asker": {
+                "host": "mini",
+                "name": "cos"
+              },
+              "expiresAt": "2099-01-01T00:00:00Z",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "ask"
+                },
+                {
+                  "id": "b",
+                  "label": "question"
+                },
+                {
+                  "id": "c",
+                  "label": "pick"
+                }
+              ],
+              "question": "Which name?",
+              "status": "cancelled"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:3>",
+        "props": {
+          "status": "expired"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "question <obj:3> is cancelled: only archived can change"
+        },
+        "id": "r29",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 244,
+          "w": 460,
+          "x": 1200,
+          "y": 0
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "expiresAt": "<time:iso>",
+          "options": [
+            {
+              "id": "y",
+              "label": "Yes"
+            }
+          ],
+          "question": "Still needed?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "id": "r30",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 244,
+              "w": 460,
+              "x": 1200,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "expiresAt": "<time:iso>",
+              "options": [
+                {
+                  "id": "y",
+                  "label": "Yes"
+                }
+              ],
+              "question": "Still needed?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 244,
+              "w": 460,
+              "x": 1200,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "expiresAt": "<time:iso>",
+              "options": [
+                {
+                  "id": "y",
+                  "label": "Yes"
+                }
+              ],
+              "question": "Still needed?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 4
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 148,
+              "w": 460,
+              "x": 1200,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "expiresAt": "<time:iso>",
+              "options": [
+                {
+                  "id": "y",
+                  "label": "Yes"
+                }
+              ],
+              "question": "Still needed?",
+              "status": "expired"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r31",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 148,
+              "w": 460,
+              "x": 1200,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "expiresAt": "<time:iso>",
+              "options": [
+                {
+                  "id": "y",
+                  "label": "Yes"
+                }
+              ],
+              "question": "Still needed?",
+              "status": "expired"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 244,
+          "w": 460,
+          "x": 1800,
+          "y": 0
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "expiresAt": "2099-01-01T00:00:00Z",
+          "options": [
+            {
+              "id": "y",
+              "label": "Yes"
+            }
+          ],
+          "question": "Open for a while?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "id": "r32",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 244,
+              "w": 460,
+              "x": 1800,
+              "y": 0
+            },
+            "id": "<obj:5>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "expiresAt": "2099-01-01T00:00:00Z",
+              "options": [
+                {
+                  "id": "y",
+                  "label": "Yes"
+                }
+              ],
+              "question": "Open for a while?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 5
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 244,
+              "w": 460,
+              "x": 1800,
+              "y": 0
+            },
+            "id": "<obj:5>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "expiresAt": "2099-01-01T00:00:00Z",
+              "options": [
+                {
+                  "id": "y",
+                  "label": "Yes"
+                }
+              ],
+              "question": "Open for a while?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 5
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:5>",
+        "props": {
+          "expiresAt": "<time:iso>"
+        }
+      },
+      "response": {
+        "id": "r33",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 244,
+              "w": 460,
+              "x": 1800,
+              "y": 0
+            },
+            "id": "<obj:5>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "expiresAt": "<time:iso>",
+              "options": [
+                {
+                  "id": "y",
+                  "label": "Yes"
+                }
+              ],
+              "question": "Open for a while?",
+              "status": "open"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 244,
+              "w": 460,
+              "x": 1800,
+              "y": 0
+            },
+            "id": "<obj:5>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "expiresAt": "<time:iso>",
+              "options": [
+                {
+                  "id": "y",
+                  "label": "Yes"
+                }
+              ],
+              "question": "Open for a while?",
+              "status": "open"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 148,
+              "w": 460,
+              "x": 1800,
+              "y": 0
+            },
+            "id": "<obj:5>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "expiresAt": "<time:iso>",
+              "options": [
+                {
+                  "id": "y",
+                  "label": "Yes"
+                }
+              ],
+              "question": "Open for a while?",
+              "status": "expired"
+            },
+            "rev": "<rev:3>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 194,
+          "w": 460,
+          "x": 2400,
+          "y": 0
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "options": [],
+          "question": "Free text?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "id": "r34",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 194,
+              "w": 460,
+              "x": 2400,
+              "y": 0
+            },
+            "id": "<obj:6>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "options": [],
+              "question": "Free text?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 6
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 194,
+              "w": 460,
+              "x": 2400,
+              "y": 0
+            },
+            "id": "<obj:6>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "options": [],
+              "question": "Free text?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 6
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "status": "open",
+        "type": "question"
+      },
+      "response": {
+        "id": "r35",
+        "ok": true,
+        "result": {
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 194,
+                "w": 460,
+                "x": 2400,
+                "y": 0
+              },
+              "id": "<obj:6>",
+              "props": {
+                "asker": {
+                  "name": "cos"
+                },
+                "options": [],
+                "question": "Free text?",
+                "status": "open"
+              },
+              "rev": "<rev:1>",
+              "type": "question",
+              "updatedAt": "<time:number>",
+              "z": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:6>",
+        "props": {
+          "answer": {
+            "note": "no option needed"
+          },
+          "status": "answered"
+        }
+      },
+      "response": {
+        "id": "r36",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 188,
+              "w": 460,
+              "x": 2400,
+              "y": 0
+            },
+            "id": "<obj:6>",
+            "props": {
+              "answer": {
+                "at": "<time:iso>",
+                "by": {
+                  "kind": "user"
+                },
+                "note": "no option needed"
+              },
+              "asker": {
+                "name": "cos"
+              },
+              "options": [],
+              "question": "Free text?",
+              "status": "answered"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 188,
+              "w": 460,
+              "x": 2400,
+              "y": 0
+            },
+            "id": "<obj:6>",
+            "props": {
+              "answer": {
+                "at": "<time:iso>",
+                "by": {
+                  "kind": "user"
+                },
+                "note": "no option needed"
+              },
+              "asker": {
+                "name": "cos"
+              },
+              "options": [],
+              "question": "Free text?",
+              "status": "answered"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.find",
+      "method": "object.find",
+      "request": {
+        "board": "<board>",
+        "type": "question"
+      },
+      "response": {
+        "id": "r37",
+        "ok": true,
+        "result": {
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "agent",
+                "tile": "<obj:1>"
+              },
+              "frame": {
+                "h": 188,
+                "w": 460,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "answer": {
+                  "at": "<time:iso>",
+                  "by": {
+                    "kind": "user"
+                  },
+                  "note": "after the perf lane lands",
+                  "option": "later"
+                },
+                "archived": true,
+                "asker": {
+                  "tile": "<obj:1>"
+                },
+                "context": [
+                  {
+                    "lines": {
+                      "end": 20,
+                      "start": 1
+                    },
+                    "path": "Sources/CanvasCore/Question.swift"
+                  },
+                  {
+                    "url": "https://github.com/twaldin/easl/pull/28"
+                  }
+                ],
+                "options": [
+                  {
+                    "id": "now",
+                    "label": "Ship now",
+                    "why": "it is done and green"
+                  },
+                  {
+                    "id": "later",
+                    "label": "After #28"
+                  }
+                ],
+                "question": "Ship the question tile before the perf lane?",
+                "recommended": "now",
+                "status": "answered"
+              },
+              "rev": "<rev:3>",
+              "type": "question",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 2
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 148,
+                "w": 460,
+                "x": 600,
+                "y": 0
+              },
+              "id": "<obj:3>",
+              "props": {
+                "asker": {
+                  "host": "mini",
+                  "name": "cos"
+                },
+                "expiresAt": "2099-01-01T00:00:00Z",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "ask"
+                  },
+                  {
+                    "id": "b",
+                    "label": "question"
+                  },
+                  {
+                    "id": "c",
+                    "label": "pick"
+                  }
+                ],
+                "question": "Which name?",
+                "status": "cancelled"
+              },
+              "rev": "<rev:2>",
+              "type": "question",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 3
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 148,
+                "w": 460,
+                "x": 1200,
+                "y": 0
+              },
+              "id": "<obj:4>",
+              "props": {
+                "asker": {
+                  "name": "cos"
+                },
+                "expiresAt": "<time:iso>",
+                "options": [
+                  {
+                    "id": "y",
+                    "label": "Yes"
+                  }
+                ],
+                "question": "Still needed?",
+                "status": "expired"
+              },
+              "rev": "<rev:2>",
+              "type": "question",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 4
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 148,
+                "w": 460,
+                "x": 1800,
+                "y": 0
+              },
+              "id": "<obj:5>",
+              "props": {
+                "asker": {
+                  "name": "cos"
+                },
+                "expiresAt": "<time:iso>",
+                "options": [
+                  {
+                    "id": "y",
+                    "label": "Yes"
+                  }
+                ],
+                "question": "Open for a while?",
+                "status": "expired"
+              },
+              "rev": "<rev:3>",
+              "type": "question",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 5
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 188,
+                "w": 460,
+                "x": 2400,
+                "y": 0
+              },
+              "id": "<obj:6>",
+              "props": {
+                "answer": {
+                  "at": "<time:iso>",
+                  "by": {
+                    "kind": "user"
+                  },
+                  "note": "no option needed"
+                },
+                "asker": {
+                  "name": "cos"
+                },
+                "options": [],
+                "question": "Free text?",
+                "status": "answered"
+              },
+              "rev": "<rev:2>",
+              "type": "question",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 6
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

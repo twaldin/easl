@@ -49,7 +49,11 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
   Bubbles sit beside their tile, off other tiles (cut short, the whole message in the tooltip, when that's what keeps them off) and never over the terminal the user is typing in.
 - **Edge pill** (arrow + the start of the message; the whole message in its tooltip): something that needs the user is off screen that way; clicking it goes there.
   It sits on a stretch of the view's edge with no tile under it; when the edge is covered, it is a chip in the toolbar row beside the drawing toolbar.
-- **⌘J**: the next thing on this board that needs the user, blocked agents first, then markers, then agents that finished unseen; "Nothing needs you" when there's nothing.
+- **Question tile** (`type: question`, `easl ask`): an agent's question with its options (the recommended one outlined, each with its why), links to its context, and who asks.
+  The user presses a number (or clicks) to pick, may add a note, and Return (or Answer) answers; the answer reaches the asker, and the tile collapses to it. Dismiss cancels it; Archive (or Return twice on a selected closed one: the first enters it) hides a closed one, which then is neither selected, ⌘A'd nor framed by Zoom to Fit, though the API still lists it; cancelled and expired ones are dimmed.
+  VoiceOver reads the whole question (options with their why and the recommendation, context, asker, status, answer) and can press its options, links and buttons.
+- **Open asks**: the count beside the drawing toolbar of questions waiting on the user; clicking it goes to the next one.
+- **⌘J**: the next thing on this board that needs the user, blocked agents first, then open questions, then markers, then agents that finished unseen; "Nothing needs you" when there's nothing.
 
 ## Agents' tiles
 
@@ -78,7 +82,7 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 - ⌘P Go to (tiles, files, `@symbols`, and while typing a note's headings; `core.py:120` opens at a line; ⌘P again selects the query, Esc closes; an agent's terminal is framed with its follow tile when both fit); ⌘T new terminal; ⌘W close the selection (a terminal asks first; Close is ⌘⌫); ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
 - Right-click empty board for New Terminal Here, New Note Here and New Browser Here; File › New … puts them in the view.
 - ⌘-click a `path:line` in terminal output opens it in that terminal's preview tile; ⌥⌘-click opens a separate tile the user keeps.
-- Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the board.
+- Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page, a question); Esc gives the keyboard back to the board.
   In a terminal or a web page Esc belongs to the program or page: ⌘Esc (View › Leave Tile) leaves any tile.
 - Code › Go to Definition ⌃⌘J (Open Definition in New Tile ⌃⌥⌘J), Find References ⌃⌘R (Open All lays them out as excerpts), Outline ⌃⌘O (type to filter), and code tiles' hover use the language's server (sourcekit-lsp, pyright-langserver, typescript-language-server, gopls, rust-analyzer), found through the login shell: `EASL_LSP_<LANGUAGE>` (e.g. `EASL_LSP_RUST`) if set, else PATH, else nvim's mason bin, `~/go/bin`, `rustup which rust-analyzer`; without one they answer by text search, labelled so, and the panel says where easl looked.
 - A code tile without changes shows a quiet "no changes" (a file git ignores, such as a dependency under node_modules, a quiet "ignored by git"); its diff-base picker appears when the pointer is over the header.

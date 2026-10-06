@@ -198,8 +198,9 @@ func (b *Board) CallerCheckout(caller string) (string, bool) {
 }
 
 // InCallersCheckout is props with a caller's relative paths meaning its own checkout when it
-// works in another worktree of the board's repository. existing is the tile's props on a
-// re-aim (nil on a create).
+// works in another worktree of the board's repository (a question's relative `context` paths
+// become absolute there, as a code tile's `path`). existing is the tile's props on a re-aim (nil
+// on a create).
 func (b *Board) InCallersCheckout(props map[string]any, typ model.ObjectType, caller string, existing map[string]any) map[string]any {
 	checkout, ok := b.CallerCheckout(caller)
 	if props == nil || !ok {
@@ -233,6 +234,19 @@ func (b *Board) InCallersCheckout(props map[string]any, typ model.ObjectType, ca
 			break
 		}
 		fields["root"] = checkout
+	case model.Question:
+		items, ok := fields["context"].([]any)
+		if !ok {
+			break
+		}
+		for _, item := range items {
+			context, ok := item.(map[string]any)
+			path, isPath := context["path"].(string)
+			if !ok || !isPath || path == "" || strings.HasPrefix(path, "/") || strings.HasPrefix(path, "~") {
+				continue
+			}
+			context["path"] = store.Standardized(filepath.Join(checkout, path))
+		}
 	}
 	return fields
 }

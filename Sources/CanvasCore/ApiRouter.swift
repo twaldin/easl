@@ -51,6 +51,8 @@ public final class BoardRegistry {
                               summary: "easl started (pid \(ProcessInfo.processInfo.processIdentifier)); board opened with \(board.objects.count) objects")
         frontmost = frontmost ?? id
         replayAgentReports(on: board)
+        // Questions that expired while the board was closed expire now.
+        board.scheduleQuestionExpiry()
         return board
     }
 
@@ -915,7 +917,7 @@ public final class ApiRouter {
         case "object.create":
             let board = try board(p)
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
-            guard let props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
+            guard var props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
             try Self.checkProps(p)
             // Just w and h: that size, placed as a create without a frame is (near the caller).
             let frame = try p["frame"].map { value in
@@ -927,6 +929,7 @@ public final class ApiRouter {
             if type == .note || type == .html, let root = props["root"]?.string, !root.isEmpty { try board.checkLinkRoot(root) }
             try board.checkKey(props, for: nil)
             if type == .diagram, let problem = DiagramSpec.problem(props) { throw Failure("invalid_params", problem) }
+            if type == .question { props = try board.questionToCreate(props, caller: caller(p)) }
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p))
             return Self.withWarnings(["object": JSONValue(board.reported(object))], type.unknownPropWarnings(props))
 
@@ -934,12 +937,14 @@ public final class ApiRouter {
             let id = try string(p, "id")
             let board = try board(forObject: id)
             try Self.checkProps(p)
-            let frame = try p["frame"].map { try Self.frame($0, onto: board.object(id).frame) }
-            if let root = p["props"]?["root"]?.string, !root.isEmpty, [.note, .html].contains(try board.object(id).type) { try board.checkLinkRoot(root) }
-            if let patch = p["props"], try board.object(id).type == .diagram, let problem = DiagramSpec.problem(try board.object(id).props.merging(patch)) {
+            var frame = try p["frame"].map { try Self.frame($0, onto: board.object(id).frame) }
+            var props = p["props"]
+            if let root = props?["root"]?.string, !root.isEmpty, [.note, .html].contains(try board.object(id).type) { try board.checkLinkRoot(root) }
+            if let patch = props, try board.object(id).type == .diagram, let problem = DiagramSpec.problem(try board.object(id).props.merging(patch)) {
                 throw Failure("invalid_params", problem)
             }
-            let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: p["props"], caller: caller(p))
+            (props, frame) = try board.questionUpdate(id, props: props, frame: frame, caller: caller(p))
+            let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: props, caller: caller(p))
             return Self.withWarnings(["object": JSONValue(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
         case "object.delete":
@@ -1208,20 +1213,28 @@ public final class ApiRouter {
     }
 
     /// `object.find`: `key` → the object holding it, as `object.get` returns it; `keyPrefix` →
-    /// every object whose key starts with it, summarized as `board.get` lists them.
+    /// every object whose key starts with it, summarized as `board.get` lists them; `type` →
+    /// every object of that type (with `status`, whose `props.status` is that: open questions),
+    /// summarized likewise, oldest first.
     private func find(_ p: JSONValue) async throws -> JSONValue {
         let board = try board(p)
-        switch (p["key"]?.string, p["keyPrefix"]?.string) {
-        case (let key?, nil):
+        let key = p["key"]?.string, prefix = p["keyPrefix"]?.string, type = p["type"]?.string
+        guard [key, prefix, type].compactMap({ $0 }).count == 1 else { throw Failure("invalid_params", "object.find takes one of key, keyPrefix, or type") }
+        let status = p["status"]?.string
+        if status != nil, type == nil { throw Failure("invalid_params", "object.find takes status only with type (e.g. type question, status open)") }
+        if let key {
             guard let object = try board.holder(ofKey: key) else { throw BoardError.notFound("no object on board \(board.id) has key \"\(key)\"") }
             var params: [String: JSONValue] = ["id": .string(object.id)]
             if let view = p["as"] { params["as"] = view }
             return try await get(.object(params))
-        case (nil, let prefix?):
-            return .object(["objects": .array(board.reported(board.objects(keyPrefix: prefix)).map(summarized).map(JSONValue.init))])
-        default:
-            throw Failure("invalid_params", "object.find takes key or keyPrefix, one of them")
         }
+        if let prefix {
+            return .object(["objects": .array(board.reported(board.objects(keyPrefix: prefix)).map(summarized).map(JSONValue.init))])
+        }
+        guard let kind = type.flatMap(ObjectType.init) else { throw Failure("invalid_params", "unknown object type") }
+        let found = board.objects.values.filter { $0.type == kind && (status == nil || $0.props["status"]?.string == status) }
+            .sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+        return .object(["objects": .array(board.reported(found).map(summarized).map(JSONValue.init))])
     }
 
     /// What the ops of a batch before an upsert do to keys, which the board doesn't show until

@@ -64,7 +64,7 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"id"},
 	},
 	"object.find": {
-		Accepted: []string{"board", "key", "keyPrefix", "as"},
+		Accepted: []string{"board", "key", "keyPrefix", "type", "status", "as"},
 		Required: nil,
 	},
 	"object.create": {
@@ -499,6 +499,54 @@ type DiagramProps struct {
 	Key   *ObjectKey         `json:"key,omitempty"`
 }
 
+type QuestionPropsOptions struct {
+	// unique among the options; what `answer.option` names
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// the case for it, shown under the label
+	Why *string `json:"why,omitempty"`
+}
+
+// QuestionPropsAsker: who asks: a terminal on the board (`tile`; the answer is handed to it), or a name (an agent elsewhere, a script) on an optional host; at least one of tile and name. Default: the calling terminal (`caller`); a create without either is invalid_params
+type QuestionPropsAsker struct {
+	Tile *Id     `json:"tile,omitempty"`
+	Name *string `json:"name,omitempty"`
+	Host *string `json:"host,omitempty"`
+}
+
+// QuestionPropsAnswer: with status answered only: the picked option and/or a note (at least one); `at` and `by` are written by easl when the question becomes answered
+type QuestionPropsAnswer struct {
+	// an option id
+	Option *string `json:"option,omitempty"`
+	Note   *string `json:"note,omitempty"`
+	At     *string `json:"at,omitempty"`
+	// who answered: the user, or an agent's terminal (`caller`)
+	By Actor `json:"by,omitempty"`
+}
+
+// QuestionProps: A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `recommended` and `answer.option` name an option, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step)
+type QuestionProps struct {
+	Question string `json:"question"`
+	// what the user picks from (number keys 1–9 pick on the tile); may be empty, then the answer is a note
+	Options []QuestionPropsOptions `json:"options"`
+	// the id of the option the asker recommends; the tile marks it
+	Recommended *string `json:"recommended,omitempty"`
+	// what to look at before answering; each a link on the tile that opens beside it
+	Context []map[string]any `json:"context,omitempty"`
+	// who asks: a terminal on the board (`tile`; the answer is handed to it), or a name (an agent elsewhere, a script) on an optional host; at least one of tile and name. Default: the calling terminal (`caller`); a create without either is invalid_params
+	Asker *QuestionPropsAsker `json:"asker,omitempty"`
+	// written open on create; answered with `answer` (the user's pick on the tile, or an object.update), cancelled (the asker took it back: `easl ask cancel`, or the user dismissed it), expired (by easl at `expiresAt`) One of "open", "answered", "cancelled", "expired".
+	Status *string `json:"status,omitempty"`
+	// when an open question stops waiting (RFC 3339); none by default
+	ExpiresAt *string `json:"expiresAt,omitempty"`
+	// with status answered only: the picked option and/or a note (at least one); `at` and `by` are written by easl when the question becomes answered
+	Answer *QuestionPropsAnswer `json:"answer,omitempty"`
+	// true hides a closed question's tile (archive is not a status: `status` keeps how it ended, `answer` stays); an open question can't be archived
+	Archived *bool      `json:"archived,omitempty"`
+	Zoom     *Zoom      `json:"zoom,omitempty"`
+	Key      *ObjectKey `json:"key,omitempty"`
+}
+
 type ShapeProps struct {
 	// One of "rect", "ellipse", "text", "ink".
 	Kind string  `json:"kind"`
@@ -583,6 +631,7 @@ const (
 	ObjectTypeChanges  ObjectType = "changes"
 	ObjectTypeImage    ObjectType = "image"
 	ObjectTypeDiagram  ObjectType = "diagram"
+	ObjectTypeQuestion ObjectType = "question"
 	ObjectTypeShape    ObjectType = "shape"
 	ObjectTypeArrow    ObjectType = "arrow"
 	ObjectTypeGroup    ObjectType = "group"
@@ -600,7 +649,7 @@ type CanvasObject struct {
 	UpdatedBy Actor   `json:"updatedBy,omitempty"`
 	CreatedAt string  `json:"createdAt"`
 	UpdatedAt string  `json:"updatedAt"`
-	// one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)
+	// one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)
 	Props map[string]any `json:"props"`
 }
 

@@ -312,6 +312,23 @@ A marker's bubble is at most the object's width (240–480 pt), so put the point
 Raise one marker per thing your answer points at. Your first marker after the user's next prompt clears your earlier turns' markers (the result lists them in `cleared`), while markers of the same turn stay together:
 don't clear old ones yourself, and never re-raise the cleared ones; the user saw them with your last answer.
 
+## Asking the user
+
+When a decision is the user's to make and blocks you or another agent, post a question tile instead of asking in chat or building a `<canvas-decisions>` page.
+It carries discrete options and your recommendation, shows up in the user's ⌘J needs-you list and the board's open-asks count, and the answer comes back to you as a mention with your next prompt, or from `--wait`.
+
+```sh
+easl ask "Ship the migration before the freeze?" --option now="Ship now:needs the 9am deploy window" --option later="After the freeze" --recommend now --context src/migrate.ts:40-72 --expires 4h
+easl ask "Which name?" --option a=Atlas --option b=Beacon --wait   # blocks; the answer {id, option, label, note, at, by} prints as JSON, exit 0
+easl ask cancel obj_…                                              # the question is moot
+```
+
+- `--option id=label[:why]` repeats; `--recommend <id>` names your pick; `--context` points at what it is about (an `obj_…`, a URL, or `path:10-20`). Without options the answer is a note.
+- Without `--wait` the command returns at once: carry on, and the answer reaches you as an object mention. Use `--wait` only when nothing else can proceed; a question cancelled, expired (`--expires 30m`, `2h`, `1d`) or deleted ends it with the reason on stderr and exit 2.
+- Ask only what you can't decide yourself, one question per decision. Cancel one the moment it is moot (you found the answer, the plan changed): an open question keeps counting as something the user must do.
+- Keep `<canvas-decisions>` for an explanatory page with many choices recorded in its state, and chat for anything conversational.
+- `easl ask list --open` lists the board's open questions; `easl ask wait <id>` resumes waiting on one after an interruption.
+
 ## Whose objects are whose
 
 Every object records who created and last changed it (`createdBy`/`updatedBy`: `user` or an agent's tile).

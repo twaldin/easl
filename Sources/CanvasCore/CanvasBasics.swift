@@ -61,7 +61,9 @@ public enum CanvasBasics {
         Section(title: "Needs you", items: [
             Item(term: "Pink ring and bubble", text: "an attention marker: an agent (or a bell) says \"look here\". It clears when you select the tile, type in it, or look at it."),
             Item(term: "Pill at the edge", text: "something that needs you is off screen that way. Click it to go there."),
-            Item(term: "⌘J", text: "go to the next thing on this board that needs you: blocked agents first, then markers, then agents that finished while you looked elsewhere."),
+            Item(term: "Question tile", text: "an agent asks you to decide: its options (the recommended one outlined, each with why), links to what it's about, and who asks. Press a number to pick, add a note if you like, Return answers; the answer goes back to the agent. Archive hides an answered tile; a cancelled or expired one is dimmed."),
+            Item(term: "Open asks", text: "the count beside the drawing toolbar: questions waiting for you on this board. Click it to go to the next one."),
+            Item(term: "⌘J", text: "go to the next thing on this board that needs you: blocked agents first, then open questions, then markers, then agents that finished while you looked elsewhere."),
         ]),
         Section(title: "Agents' tiles", items: [
             Item(term: "Follow tile", text: "each agent's code tile follows the file and line it last read or edited; the strip under it lists recent places (a pencil marks an edit). Pin keeps a view; turn it off with right-click › Follow Files."),

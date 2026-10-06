@@ -576,7 +576,7 @@
       "response": {
         "error": {
           "code": "invalid_params",
-          "message": "object.find takes key or keyPrefix, one of them"
+          "message": "object.find takes one of key, keyPrefix, or type"
         },
         "id": "r14",
         "ok": false
@@ -593,7 +593,7 @@
       "response": {
         "error": {
           "code": "invalid_params",
-          "message": "object.find takes key or keyPrefix, one of them"
+          "message": "object.find takes one of key, keyPrefix, or type"
         },
         "id": "r15",
         "ok": false

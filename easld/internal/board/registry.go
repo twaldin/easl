@@ -106,6 +106,8 @@ func (r *Registry) Open(root string) (*Board, error) {
 		r.Frontmost = id
 	}
 	r.replayAgentReports(b)
+	// Questions that expired while the board was closed expire now.
+	b.ScheduleQuestionExpiry()
 	return b, nil
 }
 
@@ -132,6 +134,7 @@ func (r *Registry) load(root, id, commonDir string) (*Board, error) {
 		b.Repo = rec
 	}
 	b.OnChange = func() { r.Store.ScheduleSave(b.id, b.Snapshot) }
+	b.Lock = &r.Mu
 	return b, nil
 }
 
@@ -162,6 +165,7 @@ func (r *Registry) Containing(id string) (*Board, bool) {
 func (r *Registry) Close(id string) {
 	if b, ok := r.boards[id]; ok {
 		delete(r.boards, id)
+		b.StopQuestionExpiry()
 		r.Store.Cancel(id)
 		_ = r.Store.Write(b.Snapshot())
 	}

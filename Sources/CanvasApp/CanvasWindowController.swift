@@ -13,6 +13,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let emptyHint = EmptyBoardHint()
     private let basics = BasicsPanel()
     private let getStarted = GetStartedPanel()
+    /// The open-asks count beside the drawing toolbar (`AsksChip`).
+    private let asks = AsksChip()
     /// The walk-through's progress while Get Started is open.
     private var guide: GetStarted.Progress?
     private let registry: BoardRegistry
@@ -95,6 +97,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             emptyHint.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
         ])
         drawing = ShapeLayer.install(on: canvas, toolbarIn: container)
+        if let toolbar = drawing?.toolbar {
+            asks.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(asks)
+            NSLayoutConstraint.activate([
+                asks.leadingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: 12),
+                asks.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            ])
+        }
+        asks.onGo = { [weak self] in self?.canvas.goToNextAsk() }
         canvas.chromeInsets = { [weak container, weak tray, weak drawing, weak getStarted] in
             guard let container else { return NSEdgeInsets() }
             // The toolbar and tray sit at fixed offsets, so only a window never laid out needs a
@@ -107,18 +118,20 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return NSEdgeInsets(top: top, left: left, bottom: bottom, right: 0)
         }
         // Edge pills with no clear stretch of the view's edge go to the toolbar row beside the
-        // toolbar (`PillLayout`), which only the chrome uses.
-        canvas.chromeBands = { [weak container, weak drawing] in
+        // toolbar (`PillLayout`), which only the chrome uses (the open-asks count included).
+        canvas.chromeBands = { [weak container, weak drawing, weak asks] in
             guard let container, let toolbar = drawing?.toolbar, !toolbar.isHidden else { return [] }
             let bar = toolbar.frame, margin: CGFloat = 16
+            let right = asks.map { $0.isHidden ? bar.maxX : $0.frame.maxX } ?? bar.maxX
             return [NSRect(x: margin, y: bar.minY, width: bar.minX - 2 * margin, height: bar.height),
-                    NSRect(x: bar.maxX + margin, y: bar.minY, width: container.bounds.maxX - bar.maxX - 2 * margin, height: bar.height)]
+                    NSRect(x: right + margin, y: bar.minY, width: container.bounds.maxX - right - 2 * margin, height: bar.height)]
                 .filter { $0.width > 0 }.map { container.convert($0, to: nil) }
         }
         canvas.onChromeHiddenChange = { [weak self] in
             guard let self else { return }
             self.drawing?.toolbar?.isHidden = self.canvas.chromeHidden
             self.tray.isHidden = self.canvas.chromeHidden
+            self.refreshAsks()
         }
         // Above the toolbar and tray, so the navigator is never covered.
         for view in [nothingHere, getStarted, basics, navigator] {
@@ -198,6 +211,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         refreshTray()
         refreshTab()
         refreshEmptyHint()
+        refreshAsks()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -207,6 +221,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     @objc private func chromeTextChanged() {
         tray.chromeTextChanged()
         refreshTray()
+        refreshAsks()
     }
 
     func apply(_ event: BoardEvent) {
@@ -223,13 +238,21 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             refreshTray()
             refreshTab()
             refreshEmptyHint()
+            refreshAsks()
         case .objectUpdated(let object) where object.type == .terminal:
             // An agent starting or exiting in a terminal can move the target.
             settlePromptTarget()
             if composer.targets.contains(object.id) { refreshTray() }
             refreshTab()
+        case .objectUpdated(let object) where object.type == .question:
+            refreshAsks()
         default: break
         }
+    }
+
+    /// The open-asks count: questions waiting on the user (hidden with the board's chrome).
+    private func refreshAsks() {
+        asks.show(canvas.chromeHidden ? [] : board.waitingQuestions())
     }
 
     /// The composer's terminals (`ComposerController.send`): `agent.prompt` from the user, set by

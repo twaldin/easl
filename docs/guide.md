@@ -20,7 +20,9 @@ Terminal tiles are rendered by libghostty and use your Ghostty config (theme, co
 
 ## See which agent needs you
 
-Each agent's state is on its tile: blue working, orange needs you (an approval or a question, in a bubble with its message), green done and not yet seen. ⌘J goes to whoever on this board needs you next: blocked agents first, then marked tiles, then finished agents you haven't seen. A turn that ends while its tile is off-screen stays green until you look at it. When easl isn't in front, macOS notifications tell you, and a background board's tab shows a dot.
+Each agent's state is on its tile: blue working, orange needs you (an approval or a question, in a bubble with its message), green done and not yet seen. ⌘J goes to whoever on this board needs you next: blocked agents first, then open questions, then marked tiles, then finished agents you haven't seen. A turn that ends while its tile is off-screen stays green until you look at it. When easl isn't in front, macOS notifications tell you, and a background board's tab shows a dot.
+
+When an agent needs a decision from you, it posts a question tile (`easl ask`): the question, its options with the one it recommends marked and why, and links to what it is about. The count beside the drawing toolbar says how many are open; click it, or ⌘J, to go to one. Press a number to pick, add a note if you like, and Return answers. The answer goes back to the agent that asked (with its next prompt, or to a script waiting with `easl ask --wait`), and the tile collapses to your answer. Archive hides an answered tile; a question its asker cancelled, or that expired, stays dimmed until you archive or delete it.
 
 Which agents report their state and get your mentions:
 

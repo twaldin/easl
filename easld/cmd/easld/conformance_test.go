@@ -20,7 +20,7 @@ import (
 var passing = []string{
 	"agents", "arrows", "batch", "board-get-history", "boards", "code-tiles", "events",
 	"follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "metrics",
-	"open-url", "placement", "protocol", "tray",
+	"open-url", "placement", "protocol", "questions", "tray",
 }
 
 // Not passing yet, and why:

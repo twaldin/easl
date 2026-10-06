@@ -141,6 +141,8 @@ public final class Board {
     /// Per terminal, the code tile its last ⌘-click opened or re-aimed and that tile's `rev`
     /// then (`openCode`); in memory only.
     var codePreviews: [ObjectID: (tile: ObjectID, rev: Int)] = [:]
+    /// The pending check for the earliest open question's `expiresAt` (Question.swift).
+    var questionExpiry: DispatchWorkItem?
 
     public var onEvent: ((BoardEvent) -> Void)?
     /// Content changes by anyone, for ⌘Z; see UndoHistory.
@@ -278,7 +280,7 @@ public final class Board {
 
     @discardableResult
     public func create(type: ObjectType, props: JSONValue, frame: Frame? = nil, parent: ObjectID? = nil, caller: ObjectID? = nil) -> CanvasObject {
-        let size = Self.defaultSize(type)
+        let size = type == .question ? QuestionSpec.size(props) : Self.defaultSize(type)
         let z = (objects.values.map(\.z).max() ?? 0) + 1
         var object = CanvasObject(id: IDs.make("obj"), type: type, frame: frame ?? Frame(x: 0, y: 0, w: size.w, h: size.h), z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(),
                                   props: type == .terminal ? stampingWorktree(props) : props)
@@ -373,6 +375,7 @@ public final class Board {
         }
         markMentionsEdited(from: before, to: object)
         onEvent?(.objectUpdated(object))
+        if object.type == .question { questionWritten(before: before, after: object) }
         if before.frame != object.frame { refitGroups(containing: id, actor: credited, caller: caller, visited: refitting) }
         return object
     }
@@ -464,6 +467,7 @@ public final class Board {
             }
             markMentionsEdited(from: previous, to: object)
             onEvent?(.objectUpdated(object))
+            if object.type == .question { questionWritten(before: previous, after: object) }
         } else {
             log(.created, object, actor: replayActor, "restored \(ActivityLog.describe(object)) at \(ActivityLog.position(reported(object).frame))")
             onEvent?(.objectCreated(object))
@@ -492,6 +496,7 @@ public final class Board {
         changedAt[object.id] = revision
         revHighWater[object.id] = max(revHighWater[object.id] ?? 0, object.rev)
         onChange?()
+        if object.type == .question { scheduleQuestionExpiry() }
     }
 
     private func reindexKey(_ id: ObjectID, from old: JSONValue?, to new: JSONValue?) {
@@ -519,12 +524,15 @@ public final class Board {
     }
 
     /// Runs `body` as one undo step and one board revision; when it throws, every change it
-    /// made is reverted (announced as normal changes) and the error rethrown.
+    /// made is reverted (announced as normal changes), the hand-offs waiting for terminals are put
+    /// back as they were (an answer it handed off withdrawn, one a delete took restored), and the
+    /// error rethrown.
     public func atomically<T>(_ body: () throws -> T) throws -> T {
         let outermost = pinnedRevision == nil
         if outermost { pinnedRevision = revision + 1 }
         history.begin()
         let mark = history.mark()
+        let handed = handoffs
         defer {
             endStep()
             if outermost { pinnedRevision = nil }
@@ -539,6 +547,7 @@ public final class Board {
                 replayActor = .user
             }
             revert(history.discard(from: mark))
+            handoffs = handed
             throw error
         }
     }
@@ -554,6 +563,8 @@ public final class Board {
         case .changes: (820, 620)
         case .image: (640, 506)
         case .diagram: (760, 480)
+        // Three options, no context; a new question is sized by its props (`QuestionSpec.size`).
+        case .question: (QuestionSpec.width, QuestionSpec.openBase + 3 * QuestionSpec.optionRow)
         case .shape: (160, 100)
         case .arrow, .group: (0, 0)
         }

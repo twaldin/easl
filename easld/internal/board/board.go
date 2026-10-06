@@ -6,14 +6,17 @@ package board
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/mention"
 	"github.com/twaldin/easl/easld/internal/metrics"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/question"
 	"github.com/twaldin/easl/easld/internal/route"
 	"github.com/twaldin/easl/easld/internal/store"
 )
@@ -116,6 +119,15 @@ type Board struct {
 	Viewport func() *model.Frame
 	// settled is the drawing layer's last routing (Board.settledRouting).
 	settled *route.Result
+
+	// Lock is what serialises this board's work with everyone else's (the registry's Mu); the
+	// question expiry timer takes it to expire questions as a request would. A board without
+	// one (outside a registry) sets no timer: ExpireQuestions is the caller's.
+	Lock sync.Locker
+	// questionExpiry is the pending check for the earliest open question's expiresAt
+	// (Board.questionExpiry); expirySeq tells a timer that was replaced.
+	questionExpiry *time.Timer
+	expirySeq      int
 }
 
 // New is an empty board.
@@ -393,7 +405,6 @@ func DefaultSize(t model.ObjectType) (float64, float64) { return model.DefaultSi
 // Create adds an object (Board.create). Without a frame it is placed beside the caller, or at
 // the viewport's center (the origin without one); a group's frame follows its members.
 func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.Frame, parent, caller string) model.Object {
-	w, h := DefaultSize(typ)
 	z := 0.0
 	first := true
 	for _, o := range b.objects {
@@ -407,6 +418,10 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 		props = map[string]any{}
 	}
 	props, _ = model.Clone(props).(map[string]any)
+	w, h := DefaultSize(typ)
+	if typ == model.Question {
+		w, h = question.Size(props)
+	}
 	if typ == model.Terminal {
 		props = b.stampingWorktree(props)
 	}
@@ -548,6 +563,9 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 	data := o.APIJSON()
 	b.reanchorShown(before, o)
 	b.emit(EventObjectUpdated, data)
+	if o.Type == model.Question {
+		b.questionWritten(before, o)
+	}
 	if before.Frame != o.Frame {
 		b.refitGroups(id, credited, caller, refitting)
 	}
@@ -692,6 +710,9 @@ func (b *Board) restore(o model.Object) {
 		}
 		b.markMentionsEdited(previous, o)
 		b.emit(EventObjectUpdated, o.APIJSON())
+		if o.Type == model.Question {
+			b.questionWritten(previous, o)
+		}
 	} else {
 		b.log(KindCreated, o, b.replayActor, "restored "+Describe(o)+" at "+Position(b.ReportedOne(o).Frame), "", nil)
 		b.emit(EventObjectCreated, o.APIJSON())
@@ -711,6 +732,9 @@ func (b *Board) commit(o model.Object) {
 		b.revHighWater[o.ID] = o.Rev
 	}
 	b.changed()
+	if o.Type == model.Question {
+		b.ScheduleQuestionExpiry()
+	}
 }
 
 // countWrite counts a change to the board's objects for `app.metrics`: `board.write` (and the
@@ -743,8 +767,9 @@ func (b *Board) bumpRevision() {
 func (b *Board) endStep() { b.history.end() }
 
 // Atomically runs body as one step and one board revision; when it fails, every change it made
-// is reverted (announced as normal changes, logged as "reverted (batch failed)") and the error
-// returned.
+// is reverted (announced as normal changes, logged as "reverted (batch failed)"), the hand-offs
+// waiting for terminals are put back as they were (an answer it handed off withdrawn, one a
+// delete took restored), and the error returned.
 func (b *Board) Atomically(body func() error) error {
 	outermost := b.pinnedRevision == nil
 	if outermost {
@@ -753,6 +778,7 @@ func (b *Board) Atomically(body func() error) error {
 	}
 	b.history.begin()
 	mark := b.history.mark()
+	handed := maps.Clone(b.handoffs)
 	defer func() {
 		b.endStep()
 		if outermost {
@@ -763,6 +789,7 @@ func (b *Board) Atomically(body func() error) error {
 		b.replayVerb, b.replayActor = "reverted (batch failed)", SystemActor
 		b.revert(b.history.discard(mark))
 		b.replayVerb, b.replayActor = "", UserActor
+		b.handoffs = handed
 		return err
 	}
 	return nil

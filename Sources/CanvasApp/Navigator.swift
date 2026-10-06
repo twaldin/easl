@@ -83,6 +83,7 @@ extension CanvasView {
             if let message = item.message, !message.isEmpty { row.subtitle = message }
             switch item.reason {
             case .blocked: row.terms += ["blocked", "needs you"]
+            case .question: row.terms += ["question", "ask", "needs you"]
             case .marked: row.terms += ["marked", "needs you", "attention"]
             case .done: row.terms += ["done", "finished", "needs you"]
             }
@@ -166,6 +167,11 @@ extension CanvasView {
             let host = url.flatMap(URLComponents.init(string:)).flatMap { parts in parts.host.map { host in parts.port.map { "\(host):\($0)" } ?? host } }
             return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "Browser", dot: nil,
                                 subtitle: host, terms: url.map { [$0] } ?? [], toolTip: url)
+        case .question:
+            // The question is what it is found by; its title bar names who asks.
+            let spec = QuestionSpec(props)
+            return NavigatorRow(target: .object(object.id), title: spec.question.isEmpty ? "Question" : spec.question, kind: "Question", dot: nil,
+                                subtitle: spec.status == .open ? TileFrameView.title(for: object) : spec.status.rawValue.capitalized, terms: ["question", "ask"])
         default:
             return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: object.type.rawValue.capitalized, dot: nil)
         }
@@ -557,6 +563,7 @@ private final class NavigatorCell: NSTableCellView {
         let color: NSColor? = row.needs.map { needs in
             switch needs {
             case .blocked: AttentionStyle.blocked.color
+            case .question: NSColor.controlAccentColor
             case .marked: AttentionStyle.marker.color
             case .done: TileFrameView.badgeColor(LifecycleState.done.rawValue)
             }
@@ -564,6 +571,7 @@ private final class NavigatorCell: NSTableCellView {
         flag.stringValue = row.needs.map { needs in
             switch needs {
             case .blocked: " Blocked "
+            case .question: " Ask "
             case .marked: " Marked "
             case .done: " Done "
             }

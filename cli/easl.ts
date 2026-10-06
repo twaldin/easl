@@ -8,6 +8,8 @@
 //   easl render <id|id,id|x,y,w,h> [--out f.png] [--scale 2] [--full] ...   view.render
 //   easl browser <verb> [<tile>] [--key value] ...   browser tiles over the cmux subset (below)
 //   easl metrics [--watch] [--reset] [--json]       app.metrics as text (--watch: every second)
+//   easl ask "question" --option id=label[:why] ... [--wait]   a question tile for the user: object.create type question
+//   easl ask list|get|cancel|wait ...    the question verbs (object.find, object.get, object.update, the --wait loop); `easl ask --help`
 // view.render and view.snapshot write the image to --out (relative to the cwd; format from the
 // extension) or, without it, to a new file under $TMPDIR/easl-renders/, and print the result
 // metadata with its `path`; so does `browser screenshot`. object.create/update print prop values
@@ -15,10 +17,12 @@
 // Connection: EASL_SOCKET, EASL_TILE_ID, EASL_BOARD_ID (every easl terminal tile sets them);
 // `browser`: CMUX_SOCKET_PATH (else cmux.sock beside the easl socket), CMUX_SURFACE_ID,
 // CMUX_SOCKET_PASSWORD.
+// `ask --wait` waits on a dedicated event connection until the question is answered (the answer JSON on
+// stdout, exit 0) or closed unanswered (cancelled, expired or deleted: why on stderr, exit 2).
 // Errors print `code: message` to stderr and exit 1.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { connect } from "node:net";
-import { tmpdir } from "node:os";
+import { connect, type Socket } from "node:net";
+import { hostname, tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import catalog from "../schema/easl-api.json";
@@ -48,6 +52,20 @@ const SKILL = resolve(import.meta.dir, "../skills/easl/SKILL.md");
 /** Printed prop values longer than this (JSON bytes) are elided unless `--full`. */
 const ELIDE_BYTES = 1024;
 
+const ASK_FORMS = [
+  'easl ask "question" --option id=label[:why] ... [--recommend id] [--context obj_…|url|path[:a[-b]]] ... [--asker name[@host]] [--expires 30m|2h|1d|45s|ISO] [--board brd_…] [--wait]',
+  "easl ask --json '{...}' | --json @file | --json @-   (question, options, recommended, … as props; the flags add to them)",
+  "easl ask list [--open] [--board brd_…]",
+  "easl ask get <id> | cancel <id> | wait <id>",
+];
+const ASK_HELP = [
+  "`easl ask` puts a question tile on the board for the user. --option repeats (split at the first =, then the first :); with none, the answer is a note.",
+  "--context points at what the question is about: an object id, a URL (https://…, mailto:…), or a path with :line or :start-end.",
+  "--asker defaults to the asking terminal tile; outside a tile, to <user>@<short hostname>. --expires takes 45s, 30m, 2h, 1d or an ISO 8601 date-time.",
+  "--wait blocks until the user answers: the answer {id, option, label, note, at, by} prints as JSON, exit 0. Cancelled, expired or deleted: why on stderr, exit 2.",
+  "`ask wait <id>` does the same for a question already posted; `ask cancel <id>` withdraws one; `ask list --open` lists the open ones.",
+];
+
 function usage(help = false): never {
   const lines = [
     "usage: easl methods [<name>]",
@@ -56,6 +74,7 @@ function usage(help = false): never {
     "       easl render <id|id,id|x,y,w,h> [--out file.png] [--scale 2] [--full]",
     "       easl browser <verb> [<tile>] [--key value] [--json '{...}']   (open [url] | list | close | navigate, snapshot, click, …)",
     "       easl metrics [--watch] [--reset] [--json]",
+    ...ASK_FORMS.map((form) => `       ${form}`),
   ];
   if (help) {
     lines.push(
@@ -69,6 +88,7 @@ function usage(help = false): never {
       "`easl browser` drives browser tiles over the cmux subset (docs/contracts.md): `open [url]` opens one beside",
       "this terminal, `list` lists this board's, `close <tile>` closes one, any other verb sends browser.<verb> to <tile>",
       "(e.g. `easl browser snapshot obj_… --interactive`, `easl browser click obj_… --selector @e2`).",
+      ...ASK_HELP,
       "",
       `How to use easl well (read before building on the board): ${SKILL}`,
     );
@@ -432,6 +452,323 @@ if (argv[0] === "metrics") {
     process.exitCode = 1;
   } finally {
     client.close();
+  }
+  process.exit();
+}
+
+/** The flags of each `easl ask` form: [those that take a value (repeating one adds), bare ones]. */
+const ASK_FLAGS = {
+  create: [["json", "option", "recommend", "context", "asker", "expires", "board"], ["wait"]],
+  list: [["board"], ["open"]],
+  get: [[], []],
+  cancel: [[], []],
+  wait: [["board"], []],
+} as const;
+type AskForm = keyof typeof ASK_FLAGS;
+/** An object id (the schema's `Id`): a `--context` that matches it names an object. */
+const ID_PATTERN = /^[a-z]+_[0-9A-Za-z]+$/;
+const DURATION_SECONDS: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400 };
+
+function askHelp(help: boolean): never {
+  const lines = [`usage: ${ASK_FORMS[0]}`, ...ASK_FORMS.slice(1).map((form) => `       ${form}`), "", ...ASK_HELP];
+  (help ? console.log : console.error)(lines.join("\n"));
+  process.exit(help ? 0 : 2);
+}
+
+/** The positional arguments and flags of one `easl ask` form; a repeated flag keeps every value. */
+function askArgs(form: AskForm, args: string[]): { positional: string[]; flags: Map<string, string[]> } {
+  const [valued, bare] = ASK_FLAGS[form] as readonly [readonly string[], readonly string[]];
+  const positional: string[] = [];
+  const flags = new Map<string, string[]>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const name = arg.slice(2);
+    if (!arg.startsWith("--")) positional.push(arg);
+    else if (bare.includes(name)) flags.set(name, []);
+    else if (valued.includes(name)) {
+      const value = args[++i];
+      if (value === undefined) throw new CanvasError("invalid_params", `${arg} needs a value`);
+      flags.set(name, [...(flags.get(name) ?? []), value]);
+    } else {
+      throw new CanvasError("invalid_params", `unknown flag ${arg} for easl ask${form === "create" ? "" : ` ${form}`} (easl ask --help)`);
+    }
+  }
+  return { positional, flags };
+}
+
+/** `--option id=label[:why]`: the id ends at the first `=`, the label at the first `:` after it. */
+function parseOption(text: string): Record<string, string> {
+  const equals = text.indexOf("=");
+  if (equals < 0) throw new CanvasError("invalid_params", `--option takes id=label[:why], got "${text}"`);
+  const rest = text.slice(equals + 1);
+  const colon = rest.indexOf(":");
+  const option: Record<string, string> = { id: text.slice(0, equals).trim(), label: (colon < 0 ? rest : rest.slice(0, colon)).trim() };
+  const why = colon < 0 ? "" : rest.slice(colon + 1).trim();
+  if (why) option.why = why;
+  return option;
+}
+
+/**
+ * `--context`: an object id → {object}; a URL (a scheme, unless what follows the colon is only
+ * `N` or `N-M`: `notes.md:7` is a path) → {url}; else a path with an optional `:N` or `:N-M` → {path, lines}.
+ */
+function parseContext(text: string): Record<string, unknown> {
+  if (ID_PATTERN.test(text)) return { object: text };
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:(.*)$/s.exec(text);
+  if (scheme && !/^\d+(-\d+)?$/.test(scheme[1])) return { url: text };
+  const lines = /^(.+):(\d+)(?:-(\d+))?$/.exec(text);
+  if (!lines) return { path: text };
+  const start = Number(lines[2]);
+  return { path: lines[1], lines: { start, end: lines[3] === undefined ? start : Number(lines[3]) } };
+}
+
+/** `--asker name[@host]`. */
+function parseAsker(text: string): Record<string, string> {
+  const at = text.indexOf("@");
+  return at < 0 || at === text.length - 1 ? { name: at < 0 ? text : text.slice(0, at) } : { name: text.slice(0, at), host: text.slice(at + 1) };
+}
+
+/** `--expires`: 45s, 30m, 2h, 1d from now as UTC RFC 3339 in whole seconds; an ISO date-time as given. */
+function parseExpires(text: string): string {
+  const duration = /^(\d+)([smhd])$/.exec(text);
+  if (duration) {
+    const at = new Date((Math.floor(Date.now() / 1000) + Number(duration[1]) * DURATION_SECONDS[duration[2]]) * 1000);
+    if (!Number.isNaN(at.getTime())) return at.toISOString().replace(".000Z", "Z");
+  } else if (/^\d{4}-\d{2}-\d{2}T/.test(text)) {
+    return text;
+  }
+  throw new CanvasError("invalid_params", `--expires takes a duration (45s, 30m, 2h, 1d) or an ISO 8601 date-time, got "${text}"`);
+}
+
+/** Who asks when no terminal does (from a tile the server fills {tile}): this OS user on this host. */
+function defaultAsker(): Record<string, string> | undefined {
+  let name = process.env.USER;
+  try {
+    name = userInfo().username;
+  } catch {
+    // no passwd entry (a container): $USER
+  }
+  return name ? { name, host: hostname().split(".")[0] } : undefined;
+}
+
+/**
+ * The question's props: `--json` first, then the flags on top (the positional question and
+ * --recommend/--asker/--expires replace; --option and --context add). Without options the answer is a note.
+ */
+function questionProps(positional: string[], flags: Map<string, string[]>): Record<string, unknown> {
+  const props: Record<string, unknown> = {};
+  for (const value of flags.get("json") ?? []) Object.assign(props, jsonParams(value));
+  if (positional.length > 1) {
+    throw new CanvasError("invalid_params", `easl ask takes one question; quote it (got ${positional.length} arguments, "${positional[1]}" is the second)`);
+  }
+  if (positional.length === 1) props.question = positional[0];
+  for (const [flag, key, parse] of [
+    ["option", "options", parseOption],
+    ["context", "context", parseContext],
+  ] as const) {
+    const values = flags.get(flag);
+    if (values === undefined) continue;
+    const before = props[key] ?? [];
+    if (!Array.isArray(before)) throw new CanvasError("invalid_params", `--${flag} adds to ${key}, but --json gave ${key} that is not an array`);
+    props[key] = [...before, ...values.map(parse)];
+  }
+  props.options ??= [];
+  const recommend = flags.get("recommend")?.at(-1);
+  if (recommend !== undefined) props.recommended = recommend;
+  const expires = flags.get("expires")?.at(-1);
+  if (expires !== undefined) props.expiresAt = parseExpires(expires);
+  const asker = flags.get("asker")?.at(-1);
+  if (asker !== undefined) props.asker = parseAsker(asker);
+  else if (props.asker === undefined && !process.env.EASL_TILE_ID) props.asker = defaultAsker();
+  return props;
+}
+
+type EventMessage = { id?: string; ok?: boolean; error?: { code: string; message: string }; event?: string; data?: unknown };
+type QuestionObject = { id: string; type?: string; props?: Record<string, unknown> };
+
+/**
+ * A dedicated `events.subscribe` connection. clients/ts `subscribe` returns before the app has
+ * acknowledged it (a write made next can slip past) and cannot say the connection dropped, and
+ * `ask --wait` needs both, so the CLI frames its own.
+ */
+class EventStream {
+  #buffer = "";
+  readonly #lines: string[] = [];
+  #closed = false;
+  #wake: (() => void) | undefined;
+
+  constructor(readonly socket: Socket) {
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      this.#buffer += chunk;
+      for (let newline = this.#buffer.indexOf("\n"); newline >= 0; newline = this.#buffer.indexOf("\n")) {
+        const line = this.#buffer.slice(0, newline);
+        this.#buffer = this.#buffer.slice(newline + 1);
+        if (line) this.#lines.push(line);
+      }
+      this.#wake?.();
+    });
+    // `close` follows `end` and every error, after the data: a dropped connection always wakes the reader.
+    socket.on("error", () => undefined);
+    socket.on("close", () => {
+      this.#closed = true;
+      this.#wake?.();
+    });
+  }
+
+  /** The next line from the app; undefined once the connection has closed and nothing is left to read. */
+  async next(): Promise<EventMessage | undefined> {
+    for (;;) {
+      const line = this.#lines.shift();
+      if (line !== undefined) return JSON.parse(line) as EventMessage;
+      if (this.#closed) return undefined;
+      await new Promise<void>((resolve) => (this.#wake = resolve));
+    }
+  }
+
+  close(): void {
+    this.socket.destroy();
+  }
+}
+
+/** Subscribe to `board`'s events (every board's without one) and return once the app has acknowledged it. */
+async function openEvents(path: string, board: string | undefined): Promise<EventStream> {
+  const socket = connect(path);
+  const connected = Promise.withResolvers<void>();
+  socket.once("connect", () => connected.resolve());
+  socket.once("error", connected.reject);
+  try {
+    await connected.promise;
+  } catch (error) {
+    throw new CanvasError("unavailable", `easl socket ${path}: ${(error as Error).message}`);
+  }
+  const stream = new EventStream(socket);
+  socket.write(`${JSON.stringify({ id: "subscribe", method: "events.subscribe", params: board ? { board } : {} })}\n`);
+  for (;;) {
+    const message = await stream.next();
+    if (!message) throw new CanvasError("unavailable", "easl closed the event connection before acknowledging events.subscribe");
+    // Events ahead of the acknowledgment predate anything the caller does next.
+    if (message.id !== "subscribe") continue;
+    if (!message.ok) throw new CanvasError(message.error?.code ?? "internal_error", message.error?.message ?? "events.subscribe failed");
+    return stream;
+  }
+}
+
+/**
+ * What a question's state calls for: answered → the answer JSON on stdout, 0; cancelled or
+ * expired → why on stderr, 2; still open → undefined.
+ */
+function questionOutcome(object: QuestionObject): number | undefined {
+  const props = object.props ?? {};
+  const status = props.status ?? "open";
+  if (status === "answered") {
+    const { option, note, at, by, ...rest } = (props.answer ?? {}) as Record<string, unknown>;
+    const options = Array.isArray(props.options) ? (props.options as { id?: unknown; label?: unknown }[]) : [];
+    const label = options.find((candidate) => option !== undefined && candidate.id === option)?.label;
+    console.log(JSON.stringify({ id: object.id, option: option ?? undefined, label, note: note ?? undefined, at, by, ...rest }, null, 2));
+    return 0;
+  }
+  if (status === "cancelled") console.error(`cancelled: question ${object.id} was cancelled`);
+  else if (status === "expired") console.error(`expired: question ${object.id} expired`);
+  else return undefined;
+  return 2;
+}
+
+/** A question gone from the board: why on stderr, 2. */
+function questionDeleted(id: string): number {
+  console.error(`deleted: question ${id} was deleted`);
+  return 2;
+}
+
+/** Read events until question `id` is answered, closed or deleted; a dropped connection is an error. */
+async function awaitQuestion(id: string, events: EventStream): Promise<number> {
+  for (;;) {
+    const message = await events.next();
+    if (!message) throw new CanvasError("unavailable", `the event connection closed before question ${id} was answered (\`easl ask wait ${id}\` resumes)`);
+    const object = message.data as QuestionObject | undefined;
+    if (object?.id !== id) continue;
+    if (message.event === "object.deleted") return questionDeleted(id);
+    const outcome = message.event === "object.updated" ? questionOutcome(object) : undefined;
+    if (outcome !== undefined) return outcome;
+  }
+}
+
+/**
+ * `easl ask`: a question tile for the user (create), or `list`/`get`/`cancel`/`wait` on them. Returns the
+ * exit code: 0, or 2 for `--wait`/`wait` on a question that ended without an answer.
+ */
+async function ask(args: string[]): Promise<number> {
+  if (args.length === 0) askHelp(false);
+  if (args.includes("--help") || args.includes("-h")) askHelp(true);
+  const form: AskForm = args[0] !== "create" && Object.hasOwn(ASK_FLAGS, args[0]) ? (args[0] as AskForm) : "create";
+  const { positional, flags } = askArgs(form, form === "create" ? args : args.slice(1));
+  const last = (name: string) => flags.get(name)?.at(-1);
+  const show = (result: unknown) => console.log(JSON.stringify(result, null, 2));
+  if (form === "list" && positional.length > 0) throw new CanvasError("invalid_params", "easl ask list takes no arguments");
+  if ((form === "get" || form === "cancel" || form === "wait") && positional.length !== 1) {
+    throw new CanvasError("invalid_params", `easl ask ${form} takes one question id`);
+  }
+  const id = positional[0];
+  const props = form === "create" ? questionProps(positional, flags) : undefined;
+
+  const client = new CanvasClient();
+  try {
+    if (form === "list") {
+      const params: Record<string, unknown> = { type: "question" };
+      if (flags.has("open")) params.status = "open";
+      if (last("board")) params.board = last("board");
+      show(await client.call("object.find", params, ["board"]));
+    } else if (form === "get") {
+      show(await client.call("object.get", { id }, []));
+    } else if (form === "cancel") {
+      show(await client.call("object.update", { id, props: { status: "cancelled" } }, ["caller"]));
+    } else if (form === "wait") {
+      // Subscribe first, then read: a change in between is still on the stream.
+      const events = await openEvents(client.socketPath, last("board"));
+      try {
+        let object: QuestionObject;
+        try {
+          ({ object } = (await client.call("object.get", { id }, [])) as { object: QuestionObject });
+        } catch (error) {
+          // Deleted before the subscription, or after it and before this read (its object.deleted
+          // is queued unread): the same outcome as a deletion during the wait.
+          if (error instanceof CanvasError && error.code === "not_found") return questionDeleted(id);
+          throw error;
+        }
+        if (object.type !== "question") throw new CanvasError("invalid_params", `${id} is a ${object.type}, not a question`);
+        return questionOutcome(object) ?? (await awaitQuestion(id, events));
+      } finally {
+        events.close();
+      }
+    } else {
+      const params: Record<string, unknown> = { type: "question", props };
+      if (last("board")) params.board = last("board");
+      if (!flags.has("wait")) {
+        show(await client.call("object.create", params, ["board", "caller"]));
+        return 0;
+      }
+      // Subscribed before the create, to the board it lands on when that is known, else to every board: no update can be missed.
+      const events = await openEvents(client.socketPath, last("board") ?? client.boardId);
+      try {
+        const created = (await client.call("object.create", params, ["board", "caller"])) as { object: QuestionObject };
+        return await awaitQuestion(created.object.id, events);
+      } finally {
+        events.close();
+      }
+    }
+    return 0;
+  } finally {
+    client.close();
+  }
+}
+
+if (argv[0] === "ask") {
+  try {
+    process.exitCode = await ask(argv.slice(1));
+  } catch (error) {
+    if (error instanceof CanvasError) console.error(`${error.code}: ${error.message}`);
+    else console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
   }
   process.exit();
 }

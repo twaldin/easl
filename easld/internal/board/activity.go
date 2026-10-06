@@ -291,6 +291,8 @@ func Describe(o model.Object) string {
 		return "image " + path + q("title")
 	case model.Diagram:
 		return "diagram" + quoted(diagramTitle(p), true)
+	case model.Question:
+		return "question" + q("question")
 	case model.Browser:
 		return "browser " + str("url")
 	case model.Terminal:

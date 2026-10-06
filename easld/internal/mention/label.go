@@ -110,6 +110,11 @@ func Title(o model.Object) string {
 		return "image"
 	case model.Diagram:
 		return diagramTitle(p)
+	case model.Question:
+		if s, ok := str(p, "question"); ok {
+			return s
+		}
+		return "question"
 	case model.Shape:
 		if s, ok := str(p, "text"); ok {
 			return s
