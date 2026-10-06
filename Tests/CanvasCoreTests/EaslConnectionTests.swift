@@ -68,8 +68,10 @@ final class EaslConnectionTests {
         }
     }
 
-    /// The first state in `states` that is `wanted`, within `seconds`.
-    func reach(_ wanted: EaslConnection.State, _ connection: EaslConnection, within seconds: Double = 5) async -> Bool {
+    /// The first state in `states` that is `wanted`, within `seconds`: long, since the whole
+    /// suite starts at once and a CI runner can stall every test for seconds; only a failing
+    /// test waits it out.
+    func reach(_ wanted: EaslConnection.State, _ connection: EaslConnection, within seconds: Double = 30) async -> Bool {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
             if connection.state == wanted { return true }
@@ -80,7 +82,7 @@ final class EaslConnectionTests {
 
     /// `body`'s answer, or nil after `seconds`: a stream that never yields fails the test
     /// instead of hanging the suite.
-    func within<T: Sendable>(_ seconds: Double = 5, _ body: @escaping @Sendable () async -> T?) async -> T? {
+    func within<T: Sendable>(_ seconds: Double = 30, _ body: @escaping @Sendable () async -> T?) async -> T? {
         await withTaskGroup(of: T?.self) { group in
             group.addTask { await body() }
             group.addTask {
