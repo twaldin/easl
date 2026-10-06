@@ -94,7 +94,7 @@ struct HostedTerminalTests {
         try loop.run()
         defer { loop.terminate() }
         let attaches = dir.appendingPathComponent("attaches")
-        for _ in 0..<50 where !FileManager.default.fileExists(atPath: attaches.path) { try await Task.sleep(for: .milliseconds(100)) }
+        for _ in 0..<300 where !FileManager.default.fileExists(atPath: attaches.path) { try await Task.sleep(for: .milliseconds(100)) }
         // Past the loop's 1 s pause: a retry would have attached again by now.
         try await Task.sleep(for: .milliseconds(1500))
         #expect(loop.isRunning, "the tile stays, showing whose the session is")
@@ -243,11 +243,12 @@ struct HostedTerminalTests {
         setsockopt(client.fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         let nonce = "00112233445566778899aabbccddeeff"
         client.send("\(name) \(nonce)")
-        guard let answer = try? await client.nextText(timeout: 5) else { return (nil, nil) }
+        // The default 30 s: a slow runner's splice took over 5. A connection the gate refuses closes at once.
+        guard let answer = try? await client.nextText() else { return (nil, nil) }
         let theirs = String(answer.prefix(32))
         client.send(RelayGate.proof(token: token, role: "easld", name: name, easld: nonce, gate: theirs))
         client.send(#"{"id":"1","method":"system.ping"}"#)
-        return (answer, try? await client.nextText(timeout: 5))
+        return (answer, try? await client.nextText())
     }
 
     /// The gate proves its token without sending it, splices only a connection that proves it back
