@@ -118,23 +118,37 @@ launch() {
   bundle="$("$repo/scripts/dev-bundle.sh" $([ -n "${EASL_DEV_HOME:-}" ] || echo --release-id) "$app" "$home" "$@")"
   n=$#
   while [ "$n" -gt 0 ]; do set -- "$@" --env "$1"; shift; n=$((n - 1)); done
-  # yabai can't place a new window on another display's Space (it lands on the Space being
-  # viewed), so a one-shot rule parks this launch's first window on an unviewed Space of the
-  # built-in display, and it moves to the testing Space once it exists. One-shot and removed
-  # afterwards: a standing rule on app=easl also grabbed every later window (tabs, other
-  # instances, the user's own boards) and hid them on the parking Space.
-  rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
-  if [ -x "$yabai" ]; then
-    "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-    "$yabai" -m rule --add --one-shot label="$rule" app="^easl$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
+  # EASL_DEV_LAUNCHER (a command, split on spaces) launches instead of `open -g -n`, with the same
+  # `open` arguments, in the background (its output in $home/launcher.log), and places the window
+  # itself: a guard that keeps test windows off a shared Mac's viewed Spaces, such as
+  # `gui-launch --space 7 --guard-seconds 7200 -- -n` (docs/testing.md).
+  if [ -n "${EASL_DEV_LAUNCHER:-}" ]; then
+    # shellcheck disable=SC2086
+    $EASL_DEV_LAUNCHER --stdout "$home/app.log" --stderr "$home/app.log" --env EASL_HOME="$home" "$@" "$bundle" > "$home/launcher.log" 2>&1 &
+  else
+    # yabai can't place a new window on another display's Space (it lands on the Space being
+    # viewed), so a one-shot rule parks this launch's first window on an unviewed Space of the
+    # built-in display, and it moves to the testing Space once it exists. One-shot and removed
+    # afterwards: a standing rule on app=easl also grabbed every later window (tabs, other
+    # instances, the user's own boards) and hid them on the parking Space.
+    rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
+    if [ -x "$yabai" ]; then
+      "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
+      "$yabai" -m rule --add --one-shot label="$rule" app="^easl$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
+    fi
+    open -g -n --stdout "$home/app.log" --stderr "$home/app.log" --env EASL_HOME="$home" "$@" "$bundle"
   fi
-  open -g -n --stdout "$home/app.log" --stderr "$home/app.log" --env EASL_HOME="$home" "$@" "$bundle"
   i=0
   while [ ! -S "$EASL_SOCKET" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
   [ -S "$EASL_SOCKET" ] || { echo "easl did not open its socket; see $home/app.log" >&2; exit 1; }
   # The socket's owner, not the newest process of this bundle: parallel launches of one bundle race.
   lsof -t "$EASL_SOCKET" | head -n 1 > "$home/pid"
-  if [ ! -x "$yabai" ]; then
+  if [ -n "${EASL_DEV_LAUNCHER:-}" ] || [ ! -x "$yabai" ]; then
+    # The launcher places the window; callers that look it up by pid (perf-loop.py) find it here.
+    if [ -x "$yabai" ]; then
+      i=0
+      while [ -z "$(window_id)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+    fi
     echo "easl pid $(cat "$home/pid"), EASL_SOCKET=$EASL_SOCKET"
     return
   fi
