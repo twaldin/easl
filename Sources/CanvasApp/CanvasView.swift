@@ -157,8 +157,11 @@ final class CanvasView: NSScrollView {
     /// Who the activity log credits for viewport moves: the user, except while the app moves it.
     private var viewportMover: ActivityActor = .user
     private var activitySettle: DispatchWorkItem?
-    /// This client's record of where the view was left (`SavedViewport`), not the board's.
-    private var viewportRecorder: SavedViewport.Recorder
+    /// This client's record of where the view was left (`SavedViewport`), not the board's; none
+    /// for a remote board, which leaves nothing on disk.
+    private var viewportRecorder: SavedViewport.Recorder?
+    /// The host a remote board mirrors and how its tiles reach it; nil for a local board.
+    let remote: RemoteSource?
     /// Whether the opening view is in place: nothing is saved before it, or a board closed in its
     /// first turn would record the unplaced view over the real one.
     private var viewPlaced = false
@@ -220,9 +223,10 @@ final class CanvasView: NSScrollView {
         var lasso: Bool
     }
 
-    init(board: Board) {
+    init(board: Board, remote: RemoteSource? = nil) {
         self.board = board
-        viewportRecorder = SavedViewport.Recorder(store: SavedViewport.Store(url: AppPaths.viewport(of: board.id)))
+        self.remote = remote
+        viewportRecorder = remote == nil ? SavedViewport.Recorder(store: SavedViewport.Store(url: AppPaths.viewport(of: board.id))) : nil
         super.init(frame: .zero)
         documentView = document
         document.canvas = self
@@ -384,7 +388,7 @@ final class CanvasView: NSScrollView {
         if object.type == .group { return addGroup(object) }
         guard tiles[object.id] == nil, TileFactory.hasTile(object.type), !TileFactory.hidden(object) else { return }
         let id = object.id
-        let content = TileFactory.make(object, board: board)
+        let content = TileFactory.make(object, board: board, remote: remote)
         if chromeHidden { (content as? CodeTile)?.setPresenting(true) }
         if let terminal = content as? TerminalTile {
             terminal.onTitle = { [weak self] title in
@@ -979,6 +983,7 @@ final class CanvasView: NSScrollView {
     }
 
     func bringToFront() {
+        guard !board.isRemote else { return showNotice("Restacking isn't sent to a remote board's host yet") }
         let ids = expandedSelection().sorted { (board.objects[$0]?.z ?? 0) < (board.objects[$1]?.z ?? 0) }
         var top = board.objects.values.map(\.z).max() ?? 0
         board.transaction {
@@ -990,6 +995,7 @@ final class CanvasView: NSScrollView {
     }
 
     func sendToBack() {
+        guard !board.isRemote else { return showNotice("Restacking isn't sent to a remote board's host yet") }
         let ids = expandedSelection().sorted { (board.objects[$0]?.z ?? 0) > (board.objects[$1]?.z ?? 0) }
         var bottom = board.objects.values.map(\.z).min() ?? 0
         board.transaction {
@@ -1579,7 +1585,7 @@ final class CanvasView: NSScrollView {
     /// The view a board opens with: where this client left it (zoom and centre), else the top of
     /// its content (`centerOnContent`), as every board's first open.
     private func placeOpeningView() {
-        if let saved = viewportRecorder.opened {
+        if let saved = viewportRecorder?.opened {
             restoreView(saved)
             openedAtSavedView = saved
         } else {
@@ -1650,7 +1656,7 @@ final class CanvasView: NSScrollView {
     func saveViewport() {
         viewportSave?.cancel()
         guard viewPlaced else { return }
-        viewportRecorder.record(currentViewport)
+        viewportRecorder?.record(currentViewport)
     }
 
     private func scroll(to origin: NSPoint) {

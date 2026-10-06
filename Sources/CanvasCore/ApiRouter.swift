@@ -536,11 +536,33 @@ public final class ApiRouter {
     /// its turn (`working`): the prompt joins that turn, whose end answers it. A `blocked` agent is
     /// refused unless `force`: its screen holds a dialog or selector, which would take the text.
     private func prompt(_ p: JSONValue) async throws -> JSONValue {
+        try Self.checkComposer(p)
         let (board, terminal) = try agentTile(try string(p, "target"))
         let text = try string(p, "text")
         let mentions = p["mentions"]?.array ?? []
+        if p["composer"]?.bool == true {
+            // A composer in another app (a remote board's viewer): what this app's composer sends.
+            let answer = p["answer"]?.bool == true
+            let given: [Mention] = answer ? [] : try mentions.map { json in
+                let target = try HandoffMention(json: json).target(on: board)
+                return Mention(id: IDs.make("men"), target: target, label: MentionContext.label(for: target, on: board), stagedAt: Date())
+            }
+            return try await submitPrompt(text, to: terminal, on: board, attached: .composer(given, answer: answer), caller: nil, force: false)
+        }
         return try await submitPrompt(text, to: terminal, on: board, attached: .agent { try mentions.map { try HandoffMention(json: $0).target(on: board) } },
                                       caller: p["caller"]?.string, force: p["force"]?.bool == true)
+    }
+
+    /// `agent.prompt`'s `composer` and `answer`, checked before the target: only the user answers
+    /// (`answer` needs `composer`), and the composer's prompt is the user's (no `caller`, no `force`).
+    static func checkComposer(_ p: JSONValue) throws {
+        let composer = p["composer"]?.bool == true
+        if p["answer"]?.bool == true, !composer {
+            throw Failure("invalid_params", "answer is the user's answer from a composer: it needs composer: true (an agent or script sends force: true instead)")
+        }
+        guard composer else { return }
+        if p["caller"].map({ $0 != .null }) == true { throw Failure("invalid_params", "a composer's prompt is the user's: it takes no caller") }
+        if p["force"]?.bool == true { throw Failure("invalid_params", "a composer's prompt never forces: answer: true answers a blocked target") }
     }
 
     /// What goes with a prompt: an agent's `mentions` (`Board.handOff`), or the composer's.
@@ -684,6 +706,8 @@ public final class ApiRouter {
 
     /// `view.render`: parse the target, render offscreen in the app, then deliver the image.
     private func render(_ p: JSONValue) async throws -> JSONValue {
+        let inline = p["inline"]?.bool == true
+        if inline, p["out"] != nil { throw Failure("invalid_params", "inline returns the image in the reply and out writes it to a file: pass one of them") }
         let board: Board
         let target: RenderTarget
         switch p["target"] {
@@ -715,11 +739,19 @@ public final class ApiRouter {
         let (format, out) = try imageDestination(p, name: "render")
         guard let renderView else { throw Failure("unsupported", "rendering needs the app UI") }
         let output = try await renderView(board, request, format)
-        var result = try await deliver(output, to: out)
+        var result = inline ? Self.inlined(output) : try await deliver(output, to: out)
         result["canvasRect"] = RenderMath.json(output.canvasRect)
         result["scale"] = .number(output.scale)
         result["objects"] = .array(output.objects.map(\.json))
         return .object(result)
+    }
+
+    /// `view.render` `inline`: the image in the reply, base64, and no file written.
+    static func inlined(_ output: RenderOutput) -> [String: JSONValue] {
+        [
+            "data": .string(output.image.base64EncodedString()), "format": .string(output.format.rawValue),
+            "width": .number(Double(output.width)), "height": .number(Double(output.height)),
+        ]
     }
 
     /// `view.snapshot`: the window as shown, with the viewport it shows.

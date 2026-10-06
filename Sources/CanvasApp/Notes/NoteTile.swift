@@ -189,7 +189,7 @@ final class NoteTile: NSView, TileContent {
     /// and excerpts but no text layout (about 1 MB per note on a large board).
     private func renderDisplay() {
         guard live || isEditing else { return }
-        let renderer = NoteRenderer(excerpts: excerpts, images: images, width: textWidth)
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, width: textWidth, asWritten: board.isRemote)
         let text = renderer.render(document, placeholder: Self.placeholder)
         renderedWidth = renderer.fitsWidth ? textWidth : nil
         display.textStorage?.setAttributedString(text)
@@ -198,12 +198,13 @@ final class NoteTile: NSView, TileContent {
     // MARK: Live fences
 
     /// Resolve every anchored fence off the main actor, one at a time per note, then re-render
-    /// if anything changed. Only while live and on screen.
+    /// if anything changed. Only while live and on screen. A remote board's note reads nothing
+    /// here: its fences and images are its host's files, so they show as written.
     private func resolve() {
         pendingResolve?.cancel()
         pendingResolve = nil
         resolveTask?.cancel()
-        guard live, window != nil else { return }
+        guard live, window != nil, !board.isRemote else { return }
         let sources = NoteImages.sources(in: document)
         guard !fences.isEmpty || !sources.isEmpty else {
             if !images.isEmpty {
@@ -260,6 +261,7 @@ final class NoteTile: NSView, TileContent {
     /// note that isn't live watches nothing, so a render or `object.get` of it must not trust
     /// what it resolved last (a source restored since would still show its stale badge).
     func resolvedExcerpts() async -> [String: NoteExcerpt] {
+        guard !board.isRemote else { return [:] }
         let jobs = fences
         let reading = await board.linkSource(of: object)
         self.reading = reading
@@ -639,7 +641,7 @@ final class NoteTile: NSView, TileContent {
         let sources = NoteImages.sources(in: document)
         let pictures = await NoteImages.load(sources, root: root)
         let inset = NSSize(width: 8, height: 10)
-        let text = NoteRenderer(excerpts: resolved, images: pictures, width: request.size.width - 2 * inset.width).render(document, placeholder: Self.placeholder)
+        let text = NoteRenderer(excerpts: resolved, images: pictures, width: request.size.width - 2 * inset.width, asWritten: board.isRemote).render(document, placeholder: Self.placeholder)
         let content = NSTextContentStorage()
         let layout = NSTextLayoutManager()
         let delegate = NoteLayoutDelegate()

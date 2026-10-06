@@ -12,10 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The boards in the order they were first opened, which orders windows that aren't tabs of
     /// one another (`openBoardsInOrder`).
     private var openedOrder: [BoardID] = []
+    /// Remote boards' windows (docs/design.md "Client mode"), by host and board: another host's
+    /// board may have the id of one of ours (two checkouts of one repository).
+    private var remoteControllers: [String: CanvasWindowController] = [:]
     private var terminationSignal: DispatchSourceSignal?
     private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
-        self?.controllers.values.first { $0.window === window }?.canvas
+        guard let self else { return nil }
+        return (self.controllers.values.first { $0.window === window } ?? self.remoteControllers.values.first { $0.window === window })?.canvas
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -306,6 +310,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.contentView?.layoutSubtreeIfNeeded()
         }
         target.canvas.visit(stop.item)
+    }
+
+    /// Opens a window mirroring `board` on `host` (docs/design.md "Client mode"): a tab of the
+    /// frontmost board window, or its own window when there's none; again, its tab comes forward.
+    /// The board is read before the window opens, so a host that can't be reached, or that has no
+    /// such board, says so in an alert instead. Nothing about the board is written on this Mac.
+    func openRemoteBoard(host: RemoteHost, board: BoardID) {
+        let key = "\(host.sshTarget)|\(board)"
+        if let open = remoteControllers[key], let window = open.window {
+            window.tabGroup?.selectedWindow = window
+            if ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] != "1" { window.makeKeyAndOrderFront(nil) }
+            return
+        }
+        let mirror = BoardMirror(hostName: host.name, board: board, connection: host.connection(), renders: host.connection())
+        Task { @MainActor [weak self] in
+            let loaded: Board
+            do {
+                loaded = try await mirror.load()
+            } catch {
+                mirror.close()
+                let alert = NSAlert()
+                alert.messageText = "Couldn't open the board on \(host.name)"
+                alert.informativeText = BoardMirror.reason(error)
+                // A sheet: a modal run loop would stall every socket request.
+                if let window = self?.keyController?.window { alert.beginSheetModal(for: window, completionHandler: nil) } else { alert.runModal() }
+                return
+            }
+            guard let self else { return mirror.close() }
+            let controller = CanvasWindowController(board: loaded, registry: self.registry, remote: RemoteSource(host: host, mirror: mirror))
+            self.remoteControllers[key] = controller
+            loaded.onEvent = { [weak controller] event in controller?.apply(event) }
+            controller.onClose = { [weak self] in self?.remoteControllers.removeValue(forKey: key) }
+            self.show(controller)
+        }
+    }
+
+    /// A new board window as a tab of the frontmost one (its own window when there's none), selected.
+    private func show(_ controller: CanvasWindowController) {
+        guard let window = controller.window else { return }
+        let noActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
+        if let host = tabHost(excluding: window) {
+            if host.isMiniaturized, let group = host.tabGroup { group.addWindow(window) } else { host.addTabbedWindow(window, ordered: .above) }
+            window.tabGroup?.selectedWindow = window
+            if !noActivate { window.makeKeyAndOrderFront(nil) }
+        } else if noActivate {
+            window.orderBack(nil)
+        } else {
+            controller.showWindow(nil)
+        }
     }
 
     /// A tab that isn't selected is ordered out and a minimized window isn't visible, so "shown"

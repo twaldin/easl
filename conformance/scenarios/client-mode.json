@@ -1,0 +1,79 @@
+{
+  "description": "What a remote board's viewer sends (docs/design.md \"Client mode\"), checked before anything else on both servers: view.render `inline` doesn't combine with `out`; agent.prompt `answer` needs `composer`, and a composer's prompt takes no `caller` and never forces. Drawing and typing are the Mac client's (delegated), so only the refusals are replayed.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "terminal",
+        "props": {
+          "cwd": "{{root}}",
+          "command": [
+            "/bin/cat"
+          ]
+        },
+        "frame": {
+          "x": 50000,
+          "y": 50000,
+          "w": 600,
+          "h": 400
+        }
+      },
+      "save": "t"
+    },
+    {
+      "call": "view.render",
+      "params": {
+        "board": "{{board}}",
+        "target": "{{t.object.id}}",
+        "inline": true,
+        "out": "/tmp/easl-conformance-never.png"
+      }
+    },
+    {
+      "call": "view.render",
+      "params": {
+        "board": "{{board}}",
+        "target": "obj_missing",
+        "inline": true,
+        "out": "/tmp/easl-conformance-never.png"
+      }
+    },
+    {
+      "call": "agent.prompt",
+      "params": {
+        "target": "{{t.object.id}}",
+        "text": "yes",
+        "answer": true
+      }
+    },
+    {
+      "call": "agent.prompt",
+      "params": {
+        "target": "{{t.object.id}}",
+        "text": "hello",
+        "composer": true,
+        "caller": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "agent.prompt",
+      "params": {
+        "target": "{{t.object.id}}",
+        "text": "hello",
+        "composer": true,
+        "force": true
+      }
+    },
+    {
+      "call": "agent.prompt",
+      "params": {
+        "target": "nobody-here",
+        "text": "hello",
+        "composer": true,
+        "answer": true,
+        "force": true
+      }
+    }
+  ]
+}

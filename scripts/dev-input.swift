@@ -20,6 +20,8 @@
 //   dev-input <pid> perf [ms]                        an idle DevPerf span (EASL_DEV_PERF=1), default 5000 ms
 //   dev-input <pid> panel <path>                     choose <path> in the window's open panel (a page's file
 //                                                    upload), which runs out of process where no click reaches
+//   dev-input <pid> remote <ssh target> <board> [host home]  open another easl's board as a remote board (the
+//                                                    host found over ssh; host home: its support directory)
 //   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the longest gap
 //   scroll --repeat N --gesture                      the burst as one phased trackpad gesture: began and ended
 //                                                    without movement, the steps between as changed
@@ -78,6 +80,10 @@ case "perf":
 case "panel":
     guard !rest.isEmpty else { exit(2) }
     info["path"] = rest.joined(separator: " ")
+case "remote":
+    guard rest.count >= 2 else { exit(2) }
+    info["target"] = rest[0]; info["board"] = rest[1]
+    if rest.count >= 3 { info["home"] = rest.dropFirst(2).joined(separator: " ") }
 default:
     FileHandle.standardError.write(Data("unknown kind \(args[1])\n".utf8))
     exit(2)
