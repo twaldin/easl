@@ -132,14 +132,16 @@ final class BoardMirrorTests {
         #expect(host.objects[anchored.id]?.props["markdown"]?.string == "plain")
     }
 
+    /// Typed even into an omp that takes peer messages (`protocol`): the composer's prompt is never queued as one.
     @Test func theComposersPromptIsTypedOnTheHostAndAnswersABlockedAgent() async throws {
         let agent = host.create(type: .terminal, props: .object(["cwd": .string(dir.path), "name": .string("worker")])).id
-        try host.reportLifecycle(tile: agent, kind: "omp", state: .idle, message: nil, seq: 1, source: nil)
+        try host.reportLifecycle(tile: agent, kind: "omp", state: .idle, message: nil, seq: 1, source: nil, protocol: 1)
         let (mirror, _) = try await mirror()
         defer { mirror.close() }
         try await mirror.prompt("fix the build", to: agent, mentions: [], answer: false)
         #expect(typed[agent] == ["fix the build"])
-        try host.reportLifecycle(tile: agent, kind: "omp", state: .blocked, message: "Run tests?", seq: 2, source: nil)
+        #expect(host.messages[agent]?.isEmpty ?? true)
+        try host.reportLifecycle(tile: agent, kind: "omp", state: .blocked, message: "Run tests?", seq: 2, source: nil, protocol: 1)
         await #expect(throws: ApiRouter.Failure.self) { try await mirror.prompt("more", to: agent, mentions: [], answer: false) }
         try await mirror.prompt("yes", to: agent, mentions: [], answer: true)
         #expect(typed[agent] == ["fix the build", "yes"])
@@ -151,6 +153,8 @@ final class BoardMirrorTests {
             (#"{"target":"nobody","text":"x","answer":true}"#, "needs composer: true"),
             (#"{"target":"nobody","text":"x","composer":true,"caller":"obj_1"}"#, "takes no caller"),
             (#"{"target":"nobody","text":"x","composer":true,"force":true}"#, "never forces"),
+            (#"{"target":"nobody","text":"x","composer":true,"from":"machine-watch"}"#, "takes no from"),
+            (#"{"target":"nobody","text":"x","composer":true,"when":"next-turn"}"#, "takes no when"),
         ] {
             client.send(#"{"id":"1","method":"agent.prompt","params":\#(params)}"#)
             let reply = try await client.next()

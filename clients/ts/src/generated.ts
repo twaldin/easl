@@ -1379,7 +1379,7 @@ export type AgentPromptParams = {
   when?: "now" | "next-turn";
   /** typing only: send even though the target is `blocked` or runs another foreground program than its agent (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval */
   force?: boolean;
-  /** the user's own prompt from a composer that isn't in this app (a remote board's viewer, docs/design.md "Client mode"): sent exactly as this app's composer sends it, typed into the terminal; `mentions` wait for that prompt's own drain, numbered from 1, never the tray and never a hand-off. Takes no `caller` */
+  /** the user's own prompt from a composer that isn't in this app (a remote board's viewer, docs/design.md "Client mode"): sent exactly as this app's composer sends it, typed into the terminal, also into one whose integration takes messages; `mentions` wait for that prompt's own drain, numbered from 1, never the tray and never a hand-off. Takes no `caller`, `from` or `when` */
   composer?: boolean;
   /** with `composer`: the text is the user's answer to the question or approval the target is blocked on, so it passes the blocked check (only the user answers; `force` is for agents and scripts). Takes no mentions */
   answer?: boolean;

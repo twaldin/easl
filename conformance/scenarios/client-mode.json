@@ -1,5 +1,5 @@
 {
-  "description": "What a remote board's viewer sends (docs/design.md \"Client mode\"), checked before anything else on both servers: view.render `inline` doesn't combine with `out`; agent.prompt `answer` needs `composer`, and a composer's prompt takes no `caller` and never forces. Drawing and typing are the Mac client's (delegated), so only the refusals are replayed.",
+  "description": "What a remote board's viewer sends (docs/design.md \"Client mode\"), checked before anything else on both servers: view.render `inline` doesn't combine with `out`; agent.prompt `answer` needs `composer`, and a composer's prompt takes no `caller`, `from` or `when` and never forces. Drawing and typing are the Mac client's (delegated), so only the refusals are replayed.",
   "steps": [
     {
       "call": "object.create",
@@ -63,6 +63,24 @@
         "text": "hello",
         "composer": true,
         "force": true
+      }
+    },
+    {
+      "call": "agent.prompt",
+      "params": {
+        "target": "{{t.object.id}}",
+        "text": "hello",
+        "composer": true,
+        "from": "machine-watch"
+      }
+    },
+    {
+      "call": "agent.prompt",
+      "params": {
+        "target": "nobody-here",
+        "text": "hello",
+        "composer": true,
+        "when": "next-turn"
       }
     },
     {

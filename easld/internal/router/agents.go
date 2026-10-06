@@ -502,8 +502,8 @@ func (r *Router) finalAnswer(terminal model.Object, b *board.Board, p map[string
 }
 
 // prompt is agent.prompt: to a terminal whose integration takes messages it queues one
-// (queueMessage); into any other a client types it, after the board's refusals, with the
-// mentions the board hands over.
+// (queueMessage); into any other, and a composer's prompt into any terminal, a client types it,
+// after the board's refusals, with the mentions the board hands over.
 func (r *Router) prompt(p map[string]any) (any, error) {
 	if err := checkComposer(p); err != nil {
 		return nil, err
@@ -538,7 +538,8 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 		}
 		label = s
 	}
-	if board.TakesMessages(terminal) {
+	composer := boolParam(p, "composer")
+	if !composer && board.TakesMessages(terminal) {
 		return r.queueMessage(text, terminal, b, mentions, caller, label, when)
 	}
 	if when == "next-turn" && stateOf(terminal) == "working" {
@@ -546,7 +547,7 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 	}
 	force := boolParam(p, "force")
 	// The user's answer from a composer (a remote board's viewer) passes the blocked check alone.
-	answering := boolParam(p, "composer") && boolParam(p, "answer")
+	answering := composer && boolParam(p, "answer")
 	lifecycle := asMap(terminal.Props["lifecycle"])
 	if stateOf(terminal) == "blocked" && !force && !answering {
 		blocker := ""
@@ -626,7 +627,8 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 }
 
 // checkComposer checks agent.prompt's `composer` and `answer` before the target, as
-// ApiRouter.checkComposer does: only the user answers, and the composer's prompt is the user's.
+// ApiRouter.checkComposer does: only the user answers, and the composer's prompt is the user's,
+// typed (no caller, from, when or force).
 func checkComposer(p map[string]any) error {
 	composer := boolParam(p, "composer")
 	if boolParam(p, "answer") && !composer {
@@ -637,6 +639,12 @@ func checkComposer(p map[string]any) error {
 	}
 	if caller, ok := p["caller"]; ok && caller != nil {
 		return invalid("a composer's prompt is the user's: it takes no caller")
+	}
+	if from, ok := p["from"]; ok && from != nil {
+		return invalid("a composer's prompt is the user's: it takes no from")
+	}
+	if when, ok := p["when"]; ok && when != nil {
+		return invalid("a composer's prompt is typed as the user sends it: it takes no when")
 	}
 	if boolParam(p, "force") {
 		return invalid("a composer's prompt never forces: answer: true answers a blocked target")

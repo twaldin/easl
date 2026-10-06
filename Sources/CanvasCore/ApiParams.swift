@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 1
-    static let schemaHash = "452dcf28ac5f2aa1"
+    static let schemaHash = "41682b25da41a75b"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "system.ping": ([], []),

@@ -625,6 +625,33 @@ func TestAScriptsMessageIsTheUsersAndALongPollTakesIt(t *testing.T) {
 	}
 }
 
+// A composer's prompt (a remote board's viewer) is the user's, typed as the app's composer types
+// it: `from` and `when` are refused before the target is looked up, and it is never queued as a
+// message, even for a terminal whose integration takes them (a client types it; none is attached).
+func TestAComposersPromptTakesNoFromOrWhenAndIsTyped(t *testing.T) {
+	f := newFixture(t)
+	reviewer := f.namedTerminal("reviewer", "")
+	f.result("agent.report", map[string]any{"tile": reviewer, "kind": "omp", "state": "idle", "protocol": 1.0})
+	for _, c := range []struct {
+		params map[string]any
+		want   string
+	}{
+		{map[string]any{"target": reviewer, "text": "x", "composer": true, "from": "machine-watch"}, "invalid_params: a composer's prompt is the user's: it takes no from"},
+		{map[string]any{"target": reviewer, "text": "x", "composer": true, "when": "next-turn"}, "invalid_params: a composer's prompt is typed as the user sends it: it takes no when"},
+		{map[string]any{"target": "nobody", "text": "x", "composer": true, "when": "now"}, "invalid_params: a composer's prompt is typed as the user sends it: it takes no when"},
+	} {
+		if code, message := errorOf(f.call("agent.prompt", c.params)); code+": "+message != c.want {
+			t.Errorf("%v: %s: %s", c.params, code, message)
+		}
+	}
+	if code, message := errorOf(f.call("agent.prompt", map[string]any{"target": reviewer, "text": "fix the build", "composer": true})); code != "unavailable" {
+		t.Fatalf("a composer's prompt with no client to type it: %s %s", code, message)
+	}
+	if got := f.board.Messages(reviewer); len(got) != 0 {
+		t.Fatalf("queued as a message: %v", got)
+	}
+}
+
 // name@board, the caller's board first, a renamed terminal's old name until another takes it,
 // ambiguity, and boards found by name only while their root folder exists.
 func TestAgentAddresses(t *testing.T) {

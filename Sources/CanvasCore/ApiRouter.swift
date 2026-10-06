@@ -711,7 +711,8 @@ public final class ApiRouter {
     }
 
     /// `agent.prompt`'s `composer` and `answer`, checked before the target: only the user answers
-    /// (`answer` needs `composer`), and the composer's prompt is the user's (no `caller`, no `force`).
+    /// (`answer` needs `composer`), and the composer's prompt is the user's, typed as this app's
+    /// composer types it (no `caller`, `from`, `when` or `force`).
     static func checkComposer(_ p: JSONValue) throws {
         let composer = p["composer"]?.bool == true
         if p["answer"]?.bool == true, !composer {
@@ -719,6 +720,8 @@ public final class ApiRouter {
         }
         guard composer else { return }
         if p["caller"].map({ $0 != .null }) == true { throw Failure("invalid_params", "a composer's prompt is the user's: it takes no caller") }
+        if p["from"].map({ $0 != .null }) == true { throw Failure("invalid_params", "a composer's prompt is the user's: it takes no from") }
+        if p["when"].map({ $0 != .null }) == true { throw Failure("invalid_params", "a composer's prompt is typed as the user sends it: it takes no when") }
         if p["force"]?.bool == true { throw Failure("invalid_params", "a composer's prompt never forces: answer: true answers a blocked target") }
     }
 
