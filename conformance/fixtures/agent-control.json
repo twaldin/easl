@@ -1,7 +1,7 @@
 {
   "scenario": "agent-control",
-  "description": "Agent control: agent.report keeps draft and pid in props.agent (a report without them forgets them), agent.report_session keeps model and thinking (a report without them keeps the last), agent.list says open, focused, draft, model and thinking, and agent.restart's checks: target, mode, args, then its refusals in order (blocked, working, a draft), and resume without a recorded session. Never a restart that goes through: the app really relaunches the session.",
-  "recordedOn": "easl agent/control (rebased on bd72485), dev instance",
+  "description": "Agent control: agent.report keeps draft and pid in props.agent (a report without them forgets them), agent.report_session keeps model and thinking (a report without them keeps the last), agent.list says open, focused, draft, model and thinking, and agent.restart's checks: target, mode, args, then its refusals in order (blocked, working, a draft, a draft nothing reports), and resume without a recorded session. Never a restart that goes through: the app really relaunches the session.",
+  "recordedOn": "easl agent/control fb5a727, dev instance",
   "steps": [
     {
       "step": "board.open",
@@ -1094,6 +1094,32 @@
             }
           ]
         }
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "mode": "resume",
+        "target": "worker"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "nothing in <obj:1> reports whether its input holds a draft the user hasn't sent (omp's easl extension does), so restarting could lose one; force: true restarts anyway"
+        },
+        "id": "r22",
+        "ok": false
       },
       "ignored": {
         "response.result.agent.live": "whether the tile's zmx session runs (client)",
