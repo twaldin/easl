@@ -1238,13 +1238,14 @@ public final class Board {
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
     }
 
-    /// The agent in `tile` was killed and relaunched (agent.restart): the tile runs `command` now
-    /// (what a reboot reruns), its agent is `agent` (what it was, without what only the killed
-    /// process knew: its draft and pid), and its lifecycle is unknown until the new agent reports.
-    /// Waits on approvals the killed agent had end, and the composer's prompts it never drained
-    /// return their mentions to the tray, as when an agent exits. The killed agent's session
-    /// ended before the relaunch started (`endAgentSession`, ApiRouter.restart); a death of its
-    /// integration seen meanwhile (`agentExited`) isn't the relaunched agent's.
+    /// The agent in `tile` was killed and is being relaunched (agent.restart): the tile runs
+    /// `command` now (what a reboot reruns), its agent is `agent` (what it was, without what only
+    /// the killed process knew: its draft and pid), and its lifecycle is unknown until the new
+    /// agent reports. Waits on approvals the killed agent had end, and the composer's prompts it
+    /// never drained return their mentions to the tray, as when an agent exits. Recorded once the
+    /// old session is confirmed gone and its agent session ended (`endAgentSession`), before the
+    /// relaunch starts (ApiRouter.restart), so what the relaunched agent reports stays; a death
+    /// of the killed agent's integration seen meanwhile (`agentExited`) isn't the relaunched one's.
     public func restartedAgent(tile: ObjectID, command: [String], agent: JSONValue) throws {
         _ = try object(tile)
         pendingApprovals[tile] = nil

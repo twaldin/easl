@@ -307,15 +307,17 @@ final class TerminalHost {
         return Set(sessions.compactMap { $0["labels"]?["canvas.home"]?.string == TerminalTile.homeLabel ? $0["tile"]?.string : nil })
     }
 
-    /// agent.restart of hosted `tile`: easld ends its session (`session.kill`, only this
-    /// instance's) and, once it no longer lists it (at most 3 s), `ended` runs and easld starts
-    /// the relaunch running `argv` in a new one (`session.spawn`). Fails `unavailable` while the
-    /// host isn't online, leaving the session as it was.
-    func restart(_ tile: TerminalTile, running argv: [String], ended: @escaping @MainActor () -> Void) async throws {
+    /// agent.restart of hosted `tile`: `killing` (which throws to call it off), then easld ends
+    /// its session (`session.kill`, only this instance's) and, once it no longer lists it (at most
+    /// 3 s), `ended` runs and easld starts the relaunch running `argv` in a new one
+    /// (`session.spawn`). Fails `unavailable` while the host isn't online, leaving the session as
+    /// it was, and when the host still lists it, before `ended`.
+    func restart(_ tile: TerminalTile, running argv: [String], killing: () throws -> Void, ended: @escaping @MainActor () -> Void) async throws {
         let id = tile.objectID
         guard state == .online, let home, let run else {
             throw ApiRouter.Failure("unavailable", "\(target) is offline: terminal \(id)'s session there can't be restarted until it is back")
         }
+        try killing()
         _ = try await call("session.kill", .object(["tile": .string(id), "home": .string(TerminalTile.homeLabel)]))
         var waited = 0
         while await hasSession(id) != false {

@@ -93,12 +93,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return live
         }
-        router.restartTerminal = { [weak self] board, tile, argv, ended in
+        router.restartTerminal = { [weak self] board, tile, argv, killing, ended in
             guard let terminal = self?.content(of: tile, on: board) as? TerminalTile else {
                 throw ApiRouter.Failure("unavailable", "terminal \(tile) isn't shown in a window")
             }
             NSLog("easl: restarting terminal %@: %@", tile, argv.joined(separator: " "))
-            try await terminal.restart(running: argv, ended: ended)
+            try await terminal.restart(running: argv, killing: killing, ended: ended)
         }
         router.tmuxPane = { [weak self] board, tile in
             guard let terminal = self?.content(of: tile, on: board) as? TerminalTile else { return nil }

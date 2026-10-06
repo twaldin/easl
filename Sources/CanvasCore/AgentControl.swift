@@ -210,11 +210,14 @@ extension ApiRouter {
         return .object(entry)
     }
 
-    /// agent.restart: refused while the agent works, waits on its user, or the user is in the
-    /// terminal or has a draft there (unless `force`); then the app kills the tile's session and
-    /// starts the relaunch in a new one, and the tile records it (`Board.restartedAgent`). The
-    /// killed agent's session ends between the two (`Board.endAgentSession`): the messages still
-    /// queued for it bounce, in either mode, and none goes to the relaunched agent.
+    /// agent.restart: refused while the agent works, has a prompt it hasn't started, waits on its
+    /// user, may hold a draft, or the user is in its terminal (unless `force`), and while another
+    /// restart of it runs. The terminal is then reserved (`restarting`): nothing else reaches it
+    /// until the restart is done. The app checks again just before it kills the tile's session,
+    /// and once the session is confirmed gone the killed agent's session ends
+    /// (`Board.endAgentSession`: the messages still queued for it bounce, in either mode) and the
+    /// tile records the relaunch (`Board.restartedAgent`) before it starts, so what the
+    /// relaunched agent reports is its own.
     func restart(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"), caller: p["caller"]?.string)
         let mode = try string(p, "mode")
@@ -225,7 +228,11 @@ extension ApiRouter {
             args = items.compactMap(\.string)
             guard given.array != nil, args.count == items.count else { throw Failure("invalid_params", "args is an array of strings") }
         }
-        if p["force"]?.bool != true { try refuseRestart(terminal, on: board) }
+        guard !restarting.contains(terminal.id) else {
+            throw Failure("conflict", "\(terminal.id) is already restarting (another agent.restart): wait for that one to finish")
+        }
+        let force = p["force"]?.bool == true
+        if !force { try refuseRestart(terminal, on: board) }
         let agent = terminal.props["agent"]
         let kind = agent?["kind"]?.string
         let session = mode == "resume" ? AgentResume.session(of: agent) : nil
@@ -248,12 +255,28 @@ extension ApiRouter {
             kept?["sessionId"] = nil
             kept?["sessionPath"] = nil
         }
-        try await restartTerminal(board, terminal.id, launch.argv) { board.endAgentSession(terminal.id) }
-        forgetPrompts(to: terminal.id)
-        try board.restartedAgent(tile: terminal.id, command: launch.command, agent: kept.map(JSONValue.object) ?? .null)
-        return .object(["agent": agentEntry(board.objects[terminal.id] ?? terminal, on: board), "command": .array(launch.argv.map(JSONValue.string))])
+        let relaunched = kept.map(JSONValue.object) ?? .null
+        let tile = terminal.id
+        restarting.insert(tile)
+        defer {
+            restarting.remove(tile)
+            serveInbox(tile, on: board)
+        }
+        try await restartTerminal(board, tile, launch.argv, {
+            // Checked again at the kill: a turn, prompt, draft or focus that came since would be lost too.
+            guard let current = board.objects[tile] else { throw Failure("not_found", "terminal \(tile) was closed") }
+            if !force { try self.refuseRestart(current, on: board) }
+        }, {
+            board.endAgentSession(tile)
+            self.forgetPrompts(to: tile)
+            try? board.restartedAgent(tile: tile, command: launch.command, agent: relaunched)
+        })
+        return .object(["agent": agentEntry(board.objects[tile] ?? terminal, on: board), "command": .array(launch.argv.map(JSONValue.string))])
     }
 
+    /// Why agent.restart leaves `terminal` alone without `force`: the dialog, turn, prompt or
+    /// draft a restart would lose, in that order, or the user in it. A draft no integration
+    /// reports is one the user may have.
     private func refuseRestart(_ terminal: CanvasObject, on board: Board) throws {
         switch Self.state(of: terminal) {
         case LifecycleState.blocked.rawValue:
@@ -263,8 +286,16 @@ extension ApiRouter {
             throw Failure("conflict", "\(terminal.id) is working: restarting would kill its turn. Wait for it (agent.wait), or force: true restarts anyway")
         default: break
         }
-        if terminal.props["agent"]?["draft"]?.bool == true {
+        if promptPending(to: terminal.id) {
+            throw Failure("conflict", "\(terminal.id) was just prompted and hasn't started that turn: restarting would lose the prompt. Wait for it (agent.wait), or force: true restarts anyway")
+        }
+        switch terminal.props["agent"]?["draft"]?.bool {
+        case true?:
             throw Failure("conflict", "\(terminal.id)'s input editor holds a draft the user hasn't sent: restarting would lose it; force: true restarts anyway")
+        case nil:
+            throw Failure("conflict", "nothing in \(terminal.id) reports whether its input holds a draft the user hasn't sent (omp's easl extension does), so restarting could lose one; force: true restarts anyway")
+        case false?:
+            break
         }
         if terminalStatus?(board, terminal.id).focused == true {
             throw Failure("conflict", "\(terminal.id) has keyboard focus: the user may be typing in it; force: true restarts anyway")

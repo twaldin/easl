@@ -31,7 +31,8 @@ final class AgentControlTests {
         }
         try server.start()
         router.terminalStatus = { [unowned self] _, tile in TerminalStatus(pid: foreground[tile], focused: tile == focused) }
-        router.restartTerminal = { [unowned self] _, tile, argv, ended in
+        router.restartTerminal = { [unowned self] _, tile, argv, killing, ended in
+            try killing()
             ended()
             restarted.append((tile, argv))
         }
@@ -187,37 +188,128 @@ final class AgentControlTests {
         #expect(try await refusal() == "\(tile) is working: restarting would kill its turn. Wait for it (agent.wait), or force: true restarts anyway")
         try await report(tile, "idle", seq: 3, ["draft": .bool(true)])
         #expect(try await refusal() == "\(tile)'s input editor holds a draft the user hasn't sent: restarting would lose it; force: true restarts anyway")
-        try await report(tile, "idle", seq: 4, ["draft": .bool(false)])
+        try await report(tile, "idle", seq: 4)
+        #expect(try await refusal() == "nothing in \(tile) reports whether its input holds a draft the user hasn't sent (omp's easl extension does), so restarting could lose one; force: true restarts anyway",
+                "a draft nothing reports is one the user may have")
+        try await report(tile, "idle", seq: 5, ["draft": .bool(false)])
         focused = tile
         #expect(try await refusal() == "\(tile) has keyboard focus: the user may be typing in it; force: true restarts anyway")
         #expect(restarted.isEmpty)
 
-        try await report(tile, "working", seq: 5, ["draft": .bool(true)])
+        try await report(tile, "working", seq: 6, ["draft": .bool(true)])
         let forced = try await restart(["force": .bool(true)])
         #expect(forced["ok"] == .bool(true), "\(forced)")
         #expect(restarted.map(\.0) == [tile])
     }
 
+    @Test func restartWaitsForAPromptsTurnToStartAsAgentWaitDoes() async throws {
+        let tile = terminal(name: "worker", command: ["omp"])
+        _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s1"])
+        try await report(tile, "idle", seq: 1, ["draft": .bool(false)])
+        router.submitToTerminal = { _, _, _ in true }
+        let restart = { try await self.call("agent.restart", ["target": "worker", "mode": "resume"]) }
+        #expect(try await call("agent.prompt", ["target": "worker", "text": "run the tests"])["result"]?["delivery"] == "typed")
+        #expect(try await restart()["error"]?["message"]
+                == "\(tile) was just prompted and hasn't started that turn: restarting would lose the prompt. Wait for it (agent.wait), or force: true restarts anyway")
+        try await report(tile, "working", seq: 2, ["draft": .bool(false)])
+        #expect(try await restart()["error"]?["code"] == "conflict")
+        try await report(tile, "idle", seq: 3, ["draft": .bool(false)])
+        #expect(try await restart()["ok"] == .bool(true))
+
+        // A prompt that started no turn within agent.wait's grace never will.
+        try await report(tile, "idle", seq: 4, ["draft": .bool(false)])
+        #expect(try await call("agent.prompt", ["target": "worker", "text": "/compact"])["ok"] == .bool(true))
+        #expect(try await restart()["error"]?["code"] == "conflict")
+        router.promptStartGrace = 0
+        #expect(try await restart()["ok"] == .bool(true))
+        #expect(restarted.count == 2)
+    }
+
+    @Test func nothingReachesARestartingTerminalAndTheKillChecksAgain() async throws {
+        let worker = terminal(name: "worker", command: ["omp"])
+        try board.reportLifecycle(tile: worker, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 1, draft: false)
+        try board.reportSession(tile: worker, kind: "omp", sessionId: "s1", sessionPath: nil)
+        #expect(try await call("agent.prompt", ["target": "worker", "text": "Nightly failed.", "from": "machine-watch"])["result"]?["delivery"] == "message")
+        let restarting = "\(worker) is restarting (agent.restart): nothing reaches it until its agent is relaunched; send again once it reports"
+
+        // While the app kills and relaunches it: no message, typed prompt, delivery or other restart.
+        var during: [String: JSONValue] = [:]
+        router.restartTerminal = { [unowned self] _, tile, argv, killing, ended in
+            during["message"] = try await call("agent.prompt", ["target": "worker", "text": "Also this.", "from": "machine-watch"])
+            during["composer"] = try await call("agent.prompt", ["target": "worker", "text": "and this", "composer": true])
+            during["inbox"] = try await call("agent.inbox", ["tile": .string(tile)])
+            during["restart"] = try await call("agent.restart", ["target": "worker", "mode": "fresh", "force": true])
+            try killing()
+            ended()
+            restarted.append((tile, argv))
+        }
+        #expect(try await call("agent.restart", ["target": "worker", "mode": "resume"])["ok"] == .bool(true))
+        #expect(during["message"]?["error"] == .object(["code": "conflict", "message": .string(restarting)]))
+        #expect(during["composer"]?["error"] == .object(["code": "conflict", "message": .string(restarting)]))
+        #expect(during["inbox"]?["result"]?["messages"] == .array([]), "\(String(describing: during["inbox"]))")
+        #expect(during["restart"]?["error"]?["message"] == .string("\(worker) is already restarting (another agent.restart): wait for that one to finish"))
+        #expect(restarted.count == 1)
+        #expect(board.messages[worker] == nil, "what was queued for the killed session bounced")
+
+        // A turn that started after the first check calls the restart off at the kill.
+        try board.reportLifecycle(tile: worker, kind: "omp", state: .idle, message: nil, seq: 2, source: "canvas-omp", protocol: 1, draft: false)
+        #expect(try await call("agent.prompt", ["target": "worker", "text": "Welcome back.", "from": "machine-watch"])["result"]?["delivery"] == "message")
+        var killed = false
+        router.restartTerminal = { [unowned self] _, tile, _, killing, ended in
+            try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 3, source: "canvas-omp", protocol: 1, draft: false)
+            try killing()
+            killed = true
+            ended()
+        }
+        let generation = board.agentSession(of: worker)
+        let refused = try await call("agent.restart", ["target": "worker", "mode": "resume"])
+        #expect(refused["error"]?["message"] == .string("\(worker) is working: restarting would kill its turn. Wait for it (agent.wait), or force: true restarts anyway"))
+        #expect(!killed && board.agentSession(of: worker) == generation)
+        #expect(try await call("agent.inbox", ["tile": .string(worker)])["result"]?["messages"]?.array?.count == 1, "offered again once the restart is off")
+    }
+
+    @Test func whatTheRelaunchedAgentReportsWhileItStartsStays() async throws {
+        let tile = terminal(name: "worker", command: ["omp"])
+        _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s1", "model": "anthropic/claude-opus-4-5", "thinking": "auto"])
+        try await report(tile, "idle", seq: 1, ["draft": .bool(false)])
+        router.restartTerminal = { [unowned self] _, tile, argv, killing, ended in
+            try killing()
+            ended()
+            // A hosted relaunch reports through the relay before the host's session.spawn answers.
+            _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s2", "model": "anthropic/claude-opus-4-5", "thinking": "auto"])
+            try await report(tile, "working", seq: 2, ["draft": .bool(false), "pid": .number(Self.alive)])
+            restarted.append((tile, argv))
+        }
+        let reply = try await call("agent.restart", ["target": "worker", "mode": "fresh"])
+        #expect(reply["result"]?["command"] == ["omp", "--model=anthropic/claude-opus-4-5", "--thinking=auto"], "\(reply)")
+        let agent = try #require(board.objects[tile]?.props["agent"])
+        #expect(agent["sessionId"] == "s2" && agent["thinking"] == "auto" && agent["pid"] == .number(Self.alive))
+        #expect(board.objects[tile]?.props["lifecycle"]?["state"] == "working")
+        #expect(reply["result"]?["agent"]?["lifecycle"]?["state"] == "working")
+    }
+
     @Test func restartBouncesWhatWasQueuedForTheKilledSessionBeforeTheRelaunchStarts() async throws {
         let worker = terminal(name: "worker", command: ["omp"])
-        try board.reportLifecycle(tile: worker, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 1)
+        try board.reportLifecycle(tile: worker, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 1, draft: false)
         try board.reportSession(tile: worker, kind: "omp", sessionId: "s1", sessionPath: nil)
         let queued = try await call("agent.prompt", ["target": "worker", "text": "Nightly failed.", "from": "machine-watch"])
         #expect(queued["result"]?["delivery"] == "message", "\(queued)")
 
         // The app fails before it kills anything: the session goes on, and its queue with it.
-        router.restartTerminal = { _, tile, _, _ in throw ApiRouter.Failure("unavailable", "terminal \(tile) isn't shown in a window") }
+        router.restartTerminal = { _, tile, _, _, _ in throw ApiRouter.Failure("unavailable", "terminal \(tile) isn't shown in a window") }
+        var generation = board.agentSession(of: worker)
         #expect(try await call("agent.restart", ["target": "worker", "mode": "resume"])["error"]?["code"] == "unavailable")
-        #expect(board.messages[worker]?.map(\.text) == ["Nightly failed."])
+        #expect(board.messages[worker]?.map(\.text) == ["Nightly failed."] && board.agentSession(of: worker) == generation)
 
         // Killed: what was queued for the old session bounced before the relaunch started.
         var queuedAtRelaunch: [String]? = ["not asked"]
-        router.restartTerminal = { [unowned self] _, tile, argv, ended in
+        router.restartTerminal = { [unowned self] _, tile, argv, killing, ended in
+            try killing()
             ended()
             queuedAtRelaunch = board.messages[tile]?.map(\.text)
             restarted.append((tile, argv))
         }
-        let generation = board.agentSession(of: worker)
+        generation = board.agentSession(of: worker)
         let resumed = try await call("agent.restart", ["target": "worker", "mode": "resume"])
         #expect(resumed["ok"] == .bool(true), "\(resumed)")
         #expect(queuedAtRelaunch == nil && board.agentSession(of: worker) == generation + 1)
@@ -252,13 +344,13 @@ final class AgentControlTests {
     @Test func freshRelaunchesWithoutTheSessionAndAShellRerunsItsCommand() async throws {
         let tile = terminal(command: ["omp", "--resume=s0"])
         _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s1", "model": "openai/gpt-5.2"])
-        let reply = try await call("agent.restart", ["target": .string(tile), "mode": "fresh"])
+        let reply = try await call("agent.restart", ["target": .string(tile), "mode": "fresh", "force": .bool(true)])
         #expect(reply["result"]?["command"] == ["omp", "--model=openai/gpt-5.2"], "\(reply)")
         #expect(board.objects[tile]?.props["agent"] == .object(["kind": "omp", "model": "openai/gpt-5.2"]))
 
         let server = terminal(command: ["npm", "run", "dev"])
-        #expect(try await call("agent.restart", ["target": .string(server), "mode": "fresh", "args": ["--", "--port", "3001"]])["result"]?["command"]
-                == ["npm", "run", "dev", "--", "--port", "3001"])
+        let rerun = try await call("agent.restart", ["target": .string(server), "mode": "fresh", "args": ["--", "--port", "3001"], "force": .bool(true)])
+        #expect(rerun["result"]?["command"] == ["npm", "run", "dev", "--", "--port", "3001"], "\(rerun)")
         #expect(board.objects[server]?.props["agent"] == nil)
     }
 
@@ -267,13 +359,13 @@ final class AgentControlTests {
         let noSession = try await call("agent.restart", ["target": .string(shell), "mode": "resume", "force": .bool(true)])
         #expect(noSession["error"]?["code"] == "unavailable")
         #expect(noSession["error"]?["message"] == .string("\(shell) has no recorded agent session to resume (its agent never reported one, or it exited); mode fresh starts it anew"))
-        let nothing = try await call("agent.restart", ["target": .string(shell), "mode": "fresh"])
+        let nothing = try await call("agent.restart", ["target": .string(shell), "mode": "fresh", "force": .bool(true)])
         #expect(nothing["error"]?["message"] == .string("\(shell) runs no known agent and has no command to relaunch"))
         #expect(try await call("agent.restart", ["target": .string(shell), "mode": "restart"])["error"]?["message"] == "mode is resume or fresh, not restart")
         #expect(try await call("agent.restart", ["target": .string(shell), "mode": "fresh", "args": [1]])["error"]?["message"] == "args is an array of strings")
         #expect(try await call("agent.restart", ["target": "nobody", "mode": "fresh"])["error"]?["code"] == "not_found")
         router.restartTerminal = nil
-        let headless = try await call("agent.restart", ["target": .string(terminal(command: ["make"])), "mode": "fresh"])
+        let headless = try await call("agent.restart", ["target": .string(terminal(command: ["make"])), "mode": "fresh", "force": .bool(true)])
         #expect(headless["error"]?["message"] == "restarting needs the app UI")
         #expect(restarted.isEmpty)
     }

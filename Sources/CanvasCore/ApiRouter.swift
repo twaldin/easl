@@ -160,10 +160,13 @@ public final class ApiRouter {
     /// `live`). A host left out can't be asked now.
     public var hostedSessions: ((_ hosts: [String]) async -> [String: Set<ObjectID>])?
     /// Kills terminal `tile`'s session (a hosted tile's through its host's easld) and starts a
-    /// new one running `argv` in the same tile (agent.restart), calling `ended` in between: once
-    /// the old session is gone, before the new one starts. Throws `Failure` when the tile isn't
-    /// shown in a window, or its host can't be reached.
-    public var restartTerminal: ((Board, ObjectID, _ argv: [String], _ ended: @escaping @MainActor () -> Void) async throws -> Void)?
+    /// new one running `argv` in the same tile (agent.restart). `killing` runs just before the
+    /// kill and throws to call it off with nothing touched; `ended` runs once the old session is
+    /// confirmed gone, before the new one starts. Throws `Failure` when the tile isn't shown in a
+    /// window, its host can't be reached, or the old session can't be confirmed gone (then
+    /// `ended` never ran).
+    public var restartTerminal: ((Board, ObjectID, _ argv: [String], _ killing: @escaping @MainActor () throws -> Void,
+                                  _ ended: @escaping @MainActor () -> Void) async throws -> Void)?
     /// Inside tmux, what the active pane of a terminal tile's tmux client runs
     /// (`TerminalName.program`; its shell at that pane's prompt); nil when the tile's foreground
     /// program isn't tmux or tmux doesn't say.
@@ -221,6 +224,25 @@ public final class ApiRouter {
     func forgetPrompts(to tile: ObjectID) {
         pendingPrompts[tile] = nil
         promptMarks[tile] = nil
+    }
+
+    /// Terminals agent.restart is killing and relaunching: until it is done nothing else reaches
+    /// them (agent.prompt is refused, agent.inbox offers nothing, another restart is refused).
+    var restarting: Set<ObjectID> = []
+    /// Terminals `agent.prompt` is typing into now, with how many prompts.
+    private var typing: [ObjectID: Int] = [:]
+
+    /// A prompt to `tile` whose turn hasn't started: one being typed, or one submitted (or a
+    /// message its integration delivered as a new turn) that its agent hasn't reported working on
+    /// within `promptStartGrace`, the same interval `agent.wait` waits out.
+    func promptPending(to tile: ObjectID) -> Bool {
+        if typing[tile] != nil { return true }
+        guard let prompted = pendingPrompts[tile] else { return false }
+        return Date().timeIntervalSince(prompted) < promptStartGrace
+    }
+
+    static func restarting(_ tile: ObjectID) -> Failure {
+        Failure("conflict", "\(tile) is restarting (agent.restart): nothing reaches it until its agent is relaunched; send again once it reports")
     }
 
     private struct Waiter {
@@ -643,11 +665,13 @@ public final class ApiRouter {
     /// terminal's text was read (released, died, replaced: `Board.agentSession(of:)`) gets
     /// nothing, and the sender `unavailable`.
     private func queueMessage(_ text: String, to terminal: CanvasObject, on board: Board, mentions: [JSONValue], caller: ObjectID?, label: String?, when: AgentMessage.When) async throws -> JSONValue {
+        if restarting.contains(terminal.id) { throw Self.restarting(terminal.id) }
         let attached = try board.messageMentions(try mentions.map { try HandoffMention(json: $0).target(on: board) })
         let sender = caller.flatMap { caller in registry.boards.values.contains { $0.objects[caller]?.type == .terminal } ? caller : nil }
         let session = board.agentSession(of: terminal.id)
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
+        if restarting.contains(terminal.id) { throw Self.restarting(terminal.id) }
         if board.agentExited(terminal.id) { throw Self.agentExited(current) }
         guard PromptTarget.takesMessages(current), board.agentSession(of: terminal.id) == session else {
             throw Failure("unavailable", "\(terminal.id)'s agent session ended while the message was being sent (its agent was released, exited, "
@@ -697,8 +721,10 @@ public final class ApiRouter {
         return nil
     }
 
-    /// The messages for `tile` no open connection holds, now held by `connection`.
+    /// The messages for `tile` no open connection holds, now held by `connection`; none while
+    /// agent.restart kills and relaunches it (`restarting`).
     private func offer(_ tile: ObjectID, on board: Board, to connection: SocketServer.Connection) -> [AgentMessage] {
+        guard !restarting.contains(tile) else { return [] }
         let free = (board.messages[tile] ?? []).filter { messageHolds[$0.id]?.isOpen != true }
         for message in free { messageHolds[message.id] = connection }
         return free
@@ -710,10 +736,11 @@ public final class ApiRouter {
         return .object(["messages": .array(rendered)])
     }
 
-    /// A message reached `tile`'s queue: the oldest open long poll for it takes it.
-    private func serveInbox(_ tile: ObjectID, on board: Board) {
+    /// A message reached `tile`'s queue (or agent.restart let it go again): the oldest open long
+    /// poll for it takes it.
+    func serveInbox(_ tile: ObjectID, on board: Board) {
         inboxWaiters.removeAll { !$0.connection.isOpen }
-        guard let index = inboxWaiters.firstIndex(where: { $0.tile == tile }) else { return }
+        guard !restarting.contains(tile), let index = inboxWaiters.firstIndex(where: { $0.tile == tile }) else { return }
         let waiter = inboxWaiters.remove(at: index)
         let offered = offer(tile, on: board, to: waiter.connection)
         Task { @MainActor in
@@ -797,6 +824,7 @@ public final class ApiRouter {
     }
 
     private func submitPrompt(_ text: String, to terminal: CanvasObject, on board: Board, attached: Attached, caller sender: ObjectID?, force: Bool) async throws -> JSONValue {
+        if restarting.contains(terminal.id) { throw Self.restarting(terminal.id) }
         let answering: Bool
         if case .composer(_, let answer) = attached { answering = answer } else { answering = false }
         if Self.state(of: terminal) == LifecycleState.blocked.rawValue, !force, !answering {
@@ -834,8 +862,14 @@ public final class ApiRouter {
         if case .composer(let given, _) = attached, !given.isEmpty, PromptTarget.skipsDrain(text, in: terminal) {
             throw Failure("invalid_params", "a slash command or shell escape takes no mentions: its agent drains nothing for it")
         }
+        // From here until its turn reports, agent.restart counts the prompt as work (`promptPending`).
+        typing[terminal.id, default: 0] += 1
+        defer {
+            typing[terminal.id] = typing[terminal.id].flatMap { $0 > 1 ? $0 - 1 : nil }
+        }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
+        if restarting.contains(terminal.id) { throw Self.restarting(terminal.id) }
         // Queued before the text goes in: the target's integration drains them with this prompt.
         var handed: [Mention] = []
         var queued: String?
