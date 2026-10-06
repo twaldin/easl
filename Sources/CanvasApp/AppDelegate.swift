@@ -9,10 +9,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cmuxServer: SocketServer?
     private lazy var cmux = CmuxRouter(registry: registry, password: AppPaths.cmuxPassword)
     private var controllers: [BoardID: CanvasWindowController] = [:]
+    /// The boards in the order they were first opened, which orders windows that aren't tabs of
+    /// one another (`openBoardsInOrder`): a board's id, or a remote board's `remoteKey`.
+    private var openedOrder: [String] = []
+    /// Remote boards' windows (docs/design.md "Client mode"), by host and board (`remoteKey`):
+    /// another host's board may have the id of one of ours (two checkouts of one repository).
+    private var remoteControllers: [String: CanvasWindowController] = [:]
     private var terminationSignal: DispatchSourceSignal?
     private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
-        self?.controllers.values.first { $0.window === window }?.canvas
+        guard let self else { return nil }
+        return (self.controllers.values.first { $0.window === window } ?? self.remoteControllers.values.first { $0.window === window })?.canvas
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -47,11 +54,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controllers[board.id]?.apply(event)
             self?.notifier.observe(event, on: board)
         }
-        // Every delete of a terminal (UI close, API, batch, undo/redo) ends its zmx session, and
-        // with it any report its agent spooled (`AgentReportSpool`), which nothing would replay.
-        registry.onTerminalsEnded = { _, tiles in
-            for tile in tiles { TerminalTile.killSession(tile: tile) }
-            let spooled = tiles.map { AppPaths.agentReports.appendingPathComponent($0, isDirectory: true) }
+        // Every delete of a terminal (UI close, API, batch, undo/redo) ends its zmx session (a
+        // hosted one's on its host), and with it any report its agent spooled here
+        // (`AgentReportSpool`), which nothing would replay.
+        registry.onTerminalsEnded = { _, ended in
+            for terminal in ended { TerminalTile.killSession(terminal) }
+            let spooled = ended.map { AppPaths.agentReports.appendingPathComponent($0.id, isDirectory: true) }
             Task.detached { for folder in spooled { try? FileManager.default.removeItem(at: folder) } }
         }
         // object.measure, size: "fit", and layout.check lay HTML pages out in WebKit.
@@ -128,8 +136,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // screen's by Ghostty's own wrap flags.
             let terminal = self?.content(of: tile, on: board) as? TerminalTile
             let columns = terminal?.columns, screen = terminal?.screenRows() ?? []
+            // A hosted terminal's session is on its host (`zmx history` over ssh).
+            let host = board.objects[tile].flatMap(HostedTerminal.host(of:)).map { TerminalHost.named($0).route }
             // A blocking subprocess read (`offPool`).
-            return await offPool { TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines, columns: columns, screen: screen) }
+            return await offPool { TerminalTile.history(session: TerminalTile.sessionName(tile), on: host, lines: lines, columns: columns, screen: screen) }
         }
         let router = router
         let server = SocketServer(path: AppPaths.apiSocket) { request, connection in
@@ -211,6 +221,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for controller in controllers.values { controller.saveComposer() }
         server?.stop()
         cmuxServer?.stop()
+        // Normal quitting closes no sheet or connection, and a relay left to see its stdin close
+        // may outlive the app (an `nc` without `-N`): end every ssh before exiting, and wait.
+        OpenRemotePanel.shutdown()
+        RemoteProcesses.shared.terminateAll()
+        // Hosted terminals' connections; their sessions keep running on their hosts.
+        TerminalHost.closeAll()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -231,6 +247,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let board = registry.open(root: root)
         let controller = controllers[board.id] ?? CanvasWindowController(board: board, registry: registry)
         controllers[board.id] = controller
+        if !openedOrder.contains(board.id) { openedOrder.append(board.id) }
+        controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
         let router = router
         controller.sendPrompt = { [weak board] text, terminal, mentions, answer in
             guard let board else { return }
@@ -252,16 +270,115 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return board
         }
         guard select else { return board }
-        // Selecting a tab of a minimized group also detaches it onto the current Space: bring the
-        // group back first (the user asked to see this board). An instance that never activates
-        // leaves the tab waiting in the minimized group.
+        bringForward(window)
+        return board
+    }
+
+    /// Brings `window`'s tab, or the window, forward. Selecting a tab of a minimized group also
+    /// detaches it onto the current Space: bring the group back first (the user asked to see
+    /// this board). An instance that never activates leaves the tab waiting in the minimized
+    /// group.
+    private func bringForward(_ window: NSWindow) {
+        let noActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
         if let minimized = window.tabGroup?.windows.first(where: \.isMiniaturized) {
-            if noActivate { return board }
+            if noActivate { return }
             minimized.deminiaturize(nil)
         }
         window.tabGroup?.selectedWindow = window
         if !noActivate { window.makeKeyAndOrderFront(nil) }
-        return board
+    }
+
+    /// The open boards (shown, minimized or a tab) in tab/window order: a tab group's boards
+    /// together in tab order, and groups and lone windows by when their first board was opened.
+    private func openBoardsInOrder() -> [CanvasWindowController] {
+        let open = openedOrder.compactMap { controllers[$0] ?? remoteControllers[$0] }.filter { $0.window.map(isShown) ?? false }
+        var ordered: [CanvasWindowController] = []
+        for controller in open where !ordered.contains(where: { $0 === controller }) {
+            let windows = controller.window?.tabbedWindows ?? controller.window.map { [$0] } ?? []
+            ordered += windows.compactMap { window in open.first { $0.window === window } }
+        }
+        return ordered
+    }
+
+    /// A remote board's window by its host and board (`remoteControllers`, `openedOrder`).
+    private static func remoteKey(_ host: RemoteHost, _ board: BoardID) -> String { "\(host.sshTarget)|\(board)" }
+
+    /// A board window in ⌘J's tour: its board's id, a remote board's with its host (another
+    /// host's board may have the id of one of ours).
+    private func tourKey(_ controller: CanvasWindowController) -> String {
+        controller.remote.map { Self.remoteKey($0.host, controller.board.id) } ?? controller.board.id
+    }
+
+    /// ⌘J, Go to Next Needs-You, on `current`, the board the user is on: the next thing that needs
+    /// them there (blocked agents first, then markers, then agents that finished unseen, each in
+    /// reading order: `NeedsYouItem`), and once it has nothing after the item visited last, the
+    /// first on the next open board that has anything, in tab/window order and around (`NeedsYouTour`),
+    /// remote boards' windows included. That board's tab or window comes forward and the item is
+    /// framed, selected and focused like Go to; a notice says when no board needs the user.
+    func goToNextNeedsYou(from current: CanvasWindowController) {
+        let boards = openBoardsInOrder()
+        let entries = boards.map { NeedsYouTour.Entry(board: tourKey($0), items: $0.canvas.needsYouItems) }
+        guard let stop = NeedsYouTour.next(from: tourKey(current), after: current.canvas.needsYouCursor, in: entries) else {
+            return current.canvas.showNotice("Nothing needs you")
+        }
+        guard let target = boards.first(where: { tourKey($0) == stop.board }) else { return }
+        if let window = target.window, target !== current {
+            bringForward(window)
+            // A tab never shown has not been laid out: the item is framed in the view's real size.
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+        target.canvas.visit(stop.item)
+    }
+
+    /// Opens a window mirroring `board` on `host` (docs/design.md "Client mode"): a tab of the
+    /// frontmost board window, or its own window when there's none; again, its tab comes forward.
+    /// The board is read before the window opens, so a host that can't be reached, or that has no
+    /// such board, says so in an alert instead. Nothing about the board is written on this Mac.
+    func openRemoteBoard(host: RemoteHost, board: BoardID) {
+        let key = Self.remoteKey(host, board)
+        if let open = remoteControllers[key], let window = open.window {
+            window.tabGroup?.selectedWindow = window
+            if ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] != "1" { window.makeKeyAndOrderFront(nil) }
+            return
+        }
+        let mirror = BoardMirror(hostName: host.name, board: board, connection: host.connection(), renders: host.connection())
+        Task { @MainActor [weak self] in
+            let loaded: Board
+            do {
+                loaded = try await mirror.load()
+            } catch {
+                mirror.close()
+                let alert = NSAlert()
+                alert.messageText = "Couldn't open the board on \(host.name)"
+                alert.informativeText = BoardMirror.reason(error)
+                // A sheet: a modal run loop would stall every socket request.
+                if let window = self?.keyController?.window { alert.beginSheetModal(for: window, completionHandler: nil) } else { alert.runModal() }
+                return
+            }
+            guard let self else { return mirror.close() }
+            let controller = CanvasWindowController(board: loaded, registry: self.registry, remote: RemoteSource(host: host, mirror: mirror))
+            self.remoteControllers[key] = controller
+            if !self.openedOrder.contains(key) { self.openedOrder.append(key) }
+            loaded.onEvent = { [weak controller] event in controller?.apply(event) }
+            controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
+            controller.onClose = { [weak self] in self?.remoteControllers.removeValue(forKey: key) }
+            self.show(controller)
+        }
+    }
+
+    /// A new board window as a tab of the frontmost one (its own window when there's none), selected.
+    private func show(_ controller: CanvasWindowController) {
+        guard let window = controller.window else { return }
+        let noActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
+        if let host = tabHost(excluding: window) {
+            if host.isMiniaturized, let group = host.tabGroup { group.addWindow(window) } else { host.addTabbedWindow(window, ordered: .above) }
+            window.tabGroup?.selectedWindow = window
+            if !noActivate { window.makeKeyAndOrderFront(nil) }
+        } else if noActivate {
+            window.orderBack(nil)
+        } else {
+            controller.showWindow(nil)
+        }
     }
 
     /// A tab that isn't selected is ordered out and a minimized window isn't visible, so "shown"
@@ -424,6 +541,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// File › Open Remote…: a board on another machine, over ssh (`OpenRemotePanel`).
+    @objc func openRemote(_ sender: Any?) {
+        OpenRemotePanel.show(over: keyController?.window) { [weak self] host, board in
+            self?.openRemoteBoard(host: host, board: board)
+        }
+    }
+
     static func makeMenu() -> NSMenu {
         let main = NSMenu()
         @discardableResult
@@ -456,6 +580,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("New Browser Tile…", #selector(newBrowserTile(_:)), "B", [.command, .shift]),
             item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
             item("Open Board…", #selector(openBoard(_:)), "O", [.command, .shift]),
+            item("Open Remote…", #selector(openRemote(_:)), ""),
             item("New HTML Tile", #selector(newHtmlTile(_:)), "H", [.command, .shift]),
             item("Review Changes", #selector(reviewChanges(_:)), "R", [.command, .shift]),
             item("Review Branch", #selector(reviewBranch(_:)), ""),
@@ -622,6 +747,7 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(togglePerformanceHUD(_:)):
             item.state = MetricsHUD.shared.isShown ? .on : .off
             return true
+        case #selector(openRemote(_:)): return true
         default: return keyController?.validate(item) ?? false
         }
     }

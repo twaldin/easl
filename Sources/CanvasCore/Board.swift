@@ -73,6 +73,12 @@ public struct BoardSnapshot: Codable, Sendable {
     /// on a board for a directory outside git, and on boards saved before boards were per
     /// repository (legacy boards, `RepoBoardMigration`).
     public var repo: RepoRecord?
+    /// Old names of renamed terminals that still address them (`Board.aliases`); optional so
+    /// older board files still load.
+    public var aliases: [String: ObjectID]?
+    /// Peer messages their integrations haven't acked yet (`Board.messages`); optional so older
+    /// board files still load.
+    public var messages: [ObjectID: [AgentMessage]]?
 }
 
 /// One canvas: all objects for one root directory, the selection tray, and agent lifecycle.
@@ -116,6 +122,22 @@ public final class Board {
     /// as its integration reported it with `idle`: that turn's `finalAnswers` entry is cut off.
     /// A new turn clears it; saved with the board.
     public internal(set) var turnErrors: [ObjectID: String] = [:]
+    /// Names terminals had before a rename, each still addressing its terminal (AgentAddress)
+    /// until another terminal on this board takes it; saved with the board.
+    public internal(set) var aliases: [String: ObjectID] = [:]
+    /// Out-of-band messages queued for each terminal, oldest first, until its integration acks
+    /// them (AgentMessages.swift); saved with the board.
+    public internal(set) var messages: [ObjectID: [AgentMessage]] = [:]
+    /// Each terminal's agent session generation (`agentSession(of:)`); in memory: what a restart
+    /// keeps queued belongs to the session there now.
+    var agentSessions: [ObjectID: Int] = [:]
+    /// Terminals whose message-taking integration died without its release (`agentExited`); in memory.
+    var exitedAgents: Set<ObjectID> = []
+    /// Messages bounced in the open step, handed on when it closes (`flushBounces`).
+    var bouncing: [MessageBounce] = []
+    /// Messages whose receiver's agent session ended before its integration took them: the
+    /// registry's router sends them back or logs them (`ApiRouter.bounce`).
+    public var onMessagesBounced: ((MessageBounce) -> Void)?
 
     /// Board revision at which each object last changed (for `board.get since`).
     private var changedAt: [ObjectID: Int] = [:]
@@ -197,15 +219,37 @@ public final class Board {
     /// that block (older than easl's attach, cleared, trimmed from the scrollback). Set by the app.
     public var terminalBlockIndex: (@MainActor (ObjectID, TerminalCommand) -> Int?)?
     /// Terminal tiles that left the board for good, once the step that removed them is over:
-    /// deleted by anyone (API, batch, UI, redo of a delete, undo of a create). A terminal a failed
-    /// batch deleted and put back never counts. The app ends their sessions.
-    public var onTerminalsEnded: (([ObjectID]) -> Void)?
+    /// deleted by anyone (API, batch, UI, redo of a delete, undo of a create), as they last were
+    /// (a hosted one's `host` says where its session is). A terminal a failed batch deleted and
+    /// put back never counts. The app ends their sessions.
+    public var onTerminalsEnded: (([CanvasObject]) -> Void)?
     /// Terminals deleted in the open step; checked against `objects` when it closes.
-    private var removedTerminals: [ObjectID] = []
+    private var removedTerminals: [CanvasObject] = []
+    /// A board another easl hosts, mirrored by `BoardMirror` (docs/design.md "Client mode"): its
+    /// objects change by what the host says, and the user's creates, updates and deletes are
+    /// previews here that go to `host`.
+    public let isRemote: Bool
+    /// Where a remote board's writes go.
+    weak var host: BoardHost?
+    /// A remote board's provisional object (first) is about to become the host's (second):
+    /// whoever shows it carries what the user had going on it (`rekeyHost`).
+    public var onHostRekey: ((_ provisional: ObjectID, _ host: ObjectID) -> Void)?
+    /// How deep the user's write calls are nested on a remote board: only the outermost one goes
+    /// to the host (its cascades, a group re-fit or an arrow detaching, are the host's to make).
+    private var hostWriteDepth = 0
 
     public init(id: BoardID, root: URL) {
         self.id = id
         self.root = root
+        isRemote = false
+    }
+
+    /// An empty remote board (`BoardMirror` fills it with `applyHost`).
+    init(remote id: BoardID, root: URL, host: BoardHost) {
+        self.id = id
+        self.root = root
+        isRemote = true
+        self.host = host
     }
 
     /// Board format written by `snapshot`. 2: a tile's frame is its whole drawn box, title bar
@@ -215,6 +259,7 @@ public final class Board {
     public init(snapshot: BoardSnapshot) {
         id = snapshot.id
         root = URL(fileURLWithPath: snapshot.root)
+        isRemote = false
         revision = snapshot.revision
         let format = snapshot.format ?? 1
         // `props.scale` became a tile's content `zoom` (frame kept) and a text shape's `textSize`.
@@ -256,6 +301,8 @@ public final class Board {
         finalAnswers = (snapshot.finalAnswers ?? [:]).filter { objects[$0.key] != nil }
         turnErrors = (snapshot.turnErrors ?? [:]).filter { objects[$0.key] != nil }
         lifecycleSeq = (snapshot.lifecycleSeq ?? [:]).filter { objects[String($0.key.prefix { $0 != "|" })] != nil }
+        aliases = (snapshot.aliases ?? [:]).filter { objects[$0.value]?.type == .terminal }
+        messages = (snapshot.messages ?? [:]).filter { objects[$0.key]?.type == .terminal && !$0.value.isEmpty }
         repo = snapshot.repo
     }
 
@@ -264,7 +311,8 @@ public final class Board {
                       attention: attention.isEmpty ? nil : attention.values.sorted { $0.object < $1.object },
                       promptTarget: promptTarget == PromptTarget.State() ? nil : promptTarget,
                       finalAnswers: finalAnswers.isEmpty ? nil : finalAnswers, turnErrors: turnErrors.isEmpty ? nil : turnErrors,
-                      lifecycleSeq: lifecycleSeq.isEmpty ? nil : lifecycleSeq, repo: repo)
+                      lifecycleSeq: lifecycleSeq.isEmpty ? nil : lifecycleSeq, repo: repo, aliases: aliases.isEmpty ? nil : aliases,
+                      messages: messages.isEmpty ? nil : messages)
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {
@@ -282,8 +330,9 @@ public final class Board {
     public func create(type: ObjectType, props: JSONValue, frame: Frame? = nil, parent: ObjectID? = nil, caller: ObjectID? = nil) -> CanvasObject {
         let size = type == .question ? QuestionSpec.size(props) : Self.defaultSize(type)
         let z = (objects.values.map(\.z).max() ?? 0) + 1
+        // A remote board's terminal is stamped by its host, which knows its checkouts.
         var object = CanvasObject(id: IDs.make("obj"), type: type, frame: frame ?? Frame(x: 0, y: 0, w: size.w, h: size.h), z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(),
-                                  props: type == .terminal ? stampingWorktree(props) : props)
+                                  props: type == .terminal && !isRemote ? stampingWorktree(props) : props)
         if let fitted = fittedFrame(ofGroup: object) {
             object.frame = fitted
         } else if frame == nil {
@@ -294,16 +343,33 @@ public final class Board {
         history.record(.created(object), by: object.createdBy)
         log(.created, object, actor: ActivityActor(caller: caller), "created \(ActivityLog.describe(object)) at \(ActivityLog.position(reported(object).frame))")
         onEvent?(.objectCreated(object))
+        if isRemote, hostWriteDepth == 0 { host?.send(.create(object)) }
         return object
     }
 
     /// Patches an object. A group's frame is never taken from `frame`: it follows its members.
     /// `actor` names who the activity log credits when it isn't the caller (the app's own
-    /// write-backs are `.system`, which ⌘Z skips: `Board.unrecorded`).
+    /// write-backs are `.system`, which ⌘Z skips: `Board.unrecorded`). On a remote board the
+    /// user's patch is a preview sent to the host, and the app's write-backs are the host's to make.
     @discardableResult
     public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil, actor: ActivityActor? = nil) throws -> CanvasObject {
+        if isRemote {
+            if actor == .system { return try object(id) }
+            let seen = objects[id]?.rev
+            let object = try toHost { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: []) }
+            if hostWriteDepth == 0 { host?.send(.update(id, seen: seen, frame: frame, z: z, props: props)) }
+            return object
+        }
         if actor == .system { return try unrecorded { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: []) } }
         return try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: [])
+    }
+
+    /// Runs a remote board's local preview of the user's write one level deeper, so whatever it
+    /// writes in turn stays here (`hostWriteDepth`).
+    private func toHost<T>(_ body: () throws -> T) rethrows -> T {
+        hostWriteDepth += 1
+        defer { hostWriteDepth -= 1 }
+        return try body()
     }
 
     /// Writes props the app keeps about an object rather than its content (a browser's
@@ -333,6 +399,8 @@ public final class Board {
     }
 
     func commitBookkeeping(_ before: CanvasObject, props: JSONValue) {
+        // A remote board's bookkeeping is its host's.
+        guard !isRemote else { return }
         var object = before
         object.props = object.props.merging(props)
         guard object != before else { return }
@@ -360,6 +428,13 @@ public final class Board {
                 object.props = object.props.merging(.object(["anchor": .null]))
             }
         }
+        // A terminal's host is where its session runs, fixed for its life: the live terminal stays
+        // attached there, so a board naming another host (or none) would read its history from,
+        // and end, a session elsewhere.
+        if object.type == .terminal, HostedTerminal.host(of: object) != HostedTerminal.host(of: before) {
+            let was = HostedTerminal.host(of: before) ?? "the local machine", now = HostedTerminal.host(of: object) ?? "the local machine"
+            throw BoardError.invalidParams("terminal \(id) runs on \(was): a terminal's host can't change (create a terminal on \(now) instead)")
+        }
         if let fitted = fittedFrame(ofGroup: object) { object.frame = fitted }
         object.rev += 1
         object.updatedAt = Date()
@@ -383,8 +458,14 @@ public final class Board {
     /// Removes an object. Within the same undo step: arrows bound to it detach; a deleted
     /// terminal takes its follow tile with it; a closed follow tile stops its terminal following
     /// (`props.follow` false) so the next report doesn't bring it back. Undo and redo replay
-    /// exactly what was recorded.
+    /// exactly what was recorded. On a remote board the delete is a preview sent to the host.
     public func delete(_ id: ObjectID, caller: ObjectID? = nil) throws {
+        guard isRemote, hostWriteDepth == 0 else { return try deleting(id, caller: caller) }
+        try toHost { try deleting(id, caller: caller) }
+        host?.send(.delete(id))
+    }
+
+    private func deleting(_ id: ObjectID, caller: ObjectID?) throws {
         guard objects[id] != nil else { throw BoardError.notFound("object \(id)") }
         let actor = ActivityActor(caller: caller)
         // Arrows bound to it detach within the same undo step, so one ⌘Z restores both.
@@ -394,17 +475,19 @@ public final class Board {
         guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
         reindexKey(id, from: removed.props, to: nil)
+        forgetAliases(of: id)
         bumpRevision()
         countWrite(caller: caller)
         // Before the delete, so undo brings the object back first and then its chips.
         let unstaged = tray.enumerated().filter { $0.element.target.objectIDs.contains(id) }.map { PlacedMention(index: $0.offset, mention: $0.element) }
         if !unstaged.isEmpty { history.record(.unstaged(unstaged, pastedInto: nil), by: Actor(caller: caller)) }
         history.record(.deleted(removed), by: Actor(caller: caller))
-        if removed.type == .terminal { removedTerminals.append(id) }
+        if removed.type == .terminal { removedTerminals.append(removed) }
         log(.deleted, removed, actor: actor, "deleted \(ActivityLog.describe(removed))")
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
         forgetHandoffs(of: id)
+        forgetMessages(of: removed)
         forgetComposerPrompts(of: id)
         let marked = attention.removeValue(forKey: id) != nil
         onChange?()
@@ -492,6 +575,7 @@ public final class Board {
     private func commit(_ object: CanvasObject) {
         bumpRevision()
         reindexKey(object.id, from: objects[object.id]?.props, to: object.props)
+        renamed(object.id, from: objects[object.id]?.props, to: object.props, type: object.type)
         objects[object.id] = object
         changedAt[object.id] = revision
         revHighWater[object.id] = max(revHighWater[object.id] ?? 0, object.rev)
@@ -514,25 +598,28 @@ public final class Board {
     }
 
     /// Closes a step opened with `history.begin()`. When the outermost one closes, terminals it
-    /// deleted that are still gone (a failed batch puts its deletes back) are reported ended.
+    /// deleted that are still gone (a failed batch puts its deletes back) are reported ended, and
+    /// the messages it bounced are handed on (`flushBounces`).
     func endStep() {
         history.end()
-        guard !history.isOpen, !removedTerminals.isEmpty else { return }
-        let ended = removedTerminals.filter { objects[$0] == nil }
+        guard !history.isOpen else { return }
+        flushBounces()
+        guard !removedTerminals.isEmpty else { return }
+        let ended = removedTerminals.filter { objects[$0.id] == nil }
         removedTerminals = []
         if !ended.isEmpty { onTerminalsEnded?(ended) }
     }
 
     /// Runs `body` as one undo step and one board revision; when it throws, every change it
-    /// made is reverted (announced as normal changes), the hand-offs waiting for terminals are put
-    /// back as they were (an answer it handed off withdrawn, one a delete took restored), and the
-    /// error rethrown.
+    /// made is reverted (announced as normal changes), the hand-offs, messages and aliases of
+    /// terminals are put back as they were (an answer it handed off withdrawn, the queue, mentions
+    /// and old names a delete took restored), and the error rethrown.
     public func atomically<T>(_ body: () throws -> T) throws -> T {
         let outermost = pinnedRevision == nil
         if outermost { pinnedRevision = revision + 1 }
         history.begin()
         let mark = history.mark()
-        let handed = handoffs
+        let (handed, queued, named) = (handoffs, messages, aliases)
         defer {
             endStep()
             if outermost { pinnedRevision = nil }
@@ -548,6 +635,8 @@ public final class Board {
             }
             revert(history.discard(from: mark))
             handoffs = handed
+            messages = queued
+            aliases = named
             throw error
         }
     }
@@ -920,6 +1009,60 @@ public final class Board {
         onEvent?(.trayChanged(tray))
     }
 
+    // MARK: Remote boards (docs/design.md "Client mode")
+
+    /// The host's version of an object (`BoardMirror`): stored as the host has it, `rev`
+    /// included, and announced like any change; never an undo step, a log entry or a write sent back.
+    func applyHost(_ object: CanvasObject) {
+        let previous = objects[object.id]
+        guard previous != object else { return }
+        bumpRevision()
+        reindexKey(object.id, from: previous?.props, to: object.props)
+        objects[object.id] = object
+        changedAt[object.id] = revision
+        guard let previous else {
+            onEvent?(.objectCreated(object))
+            return
+        }
+        markMentionsEdited(from: previous, to: object)
+        onEvent?(.objectUpdated(object))
+    }
+
+    /// A provisional object whose create the host answered with `object`: the user's preview of
+    /// it (with any later writes) goes on under the host's id until those are answered too.
+    /// `onHostRekey` hears of it first, while the provisional object is still here. Nothing when
+    /// the user deleted it meanwhile (the delete follows to the host).
+    func rekeyHost(_ provisional: ObjectID, as object: CanvasObject) {
+        guard var shown = objects[provisional] else { return }
+        onHostRekey?(provisional, object.id)
+        removeHost(provisional)
+        shown.id = object.id
+        shown.rev = object.rev
+        applyHost(shown)
+    }
+
+    /// The host has no object `id` (deleted there, or a provisional create made way for the
+    /// host's own): it leaves here with its mentions and marker, ending nothing.
+    func removeHost(_ id: ObjectID) {
+        guard let removed = objects.removeValue(forKey: id) else { return }
+        bumpRevision()
+        changedAt.removeValue(forKey: id)
+        reindexKey(id, from: removed.props, to: nil)
+        let before = tray.count
+        tray.removeAll { $0.target.objectIDs.contains(id) }
+        let marked = attention.removeValue(forKey: id) != nil
+        onEvent?(.objectDeleted(id))
+        if tray.count != before { trayChanged() }
+        if marked { onEvent?(.attentionChanged(object: id, attention: nil)) }
+    }
+
+    /// The host raised (`marker`) or cleared (nil) the attention marker on `id`.
+    func applyHostAttention(_ marker: Attention?, on id: ObjectID) {
+        guard attention[id] != marker, objects[id] != nil || marker == nil else { return }
+        attention[id] = marker
+        onEvent?(.attentionChanged(object: id, attention: marker))
+    }
+
     // MARK: Agents
 
     /// `call` names the tool call a hook reports on. `blocked` with a call: that call waits for
@@ -937,8 +1080,12 @@ public final class Board {
     /// the error as its message, and the answer is known to be cut off (`turnErrors`). `unknown`:
     /// an agent without a lifecycle integration runs here (`bin/aider` says so as aider starts);
     /// its terminal notifications report when it waits (`NotifyingAgent`, `via: "notifications"`).
+    /// `protocol`: the integration's protocol version (`props.agent.protocol`; 1 takes
+    /// out-of-band messages, `PromptTarget.takesMessages`); a report without it says 0. A report
+    /// of another agent kind, or of no protocol where it took messages, ends the agent session its
+    /// messages were queued for (`endAgentSession`).
     public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil,
-                                serial: Bool = false, error: String? = nil) throws {
+                                serial: Bool = false, error: String? = nil, protocol version: Int? = nil) throws {
         let terminal = try object(tile)
         guard terminal.type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
         guard final == nil || state == .idle else { throw BoardError.invalidParams("final comes only with state idle: the answer of the turn that just ended") }
@@ -990,8 +1137,11 @@ public final class Board {
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message { lifecycle["message"] = .string(message) }
         if state == .unknown { lifecycle["via"] = .string(NotifyingAgent.via) }
-        let agent = (terminal.props["agent"] ?? .object([:])).merging(.object(["kind": .string(kind)]))
+        let before = terminal.props["agent"]
+        let agent = (before ?? .object([:])).merging(.object(["kind": .string(kind), "protocol": (version ?? 0) > 0 ? .number(Double(version!)) : .null]))
         try update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
+        exitedAgents.remove(tile)
+        if (before?["protocol"]?.int ?? 0) >= 1, before?["kind"]?.string != kind || (version ?? 0) < 1 { endAgentSession(tile) }
         composerAgentReported(tile, state: state)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .object(lifecycle)))
     }
@@ -1030,8 +1180,9 @@ public final class Board {
     /// The user has looked at this terminal; a `done` agent becomes `idle`. Looking at an agent
     /// that is still working (or waiting on an approval) doesn't count: its answer isn't there
     /// yet, so a turn that ends after the user looked away stays `done` until they look again.
+    /// A remote board's agents are seen on their host (v1: looking here changes nothing there).
     public func markSeen(_ tile: ObjectID) {
-        guard let terminal = objects[tile], terminal.type == .terminal, !seenSinceWorking.contains(tile) else { return }
+        guard !isRemote, let terminal = objects[tile], terminal.type == .terminal, !seenSinceWorking.contains(tile) else { return }
         let state = terminal.props["lifecycle"]?["state"]?.string
         guard state != LifecycleState.working.rawValue, state != LifecycleState.blocked.rawValue else { return }
         seenSinceWorking.insert(tile)
@@ -1043,13 +1194,18 @@ public final class Board {
         onEvent?(.agentLifecycle(tile: tile, lifecycle: lifecycle))
     }
 
+    /// The agent's session (`agent.report_session`). Another session where one was recorded (a
+    /// new conversation, or a replacement agent) ends the agent session its messages were queued
+    /// for (`endAgentSession`).
     public func reportSession(tile: ObjectID, kind: String, sessionId: String?, sessionPath: String?) throws {
         let terminal = try object(tile)
         var agent = terminal.props["agent"]?.object ?? [:]
+        let previous = agent["sessionId"]?.string
         agent["kind"] = .string(kind)
         if let sessionId { agent["sessionId"] = .string(sessionId) }
         if let sessionPath { agent["sessionPath"] = .string(sessionPath) }
         try update(tile, props: .object(["agent": .object(agent)]), caller: tile)
+        if let previous, let sessionId, sessionId != previous { endAgentSession(tile) }
     }
 
     /// `agent.report` as its params (schema `agent.report`): a report over the socket, or one an
@@ -1060,17 +1216,20 @@ public final class Board {
         }
         guard let state = LifecycleState(rawValue: name) else { throw BoardError.invalidParams("unknown state") }
         try reportLifecycle(tile: tile, kind: kind, state: state, message: p["message"]?.string, seq: p["seq"]?.int, source: p["source"]?.string,
-                            call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string)
+                            call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string, protocol: p["protocol"]?.int)
     }
 
     /// The agent exited (`agent.release`): the tile is a plain shell again. Its lifecycle and the
     /// recorded session go, so a reboot restores a shell instead of resuming a session the user quit,
-    /// and the composer's prompts it never drained return their mentions to the tray.
+    /// the composer's prompts it never drained return their mentions to the tray, and the
+    /// messages its integration never took bounce (`endAgentSession`).
     public func releaseAgent(tile: ObjectID) throws {
         _ = try object(tile)
         pendingApprovals[tile] = nil
+        exitedAgents.remove(tile)
         try update(tile, props: .object(["lifecycle": .null, "agent": .null]), caller: tile)
         dropComposerPrompts(of: tile)
+        endAgentSession(tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
     }
 

@@ -50,4 +50,19 @@ building libghostty ourselves. The upstream fix is an idle grace period in `sync
 the link only after it has fired some frames (or ~0.5 s) without cell changes, instead of after the
 first idle draw.
 
-To update, copy the new tag's files as above, reapply both patches, and drop the test target again.
+### Private clipboard writes
+
+For easl's client mode (a remote board's terminal shows another Mac's text, which must not stay on
+this one):
+
+- `TerminalSurfaceClipboardPrivacyDelegate` (`Surface/TerminalSurfaceViewDelegate.swift`): a
+  surface delegate answering `terminalClipboardWritesArePrivate = true` gets every write that lands
+  (`TerminalController+Callbacks.swift` `writeClipboard`: copy bindings, allowed program writes)
+  written with `.currentHostOnly` (no Universal Clipboard) plus the empty
+  `org.nspasteboard.TransientType` and `org.nspasteboard.ConcealedType` markers; on UIKit,
+  `.localOnly`. `TerminalCallbackBridge.clipboardWritesArePrivate` asks the delegate.
+- `TerminalClipboardRequestKind.kittyWrite`: under `clipboard-write = ask` a Kitty clipboard
+  protocol (OSC 5522) write reaches the confirmation delegate like an OSC 52 write, instead of
+  being denied as an unrecognized request.
+
+To update, copy the new tag's files as above, reapply the patches, and drop the test target again.

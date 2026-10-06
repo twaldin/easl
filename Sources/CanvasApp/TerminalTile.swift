@@ -5,6 +5,8 @@ import GhosttyTerminal
 
 /// A Ghostty surface running `zmx attach <session>`: the agent/shell survives app quit, crash,
 /// and rebuild; reattaching restores the screen. After a reboot, a recorded agent session resumes.
+/// A hosted terminal (`props.host`) attaches to its session on that machine over ssh instead
+/// (`TerminalHost`, `HostedTerminal`).
 @MainActor
 final class TerminalTile: NSView, TileContent {
     let objectID: ObjectID
@@ -26,28 +28,58 @@ final class TerminalTile: NSView, TileContent {
     /// A web link the terminal's text activated (⌘-click on a URL) opened or found this browser
     /// tile; the canvas shows it.
     var onOpenedLink: ((ObjectID) -> Void)?
+    /// Something asked of this terminal can't happen on this Mac (a remote terminal's file
+    /// reference: the file is on the host); the canvas says `text` for a moment (`CanvasView.showNotice`).
+    var onNotice: ((String) -> Void)?
+    /// A remote board's terminal (docs/design.md "Client mode"): the host's session, attached
+    /// over ssh; its programs, notifications and exit are the host's to watch, not this Mac's.
+    let isRemote: Bool
 
-    init(object: CanvasObject, board: Board) {
+    /// The machine this terminal's session runs on (`props.host`); nil for this Mac, and for a
+    /// remote board's terminal (its host's easl runs that session). Fixed for the tile's life:
+    /// the session is where it was started.
+    let host: TerminalHost?
+    /// Shown over the top of a hosted terminal while its host is offline or its session couldn't
+    /// start, with Reconnect.
+    private var hostBanner: HostBanner?
+
+    /// `attach`: a remote board's terminal, shown by running that command (`RemoteHost.terminalAttachCommand`).
+    init(object: CanvasObject, board: Board, attach: [String]? = nil) {
         objectID = object.id
         sessionName = Self.sessionName(object.id)
         self.board = board
+        isRemote = attach != nil
+        host = attach == nil ? HostedTerminal.host(of: object).map(TerminalHost.named) : nil
         terminal = CanvasTerminalView(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         super.init(frame: terminal.frame)
         terminal.autoresizingMask = [.width, .height]
-        let environment = Self.environment(tile: object.id, board: board)
-        terminal.configuration = TerminalSurfaceOptions(
-            backend: .exec,
-            workingDirectory: object.props["cwd"]?.string ?? board.root.path,
-            envVars: environment,
-            command: Self.command(session: sessionName, object: object, board: board, keep: Set(environment.keys))
-        )
+        if let attach {
+            terminal.configuration = TerminalSurfaceOptions(backend: .exec, workingDirectory: NSHomeDirectory(), envVars: [:], command: Self.remoteCommand(attach))
+        } else {
+            let environment = Self.environment(tile: object.id, board: board)
+            let keep = Set(environment.keys)
+            terminal.configuration = TerminalSurfaceOptions(
+                backend: .exec,
+                // A hosted session's `cwd` is the host's; ssh runs here.
+                workingDirectory: host == nil ? object.props["cwd"]?.string ?? board.root.path : board.root.path,
+                envVars: environment,
+                command: host.map { Self.hostedCommand(session: sessionName, tile: object.id, board: board.id, route: $0.route, keep: keep) }
+                    ?? Self.command(session: sessionName, object: object, board: board, keep: keep)
+            )
+        }
         terminal.controller = TerminalConfig.shared.controller
         handler.tile = self
         terminal.delegate = handler
-        terminal.linkAt = { [weak self] point in self?.link(at: point) }
-        terminal.onHover = { [weak self] hit in self?.showUnderline(hit) }
-        terminal.onOpen = { [weak self] hit, newTile in self?.open(hit, newTile: newTile) }
-        terminal.onMissedLink = { [weak self] point, newTile in self?.retryLink(at: point, newTile: newTile) }
+        if isRemote {
+            // Its paths are the host's: nothing here looks them up (on this Mac a reference would
+            // find, and open, a same-named file of its own).
+            terminal.onMissedLink = { [weak self] point, _ in self?.remoteReference(at: point) }
+        } else {
+            terminal.linkAt = { [weak self] point in self?.link(at: point) }
+            terminal.onHover = { [weak self] hit in self?.showUnderline(hit) }
+            terminal.onOpen = { [weak self] hit, newTile in self?.open(hit, newTile: newTile) }
+            terminal.onMissedLink = { [weak self] point, newTile in self?.retryLink(at: point, newTile: newTile) }
+        }
         // AppKit makes the view first responder only after `becomeFirstResponder` returns.
         terminal.onFocusChange = { [weak self] in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.updateSurfaceFocus() } }
@@ -59,7 +91,8 @@ final class TerminalTile: NSView, TileContent {
         underline.isHidden = true
         addSubview(underline)
         name = object.props["name"]?.string
-        TerminalProgramWatch.shared.add(self)
+        if !isRemote { TerminalProgramWatch.shared.add(self) }
+        host?.add(self)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -99,8 +132,8 @@ final class TerminalTile: NSView, TileContent {
     /// like a fresh login session and the user's startup files set their own variables.
     static func command(session: String, object: CanvasObject, board: Board, keep: Set<String>) -> String {
         let shell = AppPaths.userShell
-        let start = initialCommand(object).map { [shell, "-l", "-c", "\($0); exec \(quote([shell])) -l"] } ?? [shell, "-l"]
-        guard let zmx = AppPaths.zmx else { return quote(start) }
+        let start = initialCommand(object).map { [shell, "-l", "-c", "\($0); exec \(ShellWords.quote([shell])) -l"] } ?? [shell, "-l"]
+        guard let zmx = AppPaths.zmx else { return ShellWords.quote(start) }
         let strip = LoginSession.strippedForTile(ProcessInfo.processInfo.environment, keep: keep).flatMap { ["-u", $0] }
         // `canvas.home` names the owning instance: board copies in another home (replicas, dev
         // instances) carry the same board and tile ids, so ids alone can't tell whose session it is.
@@ -108,7 +141,7 @@ final class TerminalTile: NSView, TileContent {
         let attach = ["/usr/bin/env"] + strip + [zmx, "attach", "--labels", labels, session] + start
         let refusal = #"printf '\nThis terminal session (%s) belongs to another easl instance (%s).\nNot attaching: this copy of the board can neither type into it nor end it.\n' "$2" "$owner"; exec sleep 2147483647"#
         let prologue = SessionReach.prologue() + ownerGuard(refusal: refusal)
-        return quote(["/bin/sh", "-c", prologue + "shift 3\nexec \"$@\"", "canvas-attach", zmx, session, homeLabel] + attach)
+        return ShellWords.quote(["/bin/sh", "-c", prologue + "shift 3\nexec \"$@\"", "canvas-attach", zmx, session, homeLabel] + attach)
     }
 
     /// A prologue for `sh -c` with $1 = zmx, $2 = session name, $3 = this instance's home label:
@@ -146,26 +179,79 @@ final class TerminalTile: NSView, TileContent {
 
     /// What a new session runs before dropping to a login shell: after a reboot, resume the
     /// recorded agent session with the options of the tile's own `command` (`AgentResume`: omp,
-    /// claude, codex, gemini, opencode); otherwise the tile's initial `command`.
-    static func initialCommand(_ object: CanvasObject) -> String? {
+    /// claude, codex, gemini, opencode); otherwise the tile's initial `command`. As argv.
+    static func initialArgv(_ object: CanvasObject) -> [String]? {
         let argv = object.props["command"]?.array?.compactMap(\.string) ?? []
         if let kind = object.props["agent"]?["kind"]?.string, let sessionId = object.props["agent"]?["sessionId"]?.string,
            let resume = AgentResume.argv(kind: kind, sessionId: sessionId, command: argv) {
-            return quote(resume)
+            return resume
         }
-        return argv.isEmpty ? nil : quote(argv)
+        return argv.isEmpty ? nil : argv
     }
 
-    static func quote(_ argv: [String]) -> String {
-        argv.map { "'" + $0.replacingOccurrences(of: "'", with: "'\"'\"'") + "'" }.joined(separator: " ")
+    /// `initialArgv` as one command line.
+    static func initialCommand(_ object: CanvasObject) -> String? {
+        initialArgv(object).map(ShellWords.quote)
+    }
+
+    /// A hosted terminal's command: the attach loop through the app's connection to its host
+    /// (`HostedTerminal.attachLoop`), with the app's inherited variables unset as for a local one.
+    /// The session itself is easld's to start (`hostedSpawnParams`); the host attaches only to one
+    /// labelled with this instance's home, `board` and `tile`, as that starts it.
+    static func hostedCommand(session: String, tile: ObjectID, board: BoardID, route: HostRoute, keep: Set<String>) -> String {
+        let strip = LoginSession.strippedForTile(ProcessInfo.processInfo.environment, keep: keep).flatMap { ["-u", $0] }
+        let attach = HostedTerminal.attach(session: session, home: homeLabel, board: board, tile: tile)
+        return ShellWords.quote(["/usr/bin/env"] + strip + ["/bin/sh", "-c", HostedTerminal.attachLoop, "canvas-host",
+                                 "/usr/bin/ssh", route.controlPath, route.target, session, attach])
+    }
+
+    /// `session.spawn`'s params for this hosted terminal, read from the object as it is now (a
+    /// recorded agent session resumes): `home` is the host's, `run` this instance's relayed
+    /// sockets' directory there.
+    func hostedSpawnParams(home: String, run: String) -> JSONValue? {
+        guard let object = board.objects[objectID] else { return nil }
+        return HostedTerminal.spawnParams(tile: objectID, board: board.id, argv: Self.initialArgv(object), cwd: object.props["cwd"]?.string,
+                                          home: home, run: run, homeLabel: Self.homeLabel, cmuxPassword: AppPaths.cmuxPassword,
+                                          ghosttyIntegration: TerminalConfig.shared.shellIntegration != nil)
+    }
+
+    /// A remote terminal's command: the host's attach, again until the tile closes. An attach that
+    /// ends cleanly (a detach, or the session's shell exited) attaches again after a second, as a
+    /// local tile's detach reattaches (`surfaceClosed`). The host having no such session
+    /// (`RemoteHost.noSessionStatus`) before the first attach means its own tile hasn't started it
+    /// yet; after one, that the session ended: the command exits, and the host's delete of the
+    /// tile arrives. Any other failure (the link dropped) is retried every 2 s.
+    static func remoteCommand(_ attach: [String]) -> String {
+        let loop = #"""
+        attached=
+        while :; do
+          "$@"
+          case $? in
+            0) attached=1; sleep 1; continue ;;
+            \#(RemoteHost.noSessionStatus)) [ -z "$attached" ] || exit 0 ;;
+          esac
+          printf '\r\033[2K[easl] waiting for the host…'
+          sleep 2
+        done
+        """#
+        return ShellWords.quote(["/bin/sh", "-c", loop, "easl-remote"] + attach)
+    }
+
+    /// Reports this hosted terminal's integration spooled on its host while it couldn't reach the
+    /// app (`TerminalHost`), applied as the board applies its local spool (`Board.replay`).
+    func replay(_ entries: [AgentReportSpool.Entry]) {
+        guard !entries.isEmpty else { return }
+        board.replay(entries)
     }
 
     /// Ends a deleted terminal's persistent session (`Board.onTerminalsEnded`: every delete path,
     /// UI, API, batch, undo/redo), then deletes zmx's log of it (`Housekeeping.sessionLog`), which
-    /// zmx keeps forever. Never another instance's session or log (`ownerGuard`).
-    static func killSession(tile: ObjectID) {
+    /// zmx keeps forever. Never another instance's session or log (`ownerGuard`). A hosted
+    /// terminal's session is ended by its host's easld (`session.kill`).
+    static func killSession(_ object: CanvasObject) {
+        if let host = HostedTerminal.host(of: object) { return TerminalHost.named(host).kill(object.id) }
         guard let zmx = AppPaths.zmx else { return }
-        let session = sessionName(tile)
+        let session = sessionName(object.id)
         let log = AppPaths.zmxLogs.appendingPathComponent(Housekeeping.sessionLog(session: session)).path
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -176,14 +262,15 @@ final class TerminalTile: NSView, TileContent {
     /// zmx session names stay short: socket paths under the GUI app's TMPDIR are capped (docs/contracts.md).
     nonisolated static func sessionName(_ tile: ObjectID) -> String { "canvas-\(tile)" }
 
-    /// The last `limit` lines of the session's text; nil when zmx is missing or the session
-    /// doesn't exist. Streams zmx's output through a bounded tail (never the whole scrollback)
-    /// and blocks until zmx exits, so call it off the main actor when it isn't for drawing.
-    /// `columns`: the terminal's width, so rows it soft-wrapped read as one line; `screen`: the
-    /// live screen as Ghostty reads it (`screenRows`), whose rows join by Ghostty's wrap flags.
-    nonisolated static func history(session: String, lines limit: Int, columns: Int? = nil, screen: [TerminalTail.ScreenRow] = []) -> TerminalTail.Tail? {
+    /// The last `limit` lines of the session's text (on `host`, over ssh, for a hosted terminal);
+    /// nil when zmx is missing or the session doesn't exist. Streams zmx's output through a
+    /// bounded tail (never the whole scrollback) and blocks until zmx exits, so call it off the
+    /// main actor when it isn't for drawing. `columns`: the terminal's width, so rows it
+    /// soft-wrapped read as one line; `screen`: the live screen as Ghostty reads it
+    /// (`screenRows`), whose rows join by Ghostty's wrap flags.
+    nonisolated static func history(session: String, on host: HostRoute? = nil, lines limit: Int, columns: Int? = nil, screen: [TerminalTail.ScreenRow] = []) -> TerminalTail.Tail? {
         var tail = TerminalTail(limit: limit, columns: columns, screen: screen)
-        guard Zmx.run(["history", session], { tail.append($0) }) else { return nil }
+        guard Zmx.run(["history", session], on: host, { tail.append($0) }) else { return nil }
         return tail.finish()
     }
 
@@ -246,7 +333,7 @@ final class TerminalTile: NSView, TileContent {
 
     fileprivate func titleChanged(_ title: String) {
         oscTitle = title
-        board.terminalTitled(objectID, title: title)
+        if !isRemote { board.terminalTitled(objectID, title: title) }
         // A new command: the header's status was the previous one's.
         if commands.title(title, at: Date(), promptTitle: TerminalCommandTracker.promptTitle(cwd: reportedCwd, home: NSHomeDirectory())) {
             onStatus?(nil, false, nil)
@@ -273,6 +360,8 @@ final class TerminalTile: NSView, TileContent {
     /// when it comes, does too); back at the prompt, an agent reporting by notification has
     /// exited (`Board.terminalProgram`). Where it works goes to the board too (`worksIn`).
     func refreshProgram() {
+        // A remote or hosted terminal's processes run on its host: none of this Mac's process table.
+        guard !isRemote, host == nil else { return }
         guard let shell else {
             worksIn(reportedCwd)
             return findShell()
@@ -359,13 +448,15 @@ final class TerminalTile: NSView, TileContent {
     /// (`Board.notifyingAgentSubmitted`).
     func typed(_ event: NSEvent) {
         lastKeyAt = Date()
-        if [36, 76].contains(event.keyCode) { board.notifyingAgentSubmitted(objectID) }
+        if [36, 76].contains(event.keyCode), !isRemote { board.notifyingAgentSubmitted(objectID) }
     }
 
     /// A program asked for the user (OSC 9 / OSC 777 `notify`, or BEL): the lifecycle of the
     /// agent holding the foreground (`NotifyingAgent`), else an attention marker on this
     /// terminal, unless the user is already looking at it (`Board.terminalNotified`).
     fileprivate func notified(_ message: String, bell: Bool) {
+        // The host's own tile hears a remote terminal's notifications and raises their markers.
+        guard !isRemote else { return }
         refreshProgram()
         let answersKey = lastKeyAt.map { Date().timeIntervalSince($0) <= NotifyingAgent.bellAfterKey } ?? false
         let effect = board.terminalNotified(objectID, message: message, bell: bell, program: program, watched: isWatched, answersKey: answersKey)
@@ -404,7 +495,7 @@ final class TerminalTile: NSView, TileContent {
         let detail = ([command.command ?? "The last command"] + [command.exit.map { "exit \($0)" }, command.durationMs.map(TerminalCommand.duration)].compactMap { $0 })
             .joined(separator: " · ")
         onStatus?(command.status, (command.exit ?? 0) != 0, detail)
-        guard (command.durationMs ?? 0) >= TerminalCommand.noticeAfterMs, !isWatched,
+        guard !isRemote, (command.durationMs ?? 0) >= TerminalCommand.noticeAfterMs, !isWatched,
               board.raiseTerminalNotice(objectID, message: command.noticeMessage, bell: false) else { return }
         NSLog("easl: terminal %@ finished a long command: %@", objectID, command.noticeMessage)
     }
@@ -702,22 +793,30 @@ final class TerminalTile: NSView, TileContent {
     /// session ended with it, so the tile goes the normal delete path without asking: there is
     /// nothing left to kill. A detached client (the session still runs) reattaches instead.
     /// `processAlive` is Ghostty's own close request (its ⌘W binding): not an exit, ignored here.
+    /// A hosted terminal asks its host's easld; one it can't ask (offline) reattaches, and the
+    /// attach waits for the connection.
     fileprivate func surfaceClosed(processAlive: Bool) {
-        guard !processAlive else { return }
-        let session = sessionName
+        // A remote session's end is the host's: its tile closes there, and the delete arrives.
+        guard !processAlive, !isRemote else { return }
+        let session = sessionName, tile = objectID, host = host
         Task { [weak self] in
-            let running = await offPool { Self.sessionExists(session) }
+            let running = if let host { await host.hasSession(tile) ?? true } else { await offPool { Self.sessionExists(session) } }
             guard let self, self.board.objects[self.objectID] != nil else { return }
             if running {
                 NSLog("easl: terminal %@ detached from a running session; reattaching", self.objectID)
-                let controller = self.terminal.controller
-                self.terminal.controller = nil
-                self.terminal.controller = controller
+                self.reattach()
             } else {
                 NSLog("easl: terminal %@ exited; closing it", self.objectID)
                 self.board.transaction { try? self.board.delete(self.objectID) }
             }
         }
+    }
+
+    /// Starts the surface's command again (a new `zmx attach`, or a hosted terminal's attach loop).
+    private func reattach() {
+        let controller = terminal.controller
+        terminal.controller = nil
+        terminal.controller = controller
     }
 
     /// Whether zmx still has `session`. Blocks until zmx exits; false without zmx.
@@ -762,6 +861,16 @@ final class TerminalTile: NSView, TileContent {
             self.open(hit, newTile: newTile)
         }
     }
+
+    /// A ⌘-click in a remote terminal: on what reads as a file reference (`TerminalReferences`,
+    /// not looked up: the file is on the host), says where it opens instead.
+    private func remoteReference(at point: NSPoint) {
+        guard hit(at: point, resolve: { $0 }) != nil else { return }
+        onNotice?(Self.remoteReferenceNotice)
+    }
+
+    /// What a remote terminal says to a ⌘-clicked file reference or path.
+    static let remoteReferenceNotice = "File references open on the host's own board"
 
     /// The cells `runs` cover in the underline's (flipped) coordinates, `height` tall at the
     /// bottom of each cell (the whole cell when nil).
@@ -810,17 +919,23 @@ final class TerminalTile: NSView, TileContent {
     /// a browser tile beside this terminal (`Board.openLink`: a tile already showing it is
     /// reused); ⌥ held (a ⌥⌘-click, which `CanvasTerminalView` hands Ghostty as a ⌘-click: Ghostty
     /// finds no link under ⌥⌘) opens it in the default browser instead, and any other scheme or a
-    /// file path goes to the system, as `open` would.
+    /// file path goes to the system, as `open` would. A remote terminal's text is its host's: a
+    /// path or `file:` URL there names the host's file, so nothing opens here (this Mac's file of
+    /// that name would) and the notice says so, and app.log never gets its links.
     func openLink(_ text: String) {
         let url = URL(string: text).flatMap { $0.scheme == nil ? nil : $0 }
             ?? URL(fileURLWithPath: (text as NSString).expandingTildeInPath)
+        if isRemote, url.isFileURL || TerminalReferences.reference(in: text, at: 0) != nil {
+            onNotice?(Self.remoteReferenceNotice)
+            return
+        }
         let forced = terminal.forcingDefaultBrowser || NSApp.currentEvent?.modifierFlags.contains(.option) == true
         guard WebLink.isWeb(url), !forced else {
-            ExternalOpen.open(url, because: "terminal \(objectID) link\(forced ? " (⌥-click)" : "")")
+            ExternalOpen.open(url, because: "terminal \(objectID) link\(forced ? " (⌥-click)" : "")", naming: !isRemote)
             return
         }
         let opened = board.openLink(url, near: objectID, caller: objectID)
-        NSLog("easl: terminal %@ link %@ → %@ %@", objectID, text, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
+        NSLog("easl: terminal %@ link %@ → %@ %@", objectID, isRemote ? "(remote, not logged)" : text, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
         onOpenedLink?(opened.object.id)
     }
 
@@ -912,23 +1027,27 @@ final class TerminalTile: NSView, TileContent {
         DrawingStyle.luminance(TerminalConfig.shared.style(for: effectiveAppearance).background, in: effectiveAppearance)
     }
 
-    /// The session's styled screen text: the last `rows` lines of `zmx history --vt` and the
-    /// row the cursor ends on. Blocks until zmx exits; nil when zmx or the session is missing.
-    nonisolated static func styledHistory(session: String, rows: Int) -> (lines: [TerminalLine], cursorRow: Int?)? {
+    /// The session's styled screen text: the last `rows` lines of `zmx history --vt` (on `host`
+    /// for a hosted terminal) and the row the cursor ends on. Blocks until zmx exits; nil when zmx
+    /// or the session is missing, or the host can't be reached.
+    nonisolated static func styledHistory(session: String, on host: HostRoute?, rows: Int) -> (lines: [TerminalLine], cursorRow: Int?)? {
         var tail = TerminalStyledTail(limit: rows)
-        guard Zmx.run(["history", session, "--vt"], { tail.append($0) }) else { return nil }
+        guard Zmx.run(["history", session, "--vt"], on: host, { tail.append($0) }) else { return nil }
         let lines = tail.finish()
         return (lines, tail.cursorRow)
     }
 
     /// Ghostty draws through Metal, which `cacheDisplay` can't capture, so renders, cards, and
-    /// `view.snapshot` covers draw the session's styled text on the tile's grid instead.
+    /// `view.snapshot` covers draw the session's styled text on the tile's grid instead (a remote
+    /// terminal's session is on its host: the live surface's text, unstyled).
     func render(_ request: TileRenderRequest) async -> TileRender {
         let grid = TerminalRender.grid(for: request.size, known: grid, style: TerminalConfig.shared.style(for: request.appearance))
-        let session = sessionName
+        let session = sessionName, route = host?.route
         let rows = grid.rows
-        guard let history = await offPool(qos: .userInitiated, { Self.styledHistory(session: session, rows: rows) }) else {
-            return .placeholder(request, "terminal session \(session) is not running")
+        let fetched = isRemote ? liveScreen() : await offPool(qos: .userInitiated, { Self.styledHistory(session: session, on: route, rows: rows) })
+        guard let history = fetched else {
+            return .placeholder(request, isRemote ? "remote terminal \(objectID) isn't attached yet"
+                : route.map { "terminal session \(session) on \($0.target) can't be read" } ?? "terminal session \(session) is not running")
         }
         let screen = TerminalRender.screen(history.lines, cursorRow: history.cursorRow, rows: rows)
         let image = request.image { bounds in TerminalRender.draw(screen, grid: grid, in: bounds, appearance: request.appearance) }
@@ -945,8 +1064,15 @@ final class TerminalTile: NSView, TileContent {
 
     /// `zmx history` blocks until zmx exits, so it runs off the main actor before the cover is drawn.
     func prepareSnapshot() async {
-        let session = sessionName, rows = snapshotGrid.rows
-        snapshotHistory = await offPool(qos: .userInitiated) { Self.styledHistory(session: session, rows: rows) }
+        let session = sessionName, route = host?.route, rows = snapshotGrid.rows
+        snapshotHistory = isRemote ? liveScreen() : await offPool(qos: .userInitiated) { Self.styledHistory(session: session, on: route, rows: rows) }
+    }
+
+    /// A remote terminal's screen as its surface shows it, without styles; nil before it attached.
+    private func liveScreen() -> (lines: [TerminalLine], cursorRow: Int?)? {
+        let rows = screenRows()
+        guard !rows.isEmpty else { return nil }
+        return (rows.map { TerminalLine(runs: [TerminalRun(text: $0.text, style: TerminalStyle())]) }, nil)
     }
 
     /// Temporarily covers the Metal surface with its text (`prepareSnapshot`) so `cacheDisplay`
@@ -979,13 +1105,93 @@ final class TerminalTile: NSView, TileContent {
         self.name = name
         publishLabel()
     }
+
+    // MARK: Host
+
+    /// The host's connection or this tile's session changed (`TerminalHost`): while the host is
+    /// offline, or its easld couldn't start the session, a banner over the top of the terminal
+    /// says why, with Reconnect. The attach itself waits and reattaches on its own.
+    func hostChanged() {
+        guard let host else { return }
+        let message: String? = switch host.state {
+        case .offline(let reason): "\(host.target) is offline. \(reason)"
+        case .connecting, .online: host.failures[objectID].map { "\(host.target) couldn't start this terminal's session: \($0)" }
+        }
+        guard let message else {
+            hostBanner?.removeFromSuperview()
+            hostBanner = nil
+            return
+        }
+        if hostBanner == nil {
+            let banner = HostBanner(frame: NSRect(x: 0, y: bounds.height - HostBanner.height, width: bounds.width, height: HostBanner.height))
+            banner.autoresizingMask = [.width, .minYMargin]
+            banner.onReconnect = { [weak self] in self?.host?.reconnect() }
+            addSubview(banner)
+            hostBanner = banner
+        }
+        guard hostBanner?.message != message else { return }
+        hostBanner?.message = message
+        NSLog("easl: terminal %@: %@", objectID, message)
+    }
+}
+
+/// A hosted terminal's strip saying its host is offline (or its session couldn't start), and
+/// Reconnect.
+@MainActor
+final class HostBanner: NSView {
+    static let height: CGFloat = 34
+    var onReconnect: (() -> Void)?
+    private let label = NSTextField(labelWithString: "")
+    private let button = NSButton(title: "Reconnect", target: nil, action: nil)
+
+    var message: String {
+        get { label.stringValue }
+        set {
+            label.stringValue = newValue
+            label.toolTip = newValue
+            setAccessibilityLabel(newValue)
+        }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.94).cgColor
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        button.bezelStyle = .rounded
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        button.target = self
+        button.action = #selector(reconnect)
+        button.sizeToFit()
+        addSubview(label)
+        addSubview(button)
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    override func layout() {
+        super.layout()
+        let inset: CGFloat = 10
+        button.frame.origin = NSPoint(x: bounds.maxX - button.frame.width - inset, y: (bounds.height - button.frame.height) / 2)
+        let height = label.intrinsicContentSize.height
+        label.frame = NSRect(x: inset, y: (bounds.height - height) / 2, width: max(0, button.frame.minX - 2 * inset), height: height)
+    }
+
+    @objc private func reconnect() { onReconnect?() }
 }
 
 /// Retained delegate for the terminal view (its delegate reference is weak).
 @MainActor
 private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, TerminalSurfaceLifecycleDelegate, TerminalSurfaceGridResizeDelegate,
     TerminalSurfaceBellDelegate, TerminalSurfaceDesktopNotificationDelegate, TerminalSurfacePwdDelegate, TerminalSurfaceCloseDelegate,
-    TerminalSurfaceScrollbarDelegate, TerminalSurfaceCommandFinishedDelegate, TerminalSurfaceOpenURLDelegate {
+    TerminalSurfaceScrollbarDelegate, TerminalSurfaceCommandFinishedDelegate, TerminalSurfaceOpenURLDelegate,
+    TerminalSurfaceClipboardConfirmationDelegate, TerminalSurfaceClipboardPrivacyDelegate {
     weak var tile: TerminalTile?
 
     func terminalDidResize(_ size: TerminalGridMetrics) {
@@ -1033,5 +1239,20 @@ private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, Term
 
     func terminalDidRequestOpenURL(_ url: String, kind: TerminalOpenURLKind) {
         tile?.openLink(url)
+    }
+
+    /// Ghostty asks before a program writes the clipboard (tiles run `clipboard-write = ask`,
+    /// `TerminalConfig`): a local terminal's write lands as the user's config says; a remote one's
+    /// never does (its text is the host's). A program's read and an unsafe paste stay denied, as
+    /// they were with no delegate to ask.
+    func terminalDidRequestClipboardConfirmation(_ request: TerminalClipboardConfirmationRequest) {
+        let write = request.kind == .osc52Write || request.kind == .kittyWrite
+        request.respond(allow: write && tile?.isRemote == false && TerminalConfig.shared.programsMayWriteClipboard)
+    }
+
+    /// The user's copy from a remote terminal is the host's text: kept to this Mac and out of
+    /// clipboard managers. A local terminal's copies are ordinary.
+    var terminalClipboardWritesArePrivate: Bool {
+        tile?.isRemote == true
     }
 }

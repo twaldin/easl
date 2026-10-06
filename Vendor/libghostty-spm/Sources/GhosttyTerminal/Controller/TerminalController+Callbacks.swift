@@ -69,7 +69,9 @@ private enum TerminalCallbacks {
     /// land until the host has asked. That goes through the same
     /// confirmation delegate as a protected read; a host without one denies
     /// it, as it does the read. The default configuration allows writes
-    /// outright, and those land immediately.
+    /// outright, and those land immediately. A write that lands is private
+    /// when the surface's delegate says so
+    /// (``TerminalSurfaceClipboardPrivacyDelegate``).
     ///
     /// Writes one or more MIME-typed representations to the system
     /// pasteboard. `ghostty_clipboard_content_s` is binary-safe with an
@@ -99,14 +101,16 @@ private enum TerminalCallbacks {
             "clipboard write count=\(payloads.count) mimes=\(payloads.map(\.mime).joined(separator: ",")) confirm=\(confirm)"
         )
 
+        let bridge = userdata.map {
+            Unmanaged<TerminalCallbackBridge>.fromOpaque($0).takeUnretainedValue()
+        }
         guard confirm else {
-            terminalRunOnMain { setPasteboardString(payloads) }
+            terminalRunOnMain {
+                setPasteboardString(payloads, privately: bridge?.clipboardWritesArePrivate ?? false)
+            }
             return
         }
-        guard let userdata else { return }
-        let bridge = Unmanaged<TerminalCallbackBridge>
-            .fromOpaque(userdata)
-            .takeUnretainedValue()
+        guard let bridge else { return }
         let text = firstTextRepresentation(in: payloads) ?? ""
         terminalRunOnMain {
             bridge.handleClipboardConfirmation(contents: text, kind: .osc52Write) { allowed in
@@ -115,25 +119,42 @@ private enum TerminalCallbacks {
                     allowed ? "clipboard write allowed" : "clipboard write denied"
                 )
                 guard allowed else { return }
-                setPasteboardString(payloads)
+                setPasteboardString(payloads, privately: bridge.clipboardWritesArePrivate)
             }
         }
     }
 
+    /// `privately`: for this device only, and on macOS marked for clipboard
+    /// managers as transient and concealed (nspasteboard.org) so they skip it.
     @MainActor
-    private static func setPasteboardString(_ payloads: [TerminalClipboardContent]) {
+    private static func setPasteboardString(_ payloads: [TerminalClipboardContent], privately: Bool) {
         #if canImport(UIKit)
             if let text = payloads.first(where: { isTextLikeMime($0.mime) }) {
-                UIPasteboard.general.string = String(decoding: text.data, as: UTF8.self)
+                let string = String(decoding: text.data, as: UTF8.self)
+                if privately {
+                    UIPasteboard.general.setItems([["public.utf8-plain-text": string]], options: [.localOnly: true])
+                } else {
+                    UIPasteboard.general.string = string
+                }
             }
         #elseif canImport(AppKit)
             let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
+            if privately {
+                // Clears it too, and keeps it off Universal Clipboard.
+                pasteboard.prepareForNewContents(with: .currentHostOnly)
+            } else {
+                pasteboard.clearContents()
+            }
             for payload in payloads {
                 if isTextLikeMime(payload.mime) {
                     pasteboard.setString(String(decoding: payload.data, as: UTF8.self), forType: .string)
                 } else {
                     pasteboard.setData(payload.data, forType: NSPasteboard.PasteboardType(payload.mime))
+                }
+            }
+            if privately {
+                for marker in ["org.nspasteboard.TransientType", "org.nspasteboard.ConcealedType"] {
+                    pasteboard.setData(Data(), forType: NSPasteboard.PasteboardType(marker))
                 }
             }
         #endif
@@ -232,9 +253,9 @@ private enum TerminalCallbacks {
         let text = firstTextRepresentation(in: contents) ?? ""
 
         // The new clipboard-request enum grew Kitty-clipboard-protocol and
-        // "list" cases that upstream's `TerminalClipboardRequestKind` (and
-        // its confirmation delegate) don't model yet. Deny outright rather
-        // than silently dropping the request unanswered: an unanswered
+        // "list" cases; `TerminalClipboardRequestKind` (and its confirmation
+        // delegate) models only the Kitty write. Deny the others outright
+        // rather than silently dropping the request unanswered: an unanswered
         // request hangs the requesting program indefinitely.
         guard let kind = TerminalClipboardRequestKind(request) else {
             TerminalDebugLog.log(

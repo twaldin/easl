@@ -89,6 +89,14 @@ type Board struct {
 	handoffs        map[string][]Handoff
 	finalAnswers    map[string]string
 	turnErrors      map[string]string
+	// aliases are names terminals had before a rename, each still addressing its terminal
+	// (AgentAddress) until another terminal on this board takes it; saved with the board.
+	aliases map[string]string
+	// messages are the out-of-band messages queued for each terminal, oldest first, until its
+	// integration acks them (messages.go); saved with the board.
+	messages map[string][]Message
+	// bouncing are messages bounced in the open step, handed on when it closes (flushBounces).
+	bouncing []Bounce
 
 	changedAt        map[string]int
 	keyHolders       map[string]map[string]bool
@@ -114,6 +122,9 @@ type Board struct {
 
 	// OnEvent receives every event, in order (the registry broadcasts them).
 	OnEvent func(model.Event)
+	// OnMessagesBounced receives messages whose receiver's agent session ended before its
+	// integration took them (the registry's router sends them back or logs them).
+	OnMessagesBounced func(Bounce)
 	// OnChange is called after any persisted change (the store debounces saves).
 	OnChange func()
 	// Viewport is the canvas rect a window shows; easld has none (nil), so placement ignores it.
@@ -141,6 +152,7 @@ func New(id, root string) *Board {
 		objects: map[string]model.Object{}, attention: map[string]store.Attention{}, handoffs: map[string][]Handoff{},
 		finalAnswers: map[string]string{}, turnErrors: map[string]string{}, changedAt: map[string]int{},
 		keyHolders: map[string]map[string]bool{}, seenSinceWorking: map[string]bool{}, lifecycleSeq: map[string]int{},
+		aliases: map[string]string{}, messages: map[string][]Message{},
 		pendingApprovals: map[string][]approval{}, revHighWater: map[string]int{}, history: newHistory(),
 		Activity: NewActivityLog(DefaultActivityCapacity, nil), replayActor: UserActor, cascades: map[string]cascade{}, cascadeRev: -1,
 		workingDirectories: map[string]string{}, promptTarget: store.PromptTargetState{FocusOrder: []string{}},
@@ -234,6 +246,16 @@ func FromSnapshot(s *store.Snapshot) *Board {
 			b.lifecycleSeq[k] = v
 		}
 	}
+	for alias, tile := range s.Aliases {
+		if o, ok := b.objects[tile]; ok && o.Type == model.Terminal {
+			b.aliases[alias] = tile
+		}
+	}
+	for tile, waiting := range s.Messages {
+		if o, ok := b.objects[tile]; ok && o.Type == model.Terminal && len(waiting) > 0 {
+			b.messages[tile] = append([]Message{}, waiting...)
+		}
+	}
 	if s.Repo != nil {
 		r := *s.Repo
 		r.Worktrees = append([]store.WorktreeRecord{}, s.Repo.Worktrees...)
@@ -307,6 +329,15 @@ func (b *Board) Snapshot() *store.Snapshot {
 	}
 	if len(b.lifecycleSeq) > 0 {
 		s.LifecycleSeq = copyMap(b.lifecycleSeq)
+	}
+	if len(b.aliases) > 0 {
+		s.Aliases = copyMap(b.aliases)
+	}
+	if len(b.messages) > 0 {
+		s.Messages = map[string][]Message{}
+		for tile, waiting := range b.messages {
+			s.Messages[tile] = append([]Message{}, waiting...)
+		}
 	}
 	if b.Repo != nil {
 		r := *b.Repo
@@ -544,6 +575,11 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 			}
 		}
 	}
+	if o.Type == model.Terminal {
+		if was, now := TerminalHost(before), TerminalHost(o); was != now {
+			return before, InvalidParams("terminal %s runs on %s: a terminal's host can't change (create a terminal on %s instead)", id, hostName(was), hostName(now))
+		}
+	}
 	if fitted, ok := b.fittedFrame(o); ok {
 		o.Frame = fitted
 	}
@@ -576,6 +612,22 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 	return o, nil
 }
 
+// TerminalHost is the machine terminal `o`'s session runs on (`props.host`, an ssh target); ""
+// for the local one (HostedTerminal.host). It is fixed for the terminal's life: the live terminal
+// stays attached where its session started, so a board naming another host (or none) would read
+// its history from, and end, a session elsewhere.
+func TerminalHost(o model.Object) string {
+	host, _ := o.Props["host"].(string)
+	return strings.Trim(host, " \t")
+}
+
+func hostName(host string) string {
+	if host == "" {
+		return "the local machine"
+	}
+	return host
+}
+
 func jsonEqualKey(a, b map[string]any, key string) bool {
 	x, ok1 := a[key]
 	y, ok2 := b[key]
@@ -599,6 +651,7 @@ func (b *Board) Delete(id, caller string) error {
 	delete(b.objects, id)
 	delete(b.changedAt, id)
 	b.reindexKey(id, removed.Props, nil)
+	b.forgetAliases(id)
 	b.bumpRevision()
 	b.countWrite(caller, "")
 	var unstaged []placedMention
@@ -621,6 +674,7 @@ func (b *Board) Delete(id, caller string) error {
 	}
 	b.tray = kept
 	b.forgetHandoffs(id)
+	b.forgetMessages(removed)
 	_, marked := b.attention[id]
 	delete(b.attention, id)
 	b.changed()
@@ -730,6 +784,7 @@ func (b *Board) commit(o model.Object) {
 		old = prev.Props
 	}
 	b.reindexKey(o.ID, old, o.Props)
+	b.renamed(o.ID, old, o.Props, o.Type)
 	b.objects[o.ID] = o
 	b.changedAt[o.ID] = b.revision
 	if o.Rev > b.revHighWater[o.ID] {
@@ -768,12 +823,17 @@ func (b *Board) bumpRevision() {
 	}
 }
 
-func (b *Board) endStep() { b.history.end() }
+// endStep closes a step opened with history.begin; when the outermost one closes, the messages
+// it bounced are handed on (flushBounces).
+func (b *Board) endStep() {
+	b.history.end()
+	b.flushBounces()
+}
 
 // Atomically runs body as one step and one board revision; when it fails, every change it made
-// is reverted (announced as normal changes, logged as "reverted (batch failed)"), the hand-offs
-// waiting for terminals are put back as they were (an answer it handed off withdrawn, one a
-// delete took restored), and the error returned.
+// is reverted (announced as normal changes, logged as "reverted (batch failed)"), the hand-offs,
+// messages and aliases of terminals are put back as they were (an answer it handed off
+// withdrawn, the queue, mentions and old names a delete took restored), and the error returned.
 func (b *Board) Atomically(body func() error) error {
 	outermost := b.pinnedRevision == nil
 	if outermost {
@@ -782,7 +842,7 @@ func (b *Board) Atomically(body func() error) error {
 	}
 	b.history.begin()
 	mark := b.history.mark()
-	handed := maps.Clone(b.handoffs)
+	handed, queued, named := maps.Clone(b.handoffs), maps.Clone(b.messages), maps.Clone(b.aliases)
 	defer func() {
 		b.endStep()
 		if outermost {
@@ -793,7 +853,7 @@ func (b *Board) Atomically(body func() error) error {
 		b.replayVerb, b.replayActor = "reverted (batch failed)", SystemActor
 		b.revert(b.history.discard(mark))
 		b.replayVerb, b.replayActor = "", UserActor
-		b.handoffs = handed
+		b.handoffs, b.messages, b.aliases = handed, queued, named
 		return err
 	}
 	return nil

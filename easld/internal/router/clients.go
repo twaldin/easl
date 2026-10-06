@@ -281,14 +281,3 @@ func promptMention(v any, b *board.Board) (map[string]any, error) {
 	}
 	return whole, nil
 }
-
-// senderName is how the tray names a prompting terminal (PromptTarget.label): its name, else its
-// title, else "Terminal". The title a client's terminal shows isn't known here.
-func senderName(terminal model.Object) string {
-	for _, key := range []string{"name", "title"} {
-		if s, ok := terminal.Props[key].(string); ok && strings.TrimSpace(s) != "" {
-			return s
-		}
-	}
-	return "Terminal"
-}

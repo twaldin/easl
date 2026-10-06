@@ -39,10 +39,12 @@ const (
 	KindSelection = "selection"
 	KindFollow    = "follow"
 	KindRestart   = "restart"
+	// KindMessage is a peer message that bounced, its receiver's agent gone before taking it.
+	KindMessage = "message"
 )
 
 // EntryKinds are every kind board.history filters by.
-var EntryKinds = []string{KindCreated, KindUpdated, KindDeleted, KindViewport, KindSelection, KindFollow, KindRestart}
+var EntryKinds = []string{KindCreated, KindUpdated, KindDeleted, KindViewport, KindSelection, KindFollow, KindRestart, KindMessage}
 
 // Entry is one activity log entry (ActivityEntry).
 type Entry struct {

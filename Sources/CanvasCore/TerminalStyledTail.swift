@@ -115,6 +115,10 @@ public struct TerminalRun: Equatable, Sendable {
 public struct TerminalLine: Equatable, Sendable {
     public var runs: [TerminalRun] = []
     public var text: String { runs.map(\.text).joined() }
+
+    public init(runs: [TerminalRun] = []) {
+        self.runs = runs
+    }
 }
 
 /// The last `limit` lines of `zmx history --vt` output as styled runs: SGR colors and

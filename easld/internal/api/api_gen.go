@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "2889735094c39026"
+const SchemaHash = "41682b25da41a75b"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -24,6 +24,8 @@ const (
 	CodeTimeout = "timeout"
 	// unexpected server failure.
 	CodeInternal = "internal"
+	// an address (a terminal's name, `name@board`, a board's name) matches more than one terminal or open board; the message lists each candidate as `name@board (tile id)`, so the caller can name one.
+	CodeAmbiguous = "ambiguous"
 )
 
 // ParamSpec is a method's params: every name it accepts (`params.properties`, in schema order) and the required ones.
@@ -139,7 +141,7 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"ids"},
 	},
 	"agent.report": {
-		Accepted: []string{"tile", "kind", "state", "message", "seq", "source", "call", "final", "serial", "error"},
+		Accepted: []string{"tile", "kind", "state", "message", "seq", "source", "call", "final", "serial", "error", "protocol"},
 		Required: []string{"tile", "kind", "state"},
 	},
 	"agent.report_session": {
@@ -155,16 +157,20 @@ var Methods = map[string]ParamSpec{
 		Required: nil,
 	},
 	"agent.prompt": {
-		Accepted: []string{"target", "text", "mentions", "caller", "force"},
+		Accepted: []string{"target", "text", "mentions", "caller", "from", "when", "force", "composer", "answer"},
 		Required: []string{"target", "text"},
 	},
 	"agent.wait": {
-		Accepted: []string{"target", "until", "timeoutMs"},
+		Accepted: []string{"target", "caller", "until", "timeoutMs"},
 		Required: []string{"target"},
 	},
 	"agent.read": {
-		Accepted: []string{"target", "lines", "since", "block", "final"},
+		Accepted: []string{"target", "caller", "lines", "since", "block", "final"},
 		Required: []string{"target"},
+	},
+	"agent.inbox": {
+		Accepted: []string{"tile", "ack", "started", "waitMs"},
+		Required: []string{"tile"},
 	},
 	"follow.report": {
 		Accepted: []string{"tile", "path", "range", "changes", "action"},
@@ -183,12 +189,28 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"url"},
 	},
 	"view.render": {
-		Accepted: []string{"board", "target", "scale", "full", "exclude", "padding", "out", "format", "timeoutMs"},
+		Accepted: []string{"board", "target", "scale", "full", "exclude", "padding", "out", "inline", "format", "timeoutMs"},
 		Required: []string{"target"},
 	},
 	"view.snapshot": {
 		Accepted: []string{"board", "out", "format"},
 		Required: nil,
+	},
+	"session.spawn": {
+		Accepted: []string{"tile", "command", "cwd", "env", "labels"},
+		Required: []string{"tile"},
+	},
+	"session.list": {
+		Accepted: nil,
+		Required: nil,
+	},
+	"session.kill": {
+		Accepted: []string{"tile", "home"},
+		Required: []string{"tile"},
+	},
+	"relay.open": {
+		Accepted: []string{"instance", "port", "token"},
+		Required: []string{"instance", "port", "token"},
 	},
 	"events.subscribe": {
 		Accepted: []string{"board", "events"},
@@ -267,6 +289,8 @@ type TerminalPropsAgent struct {
 	Kind        string  `json:"kind"`
 	SessionID   *string `json:"sessionId,omitempty"`
 	SessionPath *string `json:"sessionPath,omitempty"`
+	// the integration protocol version it reports (agent.report `protocol`)
+	Protocol *int `json:"protocol,omitempty"`
 }
 
 type TerminalProps struct {
@@ -274,8 +298,10 @@ type TerminalProps struct {
 	// argv run inside the zmx session
 	Command    []string `json:"command"`
 	ZmxSession *string  `json:"zmxSession,omitempty"`
-	Title      *string  `json:"title,omitempty"`
-	// a name other agents address this terminal by (agent.prompt/wait/read `target`)
+	// an ssh target (`deckbox`): the terminal's session runs on that machine under its easld (`session.spawn`), and the tile attaches to it over ssh with this app's socket forwarded back, so the agent's integration and the `easl` CLI there reach this board (docs/contracts.md "Hosted terminals"). `cwd` is a directory on that machine. Absent: this Mac. Fixed at creation: an update that changes or removes it is `invalid_params`
+	Host  *string `json:"host,omitempty"`
+	Title *string `json:"title,omitempty"`
+	// a name other agents address this terminal by: `name` or `name@board` as agent.prompt/wait/read `target` (docs/contracts.md, Agent addresses). Unique within its board is enough; renaming keeps the old name as an alias until another terminal on the board takes it
 	Name *string `json:"name,omitempty"`
 	// the agent reporting in this tile. When the tile's session is gone (a reboot) it resumes `sessionId` (`omp --resume`, `claude --resume`, `codex resume`). Removed when the agent exits (agent.release)
 	Agent     *TerminalPropsAgent `json:"agent,omitempty"`
@@ -791,6 +817,12 @@ type Agent struct {
 	// that board's root directory
 	Root string  `json:"root"`
 	Name *string `json:"name,omitempty"`
+	// how to reach this terminal as a `target` from any board, resolving to it alone: `name@board` (the board's name is its root folder's name) for a named terminal, `name@<board id>` while another open board's folder has that name too (or its own is gone), its tile id when it has no name or another terminal on its board has the same one
+	Address string `json:"address"`
+	// names it had before a rename that still reach it on its board (until another terminal there takes them); absent when none
+	Aliases []string `json:"aliases,omitempty"`
+	// the integration protocol version its agent's integration last reported (agent.report `protocol`); 1 and later take out-of-band messages (agent.inbox). Absent: none reported, or the integration died without releasing the terminal (killed: its shell came back to the prompt)
+	Protocol *int `json:"protocol,omitempty"`
 	// the integrated agent that reported (omp, claude, codex, gemini, opencode), or the program of an agent reporting by notification (aider; lifecycle `via: "notifications"`), else unknown
 	Kind string `json:"kind"`
 	// the title the program in the terminal set (OSC 0/2), e.g. Gemini CLI's "✋ Action Required (glow)"; absent when none
@@ -801,6 +833,36 @@ type Agent struct {
 	Lifecycle Lifecycle `json:"lifecycle"`
 	// the last command the terminal's shell finished (Ghostty's shell integration reports it); absent until one did
 	LastCommand *TerminalCommand `json:"lastCommand,omitempty"`
+}
+
+// AgentMessage: An out-of-band message queued for a terminal whose integration takes messages (agent.report `protocol` ≥ 1)
+type AgentMessage struct {
+	// `msg_…`; ack it (agent.inbox `ack`) once the agent has it
+	ID Id `json:"id"`
+	// as the sender wrote it
+	Text string        `json:"text"`
+	From MessageSender `json:"from"`
+	// agent: a terminal sent it (`caller`); user: a script with no tile (its `from` label), on the user's behalf One of "agent", "user".
+	Attribution string `json:"attribution"`
+	// now: into the running turn (a steer) or a new turn when idle; next-turn: never into a running turn, only once it has ended One of "now", "next-turn".
+	When     string `json:"when"`
+	QueuedAt string `json:"queuedAt"`
+	// the board objects the sender attached (agent.prompt `mentions`); absent when none
+	Mentions []Mention `json:"mentions,omitempty"`
+	// those mentions resolved now, as the hand-off block a drain gives (`<canvas-mentions …>` naming the sender); absent when none
+	Context *string `json:"context,omitempty"`
+}
+
+// MessageSender: Who sent a message, resolved when it is taken (agent.inbox): a renamed sender shows its new name
+type MessageSender struct {
+	// the sending terminal; absent for a script
+	Tile *Id `json:"tile,omitempty"`
+	// the sending terminal's name as the tray shows it now (its `name`, else its title, else `Terminal`), or the script's `from` label (default `script`)
+	Name string `json:"name"`
+	// where a reply goes: the sending terminal's address (as Agent's: `name@board`, `name@<board id>` or its tile id); absent for a script (nothing to reply to)
+	Address *string `json:"address,omitempty"`
+	// the sending terminal's board
+	Board *Id `json:"board,omitempty"`
 }
 
 type TerminalCommand struct {
@@ -888,7 +950,7 @@ type HistoryEntry struct {
 	At string `json:"at"`
 	// `user`, `system`, or `agent:<terminal tile id>`; a cascade is credited to whoever made the change that caused it
 	Actor string `json:"actor"`
-	// One of "created", "updated", "deleted", "viewport", "selection", "follow", "restart".
+	// One of "created", "updated", "deleted", "viewport", "selection", "follow", "restart", "message".
 	Kind string `json:"kind"`
 	// the object (for follow: the follow tile)
 	ID   *Id         `json:"id,omitempty"`

@@ -20,6 +20,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let registry: BoardRegistry
     private var responderObservation: NSKeyValueObservation?
     private var drawing: ShapeLayer?
+    /// A remote board's host and its link (docs/design.md "Client mode"); nil for a local board.
+    let remote: RemoteSource?
+    private let banner = ConnectionBanner(frame: .zero)
 
     /// The board in front: the frontmost visible board window, with tabs its selected tab (the
     /// others are ordered out). What menu commands and ⌘Z act on, also while a panel such as
@@ -47,25 +50,35 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         DispatchQueue.main.async { [weak self] in self?.canvas.reveal(region) }
     }
 
-    init(board: Board, registry: BoardRegistry) {
+    /// `remote`: the window mirrors a board another easl hosts; nothing about it is written here.
+    init(board: Board, registry: BoardRegistry, remote: RemoteSource? = nil) {
         self.board = board
         self.registry = registry
-        canvas = CanvasView(board: board)
+        self.remote = remote
+        canvas = CanvasView(board: board, remote: remote)
         let bar = ComposerBar(frame: .zero)
         tray = bar
-        composer = ComposerController(board: board, bar: bar, file: AppPaths.composer(of: board.id))
+        composer = ComposerController(board: board, bar: bar, file: remote == nil ? AppPaths.composer(of: board.id) : nil)
         let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = board.root.lastPathComponent
-        window.subtitle = board.root.path
+        window.title = remote?.title(of: board) ?? board.root.lastPathComponent
+        window.subtitle = remote.map { "\(board.root.path) on \($0.host.name)" } ?? board.root.path
         window.acceptsMouseMovedEvents = true
-        window.setFrameAutosaveName("Canvas-\(board.id)")
+        if remote == nil {
+            window.setFrameAutosaveName("Canvas-\(board.id)")
+        } else {
+            // Nothing of another Mac's board is kept here: AppKit saves a titled window's state
+            // and a snapshot of it for restoration unless told not to.
+            window.isRestorable = false
+            window.disableSnapshotRestoration()
+        }
         // Boards open as tabs of one window (AppDelegate.open adds them to the frontmost group).
         window.tabbingMode = .preferred
         window.tabbingIdentifier = "net.waldin.easl.board"
         super.init(window: window)
         window.delegate = self
-        // Terminal references by file name (`core.py:10`) resolve through the listing.
-        BoardFiles.of(board.root).refresh()
+        // Terminal references by file name (`core.py:10`) resolve through the listing (a remote
+        // board's files are its host's).
+        if remote == nil { BoardFiles.of(board.root).refresh() }
 
         let container = NSView()
         canvas.translatesAutoresizingMaskIntoConstraints = false
@@ -212,6 +225,27 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         refreshTab()
         refreshEmptyHint()
         refreshAsks()
+        if let remote { showRemote(remote, in: container) }
+    }
+
+    /// A remote board's window: the composer prompts through the host (`agent.prompt`
+    /// `composer`), the host's refusals show as notices, and the banner says when the link is down.
+    private func showRemote(_ remote: RemoteSource, in container: NSView) {
+        banner.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(banner)
+        NSLayoutConstraint.activate([
+            banner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            banner.topAnchor.constraint(equalTo: container.topAnchor, constant: 58),
+            banner.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
+        ])
+        let mirror = remote.mirror, host = remote.host.name
+        banner.onRetry = { mirror.reconnect() }
+        banner.show(mirror.state, host: host, problem: mirror.problem)
+        mirror.onState = { [weak self] state in self?.banner.show(state, host: host, problem: mirror.problem) }
+        mirror.onNotice = { [weak self] text in self?.canvas.showNotice(text) }
+        sendPrompt = { text, terminal, mentions, answer in
+            try await mirror.prompt(text, to: terminal, mentions: mentions, answer: answer)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -246,6 +280,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             refreshTab()
         case .objectUpdated(let object) where object.type == .question:
             refreshAsks()
+            refreshTab()
+        case .attentionChanged:
+            refreshTab()
         default: break
         }
     }
@@ -302,12 +339,21 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// What the tab last showed (`NeedsYou`), so a terminal's frequent updates redraw nothing.
     private var tabState: NeedsYou?
 
+    /// How many things need the user on this board (`NeedsYouItem.all`) as its title last said.
+    private var titledCount = 0
+
     /// The board's tab says when an agent on it needs the user, so one waiting on a background
     /// tab is seen: an orange dot for a blocked agent, a quieter green one for an agent that
     /// finished unseen (`NeedsYou`); nothing for working or idle agents. The tooltip says who
-    /// and what.
+    /// and what. The window's title, which is the tab's and the Window menu's entry for the board,
+    /// carries how many things ⌘J would visit here, "easl (2)", markers included.
     private func refreshTab() {
         guard let window else { return }
+        let count = canvas.needsYouItems.count
+        if count != titledCount {
+            titledCount = count
+            window.title = NeedsYouTour.title(remote?.title(of: board) ?? board.root.lastPathComponent, needing: count)
+        }
         let state = NeedsYou.of(board.objects.values)
         guard state != tabState else { return }
         tabState = state
@@ -478,7 +524,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        registry.frontmost = board.id
+        // The API's default board is one of this app's own, never a mirror of another's.
+        if remote == nil { registry.frontmost = board.id }
     }
 
     /// The board's tab or window closed (not app quit, which closes nothing).
@@ -491,6 +538,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// Closing the last board window quits easl, which the sheet says; the next launch reopens
     /// the board (`AppDelegate.saveOpenBoards`).
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // A remote board's terminals are its host's: closing the window detaches from them, nothing more.
+        guard remote == nil else { return true }
         let terminals = canvas.tiles.values.compactMap { $0.content as? TerminalTile }.sorted { $0.objectID < $1.objectID }
         guard !terminals.isEmpty else { return true }
         let tabs = sender.tabbedWindows?.count ?? 1
@@ -517,8 +566,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        canvas.saveViewport()
-        composer.save()
+        if let remote {
+            remote.mirror.close()
+        } else {
+            canvas.saveViewport()
+            composer.save()
+        }
         onClose?()
     }
 
@@ -795,6 +848,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private var canvasUndoApplies: Bool { canvasUndoApplies(redo: false) }
 
     private func canvasUndoApplies(redo: Bool) -> Bool {
+        // A remote board's changes are its host's: no undo for them here (v1).
+        guard !board.isRemote else { return false }
         guard let terminal = canvas.focusedTerminal else { return true }
         return (redo ? board.nextRedo : board.nextUndo)?.pastedInto == terminal
     }
@@ -907,8 +962,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: The context menus' actions in the menu bar
 
+    /// ⌘J goes on across the open boards (`AppDelegate.goToNextNeedsYou(from:)`), so the app runs it.
+    var onNextNeedsYou: ((CanvasWindowController) -> Void)?
+
     @objc func goToNextNeedsYou(_ sender: Any?) {
-        canvas.goToNextNeedsYou()
+        onNextNeedsYou?(self)
     }
 
     @objc func reviewChanges(_ sender: Any?) {
@@ -1016,6 +1074,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// Whether a menu item applies now (AppDelegate forwards the menu bar's validation here).
     func validate(_ item: NSMenuItem) -> Bool {
         let selection = canvas.selection
+        if remote != nil, let action = item.action, Self.localOnly.contains(action) { return false }
         switch item.action {
         case #selector(undoCanvas(_:)):
             item.title = undoTitle(redo: false)
@@ -1096,6 +1155,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         default: return true
         }
     }
+
+    /// What a remote board's window doesn't offer (v1): commands that read this Mac's files or
+    /// git for the board (the host's aren't here), the first-run walk-through, and restacking,
+    /// which the API can't send.
+    private static let localOnly: Set<Selector> = [
+        #selector(openCodeTile(_:)), #selector(reviewChanges(_:)), #selector(reviewBranch(_:)), #selector(toggleGetStarted(_:)),
+        #selector(bringToFront(_:)), #selector(sendToBack(_:)), #selector(snapshotPage(_:)),
+    ]
 
     /// A text view with its own undo history holding the keyboard (a note being edited).
     private var textUndoManager: UndoManager? {

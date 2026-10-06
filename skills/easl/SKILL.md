@@ -338,7 +338,7 @@ Every agent change is undoable with ⌘Z, but that is a safety net, not a licens
 
 ## Other agents
 
-Agents in other terminal tiles (any board in the app) are reachable by tile id or tile name:
+Agents in other terminal tiles (any board in the app) are reachable by tile id, tile name, or `name@board` (board = its folder's name, or its id). A bare name is looked up on your board first, then every open board; a name on two boards is `ambiguous`: say `name@board`. A renamed tile still answers to its old name.
 
 ```sh
 easl agent.list                                    # every terminal: tile, kind, name, lifecycle, board, root, `program` (foreground program) and `title` (its OSC title)
@@ -346,6 +346,8 @@ easl agent.prompt --target reviewer --text "Review the diff in src/store.ts"   #
 easl agent.wait --target reviewer --timeoutMs 600000   # until idle/done/blocked; `--until working` (or `working,blocked`) narrows it
 easl agent.read --target reviewer --since prompt   # only what came after your last agent.prompt
 ```
+
+`easl tell <name[@board]> "text" [--when next-turn] [--from <label>]` is `agent.prompt` for a message: an agent whose integration takes messages (omp with easl's extension) gets it out of band as a message naming you, without touching its draft or an open question (a working one is steered; `--when next-turn` waits for its turn to end), and replies with `write agent://<your address>`. Others are typed into as before (the result's `delivery` says `message` or `typed`). From a script with no tile, `--from machine-watch` names the sender and the message counts as the user's. If that agent exits, is killed or starts another session before it takes your message, the message bounces: you get a message from `easl` saying `undelivered to <address>: <its first line>` (a script's lands in the board's history, kind `message`). `unavailable` means nothing there takes it now (its agent was killed, or ended while you sent): check `easl agent.list` before sending again. Hosts aren't part of an address yet.
 
 When `agent.prompt` returns `waitable`, call `agent.wait` right away: it waits for the work you just asked for, not the previous idle.
 Then `agent.read --since prompt` returns what followed your prompt (its echo, then the reply), and `agent.read --final true` only its last answer (`unavailable` mid-turn or for opencode: use `--since prompt`; `cutOff` means the turn died on that error: say so, don't treat it as done).
@@ -357,6 +359,10 @@ Kind `unknown` (a shell, another CLI) has none: `agent.wait` fails once 15 s pas
 A `conflict` saying the agent was working when easl last closed and hasn't reported since (`lifecycle.restored`): omp and opencode report again within seconds of the app coming back, Claude Code, Codex and Gemini CLI at their next tool call; if it stays, read its screen (`agent.read --lines 40`) before deciding; never `force` it if the screen shows a question or approval.
 Don't prompt an agent that is `blocked`; it is waiting for its user. `agent.prompt` to one fails with `conflict` quoting what it waits on, and so does one whose foreground program isn't its agent (nvim, another tmux pane): tell the user.
 Never answer another agent's approval with `force: true`: it types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow). Force only when you know the dialog is gone.
+
+## Terminals on another machine (offload)
+
+A terminal created with `props.host` (an ssh target such as `deckbox`) runs its session on that machine, under its easld, and attaches over ssh: `easl object.create --type terminal --json '{"props":{"host":"deckbox","command":["omp"]}}'`. `command` is argv (`["sleep","600"]`; a shell line is `["sh","-c","…"]`) and `cwd` is a directory on that machine. Your `easl` CLI and lifecycle work there as here. If you run there: Docker containers escape the machine's capped slice, so start any container with `--cpuset-cpus` inside the slice's CPUs and `--memory`; files you name (`path:line`, follow) are the host's, which the Mac's code tiles can't open yet.
 
 ## Compositions
 
@@ -386,7 +392,7 @@ Give each branch's work its own region: a group titled with the branch (`props.k
 
 Help › easl Basics ⌥⌘/ is the user's legend of everything on screen (dots, rings, markers, follow tile, tray, keys); `references/ui.md` has the same text: answer "what is this?" and "which key?" from it, not from easl's source.
 ⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows (all four) move between tiles; Return gives the selected tile the keyboard, Esc gives it back (in a terminal or a web page Esc stays with the program or page: ⌘Esc leaves any tile).
-⌘J goes to the next thing on this board that needs the user; ⌘[ / ⌘] go back and forward; ⌘9 fits everything; ⌘Z undoes the user's last change or an agent's, and a notice names what it undid.
+⌘J goes to the next thing that needs the user, on this board and then on their other open boards; ⌘[ / ⌘] go back and forward; ⌘9 fits everything; ⌘Z undoes the user's last change or an agent's, and a notice names what it undid.
 Hyper-click (⌃⌥⇧⌘-click) or Edit › Mention ⇧⌘M stages a mention for the terminal the tray shows ("→ name ▾" picks another); Hyper-V pastes staged mentions into the terminal the user is typing in (else that one), for agents without an integration.
 Mouse users: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; don't tell a user without a trackpad that zooming needs a pinch.
 On a PC keyboard ⌘ is the Windows key and does what Ctrl does elsewhere, ⌥ is Alt (`macos-option-as-alt = true` in their Ghostty config for Meta), and Hyper is Ctrl+Alt+Shift+Win: point them at easl Basics' "Coming from Linux or Windows" section.

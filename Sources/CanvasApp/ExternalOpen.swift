@@ -9,9 +9,11 @@ import AppKit
 enum ExternalOpen {
     private static let logOnly = DevInput.enabled && ProcessInfo.processInfo.environment["EASL_DEV_EXTERNAL_OPEN"] == "log"
 
-    static func open(_ url: URL, because reason: String) {
+    /// `naming: false` keeps the URL out of app.log: a remote board's terminal link is the host's
+    /// text (client mode), which nothing on this Mac keeps.
+    static func open(_ url: URL, because reason: String, naming: Bool = true) {
         let app = NSWorkspace.shared.urlForApplication(toOpen: url)?.lastPathComponent ?? "no app"
-        NSLog("easl: %@: %@ → %@", reason, url.absoluteString, app)
+        NSLog("easl: %@: %@ → %@", reason, naming ? url.absoluteString : "(not logged)", app)
         if logOnly { return }
         NSWorkspace.shared.open(url)
     }

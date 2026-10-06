@@ -20,7 +20,7 @@ public final class ApiActivity {
     /// How long the activity is held after the last call.
     public static let holdAfter: TimeInterval = 2
     /// Methods that wait (on an agent, a page, a render) rather than work: they don't make a burst.
-    static let waits: Set<String> = ["agent.wait", "agent.prompt", "agent.read", "view.render", "view.snapshot", "object.reload", "tray.drain", "events.subscribe"]
+    static let waits: Set<String> = ["agent.wait", "agent.inbox", "agent.prompt", "agent.read", "view.render", "view.snapshot", "object.reload", "tray.drain", "events.subscribe"]
 
     private var inFlight = 0
     private var lastEnded = -Double.infinity

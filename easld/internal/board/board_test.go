@@ -99,6 +99,37 @@ func TestRevisionsChangedSinceAndRevConflicts(t *testing.T) {
 	}
 }
 
+// A terminal's host is where its session runs, fixed for its life: an update that names another
+// host, or drops it (or gives a local terminal one), is refused and changes nothing; the same
+// host written differently and other props pass.
+func TestATerminalsHostCantChange(t *testing.T) {
+	b := New("brd", "/r")
+	hosted := b.Create(model.Terminal, map[string]any{"host": "deckbox", "command": []any{"omp"}}, frame(0, 0, 100, 100), "", "")
+	local := b.Create(model.Terminal, map[string]any{}, frame(200, 0, 100, 100), "", "")
+	for name, c := range map[string]struct {
+		id    string
+		props map[string]any
+	}{
+		"another host":     {hosted.ID, map[string]any{"host": "mini"}},
+		"no host":          {hosted.ID, map[string]any{"host": nil}},
+		"empty host":       {hosted.ID, map[string]any{"host": ""}},
+		"a local one's":    {local.ID, map[string]any{"host": "deckbox"}},
+		"with other props": {hosted.ID, map[string]any{"name": "x", "host": "mini"}},
+	} {
+		_, err := b.Update(c.id, nil, nil, nil, c.props, "", "")
+		var be *Error
+		if !errors.As(err, &be) || be.Code != "invalid_params" || !strings.Contains(be.Message, "host can't change") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if got, _ := b.Object(hosted.ID); got.Props["host"] != "deckbox" || got.Props["name"] != nil || got.Rev != hosted.Rev {
+		t.Errorf("a refused update changed the terminal: %+v", got)
+	}
+	if _, err := b.Update(hosted.ID, nil, nil, nil, map[string]any{"host": " deckbox ", "name": "agent"}, "", ""); err != nil {
+		t.Errorf("the same host: %v", err)
+	}
+}
+
 func TestFailedAtomicStepRevertsEverythingAsOneRevision(t *testing.T) {
 	b := New("brd", "/r")
 	keep := b.Create(model.Note, map[string]any{"markdown": "keep", "key": "K"}, frame(0, 0, 100, 100), "", "")

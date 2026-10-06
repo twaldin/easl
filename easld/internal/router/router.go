@@ -20,7 +20,9 @@ import (
 	"github.com/twaldin/easl/easld/internal/clients"
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/relay"
 	"github.com/twaldin/easl/easld/internal/server"
+	"github.com/twaldin/easl/easld/internal/session"
 	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
@@ -54,17 +56,27 @@ type Router struct {
 
 	pendingPrompts map[string]time.Time
 	waiters        []*waiter
+	// messageHolds: which connection holds each message agent.inbox handed out and its
+	// integration hasn't acked yet; offered again once that connection closes.
+	messageHolds map[string]Conn
+	// inboxWaiters are agent.inbox long polls waiting for a message to their terminal.
+	inboxWaiters []*inboxWaiter
 	// FirstReportGrace: how long agent.wait gives a terminal with no lifecycle to start reporting.
 	FirstReportGrace time.Duration
 	// PromptStartGrace: how long agent.wait gives a prompt to start the agent's turn.
 	PromptStartGrace time.Duration
+	// Sessions runs hosted terminals' zmx sessions (session.*); nil: none (`unavailable`).
+	Sessions *session.Manager
+	// Relays serve clients' sockets on this machine (relay.open); nil: none (`unavailable`).
+	Relays *relay.Relays
 }
 
 // New is a router over reg; it observes every board's events (agent.wait), and measures the
 // text of reg's boards through its clients.
 func New(reg *board.Registry) *Router {
-	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
+	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[string]Conn{}, FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
 	reg.Hook = r.observe
+	reg.Bounced = r.bounce
 	reg.Texts = r.clients
 	return r
 }
@@ -77,14 +89,17 @@ func (r *Router) Answer(c *server.Conn, line map[string]any) bool {
 	return r.clients.Answer(c, line)
 }
 
-// Handle is the server's handler: the response, or nil when the reply is deferred (agent.wait)
-// or the connection became an event stream.
+// Handle is the server's handler: the response, or nil when the reply is deferred (agent.wait,
+// an agent.inbox long poll) or the connection became an event stream.
 func (r *Router) Handle(req any, c *server.Conn) any {
 	return r.HandleConn(req, c)
 }
 
 // HandleConn is Handle for any connection.
 func (r *Router) HandleConn(req any, c Conn) any {
+	if reply, ok := r.hostCall(req); ok {
+		return reply
+	}
 	r.reg.Mu.Lock()
 	defer r.reg.Mu.Unlock()
 	return r.handle(req, c)
@@ -198,6 +213,8 @@ func (r *Router) call(id any, method string, raw any, c Conn) (any, error) {
 		return nil, nil
 	case "agent.wait":
 		return r.wait(id, p, c)
+	case "agent.inbox":
+		return r.inbox(id, p, c)
 	case "agent.read":
 		return r.read(p)
 	case "agent.prompt":

@@ -39,6 +39,8 @@ type Registry struct {
 	subscribers []subscriber
 	// Hook observes every board's events after they are applied (the router's agent.wait).
 	Hook func(*Board, model.Event)
+	// Bounced handles messages that bounced on any open board (Board.OnMessagesBounced).
+	Bounced func(*Board, Bounce)
 	// AgentReports is where integrations spool reports they couldn't deliver; "" replays nothing.
 	AgentReports string
 	// Texts measures text the app lays out (arrow captions, for routing) on every board opened
@@ -104,6 +106,11 @@ func (r *Registry) Open(root string) (*Board, error) {
 			r.Hook(b, e)
 		}
 		r.broadcast(e, b.id)
+	}
+	b.OnMessagesBounced = func(bounce Bounce) {
+		if r.Bounced != nil {
+			r.Bounced(b, bounce)
+		}
 	}
 	r.boards[id] = b
 	b.Activity.Record(KindRestart, SystemActor, b.revision, "", "", fmt.Sprintf("easl started (pid %d); board opened with %d objects", r.pid, len(b.objects)), "")

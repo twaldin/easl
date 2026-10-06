@@ -1,7 +1,7 @@
 {
   "scenario": "agents",
   "description": "Agent lifecycle on terminal tiles: reports with seq and source (stale ones ignored), blocked tool calls, final answers and reading them back (agent.read final: the answer, cut off by an error, none yet, still in its turn, with lines or since), sessions, release, agent.list, agent.wait (answered, already there, timeout), lifecycle events.",
-  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "recordedOn": "easl peer/messages (Peer messages), dev instance",
   "steps": [
     {
       "step": "board.open",
@@ -225,6 +225,7 @@
         "result": {
           "agents": [
             {
+              "address": "worker@agents",
               "board": "<board>",
               "kind": "unknown",
               "lifecycle": {
@@ -235,6 +236,7 @@
               "tile": "<obj:1>"
             },
             {
+              "address": "<obj:2>",
               "board": "<board>",
               "kind": "unknown",
               "lifecycle": {
@@ -997,6 +999,7 @@
         "ok": true,
         "result": {
           "agent": {
+            "address": "worker@agents",
             "board": "<board>",
             "kind": "omp",
             "lifecycle": {
@@ -1029,6 +1032,7 @@
         "ok": true,
         "result": {
           "agent": {
+            "address": "worker@agents",
             "board": "<board>",
             "kind": "omp",
             "lifecycle": {
@@ -1134,6 +1138,7 @@
         "ok": true,
         "result": {
           "agent": {
+            "address": "worker@agents",
             "board": "<board>",
             "kind": "omp",
             "lifecycle": {
@@ -1593,6 +1598,7 @@
         "ok": true,
         "result": {
           "agent": {
+            "address": "<obj:2>",
             "board": "<board>",
             "kind": "codex",
             "lifecycle": {
@@ -1625,6 +1631,7 @@
         "result": {
           "agents": [
             {
+              "address": "worker@agents",
               "board": "<board>",
               "kind": "omp",
               "lifecycle": {
@@ -1637,6 +1644,7 @@
               "tile": "<obj:1>"
             },
             {
+              "address": "<obj:2>",
               "board": "<board>",
               "kind": "codex",
               "lifecycle": {
@@ -1822,6 +1830,7 @@
         "result": {
           "agents": [
             {
+              "address": "worker@agents",
               "board": "<board>",
               "kind": "unknown",
               "lifecycle": {
@@ -1832,6 +1841,7 @@
               "tile": "<obj:1>"
             },
             {
+              "address": "<obj:2>",
               "board": "<board>",
               "kind": "codex",
               "lifecycle": {

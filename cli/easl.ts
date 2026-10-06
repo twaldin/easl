@@ -5,6 +5,7 @@
 //   easl <namespace>.<method> [--json '{...}' | --json @file | --json @-] [--key value] [--nested.key value] [--flag]
 //   easl <namespace> <method> ...
 //   easl get <id> [--as raw|graph]       object.get
+//   easl tell <name[@board]> <text> [--when next-turn] [--from <label>]   agent.prompt: a message to another agent
 //   easl render <id|id,id|x,y,w,h> [--out f.png] [--scale 2] [--full] ...   view.render
 //   easl browser <verb> [<tile>] [--key value] ...   browser tiles over the cmux subset (below)
 //   easl metrics [--watch] [--reset] [--json]       app.metrics as text (--watch: every second)
@@ -71,6 +72,7 @@ function usage(help = false): never {
     "usage: easl methods [<name>]",
     "       easl <namespace>.<method> [--json '{...}' | --json @file | --json @-] [--key value] [--flag]",
     "       easl get <id> [--as graph]",
+    "       easl tell <name[@board]> <text> [--when next-turn] [--from <label>]",
     "       easl render <id|id,id|x,y,w,h> [--out file.png] [--scale 2] [--full]",
     "       easl browser <verb> [<tile>] [--key value] [--json '{...}']   (open [url] | list | close | navigate, snapshot, click, …)",
     "       easl metrics [--watch] [--reset] [--json]",
@@ -779,6 +781,10 @@ let target: unknown;
 if (argv[0] === "get") {
   method = "object.get";
   rest = ["--id", argv[1] ?? usage(), ...argv.slice(2)];
+} else if (argv[0] === "tell") {
+  // A message to another agent: `--from` names a script sender, `--when next-turn` waits for its running turn to end.
+  method = "agent.prompt";
+  rest = ["--target", argv[1] ?? usage(), "--text", argv[2] ?? usage(), ...argv.slice(3)];
 } else if (argv[0] === "render") {
   method = "view.render";
   rest = argv.slice(2);

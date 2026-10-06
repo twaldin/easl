@@ -1,0 +1,258 @@
+{
+  "scenario": "client-mode",
+  "description": "What a remote board's viewer sends (docs/design.md \"Client mode\"), checked before anything else on both servers: view.render `inline` doesn't combine with `out`; agent.prompt `answer` needs `composer`, and a composer's prompt takes no `caller`, `from` or `when` and never forces. Drawing and typing are the Mac client's (delegated), so only the refusals are replayed.",
+  "recordedOn": "easl peer/messages (a composer's prompt takes no from or when), dev instance",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "inline": true,
+        "out": "/tmp/easl-conformance-never.png",
+        "target": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "inline returns the image in the reply and out writes it to a file: pass one of them"
+        },
+        "id": "r3",
+        "ok": false
+      }
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "inline": true,
+        "out": "/tmp/easl-conformance-never.png",
+        "target": "obj_missing"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "inline returns the image in the reply and out writes it to a file: pass one of them"
+        },
+        "id": "r4",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "answer": true,
+        "target": "<obj:1>",
+        "text": "yes"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "answer is the user's answer from a composer: it needs composer: true (an agent or script sends force: true instead)"
+        },
+        "id": "r5",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "caller": "<obj:1>",
+        "composer": true,
+        "target": "<obj:1>",
+        "text": "hello"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a composer's prompt is the user's: it takes no caller"
+        },
+        "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "force": true,
+        "target": "<obj:1>",
+        "text": "hello"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a composer's prompt never forces: answer: true answers a blocked target"
+        },
+        "id": "r7",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "from": "machine-watch",
+        "target": "<obj:1>",
+        "text": "hello"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a composer's prompt is the user's: it takes no from"
+        },
+        "id": "r8",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "target": "nobody-here",
+        "text": "hello",
+        "when": "next-turn"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a composer's prompt is typed as the user sends it: it takes no when"
+        },
+        "id": "r9",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "answer": true,
+        "composer": true,
+        "force": true,
+        "target": "nobody-here",
+        "text": "hello"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a composer's prompt never forces: answer: true answers a blocked target"
+        },
+        "id": "r10",
+        "ok": false
+      }
+    }
+  ]
+}

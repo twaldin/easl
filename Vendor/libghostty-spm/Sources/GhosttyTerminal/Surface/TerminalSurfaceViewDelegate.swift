@@ -47,6 +47,8 @@ public enum TerminalClipboardRequestKind: Sendable {
     case paste
     case osc52Read
     case osc52Write
+    /// A Kitty clipboard protocol (OSC 5522) write under `clipboard-write = ask`.
+    case kittyWrite
 
     init?(_ rawValue: ghostty_clipboard_request_e) {
         switch rawValue {
@@ -56,6 +58,8 @@ public enum TerminalClipboardRequestKind: Sendable {
             self = .osc52Read
         case GHOSTTY_CLIPBOARD_REQUEST_OSC_52_WRITE:
             self = .osc52Write
+        case GHOSTTY_CLIPBOARD_REQUEST_KITTY_WRITE:
+            self = .kittyWrite
         default:
             return nil
         }
@@ -103,6 +107,17 @@ public protocol TerminalSurfaceClipboardConfirmationDelegate: TerminalSurfaceVie
     func terminalDidRequestClipboardConfirmation(
         _ request: TerminalClipboardConfirmationRequest
     )
+}
+
+/// Lets an embedding host keep a surface's clipboard writes private: written
+/// for this device only (no Universal Clipboard) and, on macOS, marked
+/// transient and concealed (nspasteboard.org) so clipboard managers don't
+/// keep them. Asked on the main thread for every write that lands: the copy
+/// bindings' and a program's write the host allowed. Without this delegate,
+/// writes are ordinary.
+@MainActor
+public protocol TerminalSurfaceClipboardPrivacyDelegate: TerminalSurfaceViewDelegate {
+    var terminalClipboardWritesArePrivate: Bool { get }
 }
 
 // MARK: - Extended action delegates

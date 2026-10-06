@@ -12,6 +12,9 @@ public final class NoteRenderer {
     static let maxRows = 400
 
     private let excerpts: [String: NoteExcerpt]
+    /// Anchored fences show their body as written instead of waiting for an excerpt: a remote
+    /// board's note, whose files are its host's (docs/design.md "Client mode").
+    private let asWritten: Bool
     /// Images by markdown destination (`NoteImages.load`); an image missing here shows as its alt text.
     private let images: [String: NSImage]
     /// Where lines end: the text container's width less its line fragment padding. Tables fit
@@ -27,9 +30,10 @@ public final class NoteRenderer {
 
     /// `width`: the text container's width, the note's width less `ObjectMeasure.noteInset` on
     /// each side, as the display, renders, and `ObjectMeasure` lay it out.
-    public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], width: CGFloat) {
+    public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], width: CGFloat, asWritten: Bool = false) {
         self.excerpts = excerpts
         self.images = images
+        self.asWritten = asWritten
         lineWidth = max(1, width - 2 * ObjectMeasure.noteLineFragmentPadding)
     }
 
@@ -446,7 +450,9 @@ public final class NoteRenderer {
         let proposing = fence.mode == .propose
         guard let excerpt else {
             caption(fence, excerpt: nil, context: context, line: line)
-            rows([("loading…", nil, .excerpt, nil)], context: context, markdownLine: line, numberWidth: 0, referenceLinks: false)
+            let shown: [(text: String, number: Int?, block: NoteBlock, row: NoteCodeRow?)] = asWritten
+                ? body.map { ($0, nil, proposing ? .authored : .excerpt, nil) } : [("loading…", nil, .excerpt, nil)]
+            rows(shown, context: context, markdownLine: line, numberWidth: 0, referenceLinks: false)
             return
         }
         caption(fence, excerpt: excerpt, context: context, line: line)

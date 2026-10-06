@@ -209,6 +209,8 @@ final class ApiRouterTests {
 
     @Test func aWaitOnAnAgentJustLaunchedWaitsForItsFirstReport() async throws {
         let fresh = terminal()
+        // The grace outlasts a loaded CI runner's round trip: what's tested is that the wait stays open.
+        router.firstReportGrace = 60
         let client = try connect()
         client.send(#"{"id":"w","method":"agent.wait","params":{"target":"\#(fresh)","timeoutMs":60000}}"#)
         client.send(#"{"id":"ping","method":"system.ping","params":{}}"#)
@@ -671,7 +673,7 @@ final class ApiRouterTests {
 
     @Test func deletingATerminalThroughTheApiEndsItsSessionUnlessTheBatchFails() async throws {
         var ended: [ObjectID] = []
-        registry.onTerminalsEnded = { _, ids in ended += ids }
+        registry.onTerminalsEnded = { _, objects in ended += objects.map(\.id) }
         let client = try connect()
 
         let deleted = terminal()

@@ -72,9 +72,9 @@ var (
 // two in step), and the id references the app sends that the schema leaves untyped.
 var idKeys = map[string]bool{
 	// Typed in the schema.
-	"arrow": true, "arrows": true, "board": true, "boards": true, "caller": true, "changed": true, "cleared": true, "client": true,
+	"ack": true, "arrow": true, "arrows": true, "board": true, "boards": true, "caller": true, "changed": true, "cleared": true, "client": true,
 	"crosses": true, "enteredGroup": true, "exclude": true, "focused": true, "followOf": true, "id": true, "ids": true, "lines": true,
-	"members": true, "near": true, "object": true, "objects": true, "overlaps": true, "parent": true,
+	"members": true, "message": true, "near": true, "object": true, "objects": true, "overlaps": true, "parent": true,
 	"promptTarget": true, "region": true, "regions": true, "selection": true, "target": true, "tile": true,
 	// Untyped on the wire: an object's graph (arrowsIn/arrowsOut ends, enclosure), the terminal a
 	// follow tile follows, who raised an attention marker.
@@ -94,8 +94,8 @@ var revisionKeys = map[string]string{
 
 // Keys whose value is a moment (schema date-time fields, and the app's API dates).
 var timeKeys = map[string]bool{
-	"at": true, "computedAt": true, "createdAt": true, "finishedAt": true, "raisedAt": true, "releasedAt": true,
-	"stagedAt": true, "submittedAt": true, "time": true, "updatedAt": true,
+	"at": true, "computedAt": true, "createdAt": true, "finishedAt": true, "queuedAt": true, "raisedAt": true,
+	"releasedAt": true, "stagedAt": true, "submittedAt": true, "time": true, "updatedAt": true,
 }
 
 // The API's dates count seconds from here (Foundation's reference date).

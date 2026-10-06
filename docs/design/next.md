@@ -54,10 +54,22 @@ Server-side features (the all-agents overview, supervision stats, review passes,
 
 - **One machine does the work per board**: the machine with the repository is the board's host. Either Mac can open the other's boards, and the mechanism is the same in both directions.
 - **SSH over Tailscale is the only transport.** There's no network server and no new authentication. easl lists online tailnet peers with `tailscale status --json`.
-- **File › Open Remote…** picks a machine and then one of that host's boards (repository, path, agent count), or Browse… for a new directory over ssh. If easl isn't running on the host, the viewer starts it over ssh (`open -g -a easl <dir>`, which needs a logged-in GUI session there). An unreachable host shows as offline.
+- **File › Open Remote…** picks a machine and then one of that host's boards (repository, path, agent count), or Browse… for a new directory over ssh. If easl isn't running on the host, the viewer starts the installed app over ssh (`open -g /Applications/easl.app`, which needs a logged-in GUI session there; never a development instance, whose launcher isn't known). An unreachable host shows as offline.
 - **The viewer draws the board natively.** It reads the snapshot and events over the host's socket, forwarded by ssh (`EASL_SOCKET` already accepts any socket path). Terminals attach with `ssh <host> zmx attach <session>`, and the host serves files, git and language servers.
 - **Browser tiles run where the user is.** A browser tile executes on the Mac the user is sitting at, and the host routes the agent's `easl browser` calls to it over the same ssh link, so the user and the agent see one page. When that Mac disconnects, the host takes the tile over and reloads its last URL. Browser cookies are shared between the machines over ssh, so logins carry over; in-page state doesn't.
-- **Offload**: a terminal tile can have a host of its own, such as a Linux machine with more cores. Its agent works on a clone there, with the board's socket forwarded back (`ssh -R`) so the hooks and the `easl` CLI work. Code and changes tiles it opens read that host's files, so every file-bound tile carries a host.
+- **Offload**: shipped for terminals (docs/contracts.md "Hosted terminals"): `props.host`, sessions under the host's easld in its capped slice, one ssh connection per host, easld relaying the board's sockets back (`relay.open`), reconnect, the spool replayed, `scripts/offload-setup.sh`. Still open: the agent's clone on the host (today it works in whatever `cwd` names there); code and changes tiles reading the host's files (a hosted agent's follow tile and `path:line` references name files the Mac doesn't have), so every file-bound tile carries a host; the foreground program of a hosted terminal (the host's process table); the first easld call after a reconnect sometimes waits out its 20 s timeout (seen once against deckbox) before the relay opens.
+- **Agent addresses stay `name@board`, never host** (docs/contracts.md, Agent addresses). Messages between agents whose boards live on different hosts (`name@board@host`: an agent on the work Mac's board writing to one on the home Mac's) are out of scope for now: an address resolves only among the boards of the server it is sent to. An offloaded terminal talks to its board's server over the forwarded socket, so it addresses and is addressed like any terminal on that board.
+
+## Client mode
+
+Shipped on the Swift app (docs/design.md "Client mode (remote boards)", docs/contracts.md "Remote boards"): `AppDelegate.openRemoteBoard(host:board:)` opens a window mirroring another easl's board (`BoardMirror`: subscribe, read, apply the host's events by `rev`), the user's creates, moves, resizes, edits, deletes and question answers as previews sent to the host, terminals attached to the host's sessions over ssh, code/changes/HTML/browser/image/diagram tiles as the host's `view.render` `inline` images under a read-only badge, the composer over `agent.prompt` `composer`, a reconnecting/offline banner, and nothing on disk. The schema additions (`view.render` `inline`, `agent.prompt` `composer`/`answer`) are checked by both servers (scenario `client-mode`). Still open:
+
+- **Undo** on a remote board (Edit › Undo is disabled there), and **restacking** (the API has no `z`).
+- A remote note's anchored excerpts and images show as written: the viewer doesn't read the host's files, and `object.get` `fences` gives states, not text.
+- Attention markers raised before the window opened aren't shown (`board.get` has none); markers the viewer clears and agents it sees (`markSeen`) stay unseen on the host.
+- On easld with a client attached, `agent.prompt` `composer` mentions are queued as hand-offs, not as the composer's own (easld's `prompt` queues before forwarding).
+- A remote terminal's ⌘-clicked file references open nothing (a notice says the file is the host's): resolving them on the host needs an API call that resolves a reference against the host's checkout.
+- A remote board's hosted terminal (`props.host`, docs/contracts.md "Hosted terminals") never attaches: the viewer looks for its session on the easl's Mac, but it runs on the terminal's host, so the tile waits for the host. The viewer would attach through that host instead (or through the easl's own link to it).
 
 ## The composer
 
@@ -79,7 +91,7 @@ Shipped (docs/design.md, Browser): popups with `window.opener`, downloads, uploa
 
 ## Backlog in scope
 
-- An all-agents overview: ⌘J across every board and machine.
+- An all-agents overview across machines: ⌘J visits every board open on this Mac (docs/design.md, Interaction); boards hosted on another Mac or an offload host would join the same tour.
 - Agent supervision stats: each agent's branch, diff size and changed files, and a warning when two worktrees touch the same files.
 - Review passes: show only unstaged changes, and a "since last review" bookmark.
 

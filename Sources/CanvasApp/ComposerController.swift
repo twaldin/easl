@@ -22,7 +22,9 @@ final class ComposerController {
     /// The extra targets changed, for the target label.
     var onTargetsChange: (() -> Void)?
 
-    private let file: URL
+    /// Where the draft, history and targets are kept; nil keeps them in memory only (a remote
+    /// board, which leaves nothing on disk).
+    private let file: URL?
     /// The composer is changing the tray itself: the tray events that causes are already in the draft.
     private var syncing = false
     /// The sent prompt ↑/↓ shows (an index into the history; the count for the empty draft past
@@ -30,12 +32,12 @@ final class ComposerController {
     private var recall: (index: Int, shown: ComposerDraft)?
     private var saveWork: DispatchWorkItem?
 
-    init(board: Board, bar: ComposerBar, file: URL) {
+    init(board: Board, bar: ComposerBar, file: URL?) {
         self.board = board
         self.bar = bar
         self.file = file
         // A damaged file never reaches the sync with marks its tokens don't match.
-        state = ((try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(ComposerState.self, from: $0) } ?? ComposerState()).repaired
+        state = (file.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(ComposerState.self, from: $0) } ?? ComposerState()).repaired
         state.alsoTo.removeAll { board.objects[$0]?.type != .terminal }
         var draft = state.draft
         syncing = true
@@ -252,6 +254,7 @@ final class ComposerController {
         saveWork?.cancel()
         saveWork = nil
         state.draft = bar.draft
+        guard let file else { return }
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             let encoder = JSONEncoder()

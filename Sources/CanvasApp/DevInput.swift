@@ -1,4 +1,5 @@
 import AppKit
+import CanvasCore
 
 /// Development input replay (`EASL_DEV_INPUT=1`, driven by `scripts/dev-input.swift`).
 /// Agents test the UI while the window sits on a Space nobody is viewing, where real HID input
@@ -109,6 +110,19 @@ enum DevInput {
             // nobody touches the app, also with the window minimized or covered (no frames then).
             let window = CanvasWindowController.frontmost?.window ?? NSApp.windows.first { $0.windowController is CanvasWindowController }
             return DevPerf.idle(ms: Double(fields["ms"] ?? "") ?? 5000, window: window)
+        }
+        if fields["kind"] == "remote", let target = fields["target"], let board = fields["board"] {
+            // Opens another easl's board as a remote board (`AppDelegate.openRemoteBoard`), its
+            // host found over ssh; `home` is the host's support directory (a development instance).
+            Task { @MainActor in
+                do {
+                    let host = try await RemoteHost.discover(name: target, sshTarget: target, support: fields["home"])
+                    (NSApp.delegate as? AppDelegate)?.openRemoteBoard(host: host, board: board)
+                } catch {
+                    NSLog("DevInput: remote %@ not found: %@", target, BoardMirror.reason(error))
+                }
+            }
+            return
         }
         guard let window = CanvasWindowController.frontmost?.window, let content = window.contentView else { return }
         let flags = modifiers(fields["mods"])
@@ -230,11 +244,13 @@ enum DevInput {
         case "shortcut", "key":
             guard let key = Key(fields["key"] ?? "") else { return NSLog("DevInput: unknown key %@", fields["key"] ?? "") }
             // A sheet in a window that isn't key ignores key equivalents (an alert's default button
-            // only gets Return once key), so press the matching button, or accept on Return. A save
-            // panel runs out of process, where no replayed event reaches: Return saves under the
-            // name it suggested.
+            // only gets Return once key), so press the matching button (for Return, the sheet's
+            // default button: AppKit keeps a default button's Return in the window, not the button),
+            // or accept on Return. A save panel runs out of process, where no replayed event
+            // reaches: Return saves under the name it suggested.
             if let sheet = window.attachedSheet {
-                if let pressed = button(in: sheet.contentView, keyEquivalent: key.characters) { return pressed.performClick(nil) }
+                let fallback = key.code == Key.returnCode ? sheet.defaultButtonCell?.controlView as? NSButton : nil
+                if let pressed = button(in: sheet.contentView, keyEquivalent: key.characters) ?? fallback { return pressed.performClick(nil) }
                 if key.code == Key.returnCode { return window.endSheet(sheet, returnCode: sheet is NSSavePanel ? .OK : .alertFirstButtonReturn) }
             }
             // Through the application's own dispatch, as a key press arrives: key equivalents

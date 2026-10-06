@@ -126,17 +126,24 @@ extension Board {
         var blocks: [String] = []
         for sender in senders {
             let group = waiting.filter { $0.from == sender.from && $0.header == sender.header }
-            var part: [MentionContext.Resolved] = []
-            for handoff in group {
-                part.append(await MentionContext.resolve(handoff.mention, index: index + resolved.count + part.count, on: self, caller: caller))
-            }
-            resolved.append(contentsOf: part)
-            let name = group.first?.fromName.map { " \"\($0)\"" } ?? ""
-            let header = sender.header ?? sender.from.map { "Attached by terminal \($0)\(name) to its prompt to you (agent.prompt):" }
-                ?? "Attached by a script to its prompt to you (agent.prompt):"
-            blocks.append(MentionContext.render(part, board: self, targets: group.map(\.mention.target), from: sender.from, header: header))
+            let block = await handoffBlock(group.map(\.mention), from: sender.from, fromName: group.first?.fromName, header: sender.header, for: caller, index: index + resolved.count)
+            resolved.append(contentsOf: block.resolved)
+            blocks.append(block.text)
         }
         return (resolved, blocks)
+    }
+
+    /// One sender's mentions for `caller`, resolved now and numbered from `index`, under the
+    /// block header naming that sender (or `header`, a board's own): what a drain gives a
+    /// hand-off and `agent.inbox` a message.
+    func handoffBlock(_ mentions: [Mention], from sender: ObjectID?, fromName: String?, header: String? = nil, for caller: ObjectID, index: Int) async -> (resolved: [MentionContext.Resolved], text: String) {
+        var part: [MentionContext.Resolved] = []
+        for mention in mentions {
+            part.append(await MentionContext.resolve(mention, index: index + part.count, on: self, caller: caller))
+        }
+        let name = fromName.map { " \"\($0)\"" } ?? ""
+        let header = header ?? sender.map { "Attached by terminal \($0)\(name) to its prompt to you (agent.prompt):" } ?? "Attached by a script to its prompt to you (agent.prompt):"
+        return (part, MentionContext.render(part, board: self, targets: mentions.map(\.target), from: sender, header: header))
     }
 
     /// Drops delivered (or withdrawn) handed mentions.
