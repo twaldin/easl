@@ -409,7 +409,7 @@ func TestRestartBouncesWhatWasQueuedOnceTheClientRelaunchedTheAgent(t *testing.T
 		t.Fatalf("client.attach: %v", attached)
 	}
 
-	if code, _ := errorOf(f.call("agent.restart", map[string]any{"target": "worker", "mode": "fresh"})); code != "conflict" {
+	if code, _ := errorOf(f.call("agent.restart", map[string]any{"target": "worker", "mode": "fresh", "force": true})); code != "conflict" {
 		t.Fatalf("the client's refusal: %s", code)
 	}
 	if got := texts(f.board.Messages(term)); !reflect.DeepEqual(got, []string{"Nightly failed."}) || len(f.bounced()) != 0 {
@@ -422,7 +422,7 @@ func TestRestartBouncesWhatWasQueuedOnceTheClientRelaunchedTheAgent(t *testing.T
 	}
 	old.close()
 
-	f.result("agent.restart", map[string]any{"target": "worker", "mode": "fresh"})
+	f.result("agent.restart", map[string]any{"target": "worker", "mode": "fresh", "force": true})
 	if got := f.bounced(); !reflect.DeepEqual(got, []string{"undelivered to worker@root: Nightly failed. (from machine-watch)"}) {
 		t.Fatalf("relaunched: bounced %q", got)
 	}
@@ -431,6 +431,40 @@ func TestRestartBouncesWhatWasQueuedOnceTheClientRelaunchedTheAgent(t *testing.T
 	}
 	if len(polled) != 2 || len(polled[0]) != 0 || len(polled[1]) != 0 {
 		t.Fatalf("a poll took a message while the client restarted the agent: %v", polled)
+	}
+}
+
+// A message queued for the terminal that its integration hasn't taken is a prompt whose turn
+// hasn't started, as agent.wait counts it: an unforced restart refuses before asking the client,
+// and a forced one bounces it.
+func TestAQueuedMessageHoldsOffAnUnforcedRestartAndAForcedOneBouncesIt(t *testing.T) {
+	f := newFixture(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "protocol": 1.0, "draft": false})
+	if sent := f.result("agent.prompt", map[string]any{"target": "worker", "text": "Count to 40.", "from": "machine-watch"}); sent["delivery"] != "message" {
+		t.Fatalf("queued: %v", sent)
+	}
+	app := &scriptedClient{router: f.router, replies: []map[string]any{
+		{"ok": true, "result": map[string]any{"agent": map[string]any{"tile": term}, "command": []any{"omp"}}},
+	}}
+	attached := f.router.HandleConn(map[string]any{"id": "a", "method": "client.attach", "params": map[string]any{
+		"version": float64(api.SchemaVersion), "schema": api.SchemaHash, "serves": []any{"agent.restart"}, "boards": []any{f.board.ID()},
+	}}, app).(map[string]any)
+	if attached["ok"] != true {
+		t.Fatalf("client.attach: %v", attached)
+	}
+
+	code, message := errorOf(f.call("agent.restart", map[string]any{"target": "worker", "mode": "fresh"}))
+	if code != "conflict" || message != term+" has a message queued that its agent hasn't taken yet: restarting would bounce it. Wait for it (agent.wait), or force: true restarts anyway (the message bounces)" {
+		t.Errorf("unforced: %s %q", code, message)
+	}
+	if got := texts(f.board.Messages(term)); len(app.asked) != 0 || !reflect.DeepEqual(got, []string{"Count to 40."}) || len(f.bounced()) != 0 {
+		t.Fatalf("unforced: the client was asked %d times, queued %q, bounced %q", len(app.asked), got, f.bounced())
+	}
+
+	f.result("agent.restart", map[string]any{"target": "worker", "mode": "fresh", "force": true})
+	if got := f.bounced(); !reflect.DeepEqual(got, []string{"undelivered to worker@root: Count to 40. (from machine-watch)"}) || len(f.board.Messages(term)) != 0 {
+		t.Fatalf("forced: bounced %q, still queued %q", got, texts(f.board.Messages(term)))
 	}
 }
 
@@ -487,7 +521,7 @@ func TestNothingReachesATerminalWhileAClientRestartsIt(t *testing.T) {
 	if attached["ok"] != true {
 		t.Fatalf("client.attach: %v", attached)
 	}
-	fresh := map[string]any{"target": "worker", "mode": "fresh"}
+	fresh := map[string]any{"target": "worker", "mode": "fresh", "force": true}
 
 	if code, _ := errorOf(f.call("agent.restart", fresh)); code != "conflict" {
 		t.Fatalf("the client's refusal: %s", code)

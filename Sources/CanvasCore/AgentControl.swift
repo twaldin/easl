@@ -282,9 +282,9 @@ extension ApiRouter {
         return .object(["agent": agentEntry(current, on: board), "command": .array(launch.argv.map(JSONValue.string))])
     }
 
-    /// Why agent.restart leaves `terminal` alone without `force`: the dialog, turn, prompt or
-    /// draft a restart would lose, in that order, or the user in it. A draft no integration
-    /// reports is one the user may have.
+    /// Why agent.restart leaves `terminal` alone without `force`: the dialog, turn, prompt, queued
+    /// message or draft a restart would lose, in that order, or the user in it. A draft no
+    /// integration reports is one the user may have.
     private func refuseRestart(_ terminal: CanvasObject, on board: Board) throws {
         switch Self.state(of: terminal) {
         case LifecycleState.blocked.rawValue:
@@ -296,6 +296,11 @@ extension ApiRouter {
         }
         if promptPending(to: terminal.id) {
             throw Failure("conflict", "\(terminal.id) was just prompted and hasn't started that turn: restarting would lose the prompt. Wait for it (agent.wait), or force: true restarts anyway")
+        }
+        // A message its integration hasn't taken yet: its turn hasn't started, as agent.wait
+        // counts it. A restart would bounce it (`Board.endAgentSession`).
+        if board.messages[terminal.id]?.isEmpty == false {
+            throw Failure("conflict", "\(terminal.id) has a message queued that its agent hasn't taken yet: restarting would bounce it. Wait for it (agent.wait), or force: true restarts anyway (the message bounces)")
         }
         switch terminal.props["agent"]?["draft"]?.bool {
         case true?:

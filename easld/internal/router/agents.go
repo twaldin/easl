@@ -793,7 +793,7 @@ func (r *Router) restart(p map[string]any) (any, error) {
 	}
 	agent := asMap(terminal.Props["agent"])
 	if !boolParam(p, "force") {
-		if err := r.restartRefusal(terminal, agent); err != nil {
+		if err := r.restartRefusal(b, terminal, agent); err != nil {
 			return nil, err
 		}
 	}
@@ -848,10 +848,10 @@ func resumedSession(agent map[string]any) string {
 }
 
 // restartRefusal is why agent.restart leaves a terminal alone without force: the dialog, turn,
-// prompt or draft a restart would lose, in that order; a draft no integration reports is one the
-// user may have. (The app also refuses while the user may be typing in it: easld has no window
-// to have keyboard focus.)
-func (r *Router) restartRefusal(terminal model.Object, agent map[string]any) error {
+// prompt, queued message or draft a restart would lose, in that order; a draft no integration
+// reports is one the user may have. (The app also refuses while the user may be typing in it:
+// easld has no window to have keyboard focus.)
+func (r *Router) restartRefusal(b *board.Board, terminal model.Object, agent map[string]any) error {
 	switch stateOf(terminal) {
 	case "blocked":
 		blocker := ""
@@ -864,6 +864,11 @@ func (r *Router) restartRefusal(terminal model.Object, agent map[string]any) err
 	}
 	if r.promptPending(terminal.ID) {
 		return fail(api.CodeConflict, "%s was just prompted and hasn't started that turn: restarting would lose the prompt. Wait for it (agent.wait), or force: true restarts anyway", terminal.ID)
+	}
+	// A message its integration hasn't taken yet: its turn hasn't started, as agent.wait counts it.
+	// A restart would bounce it (EndAgentSession).
+	if len(b.Messages(terminal.ID)) > 0 {
+		return fail(api.CodeConflict, "%s has a message queued that its agent hasn't taken yet: restarting would bounce it. Wait for it (agent.wait), or force: true restarts anyway (the message bounces)", terminal.ID)
 	}
 	switch draft, reported := agent["draft"].(bool); {
 	case !reported:

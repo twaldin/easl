@@ -280,7 +280,7 @@ final class AgentControlTests {
             try ended()
             restarted.append((tile, argv))
         }
-        #expect(try await call("agent.restart", ["target": "worker", "mode": "resume"])["ok"] == .bool(true))
+        #expect(try await call("agent.restart", ["target": "worker", "mode": "resume", "force": .bool(true)])["ok"] == .bool(true))
         for refused in [during["message"], during["composer"]] {
             #expect(refused?["error"]?["code"] == "conflict" && refused?["error"]?["message"] == .string(restarting), "\(String(describing: refused))")
         }
@@ -291,7 +291,6 @@ final class AgentControlTests {
 
         // A turn that started after the first check calls the restart off at the kill.
         try board.reportLifecycle(tile: worker, kind: "omp", state: .idle, message: nil, seq: 2, source: "canvas-omp", protocol: 1, draft: false)
-        #expect(try await call("agent.prompt", ["target": "worker", "text": "Welcome back.", "from": "machine-watch"])["result"]?["delivery"] == "message")
         var killed = false
         router.restartTerminal = { [unowned self] _, tile, _, killing, ended in
             try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 3, source: "canvas-omp", protocol: 1, draft: false)
@@ -303,7 +302,27 @@ final class AgentControlTests {
         let refused = try await call("agent.restart", ["target": "worker", "mode": "resume"])
         #expect(refused["error"]?["message"] == .string("\(worker) is working: restarting would kill its turn. Wait for it (agent.wait), or force: true restarts anyway"))
         #expect(!killed && board.agentSession(of: worker) == generation)
-        #expect(try await call("agent.inbox", ["tile": .string(worker)])["result"]?["messages"]?.array?.count == 1, "offered again once the restart is off")
+        #expect(try await call("agent.prompt", ["target": "worker", "text": "Welcome back.", "from": "machine-watch"])["result"]?["delivery"] == "message", "reachable again once the restart is off")
+        #expect(try await call("agent.inbox", ["tile": .string(worker)])["result"]?["messages"]?.array?.count == 1)
+    }
+
+    @Test func aQueuedMessageHoldsOffAnUnforcedRestartAndAForcedOneBouncesIt() async throws {
+        let worker = terminal(name: "worker", command: ["omp"])
+        try board.reportLifecycle(tile: worker, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 1, draft: false)
+        try board.reportSession(tile: worker, kind: "omp", sessionId: "s1", sessionPath: nil)
+        // agent.prompt to an agent whose integration takes messages queues it, and agent.wait
+        // waits until its agent takes it: so does an unforced restart.
+        #expect(try await call("agent.prompt", ["target": "worker", "text": "Count to 40."])["result"]?["delivery"] == "message")
+        let refused = try await call("agent.restart", ["target": "worker", "mode": "resume"])
+        #expect(refused["error"]?["code"] == "conflict" && refused["error"]?["message"]
+                == .string("\(worker) has a message queued that its agent hasn't taken yet: restarting would bounce it. Wait for it (agent.wait), or force: true restarts anyway (the message bounces)"), "\(refused)")
+        #expect(restarted.isEmpty && board.messages[worker]?.map(\.text) == ["Count to 40."])
+
+        // Forced: the message bounces, and the relaunched agent gets none of it.
+        let forced = try await call("agent.restart", ["target": "worker", "mode": "resume", "force": .bool(true)])
+        #expect(forced["ok"] == .bool(true), "\(forced)")
+        #expect(restarted.count == 1 && board.messages[worker] == nil)
+        #expect(board.activity.query(since: nil, limit: 10, kinds: [.message]).entries.map(\.summary) == ["undelivered to worker@root: Count to 40. (from script)"])
     }
 
     @Test func whatTheRelaunchedAgentReportsWhileItStartsStays() async throws {
@@ -351,7 +370,7 @@ final class AgentControlTests {
         // The app fails before it kills anything: the session goes on, and its queue with it.
         router.restartTerminal = { _, tile, _, _, _ in throw ApiRouter.Failure("unavailable", "terminal \(tile) isn't shown in a window") }
         var generation = board.agentSession(of: worker)
-        #expect(try await call("agent.restart", ["target": "worker", "mode": "resume"])["error"]?["code"] == "unavailable")
+        #expect(try await call("agent.restart", ["target": "worker", "mode": "resume", "force": .bool(true)])["error"]?["code"] == "unavailable")
         #expect(board.messages[worker]?.map(\.text) == ["Nightly failed."] && board.agentSession(of: worker) == generation)
 
         // Killed: what was queued for the old session bounced before the relaunch started.
@@ -363,7 +382,7 @@ final class AgentControlTests {
             restarted.append((tile, argv))
         }
         generation = board.agentSession(of: worker)
-        let resumed = try await call("agent.restart", ["target": "worker", "mode": "resume"])
+        let resumed = try await call("agent.restart", ["target": "worker", "mode": "resume", "force": .bool(true)])
         #expect(resumed["ok"] == .bool(true), "\(resumed)")
         #expect(queuedAtRelaunch == nil && board.agentSession(of: worker) == generation + 1)
         #expect(board.activity.query(since: nil, limit: 10, kinds: [.message]).entries.map(\.summary) == ["undelivered to worker@root: Nightly failed. (from machine-watch)"])
