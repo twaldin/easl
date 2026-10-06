@@ -82,20 +82,23 @@ public final class EaslConnection: @unchecked Sendable {
     public let backoff: Backoff
     /// How long a new link may take to answer `system.ping` and its subscriptions.
     public let handshakeTimeout: Duration
+    /// Where relay processes are tracked, so quitting can end them (`RemoteProcesses.terminateAll`).
+    private let processes: RemoteProcesses
 
     public static func unixSocket(_ path: String, backoff: Backoff = .standard, handshakeTimeout: Duration = .seconds(10)) -> EaslConnection {
         EaslConnection(.unixSocket(path), backoff: backoff, handshakeTimeout: handshakeTimeout)
     }
 
     public static func process(_ executable: String, _ arguments: [String], _ environment: [String: String]? = nil,
-                               backoff: Backoff = .standard, handshakeTimeout: Duration = .seconds(20)) -> EaslConnection {
-        EaslConnection(.process(executable: executable, arguments: arguments, environment: environment), backoff: backoff, handshakeTimeout: handshakeTimeout)
+                               backoff: Backoff = .standard, handshakeTimeout: Duration = .seconds(20), processes: RemoteProcesses = .shared) -> EaslConnection {
+        EaslConnection(.process(executable: executable, arguments: arguments, environment: environment), backoff: backoff, handshakeTimeout: handshakeTimeout, processes: processes)
     }
 
-    public init(_ transport: Transport, backoff: Backoff = .standard, handshakeTimeout: Duration = .seconds(20)) {
+    public init(_ transport: Transport, backoff: Backoff = .standard, handshakeTimeout: Duration = .seconds(20), processes: RemoteProcesses = .shared) {
         self.transport = transport
         self.backoff = backoff
         self.handshakeTimeout = handshakeTimeout
+        self.processes = processes
         queue.async { self.attempt() }
     }
 
@@ -352,7 +355,7 @@ public final class EaslConnection: @unchecked Sendable {
                 self?.queue.async { self?.relayEnded(link, exited: true) }
             }
             do {
-                try process.run()
+                try processes.launch(process)
             } catch {
                 errors.fileHandleForReading.readabilityHandler = nil
                 Darwin.close(link.readFD)
@@ -513,7 +516,13 @@ public final class EaslConnection: @unchecked Sendable {
     private func relayEnded(_ link: Link, stdoutDone: Bool = false, stderrDone: Bool = false, exited: Bool = false) {
         guard self.link === link else { return }
         if stdoutDone {
-            link.process.map { if $0.isRunning { $0.terminate() } }
+            // ssh closes its stdout before it exits with the remote command's status; a SIGTERM
+            // in between makes it exit 255, which reads as "host unreachable". Only one that
+            // hangs on is ended.
+            queue.asyncAfter(deadline: .now() + 2) { [weak self, weak link] in
+                guard let self, let link, self.link === link, let process = link.process, process.isRunning else { return }
+                process.terminate()
+            }
         }
         if stderrDone { link.stderrDone = true }
         if exited {

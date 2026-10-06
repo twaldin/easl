@@ -215,10 +215,14 @@ final class BoardMirrorTests {
         try await eventually { once.body == nil }
         try await eventually { mirror.reading == nil }
         let added = try #require(created)
-        #expect(board.objects[edited.id] == host.objects[edited.id])
+        // The events left the host ahead of the read's answer, but the mirror's event listener and
+        // its read are two tasks on the main actor: on a loaded machine the answer can be handled
+        // first, and the events after it. Either way the board ends as the host's, never with the
+        // read's older state undoing them.
+        try await eventually {
+            board.objects[edited.id] == host.objects[edited.id] && board.objects[doomed.id] == nil && board.objects[added] == host.objects[added]
+        }
         #expect(board.objects[edited.id]?.props["markdown"]?.string == "changed during the read")
-        #expect(board.objects[doomed.id] == nil)
-        #expect(board.objects[added] == host.objects[added])
     }
 
     @Test func queuedWritesKeepTheHostRevisionTheyWereBasedOn() async throws {
