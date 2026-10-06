@@ -56,10 +56,10 @@ public enum HostedTerminal {
     /// easld's socket on the host, relayed by `nc`: one JSON line per request (`request`). With
     /// `-N` nc shuts its side of the connection down when ssh's input ends, after the reply, and
     /// exits once easld closes it; without it nc outlives the call, holding a connection to easld
-    /// (OpenBSD nc's `-N`, offered as such in `nc -h`: Apple's `-N` is something else).
+    /// (`RemoteHost.ncHasShutdown`).
     public static let easldRelay = remote(#"""
         s="$HOME/.local/state/easl/easl.sock"
-        if nc -h 2>&1 | grep -q '^[[:space:]]*-N[[:space:]].*EOF'; then exec nc -N -U "$s"; fi
+        if \#(RemoteHost.ncHasShutdown); then exec nc -N -U "$s"; fi
         exec nc -U "$s"
         """#)
 
