@@ -68,6 +68,7 @@ Shipped on the Swift app (docs/design.md "Client mode (remote boards)", docs/con
 - Attention markers raised before the window opened aren't shown (`board.get` has none); markers the viewer clears and agents it sees (`markSeen`) stay unseen on the host.
 - On easld with a client attached, `agent.prompt` `composer` mentions are queued as hand-offs, not as the composer's own (easld's `prompt` queues before forwarding).
 - A remote terminal's ⌘-clicked file references open nothing (a notice says the file is the host's): resolving them on the host needs an API call that resolves a reference against the host's checkout.
+- A remote board's hosted terminal (`props.host`, docs/contracts.md "Hosted terminals") never attaches: the viewer looks for its session on the easl's Mac, but it runs on the terminal's host, so the tile waits for the host. The viewer would attach through that host instead (or through the easl's own link to it).
 
 ## The composer
 
