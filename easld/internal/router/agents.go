@@ -392,6 +392,9 @@ func (r *Router) finalAnswer(terminal model.Object, b *board.Board, p map[string
 // prompt is agent.prompt: its refusals and the mentions it hands over are the board's; a client
 // types it into the terminal.
 func (r *Router) prompt(p map[string]any) (any, error) {
+	if err := checkComposer(p); err != nil {
+		return nil, err
+	}
 	target, err := str(p, "target")
 	if err != nil {
 		return nil, err
@@ -404,8 +407,10 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 		return nil, err
 	}
 	force := boolParam(p, "force")
+	// The user's answer from a composer (a remote board's viewer) passes the blocked check alone.
+	answering := boolParam(p, "composer") && boolParam(p, "answer")
 	lifecycle := asMap(terminal.Props["lifecycle"])
-	if stateOf(terminal) == "blocked" && !force {
+	if stateOf(terminal) == "blocked" && !force && !answering {
 		blocker := ""
 		if m, ok := lifecycle["message"].(string); ok {
 			blocker = " (“" + m + "”)"
@@ -481,6 +486,25 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 		result["mentions"] = list
 	}
 	return result, nil
+}
+
+// checkComposer checks agent.prompt's `composer` and `answer` before the target, as
+// ApiRouter.checkComposer does: only the user answers, and the composer's prompt is the user's.
+func checkComposer(p map[string]any) error {
+	composer := boolParam(p, "composer")
+	if boolParam(p, "answer") && !composer {
+		return invalid("answer is the user's answer from a composer: it needs composer: true (an agent or script sends force: true instead)")
+	}
+	if !composer {
+		return nil
+	}
+	if caller, ok := p["caller"]; ok && caller != nil {
+		return invalid("a composer's prompt is the user's: it takes no caller")
+	}
+	if boolParam(p, "force") {
+		return invalid("a composer's prompt never forces: answer: true answers a blocked target")
+	}
+	return nil
 }
 
 // drain is tray.drain. Without a window there is no prompt target, so anyone drains the tray.

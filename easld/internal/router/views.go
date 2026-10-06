@@ -14,6 +14,11 @@ import (
 
 // render is view.render: its params are checked as the app checks them; a client draws it.
 func (r *Router) render(p map[string]any) (any, error) {
+	if inline, _ := p["inline"].(bool); inline {
+		if _, ok := p["out"]; ok {
+			return nil, invalid("inline returns the image in the reply and out writes it to a file: pass one of them")
+		}
+	}
 	var b *board.Board
 	var ids []string
 	var err error

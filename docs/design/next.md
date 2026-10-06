@@ -59,6 +59,16 @@ Server-side features (the all-agents overview, supervision stats, review passes,
 - **Browser tiles run where the user is.** A browser tile executes on the Mac the user is sitting at, and the host routes the agent's `easl browser` calls to it over the same ssh link, so the user and the agent see one page. When that Mac disconnects, the host takes the tile over and reloads its last URL. Browser cookies are shared between the machines over ssh, so logins carry over; in-page state doesn't.
 - **Offload**: a terminal tile can have a host of its own, such as a Linux machine with more cores. Its agent works on a clone there, with the board's socket forwarded back (`ssh -R`) so the hooks and the `easl` CLI work. Code and changes tiles it opens read that host's files, so every file-bound tile carries a host.
 
+## Client mode
+
+Shipped on the Swift app (docs/design.md "Client mode (remote boards)", docs/contracts.md "Remote boards"): `AppDelegate.openRemoteBoard(host:board:)` opens a window mirroring another easl's board (`BoardMirror`: subscribe, read, apply the host's events by `rev`), the user's creates, moves, resizes, edits, deletes and question answers as previews sent to the host, terminals attached to the host's sessions over ssh, code/changes/HTML/browser/image/diagram tiles as the host's `view.render` `inline` images under a read-only badge, the composer over `agent.prompt` `composer`, a reconnecting/offline banner, and nothing on disk. The schema additions (`view.render` `inline`, `agent.prompt` `composer`/`answer`) are checked by both servers (scenario `client-mode`). Still open:
+
+- **Undo** on a remote board (Edit › Undo is disabled there), and **restacking** (the API has no `z`).
+- A remote note's anchored excerpts and images show as written: the viewer doesn't read the host's files, and `object.get` `fences` gives states, not text.
+- Attention markers raised before the window opened aren't shown (`board.get` has none); markers the viewer clears and agents it sees (`markSeen`) stay unseen on the host.
+- On easld with a client attached, `agent.prompt` `composer` mentions are queued as hand-offs, not as the composer's own (easld's `prompt` queues before forwarding).
+- A remote terminal's ⌘-clicked file references open nothing (a notice says the file is the host's): resolving them on the host needs an API call that resolves a reference against the host's checkout.
+
 ## The composer
 
 Shipped on the Swift app (docs/design.md, Composer). Still open:

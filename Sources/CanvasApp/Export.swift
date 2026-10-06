@@ -82,8 +82,8 @@ extension CanvasView {
             do {
                 let png = try await self.selectionPNG()
                 let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.declareTypes([.png, .tiff], owner: nil)
+                pasteboard.clear(privately: self.board.isRemote)
+                pasteboard.addTypes([.png, .tiff], owner: nil)
                 pasteboard.setData(png, forType: .png)
                 if let tiff = NSBitmapImageRep(data: png)?.tiffRepresentation { pasteboard.setData(tiff, forType: .tiff) }
                 NSLog("easl: copied %d object(s) as a %d-byte PNG", self.selection.count, png.count)
@@ -156,7 +156,7 @@ extension CanvasView {
     func copyNoteMarkdown(_ id: ObjectID) {
         guard let markdown = noteMarkdown(id) else { return }
         let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
+        pasteboard.clear(privately: board.isRemote)
         pasteboard.setString(markdown, forType: .string)
         NSLog("easl: copied note %@ as %d characters of markdown", id, markdown.count)
     }
@@ -274,4 +274,21 @@ extension HtmlTile {
     for (const script of [...clone.querySelectorAll('script')]) script.remove();
     return '<!doctype html>\\n' + clone.outerHTML;
     """
+}
+
+extension NSPasteboard {
+    /// Empties the pasteboard for a copy. `privately`, for a remote board's content (client mode,
+    /// which keeps nothing of it on this Mac): the copy stays off other devices' Universal
+    /// Clipboard and carries nspasteboard.org's transient and concealed markers, so clipboard
+    /// managers keep no history of it.
+    func clear(privately: Bool) {
+        guard privately else {
+            clearContents()
+            return
+        }
+        prepareForNewContents(with: .currentHostOnly)
+        for marker in ["org.nspasteboard.TransientType", "org.nspasteboard.ConcealedType"] {
+            setData(Data(), forType: NSPasteboard.PasteboardType(marker))
+        }
+    }
 }

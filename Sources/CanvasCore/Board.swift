@@ -202,10 +202,31 @@ public final class Board {
     public var onTerminalsEnded: (([ObjectID]) -> Void)?
     /// Terminals deleted in the open step; checked against `objects` when it closes.
     private var removedTerminals: [ObjectID] = []
+    /// A board another easl hosts, mirrored by `BoardMirror` (docs/design.md "Client mode"): its
+    /// objects change by what the host says, and the user's creates, updates and deletes are
+    /// previews here that go to `host`.
+    public let isRemote: Bool
+    /// Where a remote board's writes go.
+    weak var host: BoardHost?
+    /// A remote board's provisional object (first) is about to become the host's (second):
+    /// whoever shows it carries what the user had going on it (`rekeyHost`).
+    public var onHostRekey: ((_ provisional: ObjectID, _ host: ObjectID) -> Void)?
+    /// How deep the user's write calls are nested on a remote board: only the outermost one goes
+    /// to the host (its cascades, a group re-fit or an arrow detaching, are the host's to make).
+    private var hostWriteDepth = 0
 
     public init(id: BoardID, root: URL) {
         self.id = id
         self.root = root
+        isRemote = false
+    }
+
+    /// An empty remote board (`BoardMirror` fills it with `applyHost`).
+    init(remote id: BoardID, root: URL, host: BoardHost) {
+        self.id = id
+        self.root = root
+        isRemote = true
+        self.host = host
     }
 
     /// Board format written by `snapshot`. 2: a tile's frame is its whole drawn box, title bar
@@ -215,6 +236,7 @@ public final class Board {
     public init(snapshot: BoardSnapshot) {
         id = snapshot.id
         root = URL(fileURLWithPath: snapshot.root)
+        isRemote = false
         revision = snapshot.revision
         let format = snapshot.format ?? 1
         // `props.scale` became a tile's content `zoom` (frame kept) and a text shape's `textSize`.
@@ -282,8 +304,9 @@ public final class Board {
     public func create(type: ObjectType, props: JSONValue, frame: Frame? = nil, parent: ObjectID? = nil, caller: ObjectID? = nil) -> CanvasObject {
         let size = type == .question ? QuestionSpec.size(props) : Self.defaultSize(type)
         let z = (objects.values.map(\.z).max() ?? 0) + 1
+        // A remote board's terminal is stamped by its host, which knows its checkouts.
         var object = CanvasObject(id: IDs.make("obj"), type: type, frame: frame ?? Frame(x: 0, y: 0, w: size.w, h: size.h), z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(),
-                                  props: type == .terminal ? stampingWorktree(props) : props)
+                                  props: type == .terminal && !isRemote ? stampingWorktree(props) : props)
         if let fitted = fittedFrame(ofGroup: object) {
             object.frame = fitted
         } else if frame == nil {
@@ -294,16 +317,33 @@ public final class Board {
         history.record(.created(object), by: object.createdBy)
         log(.created, object, actor: ActivityActor(caller: caller), "created \(ActivityLog.describe(object)) at \(ActivityLog.position(reported(object).frame))")
         onEvent?(.objectCreated(object))
+        if isRemote, hostWriteDepth == 0 { host?.send(.create(object)) }
         return object
     }
 
     /// Patches an object. A group's frame is never taken from `frame`: it follows its members.
     /// `actor` names who the activity log credits when it isn't the caller (the app's own
-    /// write-backs are `.system`, which ⌘Z skips: `Board.unrecorded`).
+    /// write-backs are `.system`, which ⌘Z skips: `Board.unrecorded`). On a remote board the
+    /// user's patch is a preview sent to the host, and the app's write-backs are the host's to make.
     @discardableResult
     public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil, actor: ActivityActor? = nil) throws -> CanvasObject {
+        if isRemote {
+            if actor == .system { return try object(id) }
+            let seen = objects[id]?.rev
+            let object = try toHost { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: []) }
+            if hostWriteDepth == 0 { host?.send(.update(id, seen: seen, frame: frame, z: z, props: props)) }
+            return object
+        }
         if actor == .system { return try unrecorded { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: []) } }
         return try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: [])
+    }
+
+    /// Runs a remote board's local preview of the user's write one level deeper, so whatever it
+    /// writes in turn stays here (`hostWriteDepth`).
+    private func toHost<T>(_ body: () throws -> T) rethrows -> T {
+        hostWriteDepth += 1
+        defer { hostWriteDepth -= 1 }
+        return try body()
     }
 
     /// Writes props the app keeps about an object rather than its content (a browser's
@@ -333,6 +373,8 @@ public final class Board {
     }
 
     func commitBookkeeping(_ before: CanvasObject, props: JSONValue) {
+        // A remote board's bookkeeping is its host's.
+        guard !isRemote else { return }
         var object = before
         object.props = object.props.merging(props)
         guard object != before else { return }
@@ -383,8 +425,14 @@ public final class Board {
     /// Removes an object. Within the same undo step: arrows bound to it detach; a deleted
     /// terminal takes its follow tile with it; a closed follow tile stops its terminal following
     /// (`props.follow` false) so the next report doesn't bring it back. Undo and redo replay
-    /// exactly what was recorded.
+    /// exactly what was recorded. On a remote board the delete is a preview sent to the host.
     public func delete(_ id: ObjectID, caller: ObjectID? = nil) throws {
+        guard isRemote, hostWriteDepth == 0 else { return try deleting(id, caller: caller) }
+        try toHost { try deleting(id, caller: caller) }
+        host?.send(.delete(id))
+    }
+
+    private func deleting(_ id: ObjectID, caller: ObjectID?) throws {
         guard objects[id] != nil else { throw BoardError.notFound("object \(id)") }
         let actor = ActivityActor(caller: caller)
         // Arrows bound to it detach within the same undo step, so one ⌘Z restores both.
@@ -920,6 +968,60 @@ public final class Board {
         onEvent?(.trayChanged(tray))
     }
 
+    // MARK: Remote boards (docs/design.md "Client mode")
+
+    /// The host's version of an object (`BoardMirror`): stored as the host has it, `rev`
+    /// included, and announced like any change; never an undo step, a log entry or a write sent back.
+    func applyHost(_ object: CanvasObject) {
+        let previous = objects[object.id]
+        guard previous != object else { return }
+        bumpRevision()
+        reindexKey(object.id, from: previous?.props, to: object.props)
+        objects[object.id] = object
+        changedAt[object.id] = revision
+        guard let previous else {
+            onEvent?(.objectCreated(object))
+            return
+        }
+        markMentionsEdited(from: previous, to: object)
+        onEvent?(.objectUpdated(object))
+    }
+
+    /// A provisional object whose create the host answered with `object`: the user's preview of
+    /// it (with any later writes) goes on under the host's id until those are answered too.
+    /// `onHostRekey` hears of it first, while the provisional object is still here. Nothing when
+    /// the user deleted it meanwhile (the delete follows to the host).
+    func rekeyHost(_ provisional: ObjectID, as object: CanvasObject) {
+        guard var shown = objects[provisional] else { return }
+        onHostRekey?(provisional, object.id)
+        removeHost(provisional)
+        shown.id = object.id
+        shown.rev = object.rev
+        applyHost(shown)
+    }
+
+    /// The host has no object `id` (deleted there, or a provisional create made way for the
+    /// host's own): it leaves here with its mentions and marker, ending nothing.
+    func removeHost(_ id: ObjectID) {
+        guard let removed = objects.removeValue(forKey: id) else { return }
+        bumpRevision()
+        changedAt.removeValue(forKey: id)
+        reindexKey(id, from: removed.props, to: nil)
+        let before = tray.count
+        tray.removeAll { $0.target.objectIDs.contains(id) }
+        let marked = attention.removeValue(forKey: id) != nil
+        onEvent?(.objectDeleted(id))
+        if tray.count != before { trayChanged() }
+        if marked { onEvent?(.attentionChanged(object: id, attention: nil)) }
+    }
+
+    /// The host raised (`marker`) or cleared (nil) the attention marker on `id`.
+    func applyHostAttention(_ marker: Attention?, on id: ObjectID) {
+        guard attention[id] != marker, objects[id] != nil || marker == nil else { return }
+        attention[id] = marker
+        onEvent?(.attentionChanged(object: id, attention: marker))
+    }
+
     // MARK: Agents
 
     /// `call` names the tool call a hook reports on. `blocked` with a call: that call waits for
@@ -1030,8 +1132,9 @@ public final class Board {
     /// The user has looked at this terminal; a `done` agent becomes `idle`. Looking at an agent
     /// that is still working (or waiting on an approval) doesn't count: its answer isn't there
     /// yet, so a turn that ends after the user looked away stays `done` until they look again.
+    /// A remote board's agents are seen on their host (v1: looking here changes nothing there).
     public func markSeen(_ tile: ObjectID) {
-        guard let terminal = objects[tile], terminal.type == .terminal, !seenSinceWorking.contains(tile) else { return }
+        guard !isRemote, let terminal = objects[tile], terminal.type == .terminal, !seenSinceWorking.contains(tile) else { return }
         let state = terminal.props["lifecycle"]?["state"]?.string
         guard state != LifecycleState.working.rawValue, state != LifecycleState.blocked.rawValue else { return }
         seenSinceWorking.insert(tile)

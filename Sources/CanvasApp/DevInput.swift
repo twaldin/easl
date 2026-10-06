@@ -1,4 +1,5 @@
 import AppKit
+import CanvasCore
 
 /// Development input replay (`EASL_DEV_INPUT=1`, driven by `scripts/dev-input.swift`).
 /// Agents test the UI while the window sits on a Space nobody is viewing, where real HID input
@@ -109,6 +110,19 @@ enum DevInput {
             // nobody touches the app, also with the window minimized or covered (no frames then).
             let window = CanvasWindowController.frontmost?.window ?? NSApp.windows.first { $0.windowController is CanvasWindowController }
             return DevPerf.idle(ms: Double(fields["ms"] ?? "") ?? 5000, window: window)
+        }
+        if fields["kind"] == "remote", let target = fields["target"], let board = fields["board"] {
+            // Opens another easl's board as a remote board (`AppDelegate.openRemoteBoard`), its
+            // host found over ssh; `home` is the host's support directory (a development instance).
+            Task { @MainActor in
+                do {
+                    let host = try await RemoteHost.discover(name: target, sshTarget: target, support: fields["home"])
+                    (NSApp.delegate as? AppDelegate)?.openRemoteBoard(host: host, board: board)
+                } catch {
+                    NSLog("DevInput: remote %@ not found: %@", target, BoardMirror.reason(error))
+                }
+            }
+            return
         }
         guard let window = CanvasWindowController.frontmost?.window, let content = window.contentView else { return }
         let flags = modifiers(fields["mods"])

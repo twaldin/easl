@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 1
-    static let schemaHash = "2889735094c39026"
+    static let schemaHash = "65888bbbea318252"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "system.ping": ([], []),
@@ -38,14 +38,14 @@ enum ApiParams {
         "agent.report_session": (["tile", "kind", "sessionId", "sessionPath"], ["tile", "kind"]),
         "agent.release": (["tile", "kind", "source"], ["tile", "kind"]),
         "agent.list": ([], []),
-        "agent.prompt": (["target", "text", "mentions", "caller", "force"], ["target", "text"]),
+        "agent.prompt": (["target", "text", "mentions", "caller", "force", "composer", "answer"], ["target", "text"]),
         "agent.wait": (["target", "until", "timeoutMs"], ["target"]),
         "agent.read": (["target", "lines", "since", "block", "final"], ["target"]),
         "follow.report": (["tile", "path", "range", "changes", "action"], ["tile", "path", "action"]),
         "view.attention": (["id", "message", "clear", "caller"], ["id"]),
         "view.get": (["board"], []),
         "view.open_url": (["url", "board", "caller"], ["url"]),
-        "view.render": (["board", "target", "scale", "full", "exclude", "padding", "out", "format", "timeoutMs"], ["target"]),
+        "view.render": (["board", "target", "scale", "full", "exclude", "padding", "out", "inline", "format", "timeoutMs"], ["target"]),
         "view.snapshot": (["board", "out", "format"], []),
         "events.subscribe": (["board", "events"], []),
         "client.attach": (["version", "schema", "app", "host", "serves", "boards", "focused"], ["version", "schema", "serves"]),
