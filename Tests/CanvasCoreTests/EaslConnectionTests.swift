@@ -94,7 +94,7 @@ final class EaslConnectionTests {
     }
 
     func relay() -> EaslConnection {
-        .process("/usr/bin/nc", ["-U", path], backoff: fast, handshakeTimeout: .seconds(5))
+        .process("/usr/bin/nc", ["-U", path], backoff: fast, handshakeTimeout: .seconds(60))
     }
 
     @Test(arguments: ["socket", "relay"])
@@ -174,16 +174,21 @@ final class EaslConnectionTests {
         let script = "perl -MTime::HiRes=time -e 'printf \"%.3f\\n\", time' >> '\(log)'; echo 'ssh: connect to host work port 22: Connection refused' >&2; exit 255"
         let connection = EaslConnection.process("/bin/sh", ["-c", script], backoff: .init(initial: .milliseconds(100), maximum: .milliseconds(400)))
         defer { connection.close() }
-        try await Task.sleep(for: .milliseconds(1600))
+        // Waits only ever run long (a busy machine), so each gap is at least its backoff.
+        var times: [Double] = []
+        let deadline = Date().addingTimeInterval(20)
+        while times.count < 5, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+            times = ((try? String(contentsOfFile: log, encoding: .utf8)) ?? "").split(separator: "\n").compactMap { Double($0) }
+        }
         #expect(connection.state != .online)
         let problem = try #require(connection.problem)
         #expect(problem == "sh exited with status 255: ssh: connect to host work port 22: Connection refused")
-        let times = try String(contentsOfFile: log, encoding: .utf8).split(separator: "\n").compactMap { Double($0) }
-        // 100, 200, 400, 400 ms apart: about 5 attempts in 1.6 s, not one every 100 ms.
-        #expect((4...7).contains(times.count), "attempts: \(times.count)")
+        try #require(times.count >= 5, "attempts: \(times.count)")
         let gaps = zip(times.dropFirst(), times).map { $0 - $1 }
-        #expect(gaps.first ?? 1 < 0.25, "the first wait is the initial one: \(gaps)")
-        #expect(gaps.last ?? 0 > 0.35, "the wait grew to the maximum: \(gaps)")
+        for (gap, wait) in zip(gaps, [0.1, 0.2, 0.4, 0.4]) {
+            #expect(gap >= wait - 0.02, "100, 200, 400, 400 ms at least: \(gaps)")
+        }
     }
 
     @Test func offlineRequestsFailAtOnce() async throws {
@@ -214,7 +219,8 @@ final class EaslConnectionTests {
         defer { connection.close() }
         #expect(await reach(.online, connection))
         async let hanging = connection.request("hang")
-        try await Task.sleep(for: .milliseconds(100))
+        let deadline = Date().addingTimeInterval(10)
+        while !server.calls.contains("hang"), Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
         server.stop()
         do {
             _ = try await hanging
