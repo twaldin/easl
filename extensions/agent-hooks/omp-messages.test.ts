@@ -1,9 +1,10 @@
 // bun test extensions/agent-hooks — omp's extension (extensions/omp/easl.ts) taking peer messages
-// (docs/contracts.md, Peer messages), driven through its omp seam (a fake `pi` and session)
-// against a fake easl that answers agent.inbox on a Unix socket as the app does: a message offered
-// to a connection is held by it until acked or until it closes. The clock is fake: it moves only
-// while a test waits for something (`until`), so the extension's coalescing, retry and record
-// checks run without real waits.
+// (docs/contracts.md, Peer messages) and reporting what agent.restart relaunches with (Agent
+// control), driven through its omp seam (a fake `pi` and session) against a fake easl that answers
+// agent.inbox on a Unix socket as the app does: a message offered to a connection is held by it
+// until acked or until it closes. The clock is fake: it moves only while a test waits for
+// something (`until`), so the extension's coalescing, retry, record and reconcile checks run
+// without real waits.
 import { afterEach, beforeEach, expect, test, vi } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -64,6 +65,8 @@ function fakeEasl() {
     failing: undefined as ((params: Params) => boolean) | undefined,
     /** Holds agent.report_session's answer back until it resolves. */
     sessionReported: undefined as Promise<void> | undefined,
+    /** Fails the next agent.report_session call it matches after applying it, as a reply lost to a timeout. */
+    failingSession: undefined as ((params: Params) => boolean) | undefined,
     send(queued: AgentMessage): void {
       easl.queue.push(queued);
       const waiter = waiters.findIndex((w) => open.has(w.connection));
@@ -102,6 +105,10 @@ function fakeEasl() {
       // Another session took the tile: what the old one never took bounces.
       if (sessionId !== undefined && params.sessionId !== sessionId) easl.bounced.push(...easl.queue.splice(0));
       sessionId = params.sessionId;
+      if (easl.failingSession?.(params)) {
+        easl.failingSession = undefined;
+        return void socket.write(`${JSON.stringify({ id, ok: false, error: { code: "timeout", message: "agent.report_session timed out" } })}\n`);
+      }
     }
     if (method !== "agent.inbox") return void answer(socket, id, {});
     const acked: string[] = params.ack ?? [];
@@ -163,11 +170,34 @@ function fakeOmp(easl: { socketPath: string }, entries: Params[] = [], sessionId
     entries,
     delivered: [] as { text: string; deliverAs?: string; attribution?: string }[],
     notices: [] as string[],
+    /** Each session's branch, root first (`grow`). */
+    branches: {} as Record<string, Params[]>,
+    /** The branch of the session omp runs now. */
+    branch(): Params[] {
+      return (omp.branches[state.sessionId] ??= []);
+    },
+    /** How many session entries the extension read (getLeafEntry, getEntry). */
+    read: 0,
     ctx: {
       hasUI: true,
+      /** What `ctx.model` says now; the extension reads it as it reconciles. */
+      model: undefined as { provider: string; id: string } | undefined,
       isIdle: () => !state.streaming,
       hasPendingMessages: () => state.pending,
-      sessionManager: { getEntries: () => entries, getSessionId: () => state.sessionId, getSessionFile: () => `/tmp/${state.sessionId}.jsonl` },
+      sessionManager: {
+        getEntries: () => entries,
+        getSessionId: () => state.sessionId,
+        getSessionFile: () => `/tmp/${state.sessionId}.jsonl`,
+        getLeafId: (): string | null => omp.branch().at(-1)?.id ?? null,
+        getLeafEntry: (): Params | undefined => {
+          omp.read++;
+          return omp.branch().at(-1);
+        },
+        getEntry: (id: string): Params | undefined => {
+          omp.read++;
+          return omp.branch().find((entry) => entry.id === id);
+        },
+      },
       ui: { notify: (text: string) => omp.notices.push(text), select: async () => undefined },
     },
     async emit(event: string, payload: Params = {}): Promise<void> {
@@ -335,4 +365,77 @@ test("messages arriving while omp reports a session switch were the old session'
   easl.send(fresh);
   await until(() => omp.delivered.length === 1, 5000);
   expect(omp.delivered[0].text).toContain(`[message ${fresh.id} from`);
+});
+
+/** What the extension sent as `field` with each agent.report_session, in order. */
+function reported(easl: { calls: { method: string; params: Params }[] }, field: "model" | "thinking"): unknown[] {
+  return easl.calls.filter((call) => call.method === "agent.report_session").map((call) => call.params[field]);
+}
+
+/** Appends entries to a session's branch, each a child of the one before, dated before this omp started. */
+function grow(branch: Params[], ...added: Params[]): void {
+  for (const entry of added) branch.push({ id: `e${branch.length + 1}`, parentId: branch.at(-1)?.id ?? null, timestamp: "2020-01-01T00:00:00.000Z", ...entry });
+}
+
+test("a model easl may have taken without answering is sent again when the user switches back", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  omp.ctx.model = { provider: "anthropic", id: "opus" };
+  await omp.emit("session_start");
+  await until(() => reported(easl, "model").length === 1);
+  // /model while idle: sent with no turn; easl applies it, but its answer is lost.
+  easl.failingSession = () => true;
+  omp.ctx.model = { provider: "openai", id: "gpt" };
+  await until(() => reported(easl, "model").length === 2);
+  // Back to the model easl acknowledged before: easl may hold the other one now.
+  omp.ctx.model = { provider: "anthropic", id: "opus" };
+  await until(() => reported(easl, "model").length === 3);
+  expect(reported(easl, "model")).toEqual(["anthropic/opus", "openai/gpt", "anthropic/opus"]);
+});
+
+test("the --thinking omp was launched with is the launch session's until the agent switches sessions", async () => {
+  const argv = process.argv;
+  const launch = Symbol.for("canvas-omp.launch");
+  const global = globalThis as unknown as Record<symbol, unknown>;
+  process.argv = [...argv, "--thinking=auto"];
+  delete global[launch];
+  cleanups.push(() => {
+    process.argv = argv;
+    delete global[launch];
+  });
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  // The launch session last recorded high, before this omp started; it runs auto, as launched.
+  grow(omp.branch(), { type: "thinking_level_change", thinkingLevel: "high", configured: "high" });
+  await omp.emit("session_start");
+  await until(() => reported(easl, "thinking").length === 1);
+  omp.state.sessionId = "ses_2";
+  await omp.emit("session_switch");
+  await until(() => reported(easl, "thinking").length === 2);
+  // Back to the launch session: omp restores what it recorded there, not the launch option.
+  omp.state.sessionId = "ses_1";
+  await omp.emit("session_switch");
+  await until(() => reported(easl, "thinking").length === 3);
+  expect(reported(easl, "thinking")).toEqual(["auto", undefined, "high"]);
+});
+
+test("the checks while omp runs read only what its session added since the last one", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  grow(omp.branch(), { type: "thinking_level_change", thinkingLevel: "low", configured: "low" });
+  grow(omp.branch(), ...Array.from({ length: 200 }, () => ({ type: "message" })));
+  await omp.emit("session_start");
+  await until(() => reported(easl, "thinking").length === 1);
+  expect(reported(easl, "thinking")).toEqual(["low"]);
+  // Four checks with nothing new read nothing.
+  const read = omp.read;
+  let ticks = 0;
+  await until(() => ++ticks > 400);
+  expect(omp.read).toBe(read);
+  // A new message: the next check reads it and stops at the leaf it read before.
+  grow(omp.branch(), { type: "message" });
+  ticks = 0;
+  await until(() => ++ticks > 200);
+  expect(omp.read - read).toBeLessThanOrEqual(2);
+  expect(reported(easl, "thinking")).toEqual(["low"]);
 });

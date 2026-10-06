@@ -543,10 +543,17 @@ public struct TerminalStatus: Sendable {
     public var program: String?
     /// The last command the shell finished, and when.
     public var lastCommand: TerminalCommandLog.Entry?
+    /// The foreground process of the session's shell (the agent, when one runs); nil at the
+    /// prompt or before the session's shell is known.
+    public var pid: Int32?
+    /// The terminal has keyboard focus in the key window while easl is the active app.
+    public var focused: Bool
 
-    public init(title: String? = nil, program: String? = nil, lastCommand: TerminalCommandLog.Entry? = nil) {
+    public init(title: String? = nil, program: String? = nil, lastCommand: TerminalCommandLog.Entry? = nil, pid: Int32? = nil, focused: Bool = false) {
         self.title = title
         self.program = program
         self.lastCommand = lastCommand
+        self.pid = pid
+        self.focused = focused
     }
 }

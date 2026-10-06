@@ -114,8 +114,12 @@ func (r *Router) inbox(id any, p map[string]any, c Conn) (any, error) {
 	return nil, nil
 }
 
-// offer is the messages for tile no open connection holds, now held by c.
+// offer is the messages for tile no open connection holds, now held by c; none while
+// agent.restart has a client kill and relaunch it (restarts).
 func (r *Router) offer(tile string, b *board.Board, c Conn) []board.Message {
+	if _, restarting := r.restarts[tile]; restarting {
+		return nil
+	}
 	var free []board.Message
 	for _, m := range b.Messages(tile) {
 		if holder, held := r.messageHolds[m.ID]; held && holder.IsOpen() {
@@ -136,7 +140,8 @@ func (r *Router) inboxResult(messages []board.Message, tile string, b *board.Boa
 	return map[string]any{"messages": rendered}
 }
 
-// serveInbox: a message reached tile's queue, and the oldest open long poll for it takes it.
+// serveInbox: a message reached tile's queue (or agent.restart let it go again), and the oldest
+// open long poll for it takes it.
 func (r *Router) serveInbox(tile string, b *board.Board) {
 	kept := r.inboxWaiters[:0]
 	for _, w := range r.inboxWaiters {
@@ -148,6 +153,9 @@ func (r *Router) serveInbox(tile string, b *board.Board) {
 	}
 	clear(r.inboxWaiters[len(kept):])
 	r.inboxWaiters = kept
+	if _, restarting := r.restarts[tile]; restarting {
+		return
+	}
 	for i, w := range r.inboxWaiters {
 		if w.tile != tile {
 			continue

@@ -1,8 +1,12 @@
 {
   "description": "Agent lifecycle on terminal tiles: reports with seq and source (stale ones ignored), blocked tool calls, final answers and reading them back (agent.read final: the answer, cut off by an error, none yet, still in its turn, with lines or since), sessions, release, agent.list, agent.wait (answered, already there, timeout), lifecycle events.",
   "ignore": {
+    "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+    "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
     "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
     "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)",
+    "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+    "response.result.agent.live": "whether the tile's zmx session runs (client)",
     "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
     "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)"
   },

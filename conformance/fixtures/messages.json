@@ -1,7 +1,7 @@
 {
   "scenario": "messages",
   "description": "Peer messages: agent.prompt to a terminal whose integration takes messages (agent.report protocol 1) queues out of band; agent.inbox takes them (held per connection, acked, started), agent.wait waits while one is queued and for the turn it started, agent.read final is unavailable meanwhile; a script's message (from, user attribution, next-turn); addresses: name@board, a renamed terminal's alias until another terminal takes the name, the caller's board first, ambiguity and unknown boards; release bounces what is queued (back to a sending terminal that takes messages as a message from easl, a script's into board.history as kind message); a typed next-turn into a working terminal is a conflict.",
-  "recordedOn": "easl peer/messages (Peer messages, review fixes), dev instance",
+  "recordedOn": "easl agent/control (rebased on bd72485), dev instance",
   "steps": [
     {
       "step": "board.open",
@@ -19,8 +19,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -38,8 +42,12 @@
         "result": {}
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -125,8 +133,12 @@
         }
       ],
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -212,8 +224,12 @@
         }
       ],
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -287,8 +303,12 @@
         }
       ],
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -363,8 +383,12 @@
         }
       ],
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -439,8 +463,12 @@
         }
       ],
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -457,12 +485,14 @@
             {
               "address": "reviewer@messages",
               "board": "<board>",
+              "focused": false,
               "kind": "omp",
               "lifecycle": {
                 "seen": false,
                 "state": "idle"
               },
               "name": "reviewer",
+              "open": true,
               "protocol": 1,
               "root": "<root>",
               "tile": "<obj:1>"
@@ -470,12 +500,14 @@
             {
               "address": "lead@messages",
               "board": "<board>",
+              "focused": false,
               "kind": "omp",
               "lifecycle": {
                 "seen": false,
                 "state": "working"
               },
               "name": "lead",
+              "open": true,
               "protocol": 1,
               "root": "<root>",
               "tile": "<obj:2>"
@@ -484,8 +516,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -510,12 +546,14 @@
           "agent": {
             "address": "reviewer@messages",
             "board": "<board>",
+            "focused": false,
             "kind": "omp",
             "lifecycle": {
               "seen": false,
               "state": "idle"
             },
             "name": "reviewer",
+            "open": true,
             "protocol": 1,
             "root": "<root>",
             "tile": "<obj:1>"
@@ -539,8 +577,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -554,8 +596,12 @@
         "target": "reviewer"
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -576,8 +622,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -624,8 +674,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -645,8 +699,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -670,8 +728,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -746,8 +808,12 @@
         }
       ],
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -823,8 +889,12 @@
         }
       ],
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -839,12 +909,14 @@
           "agent": {
             "address": "reviewer@messages",
             "board": "<board>",
+            "focused": false,
             "kind": "omp",
             "lifecycle": {
               "seen": false,
               "state": "done"
             },
             "name": "reviewer",
+            "open": true,
             "protocol": 1,
             "root": "<root>",
             "tile": "<obj:1>"
@@ -852,8 +924,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -872,12 +948,14 @@
           "agent": {
             "address": "reviewer@messages",
             "board": "<board>",
+            "focused": false,
             "kind": "omp",
             "lifecycle": {
               "seen": false,
               "state": "done"
             },
             "name": "reviewer",
+            "open": true,
             "protocol": 1,
             "root": "<root>",
             "tile": "<obj:1>"
@@ -887,8 +965,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -909,12 +991,14 @@
           "agent": {
             "address": "reviewer@messages",
             "board": "<board>",
+            "focused": false,
             "kind": "omp",
             "lifecycle": {
               "seen": false,
               "state": "done"
             },
             "name": "reviewer",
+            "open": true,
             "protocol": 1,
             "root": "<root>",
             "tile": "<obj:1>"
@@ -926,8 +1010,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -959,8 +1047,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -983,8 +1075,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -998,8 +1094,12 @@
         "waitMs": 10000
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1020,12 +1120,14 @@
           "agent": {
             "address": "reviewer@messages",
             "board": "<board>",
+            "focused": false,
             "kind": "omp",
             "lifecycle": {
               "seen": false,
               "state": "done"
             },
             "name": "reviewer",
+            "open": true,
             "protocol": 1,
             "root": "<root>",
             "tile": "<obj:1>"
@@ -1037,8 +1139,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1065,8 +1171,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1089,8 +1199,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1187,8 +1301,12 @@
         }
       ],
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1211,12 +1329,14 @@
               "reviewer"
             ],
             "board": "<board>",
+            "focused": false,
             "kind": "omp",
             "lifecycle": {
               "seen": false,
               "state": "done"
             },
             "name": "critic",
+            "open": true,
             "protocol": 1,
             "root": "<root>",
             "tile": "<obj:1>"
@@ -1228,8 +1348,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1249,12 +1373,14 @@
                 "reviewer"
               ],
               "board": "<board>",
+              "focused": false,
               "kind": "omp",
               "lifecycle": {
                 "seen": false,
                 "state": "done"
               },
               "name": "critic",
+              "open": true,
               "protocol": 1,
               "root": "<root>",
               "tile": "<obj:1>"
@@ -1262,12 +1388,14 @@
             {
               "address": "lead@messages",
               "board": "<board>",
+              "focused": false,
               "kind": "omp",
               "lifecycle": {
                 "seen": false,
                 "state": "working"
               },
               "name": "lead",
+              "open": true,
               "protocol": 1,
               "root": "<root>",
               "tile": "<obj:2>"
@@ -1276,8 +1404,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1363,8 +1495,12 @@
         }
       ],
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1385,8 +1521,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1407,8 +1547,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1429,8 +1573,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1486,8 +1634,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1509,8 +1661,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1532,8 +1688,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1554,8 +1714,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1576,8 +1740,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1598,8 +1766,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1620,8 +1792,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       },
@@ -1641,8 +1817,12 @@
         "result": {}
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1662,12 +1842,14 @@
           "agent": {
             "address": "critic@messages",
             "board": "<board>",
+            "focused": false,
             "kind": "omp",
             "lifecycle": {
               "seen": false,
               "state": "done"
             },
             "name": "critic",
+            "open": true,
             "protocol": 1,
             "root": "<root>",
             "tile": "<obj:1>"
@@ -1679,8 +1861,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1741,8 +1927,12 @@
         }
       ],
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1762,8 +1952,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1794,8 +1988,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1818,8 +2016,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1856,8 +2058,12 @@
         }
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1930,8 +2136,12 @@
         }
       ],
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1953,8 +2163,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1976,8 +2190,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }
@@ -1998,8 +2216,12 @@
         "ok": false
       },
       "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
         "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
         "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
       }

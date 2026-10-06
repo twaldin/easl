@@ -269,21 +269,8 @@ type Stored struct {
 
 // List is every readable board file in the store, sorted by id.
 func (s *Store) List() []Stored {
-	entries, _ := os.ReadDir(s.Dir)
 	var out []Stored
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		path := filepath.Join(s.Dir, e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		snap, err := DecodeSnapshot(data)
-		if err != nil {
-			continue
-		}
+	s.eachFile(func(snap *Snapshot, e fs.DirEntry) {
 		entry := Stored{ID: snap.ID, Root: snap.Root, Archived: !IsDirectory(snap.Root), ObjectCount: len(snap.Objects)}
 		if info, err := e.Info(); err == nil {
 			t := info.ModTime()
@@ -301,9 +288,37 @@ func (s *Store) List() []Stored {
 			entry.Worktrees = snap.Repo.WorktreeList(objects)
 		}
 		out = append(out, entry)
-	}
+	})
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// Snapshots is every readable board file in the store as it decodes, sorted by id: the boards
+// List lists, with their objects.
+func (s *Store) Snapshots() []*Snapshot {
+	var out []*Snapshot
+	s.eachFile(func(snap *Snapshot, _ fs.DirEntry) { out = append(out, snap) })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// eachFile calls f with every board file in the store that decodes, and its directory entry.
+func (s *Store) eachFile(f func(*Snapshot, fs.DirEntry)) {
+	entries, _ := os.ReadDir(s.Dir)
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(s.Dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		snap, err := DecodeSnapshot(data)
+		if err != nil {
+			continue
+		}
+		f(snap, e)
+	}
 }
 
 // Export writes a human-readable snapshot (BoardStore.export): the tray, attention markers,

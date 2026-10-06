@@ -1,10 +1,14 @@
 package router
 
 import (
+	"errors"
+	"math"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/api"
@@ -175,8 +179,23 @@ func sortedTerminals(b *board.Board) []model.Object {
 // agentEntry is a terminal as agent.list reports it; title, program and last command come from
 // the app's terminal surface, which easld doesn't have.
 func (r *Router) agentEntry(terminal model.Object, b *board.Board) map[string]any {
+	entry := terminalEntry(terminal, b.ID(), b.Root())
+	entry["address"] = board.Address(terminal, b, r.reg.SortedBoards())
+	if aliases := b.Aliases(terminal.ID); len(aliases) > 0 {
+		list := make([]any, len(aliases))
+		for i, a := range aliases {
+			list[i] = a
+		}
+		entry["aliases"] = list
+	}
+	return entry
+}
+
+// terminalEntry is what an agent.list entry says of a terminal on any board, open or stored:
+// everything but its address and aliases.
+func terminalEntry(terminal model.Object, boardID, root string) map[string]any {
 	agent := asMap(terminal.Props["agent"])
-	entry := map[string]any{"tile": terminal.ID, "board": b.ID(), "root": b.Root(), "address": board.Address(terminal, b, r.reg.SortedBoards()), "kind": "unknown"}
+	entry := map[string]any{"tile": terminal.ID, "board": boardID, "root": root, "kind": "unknown"}
 	if agent != nil {
 		if k, present := agent["kind"]; present {
 			entry["kind"] = k
@@ -191,24 +210,90 @@ func (r *Router) agentEntry(terminal model.Object, b *board.Board) map[string]an
 	if name, present := terminal.Props["name"]; present {
 		entry["name"] = name
 	}
-	if aliases := b.Aliases(terminal.ID); len(aliases) > 0 {
-		list := make([]any, len(aliases))
-		for i, a := range aliases {
-			list[i] = a
-		}
-		entry["aliases"] = list
-	}
 	if lc, present := terminal.Props["lifecycle"]; present {
 		entry["lifecycle"] = lc
 	} else {
 		entry["lifecycle"] = map[string]any{"state": "unknown"}
 	}
+	addAgentControl(entry, agent, board.TerminalHost(terminal) != "")
 	for k, v := range entry {
 		if v == nil {
 			delete(entry, k)
 		}
 	}
 	return entry
+}
+
+// addAgentControl adds to an agent.list entry what agent control reads: its board is open and,
+// with no window, nothing has keyboard focus; the draft, model and thinking level its
+// integration reported, and the pid it reported while that process lives. easld has no zmx
+// sessions, so no `live` and no foreground process to fall back on. A hosted terminal's
+// processes are its host's (props.host): it has no pid, and its reported one is never probed
+// on this machine, where another process may have that number.
+func addAgentControl(entry, agent map[string]any, hosted bool) {
+	entry["open"] = true
+	entry["focused"] = false
+	for _, key := range []string{"draft", "model", "thinking"} {
+		if v, present := agent[key]; present && v != nil {
+			entry[key] = v
+		}
+	}
+	if pid, ok := board.TruncInt(agent["pid"]); ok && !hosted && processLives(pid) {
+		entry["pid"] = float64(pid)
+	}
+}
+
+// processLives: a process with this pid runs (signal 0 reaches it, or it runs as another user).
+func processLives(pid int) bool {
+	if pid < 1 || pid > math.MaxInt32 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// closedBoardAgents is agent.list's terminals on the boards easld has stored but not open, by
+// board id then tile id, as their saved board files have them: a lifecycle saved `working` or
+// `blocked` is `restored` (as opening the board marks it), and each carries the address that
+// reaches it once its board opens: `<name>@<its root's directory name>`, else its tile id. A
+// terminal an open board lists already isn't listed again.
+func (r *Router) closedBoardAgents() []any {
+	var agents []any
+	for _, snap := range r.reg.Store.Snapshots() {
+		if _, open := r.reg.Board(snap.ID); open {
+			continue
+		}
+		var terminals []model.Object
+		for _, o := range snap.Objects {
+			if o.Type == model.Terminal && !r.openTerminal(o.ID) {
+				terminals = append(terminals, o)
+			}
+		}
+		sort.SliceStable(terminals, func(i, j int) bool { return terminals[i].ID < terminals[j].ID })
+		for _, terminal := range terminals {
+			board.MarkRestored(terminal)
+			entry := terminalEntry(terminal, snap.ID, snap.Root)
+			entry["open"] = false
+			entry["address"] = terminal.ID
+			delete(entry, "name")
+			if name, ok := terminal.Props["name"].(string); ok && name != "" {
+				entry["name"] = name
+				entry["address"] = name + "@" + filepath.Base(snap.Root)
+			}
+			agents = append(agents, entry)
+		}
+	}
+	return agents
+}
+
+// openTerminal: a terminal tile with this id is on an open board.
+func (r *Router) openTerminal(id string) bool {
+	for _, b := range r.reg.Boards() {
+		if o, ok := b.Objects()[id]; ok && o.Type == model.Terminal {
+			return true
+		}
+	}
+	return false
 }
 
 var waitableStates = []string{"blocked", "done", "idle", "unknown", "working"}
@@ -538,6 +623,9 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 		}
 		label = s
 	}
+	if _, restarting := r.restarts[terminal.ID]; restarting {
+		return nil, restartingFailure(terminal.ID)
+	}
 	composer := boolParam(p, "composer")
 	if !composer && board.TakesMessages(terminal) {
 		return r.queueMessage(text, terminal, b, mentions, caller, label, when)
@@ -598,7 +686,12 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 	params := copyParams(p)
 	delete(params, "mentions")
 	params["target"] = terminal.ID
+	// From here until its turn reports, agent.restart counts the prompt as work (promptPending).
+	r.typing[terminal.ID]++
 	result, err := r.await(c, "agent.prompt", params, clients.TerminalDeadline)
+	if r.typing[terminal.ID]--; r.typing[terminal.ID] <= 0 {
+		delete(r.typing, terminal.ID)
+	}
 	if err != nil {
 		b.Commit(ids)
 		return nil, err
@@ -650,6 +743,152 @@ func checkComposer(p map[string]any) error {
 		return invalid("a composer's prompt never forces: answer: true answers a blocked target")
 	}
 	return nil
+}
+
+// restartKinds are the agents agent.restart relaunches by kind (AgentResume's grammars).
+var restartKinds = []string{"omp", "claude", "codex", "gemini", "opencode"}
+
+// restart is agent.restart: its refusals are the board's (ApiRouter.restart's but focus, which
+// needs a window), and one restart of a terminal at a time; then a client kills the tile's zmx
+// session and relaunches it through its terminal tile, checking again just before the kill.
+// While the client does, the terminal is held (restarts, owned by this restart): agent.prompt to
+// it is refused and no inbox poll takes what is queued for it. Once the client has relaunched
+// it, the killed agent's session is over and what was queued bounces (Board.EndAgentSession; the
+// app ends the session between the kill and the relaunch), so none of it reaches the relaunched
+// agent. Refused or failed, the session goes on and its messages are offered again.
+func (r *Router) restart(p map[string]any) (any, error) {
+	target, err := str(p, "target")
+	if err != nil {
+		return nil, err
+	}
+	caller, _ := optStr(p, "caller")
+	b, terminal, err := r.agentTile(target, caller)
+	if err != nil {
+		return nil, err
+	}
+	mode, err := str(p, "mode")
+	if err != nil {
+		return nil, err
+	}
+	if mode != "resume" && mode != "fresh" {
+		return nil, invalid("mode is resume or fresh, not %s", mode)
+	}
+	if args, present := p["args"]; present && args != nil {
+		items, ok := args.([]any)
+		for _, item := range items {
+			if _, isString := item.(string); !isString {
+				ok = false
+			}
+		}
+		if !ok {
+			return nil, invalid("args is an array of strings")
+		}
+	}
+	if _, busy := r.restarts[terminal.ID]; busy {
+		return nil, fail(api.CodeConflict, "%s is already restarting (another agent.restart): wait for that one to finish", terminal.ID)
+	}
+	// Even forced: the client would type the prompt into the relaunched agent (ApiRouter.typingFailure).
+	if r.typing[terminal.ID] > 0 {
+		return nil, fail(api.CodeConflict, "%s is being prompted right now (agent.prompt is typing into it): restarting would cut that prompt off; try again in a moment", terminal.ID)
+	}
+	agent := asMap(terminal.Props["agent"])
+	if !boolParam(p, "force") {
+		if err := r.restartRefusal(b, terminal, agent); err != nil {
+			return nil, err
+		}
+	}
+	kind, _ := agent["kind"].(string)
+	known := slices.Contains(restartKinds, kind)
+	if mode == "resume" {
+		if !known || resumedSession(agent) == "" {
+			return nil, fail(api.CodeUnavailable, "%s has no recorded agent session to resume (its agent never reported one, or it exited); mode fresh starts it anew", terminal.ID)
+		}
+	} else if !known && len(strings_(terminal.Props["command"])) == 0 {
+		return nil, fail(api.CodeUnavailable, "%s runs no known agent and has no command to relaunch", terminal.ID)
+	}
+	params := copyParams(p)
+	params["target"] = terminal.ID
+	c, err := r.client("agent.restart", b.ID(), "agent.restart kills and relaunches the terminal's session through its live surface")
+	if err != nil {
+		return nil, err
+	}
+	r.restartSeq++
+	op := r.restartSeq
+	r.restarts[terminal.ID] = op
+	result, err := r.await(c, "agent.restart", params, clients.TerminalDeadline)
+	if r.restarts[terminal.ID] == op {
+		delete(r.restarts, terminal.ID)
+	}
+	if err != nil {
+		r.serveInbox(terminal.ID, b)
+		return nil, err
+	}
+	delete(r.pendingPrompts, terminal.ID)
+	b.EndAgentSession(terminal.ID)
+	r.serveInbox(terminal.ID, b)
+	return result, nil
+}
+
+// restartingFailure is agent.prompt's answer for a terminal agent.restart holds.
+func restartingFailure(tile string) error {
+	return fail(api.CodeConflict, "%s is restarting (agent.restart): nothing reaches it until its agent is relaunched; send again once it reports", tile)
+}
+
+// resumedSession is the session agent.restart resumes (AgentResume.session): omp's session file
+// when it reported one (its `--resume` takes a path), else the session id; "" for none.
+func resumedSession(agent map[string]any) string {
+	session, isPath := "", false
+	if agent["kind"] == "omp" {
+		session, isPath = agent["sessionPath"].(string)
+	}
+	if !isPath {
+		session, _ = agent["sessionId"].(string)
+	}
+	return session
+}
+
+// restartRefusal is why agent.restart leaves a terminal alone without force: the dialog, turn,
+// prompt, queued message or draft a restart would lose, in that order; a draft no integration
+// reports is one the user may have. (The app also refuses while the user may be typing in it:
+// easld has no window to have keyboard focus.)
+func (r *Router) restartRefusal(b *board.Board, terminal model.Object, agent map[string]any) error {
+	switch stateOf(terminal) {
+	case "blocked":
+		blocker := ""
+		if m, ok := asMap(terminal.Props["lifecycle"])["message"].(string); ok {
+			blocker = " (“" + m + "”)"
+		}
+		return fail(api.CodeConflict, "%s is blocked, waiting on its user%s: restarting would drop that dialog; force: true restarts anyway", terminal.ID, blocker)
+	case "working":
+		return fail(api.CodeConflict, "%s is working: restarting would kill its turn. Wait for it (agent.wait), or force: true restarts anyway", terminal.ID)
+	}
+	if r.promptPending(terminal.ID) {
+		return fail(api.CodeConflict, "%s was just prompted and hasn't started that turn: restarting would lose the prompt. Wait for it (agent.wait), or force: true restarts anyway", terminal.ID)
+	}
+	// A message its integration hasn't taken yet: its turn hasn't started, as agent.wait counts it.
+	// A restart would bounce it (EndAgentSession).
+	if len(b.Messages(terminal.ID)) > 0 {
+		return fail(api.CodeConflict, "%s has a message queued that its agent hasn't taken yet: restarting would bounce it. Wait for it (agent.wait), or force: true restarts anyway (the message bounces)", terminal.ID)
+	}
+	switch draft, reported := agent["draft"].(bool); {
+	case !reported:
+		return fail(api.CodeConflict, "nothing in %s reports whether its input holds a draft the user hasn't sent (omp's easl extension does), so restarting could lose one; force: true restarts anyway", terminal.ID)
+	case draft:
+		return fail(api.CodeConflict, "%s's input editor holds a draft the user hasn't sent: restarting would lose it; force: true restarts anyway", terminal.ID)
+	}
+	return nil
+}
+
+// promptPending: a prompt to tile whose turn hasn't started, one a client is typing or one
+// submitted (or a message its integration delivered as a new turn) that its agent hasn't
+// reported working on within PromptStartGrace, the interval agent.wait waits out
+// (ApiRouter.promptPending).
+func (r *Router) promptPending(tile string) bool {
+	if r.typing[tile] > 0 {
+		return true
+	}
+	prompted, ok := r.pendingPrompts[tile]
+	return ok && time.Since(prompted) < r.PromptStartGrace
 }
 
 // drain is tray.drain. Without a window there is no prompt target, so anyone drains the tray.

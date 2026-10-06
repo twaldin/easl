@@ -151,6 +151,22 @@ public final class ApiRouter {
     /// A terminal tile's live title (OSC 0/2), foreground program (`TerminalName.program`) and
     /// last finished command, as its tile knows them now; nil without the app UI.
     public var terminalStatus: ((Board, ObjectID) -> TerminalStatus)?
+    /// This instance's zmx sessions on this Mac now, by tile (their `canvas.tile` label), each
+    /// with its board and foreground process (agent.list `live`, `pid`); nil without zmx. Runs
+    /// `zmx list` off the main actor.
+    public var terminalSessions: (() async -> [ObjectID: TerminalSession]?)?
+    /// Hosted terminals' sessions (`props.host`): for each of `hosts` whose easld this app is
+    /// connected to and answered `session.list`, the tiles whose sessions run there (agent.list
+    /// `live`). A host left out can't be asked now.
+    public var hostedSessions: ((_ hosts: [String]) async -> [String: Set<ObjectID>])?
+    /// Kills terminal `tile`'s session (a hosted tile's through its host's easld) and starts a
+    /// new one running `argv` in the same tile (agent.restart). `killing` runs just before the
+    /// kill and throws to call it off with nothing touched; `ended` runs once the old session is
+    /// confirmed gone, before the new one starts, and throws to start none (the tile was closed
+    /// meanwhile). Throws `Failure` when the tile isn't shown in a window, its host can't be
+    /// reached, the old session can't be confirmed gone (then `ended` never ran), or `ended` threw.
+    public var restartTerminal: ((Board, ObjectID, _ argv: [String], _ killing: @escaping @MainActor () throws -> Void,
+                                  _ ended: @escaping @MainActor () throws -> Void) async throws -> Void)?
     /// Inside tmux, what the active pane of a terminal tile's tmux client runs
     /// (`TerminalName.program`; its shell at that pane's prompt); nil when the tile's foreground
     /// program isn't tmux or tmux doesn't say.
@@ -201,6 +217,44 @@ public final class ApiRouter {
         let tile: ObjectID
     }
 
+    /// agent.list's closed boards (`StoredTerminals`), by board file name, reread when a file changes.
+    var storedTerminals: [String: StoredTerminals] = [:]
+
+    /// A restarted terminal's prompt bookkeeping went with its old agent (agent.restart).
+    func forgetPrompts(to tile: ObjectID) {
+        pendingPrompts[tile] = nil
+        promptMarks[tile] = nil
+    }
+
+    /// Terminals agent.restart is killing and relaunching: until it is done nothing else reaches
+    /// them (agent.prompt is refused, agent.inbox offers nothing, another restart is refused).
+    var restarting: Set<ObjectID> = []
+    /// Terminals `agent.prompt` is typing into now (its checks, the screen reads, the paste and
+    /// Enter), with how many prompts: an unforced restart waits for them (`promptPending`).
+    private var typing: [ObjectID: Int] = [:]
+    /// Terminals whose surface is taking a prompt's paste and Enter now (`submitToTerminal`, a
+    /// bounded step), with how many: no restart starts on one, forced or not (`pastingFailure`).
+    /// The reads before it (tmux, the screen) have no deadline, so they don't hold a forced
+    /// restart off: a prompt whose agent session ended meanwhile types nothing.
+    private(set) var pasting: [ObjectID: Int] = [:]
+
+    /// A prompt to `tile` whose turn hasn't started: one being typed, or one submitted (or a
+    /// message its integration delivered as a new turn) that its agent hasn't reported working on
+    /// within `promptStartGrace`, the same interval `agent.wait` waits out.
+    func promptPending(to tile: ObjectID) -> Bool {
+        if typing[tile] != nil { return true }
+        guard let prompted = pendingPrompts[tile] else { return false }
+        return Date().timeIntervalSince(prompted) < promptStartGrace
+    }
+
+    static func restartingFailure(_ tile: ObjectID) -> Failure {
+        Failure("conflict", "\(tile) is restarting (agent.restart): nothing reaches it until its agent is relaunched; send again once it reports")
+    }
+
+    static func pastingFailure(_ tile: ObjectID) -> Failure {
+        Failure("conflict", "\(tile) is taking a prompt right now (agent.prompt is pasting into it): restarting would cut that prompt off; try again in a moment")
+    }
+
     private struct Waiter {
         let token = UUID()
         let id: JSONValue
@@ -246,6 +300,8 @@ public final class ApiRouter {
             if method == "agent.inbox" { return try await inbox(id, params, connection) }
             if method == "agent.read" { return Self.ok(id, try await read(params)) }
             if method == "agent.prompt" { return Self.ok(id, try await prompt(params)) }
+            if method == "agent.list" { return Self.ok(id, await agentList()) }
+            if method == "agent.restart" { return Self.ok(id, try await restart(params)) }
             if method == "view.render" { return Self.ok(id, try await render(params)) }
             if method == "view.snapshot" { return Self.ok(id, try await snapshot(params)) }
             if method == "tray.drain" { return Self.ok(id, try await drain(params)) }
@@ -489,7 +545,7 @@ public final class ApiRouter {
             "lifecycle": terminal.props["lifecycle"] ?? .object(["state": .string(LifecycleState.unknown.rawValue)]),
             "lastCommand": status?.lastCommand.map { $0.command.json(finishedAt: $0.finishedAt) } ?? .null,
         ]
-        return .object(entry.filter { $0.value != .null })
+        return .object(entry.merging(agentControlFields(terminal, status: status)) { _, new in new }.filter { $0.value != .null })
     }
 
     /// `agent.read`: the tail of the session text, or with `since: "prompt"` what the terminal
@@ -619,11 +675,13 @@ public final class ApiRouter {
     /// terminal's text was read (released, died, replaced: `Board.agentSession(of:)`) gets
     /// nothing, and the sender `unavailable`.
     private func queueMessage(_ text: String, to terminal: CanvasObject, on board: Board, mentions: [JSONValue], caller: ObjectID?, label: String?, when: AgentMessage.When) async throws -> JSONValue {
+        if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         let attached = try board.messageMentions(try mentions.map { try HandoffMention(json: $0).target(on: board) })
         let sender = caller.flatMap { caller in registry.boards.values.contains { $0.objects[caller]?.type == .terminal } ? caller : nil }
         let session = board.agentSession(of: terminal.id)
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
+        if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         if board.agentExited(terminal.id) { throw Self.agentExited(current) }
         guard PromptTarget.takesMessages(current), board.agentSession(of: terminal.id) == session else {
             throw Failure("unavailable", "\(terminal.id)'s agent session ended while the message was being sent (its agent was released, exited, "
@@ -673,8 +731,10 @@ public final class ApiRouter {
         return nil
     }
 
-    /// The messages for `tile` no open connection holds, now held by `connection`.
+    /// The messages for `tile` no open connection holds, now held by `connection`; none while
+    /// agent.restart kills and relaunches it (`restarting`).
     private func offer(_ tile: ObjectID, on board: Board, to connection: SocketServer.Connection) -> [AgentMessage] {
+        guard !restarting.contains(tile) else { return [] }
         let free = (board.messages[tile] ?? []).filter { messageHolds[$0.id]?.isOpen != true }
         for message in free { messageHolds[message.id] = connection }
         return free
@@ -686,10 +746,11 @@ public final class ApiRouter {
         return .object(["messages": .array(rendered)])
     }
 
-    /// A message reached `tile`'s queue: the oldest open long poll for it takes it.
-    private func serveInbox(_ tile: ObjectID, on board: Board) {
+    /// A message reached `tile`'s queue (or agent.restart let it go again): the oldest open long
+    /// poll for it takes it.
+    func serveInbox(_ tile: ObjectID, on board: Board) {
         inboxWaiters.removeAll { !$0.connection.isOpen }
-        guard let index = inboxWaiters.firstIndex(where: { $0.tile == tile }) else { return }
+        guard !restarting.contains(tile), let index = inboxWaiters.firstIndex(where: { $0.tile == tile }) else { return }
         let waiter = inboxWaiters.remove(at: index)
         let offered = offer(tile, on: board, to: waiter.connection)
         Task { @MainActor in
@@ -773,6 +834,15 @@ public final class ApiRouter {
     }
 
     private func submitPrompt(_ text: String, to terminal: CanvasObject, on board: Board, attached: Attached, caller sender: ObjectID?, force: Bool) async throws -> JSONValue {
+        if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
+        // From here until its turn reports an unforced restart waits for it (`promptPending`).
+        // The agent session it is for: one that ends meanwhile (released, replaced, restarted,
+        // forced or not) gets nothing typed.
+        typing[terminal.id, default: 0] += 1
+        defer {
+            typing[terminal.id] = typing[terminal.id].flatMap { $0 > 1 ? $0 - 1 : nil }
+        }
+        let session = board.agentSession(of: terminal.id)
         let answering: Bool
         if case .composer(_, let answer) = attached { answering = answer } else { answering = false }
         if Self.state(of: terminal) == LifecycleState.blocked.rawValue, !force, !answering {
@@ -812,6 +882,11 @@ public final class ApiRouter {
         }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
+        if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
+        guard board.agentSession(of: terminal.id) == session else {
+            throw Failure("unavailable", "\(terminal.id)'s agent session ended while the prompt was being sent (its agent was released, exited, "
+                + "restarted, or another session took the terminal), so nothing was typed; agent.list shows what runs there now")
+        }
         // Queued before the text goes in: the target's integration drains them with this prompt.
         var handed: [Mention] = []
         var queued: String?
@@ -824,7 +899,12 @@ public final class ApiRouter {
                 queued = board.queueComposerPrompt(text, to: terminal.id, mentions: given, answer: answer)
             }
         }
-        guard await submitToTerminal(board, terminal.id, text) else {
+        // The paste and Enter: no restart starts until they are in (`pastingFailure`). Nothing
+        // suspends between the checks above and here.
+        pasting[terminal.id, default: 0] += 1
+        let submitted = await submitToTerminal(board, terminal.id, text)
+        pasting[terminal.id] = pasting[terminal.id].flatMap { $0 > 1 ? $0 - 1 : nil }
+        guard submitted else {
             board.commit(handed.map { $0.id })
             if let queued { board.withdrawComposerPrompt(queued) }
             throw Failure("unavailable", "terminal \(terminal.id) has no attached surface")
@@ -1239,24 +1319,14 @@ public final class ApiRouter {
 
         case "agent.report_session":
             let tile = try string(p, "tile")
-            try board(forObject: tile).reportSession(tile: tile, kind: try string(p, "kind"), sessionId: p["sessionId"]?.string, sessionPath: p["sessionPath"]?.string)
+            try board(forObject: tile).reportSession(tile: tile, kind: try string(p, "kind"), sessionId: p["sessionId"]?.string, sessionPath: p["sessionPath"]?.string,
+                                                     model: p["model"]?.string, thinking: p["thinking"]?.string)
             return .object([:])
 
         case "agent.release":
             let tile = try string(p, "tile")
             try board(forObject: tile).releaseAgent(tile: tile)
             return .object([:])
-
-        case "agent.list":
-            // Every terminal: one whose agent never reported (a shell, aider, an unhooked CLI) is
-            // kind and lifecycle `unknown`, so tools still see it and can prompt and read it.
-            var agents: [JSONValue] = []
-            for board in registry.boards.values.sorted(by: { $0.id < $1.id }) {
-                for object in board.objects.values.sorted(by: { $0.id < $1.id }) where object.type == .terminal {
-                    agents.append(agentEntry(object, on: board))
-                }
-            }
-            return .object(["agents": .array(agents)])
 
         case "follow.report":
             let tile = try string(p, "tile")

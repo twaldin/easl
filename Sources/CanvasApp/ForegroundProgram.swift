@@ -53,6 +53,12 @@ enum ForegroundProgram {
         return TerminalName.program(argv: argv)
     }
 
+    /// The foreground job's leader (`state`) as a pid: the agent when one runs in the session
+    /// (agent.list `pid`); nil at the prompt or when the shell is gone.
+    static func foregroundPid(shell: pid_t) -> pid_t? {
+        leader(shell: shell) ?? nil
+    }
+
     /// The foreground job's leader (`state`): nil when the shell is gone, `.some(nil)` at its prompt.
     private static func leader(shell: pid_t) -> pid_t?? {
         guard let info = bsdInfo(shell) else { return nil }

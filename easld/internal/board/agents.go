@@ -62,6 +62,10 @@ type Report struct {
 	// Protocol is the integration's protocol version (props.agent.protocol; 1 takes out-of-band
 	// messages, TakesMessages); nil or 0 says none.
 	Protocol *int
+	// Draft and Pid are what only the running agent knows (its unsent input, its process): a
+	// report keeps them in props.agent, a report without them removes them.
+	Draft *bool
+	Pid   *int
 }
 
 // ReportLifecycle applies an agent's lifecycle report (Board.reportLifecycle): the staleness rule
@@ -150,7 +154,9 @@ func (b *Board) ReportLifecycle(r Report) error {
 		version = float64(*r.Protocol)
 	}
 	before, _ := terminal.Props["agent"].(map[string]any)
-	agent, _ := model.Merge(orEmpty(terminal.Props["agent"]), map[string]any{"kind": r.Kind, "protocol": version}).(map[string]any)
+	patch := r.agentPatch()
+	patch["protocol"] = version
+	agent, _ := model.Merge(orEmpty(terminal.Props["agent"]), patch).(map[string]any)
 	if _, err := b.Update(r.Tile, nil, nil, nil, map[string]any{"lifecycle": lifecycle, "agent": agent}, r.Tile, ""); err != nil {
 		return err
 	}
@@ -166,6 +172,19 @@ func orEmpty(v any) any {
 		return map[string]any{}
 	}
 	return v
+}
+
+// agentPatch is what a report merges into props.agent: its kind, and its draft and pid, removed
+// when the report doesn't say them.
+func (r Report) agentPatch() map[string]any {
+	patch := map[string]any{"kind": r.Kind, "draft": nil, "pid": nil}
+	if r.Draft != nil {
+		patch["draft"] = *r.Draft
+	}
+	if r.Pid != nil {
+		patch["pid"] = float64(*r.Pid)
+	}
+	return patch
 }
 
 func (b *Board) resolveApproval(tile, call string) {
@@ -214,6 +233,12 @@ func (b *Board) ReportParams(p map[string]any) error {
 	if n, ok := TruncInt(p["protocol"]); ok {
 		r.Protocol = &n
 	}
+	if draft, ok := p["draft"].(bool); ok {
+		r.Draft = &draft
+	}
+	if n, ok := TruncInt(p["pid"]); ok {
+		r.Pid = &n
+	}
 	return b.ReportLifecycle(r)
 }
 
@@ -236,10 +261,11 @@ func TruncInt(v any) (int, bool) {
 // jsonInt reads an integral number (Codable Int).
 func jsonInt(v any) (int, bool) { return model.Int(v) }
 
-// ReportSession records an agent's session on its terminal. Another session where one was
-// recorded (a new conversation, or a replacement agent) ends the agent session its messages
-// were queued for (endAgentSession).
-func (b *Board) ReportSession(tile, kind string, sessionID, sessionPath *string) error {
+// ReportSession records an agent's session on its terminal, and the model and thinking level it
+// runs (agent.restart relaunches it with them); one left out, or empty, keeps its last value.
+// Another session where one was recorded (a new conversation, or a replacement agent) ends the
+// agent session its messages were queued for (endAgentSession).
+func (b *Board) ReportSession(tile, kind string, sessionID, sessionPath, agentModel, thinking *string) error {
 	terminal, err := b.Object(tile)
 	if err != nil {
 		return err
@@ -255,6 +281,12 @@ func (b *Board) ReportSession(tile, kind string, sessionID, sessionPath *string)
 	}
 	if sessionPath != nil {
 		agent["sessionPath"] = *sessionPath
+	}
+	if agentModel != nil && *agentModel != "" {
+		agent["model"] = *agentModel
+	}
+	if thinking != nil && *thinking != "" {
+		agent["thinking"] = *thinking
 	}
 	if _, err = b.Update(tile, nil, nil, nil, map[string]any{"agent": agent}, tile, ""); err != nil {
 		return err

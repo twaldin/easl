@@ -243,6 +243,10 @@ func (b *Board) endAgentSession(terminal string) {
 	b.flushBounces()
 }
 
+// EndAgentSession: agent.restart killed the agent in terminal (its client relaunched it), so its
+// session is over and what was still queued for it bounces (endAgentSession).
+func (b *Board) EndAgentSession(terminal string) { b.endAgentSession(terminal) }
+
 // forgetMessages: a deleted terminal's undelivered messages bounce once the step that deleted it
 // closes with it still gone; a deleted object leaves the messages that mentioned it, without
 // that mention.

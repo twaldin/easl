@@ -341,7 +341,7 @@ Every agent change is undoable with ⌘Z, but that is a safety net, not a licens
 Agents in other terminal tiles (any board in the app) are reachable by tile id, tile name, or `name@board` (board = its folder's name, or its id). A bare name is looked up on your board first, then every open board; a name on two boards is `ambiguous`: say `name@board`. A renamed tile still answers to its old name.
 
 ```sh
-easl agent.list                                    # every terminal: tile, kind, name, lifecycle, board, root, `program` (foreground program) and `title` (its OSC title)
+easl agent.list                                    # every terminal on every board (closed boards too: `open: false`): tile, kind, name, lifecycle, board, root, `program`, `title`, `pid`, `focused`, `draft`, `model`, `thinking`, `live`
 easl agent.prompt --target reviewer --text "Review the diff in src/store.ts"   # → waitable, submittedAt
 easl agent.wait --target reviewer --timeoutMs 600000   # until idle/done/blocked; `--until working` (or `working,blocked`) narrows it
 easl agent.read --target reviewer --since prompt   # only what came after your last agent.prompt
@@ -359,6 +359,21 @@ Kind `unknown` (a shell, another CLI) has none: `agent.wait` fails once 15 s pas
 A `conflict` saying the agent was working when easl last closed and hasn't reported since (`lifecycle.restored`): omp and opencode report again within seconds of the app coming back, Claude Code, Codex and Gemini CLI at their next tool call; if it stays, read its screen (`agent.read --lines 40`) before deciding; never `force` it if the screen shows a question or approval.
 Don't prompt an agent that is `blocked`; it is waiting for its user. `agent.prompt` to one fails with `conflict` quoting what it waits on, and so does one whose foreground program isn't its agent (nvim, another tmux pane): tell the user.
 Never answer another agent's approval with `force: true`: it types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow). Force only when you know the dialog is gone.
+
+### Running a board's agents (chief of staff)
+
+```sh
+easl agent spawn --name reviewer --command 'omp --model=anthropic/claude-opus-4-5' --prompt "Review the open PR" --wait   # a new terminal tile; waits until it is ready, prompts it, waits for that turn
+easl agent.restart --target reviewer --mode resume   # same tile, same session, same model and thinking level
+easl agent.restart --target reviewer --mode fresh --args '["--plan"]'   # a new session with the same model and thinking
+```
+
+`agent spawn` takes `--cwd` (default here), `--board`, and `--command` as words or a JSON array; without `--prompt`, `--wait` only waits until the agent is ready.
+`agent.restart` refuses (`conflict`) while the agent is `working` or `blocked`, was just prompted and hasn't started that turn or has a message queued it hasn't taken yet, while the user's keyboard is in its terminal (`focused`), or while its editor holds a draft the user hasn't sent (`draft` true) or may (`draft` absent: its integration doesn't say, as with every agent but omp). Wait and retry; `--force` throws that work, prompt, dialog or draft away, so use it only when the user asked.
+A forced restart kills the agent: messages still queued for it bounce back to their senders (resend what matters once it reports again), and while it runs, prompts to that terminal are refused (`conflict`: send once it reports). A terminal on another machine (`props.host`) restarts there; on a board you view from another Mac, restart through that host's easl.
+`agent.list` shows closed boards' terminals with `open: false` and `live` (their session still runs); you can only prompt, wait on, read or restart terminals of open boards (`easl board.open --root <root>` opens one as a background tab). A terminal on another machine has `live` from that machine and no `pid`.
+
+A board's standing orders are its note keyed `rules`: every omp agent on that board gets the note's text appended to its system prompt at the start of each turn (the first 8 KB). To change what the board's agents follow, edit that note: `easl object.upsert --key rules --type note --json '{"props": {"markdown": "…"}}'`. Keep it short and imperative; it costs every agent's every turn.
 
 ## Terminals on another machine (offload)
 

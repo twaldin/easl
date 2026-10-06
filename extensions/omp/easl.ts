@@ -2,6 +2,9 @@
 //  - drains the selection tray into the prompt you submit (hidden context, two-phase so a
 //    prompt omp never prepares loses nothing; steering prompts each get their own)
 //  - reports lifecycle (working / blocked / idle), each turn's final answer, and session identity for resume
+//  - reports what agent.restart needs: the model and thinking level, whether the editor holds an
+//    unsent draft, and omp's pid
+//  - adds the board's standing orders (its note keyed `rules`, read each turn) to the system prompt
 //  - follow mode: forwards files the agent reads, edits, and writes to its follow tile
 //  - takes the messages other agents and scripts send this tile (agent.prompt, agent.inbox) and
 //    hands them to omp without touching the editor; `write agent://<name>` that omp doesn't know
@@ -26,6 +29,22 @@ const INBOX_RETRY_MS = 2_000;
 const RECORD_MS = 5_000;
 // The session entries that list the messages omp recorded (`{ ids }`), for a restarted omp.
 const RECORDED_ENTRY = "easl.messages";
+// How often the editor, model and thinking level are looked at (agent.report `draft`,
+// agent.report_session `model`, `thinking`), and how long an unacknowledged session report waits
+// before it is sent again.
+const RECONCILE_MS = 500;
+const SESSION_RETRY_MS = 10_000;
+// When this omp process started: thinking selectors it recorded itself are later than this.
+const STARTED_AT = Date.now() - process.uptime() * 1000;
+// Process-wide, so it outlives an extension reload: the `--thinking` omp was launched with
+// (`--thinking=<v>` or `--thinking <v>`), the session it launched with, and whether the tile's
+// agent has switched sessions since. omp runs that option until a change is recorded, and only in
+// that first activation: a session switched to (back to the launch one too) runs what it recorded.
+const LAUNCH = Symbol.for("canvas-omp.launch");
+type Launch = { thinking?: string; session?: string; switched: boolean };
+// The board's standing orders: its note with this key, injected up to this many UTF-8 bytes.
+const RULES_KEY = "rules";
+const RULES_MAX_BYTES = 8192;
 // Marks our wrapper of omp's UI select with the function it wraps (process-wide, across reloads).
 const OMP_SELECT = Symbol.for("canvas-omp.select");
 
@@ -33,6 +52,10 @@ type Staged = { prompt: string; ids: string[]; context: string; committed: boole
 type ToolCall = { name: string; args: Record<string, unknown> | undefined };
 type Details = Record<string, any>;
 type Select = (this: unknown, title: unknown, ...rest: unknown[]) => Promise<unknown>;
+// What the agent runs, as agent.report_session `model` and `thinking` say it.
+type RunsWith = { model?: string; thinking?: string };
+// A `thinking_level_change` entry of omp's session, as the extension reads it.
+type ThinkingChange = { timestamp: string; thinkingLevel?: string | null; configured?: string | null };
 
 export default function canvas(pi: ExtensionAPI): void {
   const tile = process.env.EASL_TILE_ID;
@@ -79,6 +102,8 @@ export default function canvas(pi: ExtensionAPI): void {
         final: settled ? final : undefined,
         error: settled ? failure : undefined,
         protocol: PROTOCOL,
+        draft,
+        pid: process.pid,
       });
     // Debounce idle so retries and tool-only continuations don't flicker the badge.
     if (state === "idle") idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
@@ -86,12 +111,142 @@ export default function canvas(pi: ExtensionAPI): void {
   }
 
   // A restarted easl holds our last report as `restored` (and refuses prompts to a restored
-  // `working`) until we report again: say where we are as soon as it is back.
-  watchCanvasReturn(client.socketPath, publish);
+  // `working`) until we report again: say where we are as soon as it is back, and what the agent
+  // runs, which it may never have taken.
+  watchCanvasReturn(client.socketPath, () => {
+    publish();
+    if (sessionCtx) void reportSession(sessionCtx);
+  });
+
+  // agent.restart relaunches the tile's agent with the model and thinking selector it runs
+  // (agent.report_session `model`, `thinking`; omp's --model=<provider/id> --thinking=<level>),
+  // and refuses while the editor may hold text the user hasn't sent (agent.report `draft`). omp
+  // says nothing when they change: its editor is written by keys and by omp itself (a Ctrl+D
+  // draft restored after session_start, the external editor's text), and /model and the thinking
+  // toggle fire no extension event. So the session's context is looked at every RECONCILE_MS
+  // while it runs: a draft that comes or goes reports (publish), and a model or selector easl
+  // hasn't acknowledged is sent, again every SESSION_RETRY_MS until easl takes it.
+  let sessionCtx: ExtensionContext | undefined;
+  let reconciling: NodeJS.Timeout | undefined;
+  // Undefined (left out of reports): no editor to look at (no UI, or not omp's TUI).
+  let draft: boolean | undefined;
+  // What easl acknowledged last (none while a report is out: one may apply without its answer
+  // arriving, so what easl has is unknown until one is acknowledged), and what the last session
+  // report sent and when.
+  let acked: RunsWith | undefined;
+  let tried: RunsWith | undefined;
+  let triedAt = 0;
+  const launch = ((globalThis as unknown as Record<symbol, Launch | undefined>)[LAUNCH] ??= { thinking: launchOption(process.argv, "--thinking"), switched: false });
 
   function reportSession(ctx: ExtensionContext): Promise<unknown> {
     if (!reporting) return Promise.resolve();
-    return quietly(client.api.agent.report_session({ tile: tile!, kind: "omp", sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile() }));
+    const runs = runsWith(ctx);
+    tried = runs;
+    triedAt = Date.now();
+    acked = undefined;
+    const params = { tile: tile!, kind: "omp", sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), ...runs };
+    return client.api.agent.report_session(params).then(
+      () => {
+        // A later report's answer is the one that counts.
+        if (tried === runs) acked = runs;
+      },
+      () => undefined,
+    );
+  }
+
+  /** Starts looking at `ctx`, the session the tile's agent runs now (session start and switch). */
+  function watchSession(ctx: ExtensionContext): void {
+    sessionCtx = reporting ? ctx : undefined;
+    draft = sessionCtx ? editorDraft(sessionCtx) : undefined;
+    acked = tried = undefined;
+    if (!sessionCtx) return stopWatchingSession();
+    if (reconciling) return;
+    reconciling = setInterval(reconcile, RECONCILE_MS);
+    reconciling.unref();
+  }
+
+  function stopWatchingSession(): void {
+    clearInterval(reconciling);
+    reconciling = undefined;
+    sessionCtx = undefined;
+    draft = undefined;
+  }
+
+  function reconcile(): void {
+    const ctx = sessionCtx;
+    if (!reporting || !ctx) return;
+    const now = editorDraft(ctx);
+    if (now !== draft) {
+      draft = now;
+      publish();
+    }
+    const runs = runsWith(ctx);
+    if (acked?.model === runs.model && acked?.thinking === runs.thinking) return;
+    const changed = tried?.model !== runs.model || tried?.thinking !== runs.thinking;
+    if (changed || Date.now() - triedAt >= SESSION_RETRY_MS) void reportSession(ctx);
+  }
+
+  /** Whether the editor holds anything but whitespace; undefined when there is none to read. */
+  function editorDraft(ctx: ExtensionContext): boolean | undefined {
+    if (ctx.mode !== "tui") return undefined;
+    try {
+      return /\S/.test(ctx.ui.getEditorText());
+    } catch {
+      return undefined;
+    }
+  }
+
+  function runsWith(ctx: ExtensionContext): RunsWith {
+    const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+    return { model, thinking: thinkingSelector(ctx) };
+  }
+
+  // omp's thinking selector, what `--thinking=` takes, `auto` kept: pi.getThinkingLevel() is the
+  // effort auto chose, which as `--thinking` would turn auto off. omp records each change of
+  // selector on the session's branch (`thinking_level_change`: `configured`, else
+  // `thinkingLevel`), auto's choices included, but not the one a session starts with: the
+  // `--thinking` omp was launched with while the launch session is the first one the agent runs
+  // (`launch`), else the session's last recorded one. Undefined when nothing says (a new session
+  // at omp's default auto, before its first turn): easl keeps what it had, and a relaunch what
+  // its command gave.
+  function thinkingSelector(ctx: ExtensionContext): string | undefined {
+    let last: ThinkingChange | undefined;
+    try {
+      last = lastThinkingChange(ctx);
+    } catch {
+      return undefined;
+    }
+    const recorded = last ? (last.configured ?? last.thinkingLevel ?? undefined) : undefined;
+    if (last && Date.parse(last.timestamp) >= STARTED_AT) return recorded;
+    if (launch.thinking && !launch.switched && ctx.sessionManager.getSessionId() === launch.session) return launch.thinking;
+    return recorded;
+  }
+
+  // The branch's newest thinking_level_change as of a leaf (its session and entry id). The branch
+  // is read from its leaf back to that change, or to the leaf read last time: a check that finds
+  // the same leaf reads nothing, and one after the session grew reads only what was added, so
+  // the RECONCILE_MS checks cost the same however long the session is.
+  let thinkingScan: { session: string; leaf: string | null; change?: ThinkingChange } | undefined;
+
+  function lastThinkingChange(ctx: ExtensionContext): ThinkingChange | undefined {
+    const manager = ctx.sessionManager;
+    const session = manager.getSessionId();
+    const leaf = manager.getLeafId();
+    const known = thinkingScan?.session === session ? thinkingScan : undefined;
+    if (known && known.leaf === leaf) return known.change;
+    let change: ThinkingChange | undefined;
+    for (let entry = manager.getLeafEntry(); entry; entry = entry.parentId ? manager.getEntry(entry.parentId) : undefined) {
+      if (known && entry.id === known.leaf) {
+        change = known.change;
+        break;
+      }
+      if (entry.type === "thinking_level_change") {
+        change = entry;
+        break;
+      }
+    }
+    thinkingScan = { session, leaf, change };
+    return change;
   }
 
   // omp asks for every tool approval through its UI's select dialog, titled `Allow tool: <name>`.
@@ -130,6 +285,8 @@ export default function canvas(pi: ExtensionAPI): void {
     blockers.clear();
     staged = [];
     if (reporting) watchApprovals(ctx.ui);
+    if (reporting) launch.session ??= ctx.sessionManager.getSessionId();
+    watchSession(ctx);
     void reportSession(ctx);
     publish();
     if (reporting) {
@@ -141,6 +298,8 @@ export default function canvas(pi: ExtensionAPI): void {
   pi.on("session_switch", async (_event, ctx) => {
     // A new or switched-to session starts settled; the old one's pending continuation is gone.
     active = !ctx.isIdle();
+    if (reporting) launch.switched = true;
+    watchSession(ctx);
     const reported = reportSession(ctx);
     publish();
     if (!reporting) return;
@@ -156,6 +315,7 @@ export default function canvas(pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", () => {
     // A debounced idle still pending would land after the release (and replay after it).
+    stopWatchingSession();
     clearTimeout(idleTimer);
     if (reporting) void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
     // Nothing reports for the released tile again (an easl coming back) until a session starts.
@@ -437,8 +597,9 @@ export default function canvas(pi: ExtensionAPI): void {
   // packages/coding-agent/src/session/agent-session.ts #prepareQueuedUserMessages L7301-L7331, its before_agent_start L7362;
   // packages/agent/src/agent-loop.ts L1317-L1324), so committing at agent_start would leave a
   // steering prompt's mentions uncommitted. A retried preparation gets the same context again.
-  pi.on("before_agent_start", (event) => {
-    const systemPrompt = [...event.systemPrompt, guidance];
+  pi.on("before_agent_start", async (event) => {
+    const orders = await standingOrders(client);
+    const systemPrompt = [...event.systemPrompt, guidance, ...(orders ? [orders] : [])];
     const delivered = staged.filter((entry) => event.prompt.includes(entry.prompt));
     if (delivered.length === 0) return { systemPrompt };
     const ids = delivered.flatMap((entry) => entry.ids);
@@ -510,6 +671,45 @@ export default function canvas(pi: ExtensionAPI): void {
     const range = typeof start === "number" && start > 0 ? { start, end: typeof end === "number" && end >= start ? end : start } : undefined;
     void quietly(client.api.follow.report({ tile: tile!, path: absolute, range, changes, action }));
   }
+}
+
+/**
+ * The board's standing orders, as a system prompt entry: the markdown of the note keyed `rules` on
+ * this tile's board, read fresh each turn. None when the board has no such note (or it isn't a
+ * note, or is empty) or the app doesn't answer in time: a prompt never waits on it or fails for it.
+ */
+async function standingOrders(client: CanvasClient): Promise<string | undefined> {
+  const board = process.env.EASL_BOARD_ID;
+  if (!board) return undefined;
+  let markdown: unknown;
+  try {
+    const found = await client.api.object.find({ board, key: RULES_KEY });
+    if (found.object?.type !== "note") return undefined;
+    markdown = found.object.props.markdown;
+  } catch {
+    return undefined; // not_found, or the app isn't there
+  }
+  if (typeof markdown !== "string" || !markdown.trim()) return undefined;
+  return `Standing orders for this board (its note keyed \`${RULES_KEY}\`, read fresh each turn; the user and the board's chief of staff edit it). Follow them:\n\n${capBytes(markdown.trim(), RULES_MAX_BYTES)}`;
+}
+
+/** `text` cut to at most `max` UTF-8 bytes on a character boundary, with a notice when it was cut. */
+function capBytes(text: string, max: number): string {
+  const bytes = Buffer.from(text, "utf8");
+  if (bytes.length <= max) return text;
+  let end = max;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--; // a continuation byte: its character started before the cut
+  return `${bytes.subarray(0, end).toString("utf8")}\n\n[Cut here: the note is ${bytes.length} bytes and only its first ${end} are shown. \`easl object.find --key ${RULES_KEY}\` reads it whole.]`;
+}
+
+/** The value of `option` on a command line (`--name=<v>` or `--name <v>`, the last one given, before any `--`); undefined when absent. */
+function launchOption(argv: readonly string[], option: string): string | undefined {
+  let value: string | undefined;
+  for (let i = 0; i < argv.length && argv[i] !== "--"; i++) {
+    if (argv[i].startsWith(`${option}=`)) value = argv[i].slice(option.length + 1);
+    else if (argv[i] === option && i + 1 < argv.length) value = argv[++i];
+  }
+  return value || undefined;
 }
 
 /** The text of the run's last assistant message (omp's own Stop reading); none when it has no text (an abort). */

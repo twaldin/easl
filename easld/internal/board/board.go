@@ -185,13 +185,7 @@ func FromSnapshot(s *store.Snapshot) *Board {
 		if format < 2 && o.Type.IsTile() {
 			o.Frame.H += TileTitleHeight
 		}
-		if o.Type == model.Terminal {
-			if lc, ok := o.Props["lifecycle"].(map[string]any); ok {
-				if st, _ := lc["state"].(string); st == "working" || st == "blocked" {
-					lc["restored"] = true
-				}
-			}
-		}
+		MarkRestored(o)
 		b.objects[o.ID] = o
 		b.changedAt[o.ID] = s.Revision
 		if key, ok := Key(o.Props); ok {
@@ -263,6 +257,19 @@ func FromSnapshot(s *store.Snapshot) *Board {
 	}
 	b.unknown = s.Unknown
 	return b
+}
+
+// MarkRestored marks a terminal's lifecycle saved `working` or `blocked` as `restored` (in place):
+// what it was when its board was saved, which its agent hasn't confirmed since.
+func MarkRestored(o model.Object) {
+	if o.Type != model.Terminal {
+		return
+	}
+	if lc, ok := o.Props["lifecycle"].(map[string]any); ok {
+		if st, _ := lc["state"].(string); st == "working" || st == "blocked" {
+			lc["restored"] = true
+		}
+	}
 }
 
 func (b *Board) prunePromptTarget() {

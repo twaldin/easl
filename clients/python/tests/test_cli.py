@@ -101,6 +101,91 @@ class CliParamsTest(unittest.TestCase):
         self.assertEqual(self.app.requests, [])
 
 
+@unittest.skipUnless(shutil.which("bun"), "the CLI runs on bun")
+class CliSpawnTest(unittest.TestCase):
+    """`easl agent spawn`: object.create a terminal, then (as asked) agent.wait for ready, agent.prompt, agent.wait."""
+
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory(dir="/tmp")
+        self.addCleanup(temp.cleanup)
+        self.dir = Path(os.path.realpath(temp.name))
+        self.app = FakeApp(str(self.dir / "easl.sock"))
+        self.addCleanup(self.app.stop)
+        self.app.replies["object.create"] = [{"result": {"object": {"id": "obj_new", "type": "terminal", "props": {}}}}]
+
+    def run_cli(self, *args: str) -> subprocess.CompletedProcess[str]:
+        env = {key: value for key, value in os.environ.items() if key not in EASL_ENV}
+        env.update({"EASL_SOCKET": self.app.path, "EASL_TILE_ID": "obj_me", "EASL_BOARD_ID": "brd_here"})
+        return subprocess.run(["bun", str(CLI), "agent", "spawn", *args], capture_output=True, text=True, cwd=self.dir, env=env, timeout=30)
+
+    @staticmethod
+    def agent(state: str) -> dict:
+        return {"tile": "obj_new", "board": "brd_other", "lifecycle": {"state": state}}
+
+    def test_the_command_is_split_like_a_shell_or_taken_as_a_json_array(self) -> None:
+        cases = (
+            ("omp --model=anthropic/claude", ["omp", "--model=anthropic/claude"]),
+            ("  claude  -p 'fix the bug'\t--verbose ", ["claude", "-p", "fix the bug", "--verbose"]),
+            (r"""codex "say \"hi\" \\ $HOME" it\'s' ok'""", ["codex", 'say "hi" \\ $HOME', "it's ok"]),
+            ("sh -c 'echo \"a b\"' a\\ b '' x\\", ["sh", "-c", 'echo "a b"', "a b", "", "x\\"]),
+            ('["omp", "-e", "a b"]', ["omp", "-e", "a b"]),
+        )
+        for command, argv in cases:
+            with self.subTest(command=command):
+                self.app.requests.clear()
+                self.app.replies["object.create"] = [{"result": {"object": {"id": "obj_new"}}}]
+                result = self.run_cli("--name", "fixer", "--command", command, "--cwd", "sub")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                props = {"name": "fixer", "cwd": str(self.dir / "sub"), "command": argv}
+                self.assertEqual(self.app.requests, [("object.create", {"type": "terminal", "props": props, "board": "brd_here", "caller": "obj_me"})])
+                self.assertEqual(json.loads(result.stdout), {"tile": "obj_new", "name": "fixer", "board": "brd_here", "command": argv})
+
+    def test_a_bad_command_fails_before_anything_is_created(self) -> None:
+        for command, message in (
+            ("omp 'unclosed", "--command: unterminated ' quote"),
+            ("  ", "--command names no program"),
+            ('["omp", 1]', "--command: a JSON array of strings, the program first"),
+        ):
+            with self.subTest(command=command):
+                result = self.run_cli("--name", "fixer", "--command", command)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stderr.strip(), f"invalid_params: {message}")
+        self.assertEqual(self.app.requests, [])
+
+    def test_a_prompt_waits_until_the_agent_is_ready_and_wait_waits_for_its_turn(self) -> None:
+        # A fresh terminal's agent hasn't reported yet: agent.wait answers unavailable after its 15 s.
+        unavailable = {"error": {"code": "unavailable", "message": "obj_new reported no lifecycle in 15 s"}}
+        self.app.replies["agent.wait"] = [unavailable, {"result": {"agent": self.agent("idle")}}, {"result": {"agent": self.agent("done")}}]
+        self.app.replies["agent.prompt"] = [{"result": {"agent": self.agent("idle"), "delivery": "message", "waitable": True}}]
+        result = self.run_cli("--name", "fixer", "--command", "omp", "--board", "brd_other", "--prompt", "--fix it", "--wait")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        methods = [(method, {k: v for k, v in params.items() if k != "timeoutMs"}) for method, params in self.app.requests]
+        ready = {"target": "obj_new", "until": ["idle", "done"], "caller": "obj_me"}
+        self.assertEqual(
+            methods,
+            [
+                ("object.create", {"type": "terminal", "props": {"name": "fixer", "cwd": str(self.dir), "command": ["omp"]}, "board": "brd_other", "caller": "obj_me"}),
+                ("agent.wait", ready),
+                ("agent.wait", ready),
+                ("agent.prompt", {"target": "obj_new", "text": "--fix it", "caller": "obj_me"}),
+                ("agent.wait", {"target": "obj_new", "caller": "obj_me"}),
+            ],
+        )
+        budgets = [params["timeoutMs"] for method, params in self.app.requests[1:3]]
+        self.assertTrue(120_000 >= budgets[0] > budgets[1] > 0, budgets)
+        self.assertEqual(json.loads(result.stdout), {"tile": "obj_new", "name": "fixer", "board": "brd_other", "command": ["omp"], "prompted": True, "agent": self.agent("done")})
+
+    def test_an_agent_never_ready_fails_at_the_timeout_naming_the_terminal(self) -> None:
+        self.app.replies["agent.wait"] = [{"error": {"code": "unavailable", "message": "obj_new's agent exited"}} for _ in range(10)]
+        result = self.run_cli("--name", "fixer", "--command", "omp", "--prompt", "hi", "--timeout", "1500")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(
+            result.stderr.strip(),
+            "timeout: obj_new's agent was not ready (idle) within 1500 ms; last: obj_new's agent exited (spawned terminal obj_new)",
+        )
+        self.assertNotIn("agent.prompt", [method for method, _ in self.app.requests])
+
+
 class FakeCmux:
     """Stands in for the app's cmux socket: records requests; answers `auth` lines and each method from `replies`."""
 

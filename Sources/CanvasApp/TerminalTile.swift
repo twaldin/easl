@@ -130,9 +130,9 @@ final class TerminalTile: NSView, TileContent {
     /// variable of the same name (a dev instance launched with EASL_SOCKET set) must not unset them.
     /// Everything else the app inherited is unset (`LoginSession.strippedForTile`): the shell starts
     /// like a fresh login session and the user's startup files set their own variables.
-    static func command(session: String, object: CanvasObject, board: Board, keep: Set<String>) -> String {
+    static func command(session: String, object: CanvasObject, board: Board, keep: Set<String>, start initial: String? = nil) -> String {
         let shell = AppPaths.userShell
-        let start = initialCommand(object).map { [shell, "-l", "-c", "\($0); exec \(ShellWords.quote([shell])) -l"] } ?? [shell, "-l"]
+        let start = (initial ?? initialCommand(object)).map { [shell, "-l", "-c", "\($0); exec \(ShellWords.quote([shell])) -l"] } ?? [shell, "-l"]
         guard let zmx = AppPaths.zmx else { return ShellWords.quote(start) }
         let strip = LoginSession.strippedForTile(ProcessInfo.processInfo.environment, keep: keep).flatMap { ["-u", $0] }
         // `canvas.home` names the owning instance: board copies in another home (replicas, dev
@@ -206,11 +206,11 @@ final class TerminalTile: NSView, TileContent {
     }
 
     /// `session.spawn`'s params for this hosted terminal, read from the object as it is now (a
-    /// recorded agent session resumes): `home` is the host's, `run` this instance's relayed
-    /// sockets' directory there.
-    func hostedSpawnParams(home: String, run: String) -> JSONValue? {
+    /// recorded agent session resumes), or running `argv` (agent.restart's relaunch): `home` is
+    /// the host's, `run` this instance's relayed sockets' directory there.
+    func hostedSpawnParams(home: String, run: String, argv: [String]? = nil) -> JSONValue? {
         guard let object = board.objects[objectID] else { return nil }
-        return HostedTerminal.spawnParams(tile: objectID, board: board.id, argv: Self.initialArgv(object), cwd: object.props["cwd"]?.string,
+        return HostedTerminal.spawnParams(tile: objectID, board: board.id, argv: argv ?? Self.initialArgv(object), cwd: object.props["cwd"]?.string,
                                           home: home, run: run, homeLabel: Self.homeLabel, cmuxPassword: AppPaths.cmuxPassword,
                                           ghosttyIntegration: TerminalConfig.shared.shellIntegration != nil)
     }
@@ -250,13 +250,104 @@ final class TerminalTile: NSView, TileContent {
     /// terminal's session is ended by its host's easld (`session.kill`).
     static func killSession(_ object: CanvasObject) {
         if let host = HostedTerminal.host(of: object) { return TerminalHost.named(host).kill(object.id) }
-        guard let zmx = AppPaths.zmx else { return }
-        let session = sessionName(object.id)
-        let log = AppPaths.zmxLogs.appendingPathComponent(Housekeeping.sessionLog(session: session)).path
+        guard let arguments = killArguments(tile: object.id, refusal: "exit 0") else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", ownerGuard(refusal: "exit 0") + "\"$1\" kill \"$2\"\nexec rm -f -- \"$4\"", "canvas-kill", zmx, session, homeLabel, log]
+        process.arguments = arguments
         try? process.run()
+    }
+
+    /// `/bin/sh` arguments that kill `tile`'s session unless another instance owns it
+    /// (`ownerGuard`, which runs `refusal` instead), then delete zmx's log of it; nil without zmx.
+    private static func killArguments(tile: ObjectID, refusal: String) -> [String]? {
+        guard let zmx = AppPaths.zmx else { return nil }
+        let session = sessionName(tile)
+        let log = AppPaths.zmxLogs.appendingPathComponent(Housekeeping.sessionLog(session: session)).path
+        return ["-c", ownerGuard(refusal: refusal) + "\"$1\" kill \"$2\"\nexec rm -f -- \"$4\"", "canvas-kill", zmx, session, homeLabel, log]
+    }
+
+    /// How `killArguments` exits for `endSession` when another instance owns the session.
+    private nonisolated static let notOurs: Int32 = 3
+
+    /// Ends `tile`'s session as `killSession` does (`arguments`: `killArguments` refusing with
+    /// `exit notOurs`) and confirms it is gone: zmx no longer lists it (at most 3 s more: the
+    /// processes in it get SIGHUP and may take a moment to go). Nil once it is gone, else why it
+    /// may still run: the kill couldn't start, another instance owns the session, or zmx still
+    /// lists it (or can't list its sessions). Blocks: call it off the main actor.
+    nonisolated static func endSession(tile: ObjectID, arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = arguments
+        do {
+            try process.run()
+        } catch {
+            return "terminal \(tile)'s session couldn't be ended (\(error.localizedDescription)), so nothing was relaunched"
+        }
+        process.waitUntilExit()
+        if process.terminationStatus == notOurs {
+            return "terminal \(tile)'s session belongs to another easl instance, which alone can end it, so nothing was relaunched"
+        }
+        let session = sessionName(tile)
+        for attempt in 0...30 {
+            if Zmx.list().map({ Housekeeping.sessionNames(zmxList: $0).contains(session) }) == false { return nil }
+            if attempt < 30 { usleep(100_000) }
+        }
+        return "zmx still lists terminal \(tile)'s session (or can't list its sessions) 3 s after ending it, so it may still run and nothing was relaunched"
+    }
+
+    // MARK: Restart
+
+    /// When agent.restart last killed this tile's session: the old surface's close (its
+    /// `zmx attach` exiting) is the restart, not the terminal ending (`surfaceClosed`).
+    private var restartedAt: Date?
+
+    /// agent.restart: `killing` (which throws to call it off), then kills the session (the agent
+    /// and everything it started end), calls `ended` once it is confirmed gone, and starts a new
+    /// one running `argv` in this tile, which keeps its id, frame and name. A local tile gets a
+    /// new surface running the new command, attaching to the session it creates, even when the
+    /// command reads as the one it had (a second resume of the same session, a plain command
+    /// rerun): the old surface's attach ended with the old session. A hosted tile's session is
+    /// its host's: its easld ends it and starts the relaunch (`TerminalHost.restart`), and the
+    /// attach loop starts again. Throws, with nothing relaunched, when the old session can't be
+    /// confirmed gone. A remote board's terminal is never restarted here: its host's easl does
+    /// that, through its own API.
+    func restart(running argv: [String], killing: @MainActor () throws -> Void, ended: @MainActor () throws -> Void) async throws {
+        guard !isRemote else {
+            throw ApiRouter.Failure("unsupported", "terminal \(objectID) is on a remote board: its host restarts it (agent.restart on the host's easl)")
+        }
+        if let host {
+            restartedAt = Date()
+            try await host.restart(self, running: argv, killing: killing, ended: ended)
+            restartedAt = Date()
+            return reattach()
+        }
+        guard let arguments = Self.killArguments(tile: objectID, refusal: "exit \(Self.notOurs)") else {
+            throw ApiRouter.Failure("unavailable", "terminal \(objectID) runs without zmx (easl's zmx is missing), so its session can't be ended and confirmed gone")
+        }
+        try killing()
+        restartedAt = Date()
+        let tile = objectID
+        if let failure = await offPool({ Self.endSession(tile: tile, arguments: arguments) }) {
+            restartedAt = nil
+            throw ApiRouter.Failure("unavailable", failure)
+        }
+        try ended()
+        // The old session's shell and program are gone with it.
+        shell = nil
+        shellName = nil
+        shellLookup = nil
+        restartedAt = Date()
+        guard let object = board.objects[objectID] else { throw ApiRouter.Failure("not_found", "terminal \(objectID) was closed while it restarted") }
+        var options = terminal.configuration
+        options.command = Self.command(session: sessionName, object: object, board: board, keep: Set(options.envVars.keys), start: ShellWords.quote(argv))
+        // The coordinator rebuilds only on a configuration that differs.
+        if options.command == terminal.configuration.command { reattach() } else { terminal.configuration = options }
+        refreshProgram()
+    }
+
+    /// The foreground process of the session (the agent, when one runs): agent.list `pid`.
+    var foregroundPid: Int32? {
+        shell.flatMap(ForegroundProgram.foregroundPid)
     }
 
     /// zmx session names stay short: socket paths under the GUI app's TMPDIR are capped (docs/contracts.md).
@@ -435,7 +526,7 @@ final class TerminalTile: NSView, TileContent {
     // MARK: Notices
 
     /// The user is looking at this terminal: it has keyboard focus in the active app's key window.
-    private var isWatched: Bool {
+    var isWatched: Bool {
         guard let window, NSApp.isActive, window.isKeyWindow else { return false }
         return window.firstResponder === terminal
     }
@@ -798,6 +889,8 @@ final class TerminalTile: NSView, TileContent {
     fileprivate func surfaceClosed(processAlive: Bool) {
         // A remote session's end is the host's: its tile closes there, and the delete arrives.
         guard !processAlive, !isRemote else { return }
+        // agent.restart killed the session it was attached to and is starting another.
+        if let restartedAt, Date().timeIntervalSince(restartedAt) < 10 { return }
         let session = sessionName, tile = objectID, host = host
         Task { [weak self] in
             let running = if let host { await host.hasSession(tile) ?? true } else { await offPool { Self.sessionExists(session) } }

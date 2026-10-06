@@ -94,8 +94,17 @@
         "agent": {
           "type": "object",
           "required": ["kind"],
-          "description": "the agent reporting in this tile. When the tile's session is gone (a reboot) it resumes `sessionId` (`omp --resume`, `claude --resume`, `codex resume`). Removed when the agent exits (agent.release)",
-          "properties": { "kind": { "type": "string" }, "sessionId": { "type": "string" }, "sessionPath": { "type": "string" }, "protocol": { "type": "integer", "description": "the integration protocol version it reports (agent.report `protocol`)" } },
+          "description": "the agent reporting in this tile. When the tile's session is gone (a reboot) it resumes `sessionId` (`omp --resume`, `claude --resume`, `codex resume`); agent.restart relaunches it with `model` and `thinking`. Removed when the agent exits (agent.release)",
+          "properties": {
+            "kind": { "type": "string" },
+            "sessionId": { "type": "string" },
+            "sessionPath": { "type": "string" },
+            "protocol": { "type": "integer", "description": "the integration protocol version it reports (agent.report `protocol`)" },
+            "model": { "type": "string", "description": "the model it runs, as its integration last reported it (agent.report_session `model`, omp: `provider/id`)" },
+            "thinking": { "type": "string", "description": "its thinking level, as its integration last reported it (agent.report_session `thinking`, omp: `off` … `max`)" },
+            "draft": { "type": "boolean", "description": "its input editor holds text the user hasn't sent (agent.report `draft`); absent: its integration doesn't say" },
+            "pid": { "type": "integer", "description": "the agent's process id, as its integration last reported it (agent.report `pid`)" }
+          },
           "additionalProperties": false
         },
         "lifecycle": { "$ref": "#/definitions/Lifecycle" },
@@ -663,7 +672,7 @@
     },
     "Agent": {
       "type": "object",
-      "required": ["tile", "board", "root", "address", "kind", "lifecycle"],
+      "required": ["tile", "board", "root", "address", "kind", "lifecycle", "open", "focused"],
       "properties": {
         "tile": { "$ref": "#/definitions/Id" },
         "board": { "$ref": "#/definitions/Id", "description": "the board the terminal is on" },
@@ -677,7 +686,14 @@
         "program": { "type": "string", "description": "what runs in the terminal's foreground, named the way a person would (`gemini`, `opencode`, `cargo test`); absent at the shell's prompt" },
         "sessionId": { "type": "string" },
         "lifecycle": { "$ref": "#/definitions/Lifecycle" },
-        "lastCommand": { "$ref": "#/definitions/TerminalCommand", "description": "the last command the terminal's shell finished (Ghostty's shell integration reports it); absent until one did" }
+        "lastCommand": { "$ref": "#/definitions/TerminalCommand", "description": "the last command the terminal's shell finished (Ghostty's shell integration reports it); absent until one did" },
+        "open": { "type": "boolean", "description": "its board is open in easl. false: a tile of a closed board, as its saved board file has it (lifecycle `state`, `seen`, `restored` as last saved; no title, program or last command)" },
+        "live": { "type": "boolean", "description": "its zmx session runs (a session labelled `canvas.board=<board> canvas.tile=<tile>` by this easl instance; docs/contracts.md); a hosted terminal's (`props.host`) as its host's easld lists it (`session.list`). Absent when easl can't tell (no zmx; a host it isn't connected to, or that doesn't answer)" },
+        "pid": { "type": "integer", "description": "the agent's process on this machine: the pid its integration reported (agent.report `pid`) while that process lives, else the foreground process of the tile's zmx session; absent when nothing but its shell runs there, the session is gone, or it runs on another machine (a hosted terminal)" },
+        "focused": { "type": "boolean", "description": "the terminal has keyboard focus in the key window while easl is the frontmost app: the user may be typing in it. Always false on a closed board" },
+        "draft": { "type": "boolean", "description": "its agent's input editor holds unsent text (agent.report `draft`, omp's extension); absent when its integration doesn't say" },
+        "model": { "type": "string", "description": "the model its agent runs, as its integration last reported it (agent.report_session `model`)" },
+        "thinking": { "type": "string", "description": "its agent's thinking level, as its integration last reported it (agent.report_session `thinking`)" }
       },
       "additionalProperties": false
     },
@@ -1422,14 +1438,16 @@
           "final": { "type": "string", "description": "only with `idle`: the final assistant message of the turn that just ended (the text `agent.read` `final` returns until the next turn starts)" },
           "serial": { "type": "boolean", "default": false, "description": "with `blocked` and `call`: the agent asks one approval at a time (Codex), so this request ends every earlier wait (an approval answered whose completion never matched or hasn't arrived yet)" },
           "error": { "type": "string", "description": "only with `idle`: the turn ended on this error instead of finishing (an API error such as `overloaded_error`, an abort, the output token limit). The tile goes `idle` with it as its message, never `done`, and `agent.read` `final` reports the answer as cut off (`cutOff`)" },
-          "protocol": { "type": "integer", "minimum": 0, "description": "the integration protocol version (kept as `props.agent.protocol`; every report says it, a report without it means 0). 1: the integration takes out-of-band messages (agent.inbox), so agent.prompt queues for it instead of typing into the terminal" }
+          "protocol": { "type": "integer", "minimum": 0, "description": "the integration protocol version (kept as `props.agent.protocol`; every report says it, a report without it means 0). 1: the integration takes out-of-band messages (agent.inbox), so agent.prompt queues for it instead of typing into the terminal" },
+          "draft": { "type": "boolean", "description": "the agent's input editor holds text the user hasn't sent (kept as `props.agent.draft`; every report of an integration that tracks it says it, a report without it means unknown). agent.restart refuses unless it is false. omp's extension reports it when the editor goes from empty to holding text and back, whether the user typed it or omp put it there (a restored draft)" },
+          "pid": { "type": "integer", "minimum": 1, "description": "the agent's process id (kept as `props.agent.pid`; a report without it forgets it): agent.list `pid`" }
         },
         "additionalProperties": false
       },
       "result": { "type": "object", "properties": {} }
     },
     "agent.report_session": {
-      "description": "Report the agent's native session identity so the tile can resume it after a reboot. Another session where one was recorded (a new conversation, or another agent) ends the one before: the messages still queued for it bounce (agent.inbox).",
+      "description": "Report the agent's native session identity so the tile can resume it after a reboot, and the model and thinking level it runs, which agent.restart relaunches it with. Report again when either changes; a field left out keeps its last value. Another session where one was recorded (a new conversation, or another agent) ends the one before: the messages still queued for it bounce (agent.inbox).",
       "params": {
         "type": "object",
         "required": ["tile", "kind"],
@@ -1437,7 +1455,9 @@
           "tile": { "$ref": "#/definitions/Id" },
           "kind": { "type": "string" },
           "sessionId": { "type": "string" },
-          "sessionPath": { "type": "string" }
+          "sessionPath": { "type": "string" },
+          "model": { "type": "string", "minLength": 1, "description": "the model, as the agent's own `--model` takes it (omp: `provider/id`)" },
+          "thinking": { "type": "string", "minLength": 1, "description": "the thinking level, as the agent's own option takes it (omp `--thinking`: off, minimal, low, medium, high, xhigh, max, auto)" }
         },
         "additionalProperties": false
       },
@@ -1454,7 +1474,7 @@
       "result": { "type": "object", "properties": {} }
     },
     "agent.list": {
-      "description": "Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, a CLI without easl hooks) has kind and lifecycle `unknown`. An agent without an integration that sends terminal notifications (aider through easl's `aider` wrapper, any CLI's OSC 9/777 or bell) is listed with its program as `kind` and a lifecycle `via: \"notifications\"`: `done` when it last said it waits, `unknown` after a prompt until it says so again, never `working` or `blocked`.",
+      "description": "Every terminal tile on every board easl has stored, open or not, with the agent in it: a terminal whose agent never reported (a shell, a CLI without easl hooks) has kind and lifecycle `unknown`. An agent without an integration that sends terminal notifications (aider through easl's `aider` wrapper, any CLI's OSC 9/777 or bell) is listed with its program as `kind` and a lifecycle `via: \"notifications\"`: `done` when it last said it waits, `unknown` after a prompt until it says so again, never `working` or `blocked`. A closed board's tiles come from its saved board file (`open: false`, lifecycle as saved) with `live` from the zmx sessions labelled for them: an agent there keeps running while its board is closed, but nothing hears its reports until the board opens again, and agent.prompt, agent.wait, agent.read and agent.restart reach only open boards. Open boards' tiles come first, each board's sorted by tile id, then closed boards' by board id.",
       "params": { "type": "object", "properties": {}, "additionalProperties": false },
       "result": { "type": "object", "required": ["agents"], "properties": { "agents": { "type": "array", "items": { "$ref": "#/definitions/Agent" } } } }
     },
@@ -1547,6 +1567,29 @@
         "additionalProperties": false
       },
       "result": { "type": "object", "required": ["messages"], "properties": { "messages": { "type": "array", "items": { "$ref": "#/definitions/AgentMessage" } } } }
+    },
+    "agent.restart": {
+      "description": "Relaunch the agent in a terminal tile in place: the tile keeps its id, name, frame, and its agent's recorded model and thinking level (agent.report_session `model`, `thinking`). Its zmx session is killed (the agent and everything it started end) and a new session runs the relaunched command; a hosted terminal's (`props.host`) on its host, through that host's easld (`session.kill`, `session.spawn`), `unavailable` while easl isn't connected to it. `resume`: the tile's agent reopens its recorded session (omp `--resume=<session path>`, claude `--resume <id>`, codex `resume <id>`, gemini `--resume <id>`, opencode `--session <id>`), with the options of the tile's `command` when it runs that agent, and the recorded model and thinking (omp `--model=<model> --thinking=<level>`; they replace any the command gave); `unavailable` when no session is recorded (its agent never reported one, or it exited). `fresh`: the same command, model and thinking without a session (a session selector or prompt the command had is left out); a terminal with no recorded agent reruns its `command`. `args` are appended either way. Refused with `conflict` while another restart of the terminal runs or a prompt is being pasted into it (even with `force`: it would land in the relaunched agent), and unless `force` while the agent is `working` (restored or not) or `blocked`, has a prompt whose turn hasn't started (typed, or a message its integration delivered, within agent.wait's grace for it), has a message queued that its integration hasn't taken yet (agent.wait waits for it too; a forced restart bounces it), may hold a draft (agent.list `draft` true, or absent: its integration doesn't say), or the terminal has keyboard focus (agent.list `focused`: the user may be typing in it); checked again just before the kill. While it runs nothing else reaches the terminal: agent.prompt to it fails with `conflict`, and agent.inbox offers it nothing; a typed prompt whose agent session ended before its paste (the restart came while it read the screen) types nothing and fails `unavailable`. Nothing is relaunched until the old session is confirmed gone: when it can't be (another easl instance owns it, or it is still listed 3 s after the kill), `unavailable`, with the session, its agent and its queue as they were; a tile closed while its session is killed is `not_found`, with nothing relaunched. Killing the agent ends its session (agent.inbox): in either mode the messages still queued for it bounce, and none reaches the relaunched agent. The tile's `command` becomes the relaunched one without its session selector, so a reboot relaunches the same agent; its lifecycle is cleared (`unknown`) until the new agent reports, so agent.wait gives it 15 s for a first report. Only tiles of open boards; a remote board's terminal is its host's to restart, through the host's API.",
+      "params": {
+        "type": "object",
+        "required": ["target", "mode"],
+        "properties": {
+          "target": { "type": "string", "description": "a tile id, `name` or `name@board`, as agent.prompt's" },
+          "caller": { "$ref": "#/definitions/Id", "description": "the asking terminal, whose board a bare `target` name is looked up on first; clients fill from EASL_TILE_ID" },
+          "mode": { "enum": ["resume", "fresh"], "description": "resume: reopen the recorded session; fresh: a new session with the same command, model and thinking" },
+          "args": { "type": "array", "items": { "type": "string" }, "description": "arguments appended to the relaunched command, e.g. [\"--plan\"]" },
+          "force": { "type": "boolean", "default": false, "description": "restart even though the agent is working or blocked, has a prompt whose turn hasn't started or a message queued it hasn't taken, the user is in the terminal, or its editor holds a draft (or may: its integration doesn't say): that work, prompt, dialog or draft is lost, and the queued messages bounce. Never past another restart of the terminal or a prompt being pasted into it" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["agent", "command"],
+        "properties": {
+          "agent": { "$ref": "#/definitions/Agent", "description": "the tile as relaunched: lifecycle `unknown` until its new agent reports" },
+          "command": { "type": "array", "items": { "type": "string" }, "description": "the argv the new session runs" }
+        }
+      }
     },
     "follow.report": {
       "description": "Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile, creating it in a free spot near the terminal (unless the user is working in it, which holds re-aims for ~10 s). Ignored while the terminal's `props.follow` is false, and for files outside the board root, the terminal's cwd, and the other worktrees of their repositories (a worktree file keeps its absolute path and its own gutter), scratch files in the temp directory, missing files, images, PDFs, archives, and other binaries: the tile keeps its last real file.",
@@ -1782,7 +1825,7 @@
       "result": { "type": "object", "properties": {} }
     },
     "client.attach": {
-      "description": "Make this connection a client that serves what only the Mac app can answer: the window (view.get, view.snapshot), drawing (view.render), live terminal surfaces (agent.prompt, agent.read's screen modes; interim: easld takes them over with zmx sessions, behind the same methods and errors), WebKit and language servers (object.reload), and AppKit text measurement (text.measure). A client built from an older schema `version` than the server's is refused `unavailable` (\"easl 0.1.0 on studio is older than this board's server …; update it\"); a newer one is accepted and speaks the server's `version` (the reply's), and with the same `version` the two work together whatever their `schema` hashes. Either way each uses what both know: params and `serves` names the server doesn't know are ignored. From then on the server sends this connection requests for the methods in `serves` (transport `clients`): a call that needs a client goes, after the server's own checks, to one that serves its method and shows its board (text.measure: any that serves it), the one whose user focused that board last, else the one focused most recently, else the one attached last. The call is forwarded as the same method with the caller's params (`board` and agent `target` resolved to ids; agent.prompt without `mentions`, which the server queues), and the client's result or error is the caller's. The server waits for object.reload's and view.render's `timeoutMs` plus 5 s and 30 s, else 5 s (view.get), 30 s (view.snapshot), 10 s (agent.prompt, agent.read), 2 s (text.measure); past that, or when the client disconnects first, the call fails `unavailable` (text.measure falls back to the glyph table). With no client for its board a delegated call fails `unavailable` saying what it needs. Attach again whenever `serves`, `boards` or `focused` change: each call replaces the last; closing the connection detaches. Answer text.measure without waiting on the server, which may hold a board while it measures. For the Mac app; agents never need it.",
+      "description": "Make this connection a client that serves what only the Mac app can answer: the window (view.get, view.snapshot), drawing (view.render), live terminal surfaces (agent.prompt, agent.read's screen modes, agent.restart; interim: easld takes them over with zmx sessions, behind the same methods and errors), WebKit and language servers (object.reload), and AppKit text measurement (text.measure). A client built from an older schema `version` than the server's is refused `unavailable` (\"easl 0.1.0 on studio is older than this board's server …; update it\"); a newer one is accepted and speaks the server's `version` (the reply's), and with the same `version` the two work together whatever their `schema` hashes. Either way each uses what both know: params and `serves` names the server doesn't know are ignored. From then on the server sends this connection requests for the methods in `serves` (transport `clients`): a call that needs a client goes, after the server's own checks, to one that serves its method and shows its board (text.measure: any that serves it), the one whose user focused that board last, else the one focused most recently, else the one attached last. The call is forwarded as the same method with the caller's params (`board` and agent `target` resolved to ids; agent.prompt without `mentions`, which the server queues), and the client's result or error is the caller's. The server waits for object.reload's and view.render's `timeoutMs` plus 5 s and 30 s, else 5 s (view.get), 30 s (view.snapshot), 10 s (agent.prompt, agent.read, agent.restart), 2 s (text.measure); past that, or when the client disconnects first, the call fails `unavailable` (text.measure falls back to the glyph table). With no client for its board a delegated call fails `unavailable` saying what it needs. Attach again whenever `serves`, `boards` or `focused` change: each call replaces the last; closing the connection detaches. Answer text.measure without waiting on the server, which may hold a board while it measures. For the Mac app; agents never need it.",
       "params": {
         "type": "object",
         "required": ["version", "schema", "serves"],
@@ -1791,7 +1834,7 @@
           "schema": { "type": "string", "description": "the client's schema hash: the first 16 hex digits of the SHA-256 of its schema/easl-api.json (generated: ApiParams.schemaHash)" },
           "app": { "type": "string", "description": "the client's easl version, e.g. \"0.2.0\", for messages" },
           "host": { "type": "string", "description": "the machine it runs on, for messages" },
-          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, object.reload, text.measure (others are ignored)" },
+          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, text.measure (others are ignored)" },
           "boards": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "the boards it shows (open in one of its windows or tabs), each open on the server; default none" },
           "focused": { "$ref": "#/definitions/Id", "description": "the board its user is looking at now (the key window's selected tab), one of `boards`; the client focused last on a board serves that board first" }
         },

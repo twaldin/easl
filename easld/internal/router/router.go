@@ -61,6 +61,13 @@ type Router struct {
 	messageHolds map[string]Conn
 	// inboxWaiters are agent.inbox long polls waiting for a message to their terminal.
 	inboxWaiters []*inboxWaiter
+	// restarts: the terminals agent.restart is having a client kill and relaunch, each with
+	// the restart (a number from restartSeq) that holds it. Until it is done nothing reaches the
+	// terminal: agent.prompt is refused, agent.inbox offers nothing, another restart is refused.
+	restarts   map[string]uint64
+	restartSeq uint64
+	// typing: the terminals a client is typing an agent.prompt into now, with how many prompts.
+	typing map[string]int
 	// FirstReportGrace: how long agent.wait gives a terminal with no lifecycle to start reporting.
 	FirstReportGrace time.Duration
 	// PromptStartGrace: how long agent.wait gives a prompt to start the agent's turn.
@@ -74,7 +81,8 @@ type Router struct {
 // New is a router over reg; it observes every board's events (agent.wait), and measures the
 // text of reg's boards through its clients.
 func New(reg *board.Registry) *Router {
-	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[string]Conn{}, FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
+	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[string]Conn{}, restarts: map[string]uint64{}, typing: map[string]int{},
+		FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
 	reg.Hook = r.observe
 	reg.Bounced = r.bounce
 	reg.Texts = r.clients
@@ -219,6 +227,8 @@ func (r *Router) call(id any, method string, raw any, c Conn) (any, error) {
 		return r.read(p)
 	case "agent.prompt":
 		return r.prompt(p)
+	case "agent.restart":
+		return r.restart(p)
 	case "view.render":
 		return r.render(p)
 	case "view.snapshot":

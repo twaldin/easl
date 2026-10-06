@@ -1,4 +1,15 @@
 #!/bin/sh
-# easl CLI launcher (on PATH inside easl terminal tiles). Requires bun.
+# easl CLI launcher (on PATH inside easl terminal tiles). Requires bun: on PATH, else where bun's
+# installer (~/.bun/bin) or Homebrew (/opt/homebrew/bin) puts it.
 here="$(cd "$(dirname "$0")/.." && pwd)"
-exec bun "$here/cli/easl.ts" "$@"
+if command -v bun >/dev/null 2>&1; then
+  bun=bun
+elif [ -x "$HOME/.bun/bin/bun" ]; then
+  bun="$HOME/.bun/bin/bun"
+elif [ -x /opt/homebrew/bin/bun ]; then
+  bun=/opt/homebrew/bin/bun
+else
+  echo "easl: bun not found (looked on PATH, ~/.bun/bin/bun, /opt/homebrew/bin/bun); install it from https://bun.sh" >&2
+  exit 127
+fi
+exec "$bun" "$here/cli/easl.ts" "$@"

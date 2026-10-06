@@ -1085,7 +1085,8 @@ public final class Board {
     /// of another agent kind, or of no protocol where it took messages, ends the agent session its
     /// messages were queued for (`endAgentSession`).
     public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil,
-                                serial: Bool = false, error: String? = nil, protocol version: Int? = nil) throws {
+                                serial: Bool = false, error: String? = nil, protocol version: Int? = nil,
+                                draft: Bool? = nil, pid: Int? = nil) throws {
         let terminal = try object(tile)
         guard terminal.type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
         guard final == nil || state == .idle else { throw BoardError.invalidParams("final comes only with state idle: the answer of the turn that just ended") }
@@ -1138,7 +1139,8 @@ public final class Board {
         if let message { lifecycle["message"] = .string(message) }
         if state == .unknown { lifecycle["via"] = .string(NotifyingAgent.via) }
         let before = terminal.props["agent"]
-        let agent = (before ?? .object([:])).merging(.object(["kind": .string(kind), "protocol": (version ?? 0) > 0 ? .number(Double(version!)) : .null]))
+        let reported: [String: JSONValue] = ["kind": .string(kind), "protocol": (version ?? 0) > 0 ? .number(Double(version!)) : .null]
+        let agent = (before ?? .object([:])).merging(.object(reported.merging(Self.reportedAgentState(draft: draft, pid: pid)) { _, new in new }))
         try update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
         exitedAgents.remove(tile)
         if (before?["protocol"]?.int ?? 0) >= 1, before?["kind"]?.string != kind || (version ?? 0) < 1 { endAgentSession(tile) }
@@ -1194,16 +1196,18 @@ public final class Board {
         onEvent?(.agentLifecycle(tile: tile, lifecycle: lifecycle))
     }
 
-    /// The agent's session (`agent.report_session`). Another session where one was recorded (a
-    /// new conversation, or a replacement agent) ends the agent session its messages were queued
-    /// for (`endAgentSession`).
-    public func reportSession(tile: ObjectID, kind: String, sessionId: String?, sessionPath: String?) throws {
+    /// The agent's session (`agent.report_session`), and the model and thinking level it runs.
+    /// Another session where one was recorded (a new conversation, or a replacement agent) ends
+    /// the agent session its messages were queued for (`endAgentSession`).
+    public func reportSession(tile: ObjectID, kind: String, sessionId: String?, sessionPath: String?, model: String? = nil, thinking: String? = nil) throws {
         let terminal = try object(tile)
         var agent = terminal.props["agent"]?.object ?? [:]
         let previous = agent["sessionId"]?.string
         agent["kind"] = .string(kind)
         if let sessionId { agent["sessionId"] = .string(sessionId) }
         if let sessionPath { agent["sessionPath"] = .string(sessionPath) }
+        if let model, !model.isEmpty { agent["model"] = .string(model) }
+        if let thinking, !thinking.isEmpty { agent["thinking"] = .string(thinking) }
         try update(tile, props: .object(["agent": .object(agent)]), caller: tile)
         if let previous, let sessionId, sessionId != previous { endAgentSession(tile) }
     }
@@ -1216,7 +1220,8 @@ public final class Board {
         }
         guard let state = LifecycleState(rawValue: name) else { throw BoardError.invalidParams("unknown state") }
         try reportLifecycle(tile: tile, kind: kind, state: state, message: p["message"]?.string, seq: p["seq"]?.int, source: p["source"]?.string,
-                            call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string, protocol: p["protocol"]?.int)
+                            call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string,
+                            protocol: p["protocol"]?.int, draft: p["draft"]?.bool, pid: p["pid"]?.int)
     }
 
     /// The agent exited (`agent.release`): the tile is a plain shell again. Its lifecycle and the
@@ -1230,6 +1235,23 @@ public final class Board {
         try update(tile, props: .object(["lifecycle": .null, "agent": .null]), caller: tile)
         dropComposerPrompts(of: tile)
         endAgentSession(tile)
+        onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
+    }
+
+    /// The agent in `tile` was killed and is being relaunched (agent.restart): the tile runs
+    /// `command` now (what a reboot reruns), its agent is `agent` (what it was, without what only
+    /// the killed process knew: its draft and pid), and its lifecycle is unknown until the new
+    /// agent reports. Waits on approvals the killed agent had end, and the composer's prompts it
+    /// never drained return their mentions to the tray, as when an agent exits. Recorded once the
+    /// old session is confirmed gone and its agent session ended (`endAgentSession`), before the
+    /// relaunch starts (ApiRouter.restart), so what the relaunched agent reports stays; a death
+    /// of the killed agent's integration seen meanwhile (`agentExited`) isn't the relaunched one's.
+    public func restartedAgent(tile: ObjectID, command: [String], agent: JSONValue) throws {
+        _ = try object(tile)
+        pendingApprovals[tile] = nil
+        exitedAgents.remove(tile)
+        try update(tile, props: .object(["command": .array(command.map(JSONValue.string)), "lifecycle": .null, "agent": agent]), caller: tile)
+        dropComposerPrompts(of: tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
     }
 

@@ -1,0 +1,1136 @@
+{
+  "scenario": "agent-control",
+  "description": "Agent control: agent.report keeps draft and pid in props.agent (a report without them forgets them), agent.report_session keeps model and thinking (a report without them keeps the last), agent.list says open, focused, draft, model and thinking, and agent.restart's checks: target, mode, args, then its refusals in order (blocked, working, a draft, a draft nothing reports), and resume without a recorded session. Never a restart that goes through: the app really relaunches the session.",
+  "recordedOn": "easl agent/control fb5a727, dev instance",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>",
+          "name": "worker"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": true,
+        "kind": "omp",
+        "pid": 999999,
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": true,
+                "kind": "omp",
+                "pid": 999999
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": true,
+                "kind": "omp",
+                "pid": 999999
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.list",
+      "method": "agent.list",
+      "request": {},
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "agents": [
+            {
+              "address": "worker@agent-control",
+              "board": "<board>",
+              "draft": true,
+              "focused": false,
+              "kind": "omp",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker",
+              "open": true,
+              "root": "<root>",
+              "tile": "<obj:1>"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report_session",
+      "method": "agent.report_session",
+      "request": {
+        "kind": "omp",
+        "model": "anthropic/claude-opus-4-5",
+        "thinking": "high",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": true,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "pid": 999999,
+                "thinking": "high"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:3>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report_session",
+      "method": "agent.report_session",
+      "request": {
+        "kind": "omp",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": true,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "pid": 999999,
+                "thinking": "high"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.list",
+      "method": "agent.list",
+      "request": {},
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "agents": [
+            {
+              "address": "worker@agent-control",
+              "board": "<board>",
+              "draft": true,
+              "focused": false,
+              "kind": "omp",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "model": "anthropic/claude-opus-4-5",
+              "name": "worker",
+              "open": true,
+              "root": "<root>",
+              "thinking": "high",
+              "tile": "<obj:1>"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "mode": "resume",
+        "target": "nobody"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "no terminal tile named or with id nobody"
+        },
+        "id": "r9",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "mode": "restart",
+        "target": "worker"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "mode is resume or fresh, not restart"
+        },
+        "id": "r10",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "args": [
+          "--plan",
+          1
+        ],
+        "mode": "resume",
+        "target": "worker"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "args is an array of strings"
+        },
+        "id": "r11",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": true,
+        "kind": "omp",
+        "message": "Allow rm?",
+        "state": "blocked",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": true,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "thinking": "high"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "message": "Allow rm?",
+                "seen": false,
+                "state": "blocked"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:5>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "message": "Allow rm?",
+              "seen": false,
+              "state": "blocked"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "mode": "resume",
+        "target": "worker"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "<obj:1> is blocked, waiting on its user (“Allow rm?”): restarting would drop that dialog; force: true restarts anyway"
+        },
+        "id": "r13",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": true,
+        "kind": "omp",
+        "state": "working",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": true,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "thinking": "high"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:6>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "mode": "resume",
+        "target": "worker"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "<obj:1> is working: restarting would kill its turn. Wait for it (agent.wait), or force: true restarts anyway"
+        },
+        "id": "r15",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": true,
+        "kind": "omp",
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": true,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "thinking": "high"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "done"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:7>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "done"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "mode": "resume",
+        "target": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "<obj:1>'s input editor holds a draft the user hasn't sent: restarting would lose it; force: true restarts anyway"
+        },
+        "id": "r17",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "force": true,
+        "mode": "resume",
+        "target": "worker"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "<obj:1> has no recorded agent session to resume (its agent never reported one, or it exited); mode fresh starts it anew"
+        },
+        "id": "r18",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "omp",
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "thinking": "high"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "done"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:8>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "done"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "thinking": "high"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "done"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:8>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.list",
+      "method": "agent.list",
+      "request": {},
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {
+          "agents": [
+            {
+              "address": "worker@agent-control",
+              "board": "<board>",
+              "focused": false,
+              "kind": "omp",
+              "lifecycle": {
+                "seen": false,
+                "state": "done"
+              },
+              "model": "anthropic/claude-opus-4-5",
+              "name": "worker",
+              "open": true,
+              "root": "<root>",
+              "thinking": "high",
+              "tile": "<obj:1>"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "mode": "resume",
+        "target": "worker"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "nothing in <obj:1> reports whether its input holds a draft the user hasn't sent (omp's easl extension does), so restarting could lose one; force: true restarts anyway"
+        },
+        "id": "r22",
+        "ok": false
+      },
+      "ignored": {
+        "response.result.agent.live": "whether the tile's zmx session runs (client)",
+        "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+        "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    }
+  ]
+}
