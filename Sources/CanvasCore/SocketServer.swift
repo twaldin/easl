@@ -58,9 +58,10 @@ public final class SocketServer: @unchecked Sendable {
         @discardableResult
         private func send(_ value: JSONValue, answering serial: Int?) -> Bool {
             guard let data = try? JSONEncoder().encode(value) else { return false }
-            guard write(data) else { return false }
+            // Counted before the line is queued: the outbox can write it, and the client read it and
+            // ask `app.metrics`, before this thread would get back here.
             if serial != nil || value["ok"] != nil { answered(serial, id: value["id"] ?? .null, bytes: data.count + 1) }
-            return true
+            return write(data)
         }
 
         /// A request arrived at `arrived` (`Metrics.now()`); its serial for `reply(_:to:)`.
@@ -78,11 +79,13 @@ public final class SocketServer: @unchecked Sendable {
             send(value, answering: serial)
         }
 
-        /// Records `api.<method>`: the call, the time from its arrival to its queued reply (awaits
+        /// Records `api.<method>`: the call, the time from its arrival to its reply (awaits
         /// and waiting behind earlier requests included; the main-thread part is
-        /// `api.main.<method>`) and the reply's bytes.
+        /// `api.main.<method>`) and the reply's bytes. Not once the peer is gone: that reply
+        /// is never written.
         private func answered(_ serial: Int?, id: JSONValue, bytes: Int) {
             writeLock.lock()
+            guard isOpen else { return writeLock.unlock() }
             let index = serial.map { serial in unanswered.firstIndex { $0.serial == serial } } ?? unanswered.firstIndex { $0.id == id }
             let request = index.map { unanswered.remove(at: $0) }
             writeLock.unlock()

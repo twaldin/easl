@@ -242,13 +242,20 @@ struct HostedTerminalTests {
         var on: Int32 = 1
         setsockopt(client.fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         let nonce = "00112233445566778899aabbccddeeff"
-        client.send("\(name) \(nonce)")
-        // The default 30 s: a slow runner's splice took over 5. A connection the gate refuses closes at once.
-        guard let answer = try? await client.nextText() else { return (nil, nil) }
-        let theirs = String(answer.prefix(32))
-        client.send(RelayGate.proof(token: token, role: "easld", name: name, easld: nonce, gate: theirs))
-        client.send(#"{"id":"1","method":"system.ping"}"#)
-        return (answer, try? await client.nextText())
+        // The whole handshake on one thread of its own, as easld does it: the gate waits 5 s for the
+        // proof, and a task resumed on Swift's cooperative pool between reading the gate's answer and
+        // sending the proof could start after that, while parallel suites hold the pool.
+        return await withCheckedContinuation { done in
+            Thread.detachNewThread {
+                client.send("\(name) \(nonce)")
+                // The default 30 s: a slow runner's splice took over 5. A connection the gate refuses closes at once.
+                guard let answer = try? client.nextTextNow() else { return done.resume(returning: (nil, nil)) }
+                let theirs = String(answer.prefix(32))
+                client.send(RelayGate.proof(token: token, role: "easld", name: name, easld: nonce, gate: theirs))
+                client.send(#"{"id":"1","method":"system.ping"}"#)
+                done.resume(returning: (answer, try? client.nextTextNow()))
+            }
+        }
     }
 
     /// The gate proves its token without sending it, splices only a connection that proves it back
