@@ -6,7 +6,9 @@ import CanvasCore
 /// to the context (opened beside the tile), and who asks. Number keys pick, Return answers
 /// (`Board.answerQuestion`, which hands the answer to an asking terminal). Once closed it
 /// collapses to the outcome: the answer and who gave it when, or that it was cancelled or
-/// expired (dimmed). Its text scales with the chrome text size, like the title bar's.
+/// expired (dimmed); Return in it then archives it. Its text scales with the chrome text size,
+/// like the title bar's. VoiceOver reads the whole question (`accessibleText`) and presses its
+/// painted controls (`QuestionControlElement`).
 @MainActor
 final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
     private var object: CanvasObject
@@ -18,6 +20,9 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
     private let page = QuestionPage()
     private let note = NSTextField()
     private var painter: QuestionPainter?
+    /// The painted controls for accessibility, the same element for a control across layouts
+    /// (VoiceOver stays on an option a pick lays the page out again around).
+    fileprivate private(set) var controlElements: [QuestionControlElement] = []
 
     /// A context link opened: code (the tile, whether it was already on the board), a web page,
     /// or an object on the board to go to.
@@ -66,6 +71,12 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
         let painter = QuestionPainter(spec: spec, object: object, board: board, width: width, scale: ChromeText.scale, picked: picked,
                                       noting: !note.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         self.painter = painter
+        let previous = controlElements
+        controlElements = painter.controls.map { control in
+            guard let element = previous.first(where: { $0.control.hit == control.hit }) else { return QuestionControlElement(page: page, control: control) }
+            element.control = control
+            return element
+        }
         page.frame = NSRect(x: 0, y: 0, width: width, height: max(painter.height, scroll.contentSize.height))
         note.isHidden = painter.noteRect == nil
         if let rect = painter.noteRect {
@@ -109,8 +120,11 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
         leave()
     }
 
+    /// Hides the closed question (`Board.archiveQuestion`). Its tile goes, so the keyboard, when it
+    /// is here, goes back to the canvas first.
     private func archive() {
-        _ = try? board.archiveQuestion(object.id)
+        leave()
+        if (try? board.archiveQuestion(object.id)) == nil { NSSound.beep() }
     }
 
     /// The keyboard back to the canvas, the tile still selected.
@@ -146,7 +160,13 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
     }
 
     fileprivate func click(at point: NSPoint) -> Bool {
-        guard let painter, let hit = painter.hit(point) else { return false }
+        guard let hit = painter?.hit(point) else { return false }
+        perform(hit)
+        return true
+    }
+
+    /// What a control does, clicked or pressed through accessibility.
+    fileprivate func perform(_ hit: QuestionPainter.Hit) {
         switch hit {
         case .option(let id):
             window?.makeFirstResponder(self)
@@ -156,27 +176,29 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
         case .dismiss: dismiss()
         case .archive: archive()
         }
-        return true
     }
 
     // MARK: Keyboard
 
-    override var acceptsFirstResponder: Bool { spec.status == .open }
+    /// Open or closed, Return gives it the keyboard (`enterKeyboard`); a click on its body or going
+    /// to it (⌘J, Go to) only while open (`takesKeyboardFocus`).
+    override var acceptsFirstResponder: Bool { true }
 
-    /// 1–9 pick the options in order, Return answers, Tab goes to the note, Esc gives the
-    /// keyboard back to the canvas.
+    /// Open: 1–9 pick the options in order, Return answers, Tab goes to the note. Closed: Return
+    /// archives. Esc gives the keyboard back to the canvas.
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection([.command, .control, .option])
         guard modifiers.isEmpty else { return super.keyDown(with: event) }
+        let open = spec.status == .open
         switch event.keyCode {
         case 53: return leave()
-        case 36, 76: return confirm()
-        case 48:
+        case 36, 76: return open ? confirm() : archive()
+        case 48 where open:
             window?.makeFirstResponder(note)
             return
         default: break
         }
-        if let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit), digit <= spec.options.count {
+        if open, let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit), digit <= spec.options.count {
             pick(spec.options[digit - 1].id)
         } else {
             super.keyDown(with: event)
@@ -224,18 +246,31 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
 
     func outline(for target: MentionTarget) -> NSRect? { bounds }
 
+    /// A click on its body, or going to it, gives an open question the keyboard; a closed one
+    /// takes it only by Return (its Return archives, so no arrival should hand it a Return).
     var takesKeyboardFocus: Bool { spec.status == .open }
 
-    /// The keyboard to the question (number keys, Return), while it is open.
+    /// The keyboard to the question: open, for its number keys, note and Return (answers);
+    /// closed, for Return (archives).
     func enterKeyboard() -> Bool {
-        guard spec.status == .open else { return false }
-        return window?.makeFirstResponder(self) == true
+        window?.makeFirstResponder(self) == true
     }
 
+    /// What VoiceOver reads in the tile: the question, its options, context, asker and status
+    /// with the answer (`QuestionPainter.readout`).
+    private(set) lazy var accessibleText: AccessibleTextElement? = AccessibleTextElement(view: self, label: { "question" }, read: { [weak self] in
+        guard let self, let painter = self.painter else { return nil }
+        return AccessibleText(painter.readout(object: self.object, board: self.board))
+    })
+
     func update(_ object: CanvasObject) {
+        let closing = spec.status == .open && QuestionSpec.status(of: object.props) != .open
         self.object = object
         spec = QuestionSpec(object.props)
         if let picked, spec.option(picked) == nil || spec.status != .open { self.picked = nil }
+        // Closed while it had the keyboard (answered here, or cancelled or expired meanwhile): the
+        // canvas takes the keyboard back, so a Return meant to answer never archives instead.
+        if closing { leave() }
         relayout()
     }
 }
@@ -256,7 +291,7 @@ private final class QuestionPage: NSView {
 
     override func mouseDown(with event: NSEvent) {
         // Anywhere else on an open question: the keyboard to it, for its number keys and Return.
-        if tile?.click(at: convert(event.locationInWindow, from: nil)) != true, let tile, tile.acceptsFirstResponder {
+        if tile?.click(at: convert(event.locationInWindow, from: nil)) != true, let tile, tile.takesKeyboardFocus {
             window?.makeFirstResponder(tile)
         }
     }
@@ -265,18 +300,97 @@ private final class QuestionPage: NSView {
         // Buttons and links show they act.
         for rect in tile?.clickableRects ?? [] { addCursorRect(rect, cursor: .pointingHand) }
     }
+
+    /// The note field with the painted controls around it, in reading order: the options and
+    /// links above it, the buttons below.
+    override func accessibilityChildren() -> [Any]? {
+        let views = super.accessibilityChildren() ?? []
+        guard let tile else { return views }
+        let noteTop = tile.noteTop
+        let elements = tile.controlElements
+        return elements.filter { $0.control.rect.minY < noteTop } + views + elements.filter { $0.control.rect.minY >= noteTop }
+    }
 }
 
 extension QuestionTile {
     fileprivate var clickableRects: [NSRect] { painter?.clickable ?? [] }
+    fileprivate var noteTop: CGFloat { painter?.noteRect?.minY ?? .greatestFiniteMagnitude }
+}
+
+/// A question's painted control (an option, a context link, Answer, Dismiss, Archive) for
+/// VoiceOver and Full Keyboard Access: over its rect on the page, saying what it says there, and
+/// pressed as it is clicked (`QuestionTile.perform`). An option is a radio button, on when picked.
+@MainActor
+private final class QuestionControlElement: NSAccessibilityElement {
+    private weak var page: QuestionPage?
+    var control: QuestionPainter.Control
+
+    init(page: QuestionPage, control: QuestionPainter.Control) {
+        self.page = page
+        self.control = control
+        super.init()
+    }
+
+    override func accessibilityRole() -> NSAccessibility.Role? {
+        onMain { element in
+            switch element.control.hit {
+            case .option: .radioButton
+            case .context: .link
+            case .answer, .dismiss, .archive: .button
+            }
+        }
+    }
+    override func accessibilityLabel() -> String? { onMain { $0.control.label } }
+    override func accessibilityValue() -> Any? {
+        onMain { element in
+            guard case .option = element.control.hit else { return nil }
+            return NSNumber(value: element.control.picked ? 1 : 0)
+        }
+    }
+    override func isAccessibilityEnabled() -> Bool { onMain { $0.control.enabled } }
+    override func accessibilityParent() -> Any? { onMain { $0.page.flatMap { NSAccessibility.unignoredAncestor(of: $0) } } }
+    override func accessibilityFrame() -> NSRect {
+        onMain { element in
+            guard let page = element.page, page.window != nil else { return .zero }
+            return NSAccessibility.screenRect(fromView: page, rect: element.control.rect)
+        }
+    }
+    override func accessibilityPerformPress() -> Bool {
+        onMain { element in
+            guard element.control.enabled, let tile = element.page?.tile else { return false }
+            tile.perform(element.control.hit)
+            return true
+        }
+    }
+
+    /// AppKit declares the accessibility methods nonisolated but calls them on the main thread.
+    private nonisolated func onMain<T>(_ body: @MainActor (QuestionControlElement) -> T) -> T {
+        nonisolated(unsafe) let element = self
+        nonisolated(unsafe) var result: T?
+        MainActor.assumeIsolated { result = body(element) }
+        return result!
+    }
 }
 
 /// A question tile's layout and drawing, live and for renders: everything is placed once per
 /// width, scale and state, then drawn and hit-tested from the same rects.
 @MainActor
 struct QuestionPainter {
-    enum Hit {
+    enum Hit: Equatable {
         case option(String), context(QuestionSpec.Context), answer, dismiss, archive
+    }
+
+    /// Something on the page that acts: where it is, what it does, and what it says, for
+    /// accessibility (`QuestionControlElement`).
+    struct Control {
+        let rect: NSRect
+        let hit: Hit
+        /// An option's number, label, recommendation and why; a link's or a button's title.
+        let label: String
+        /// Answer before anything is picked or noted is drawn but takes no click.
+        var enabled = true
+        /// An option that is picked.
+        var picked = false
     }
 
     static let questionFont = NSFont.systemFont(ofSize: 15, weight: .semibold)
@@ -294,11 +408,11 @@ struct QuestionPainter {
     /// Drawn in the note field's place by renders (live, the field draws itself).
     private let noteText: String
     private var items: [(rect: NSRect, draw: () -> Void)] = []
-    private var hits: [(rect: NSRect, hit: Hit)] = []
+    private(set) var controls: [Control] = []
     private(set) var noteRect: NSRect?
     private(set) var height: CGFloat = 0
 
-    var clickable: [NSRect] { hits.map(\.rect) }
+    var clickable: [NSRect] { controls.filter(\.enabled).map(\.rect) }
 
     init(spec: QuestionSpec, object: CanvasObject, board: Board, width: CGFloat, scale: Double, picked: String?, noting: Bool, note: String = "") {
         self.spec = spec
@@ -424,7 +538,7 @@ struct QuestionPainter {
                       options: [.usesLineFragmentOrigin, .usesFontLeading])
             badge?.draw(at: NSPoint(x: row.maxX - pad - badgeSize.width, y: y + pad + 2))
         }))
-        hits.append((row, .option(option.id)))
+        controls.append(Control(rect: row, hit: .option(option.id), label: Self.optionLabel(option, number: index + 1, recommended: recommended), picked: isPicked))
         return row.maxY
     }
 
@@ -436,11 +550,7 @@ struct QuestionPainter {
         var cursor = x + leadSize.width + points(6), line = y
         let chipHeight = points(20), gap = points(6)
         for context in spec.context {
-            let title: String
-            switch context {
-            case .object(let id): title = board.objects[id].map { Self.objectTitle($0) } ?? "\(id) (gone)"
-            default: title = context.label
-            }
+            let title = Self.contextTitle(context, board: board)
             let label = text(title, Self.metaFont, .linkColor, truncating: true)
             let chipWidth = min(Self.measure(label, width: 400).width + 2 * gap, width)
             if cursor + chipWidth > x + width, cursor > x + leadSize.width + points(6) {
@@ -453,7 +563,7 @@ struct QuestionPainter {
                 NSBezierPath(roundedRect: chip, xRadius: 5, yRadius: 5).fill()
                 label.draw(with: chip.insetBy(dx: gap, dy: 3), options: [.usesLineFragmentOrigin])
             }))
-            hits.append((chip, .context(context)))
+            controls.append(Control(rect: chip, hit: .context(context), label: title))
             cursor = chip.maxX + gap
         }
         return line + chipHeight + points(6)
@@ -462,6 +572,17 @@ struct QuestionPainter {
     private static func objectTitle(_ object: CanvasObject) -> String {
         let title = TileFrameView.title(for: object)
         return title.count > 40 ? String(title.prefix(39)) + "…" : title
+    }
+
+    /// A context link's text: an object's title (or that it is gone), else the URL or path as stored.
+    private static func contextTitle(_ context: QuestionSpec.Context, board: Board) -> String {
+        guard case .object(let id) = context else { return context.label }
+        return board.objects[id].map(objectTitle) ?? "\(id) (gone)"
+    }
+
+    /// An option as accessibility says it: "2. Later (recommended): the freeze is Friday".
+    private static func optionLabel(_ option: QuestionSpec.Option, number: Int, recommended: Bool) -> String {
+        "\(number). \(option.label)" + (recommended ? " (recommended)" : "") + (option.why.map { ": \($0)" } ?? "")
     }
 
     private mutating func button(_ title: String, prominent: Bool, enabled: Bool, right: CGFloat, y: CGFloat, hit: Hit) -> NSRect {
@@ -479,7 +600,7 @@ struct QuestionPainter {
             }
             label.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
         }))
-        if enabled { hits.append((rect, hit)) }
+        controls.append(Control(rect: rect, hit: hit, label: title, enabled: enabled))
         return rect
     }
 
@@ -530,8 +651,40 @@ struct QuestionPainter {
         return archive.maxY
     }
 
+    /// The question as VoiceOver reads it (`QuestionTile.accessibleText`), a line each: the
+    /// question, each option as its control says it, the context, who asks (and until when), and
+    /// where it stands: open, or the answer with its note, who gave it and when, or the outcome.
+    func readout(object: CanvasObject, board: Board) -> String {
+        var lines = [spec.question]
+        for (index, option) in spec.options.enumerated() {
+            lines.append(Self.optionLabel(option, number: index + 1, recommended: option.id == spec.recommended))
+        }
+        if !spec.context.isEmpty {
+            lines.append("Context: " + spec.context.map { Self.contextTitle($0, board: board) }.joined(separator: ", "))
+        }
+        var asked = "Asked by \(asker(board: board))"
+        if spec.status == .open, let expires = spec.expiresAt { asked += ", expires \(Self.when(expires))" }
+        lines.append(asked)
+        switch spec.status {
+        case .open:
+            lines.append("Open")
+        case .answered:
+            let answer = spec.answer
+            var line = (spec.option(answer?.option)?.label ?? answer?.option).map { "Answered: \($0)" } ?? "Answered"
+            if let note = answer?.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { line += ", note: \(note)" }
+            line += ", by \(who(answer?.by, board: board))"
+            if let at = answer?.at { line += ", \(Self.when(at))" }
+            lines.append(line)
+        case .cancelled:
+            lines.append("Cancelled, \(Self.when(object.updatedAt))")
+        case .expired:
+            lines.append("Expired, \(Self.when(spec.expiresAt ?? object.updatedAt))")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     func hit(_ point: NSPoint) -> Hit? {
-        hits.last { $0.rect.contains(point) }?.hit
+        controls.last { $0.enabled && $0.rect.contains(point) }?.hit
     }
 
     /// Draws the page; a cancelled or expired question dimmed. `noteDrawn`: the note field is

@@ -6,6 +6,7 @@ package board
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -709,6 +710,9 @@ func (b *Board) restore(o model.Object) {
 		}
 		b.markMentionsEdited(previous, o)
 		b.emit(EventObjectUpdated, o.APIJSON())
+		if o.Type == model.Question {
+			b.questionWritten(previous, o)
+		}
 	} else {
 		b.log(KindCreated, o, b.replayActor, "restored "+Describe(o)+" at "+Position(b.ReportedOne(o).Frame), "", nil)
 		b.emit(EventObjectCreated, o.APIJSON())
@@ -763,8 +767,9 @@ func (b *Board) bumpRevision() {
 func (b *Board) endStep() { b.history.end() }
 
 // Atomically runs body as one step and one board revision; when it fails, every change it made
-// is reverted (announced as normal changes, logged as "reverted (batch failed)") and the error
-// returned.
+// is reverted (announced as normal changes, logged as "reverted (batch failed)"), the hand-offs
+// waiting for terminals are put back as they were (an answer it handed off withdrawn, one a
+// delete took restored), and the error returned.
 func (b *Board) Atomically(body func() error) error {
 	outermost := b.pinnedRevision == nil
 	if outermost {
@@ -773,6 +778,7 @@ func (b *Board) Atomically(body func() error) error {
 	}
 	b.history.begin()
 	mark := b.history.mark()
+	handed := maps.Clone(b.handoffs)
 	defer func() {
 		b.endStep()
 		if outermost {
@@ -783,6 +789,7 @@ func (b *Board) Atomically(body func() error) error {
 		b.replayVerb, b.replayActor = "reverted (batch failed)", SystemActor
 		b.revert(b.history.discard(mark))
 		b.replayVerb, b.replayActor = "", UserActor
+		b.handoffs = handed
 		return err
 	}
 	return nil

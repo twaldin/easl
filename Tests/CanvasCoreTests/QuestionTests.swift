@@ -241,4 +241,88 @@ final class QuestionTests {
         #expect(await board.drain(peek: true, caller: other).context.isEmpty, "only the asker gets it")
         #expect(board.tray.isEmpty, "never in the user's tray")
     }
+
+    @Test func anUndoneAnswerIsTakenBackAndARedoHandsItOffAgain() async throws {
+        let asker = board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        let asked = try await question(["asker": .null], caller: asker)
+        let header = "Your question \(asked.id) was answered (easl ask):"
+
+        // ⌘Z before the asker's next prompt: the answer is never delivered.
+        try board.answerQuestion(asked.id, option: "later", note: nil)
+        #expect(board.undo())
+        #expect(QuestionSpec(try board.object(asked.id).props).status == .open)
+        #expect(board.handoffs[asker] == nil, "the undone answer's hand-off is withdrawn")
+        #expect(await board.drain(peek: false, caller: asker).context.isEmpty)
+
+        // Redo brings the answer back, and with it the hand-off.
+        #expect(board.redo())
+        let redone = await board.drain(peek: false, caller: asker)
+        #expect(redone.mentions.count == 1)
+        #expect(redone.context.contains(header), "\(redone.context)")
+        #expect(redone.context.contains("    answer: [later] After #28 · by the user at "), "\(redone.context)")
+
+        // Delivered, undone, redone: the restored answer is handed off again.
+        #expect(board.undo())
+        #expect(await board.drain(peek: true, caller: asker).context.isEmpty)
+        #expect(board.redo())
+        #expect(await board.drain(peek: true, caller: asker).context.contains(header))
+    }
+
+    @Test func aFailedBatchLeavesTheAnswersHandOffAsItWas() async throws {
+        let asker = board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        let asked = try await question(["asker": .null], caller: asker)
+        // The answer applies, then the stale rev fails the batch and reverts it.
+        let reply = try await call("object.batch", .object(["board": .string(board.id), "ops": .array([
+            .object(["method": "object.update", "params": .object(["id": .string(asked.id), "props": .object(["status": "answered", "answer": .object(["option": "now"])])])]),
+            .object(["method": "object.update", "params": .object(["id": .string(asked.id), "rev": .number(Double(asked.rev)), "props": .object(["archived": .bool(true)])])]),
+        ])]))
+        #expect(reply["error"]?["code"] == "conflict", "\(reply)")
+        #expect(QuestionSpec(try board.object(asked.id).props).status == .open)
+        #expect(board.handoffs[asker] == nil, "the reverted answer's hand-off is withdrawn")
+        #expect(await board.drain(peek: true, caller: asker).context.isEmpty, "no answer to deliver")
+
+        // Answered for real, then a batch that deletes the question fails: the answer still waits.
+        try board.answerQuestion(asked.id, option: "now", note: nil)
+        let failed = try await call("object.batch", .object(["board": .string(board.id), "ops": .array([
+            .object(["method": "object.delete", "params": .object(["id": .string(asked.id)])]),
+            .object(["method": "object.update", "params": .object(["id": "obj_missing", "props": .object([:])])]),
+        ])]))
+        #expect(failed["error"]?["code"] == "not_found", "\(failed)")
+        let drained = await board.drain(peek: true, caller: asker)
+        #expect(drained.mentions.count == 1)
+        #expect(drained.context.contains("Your question \(asked.id) was answered (easl ask):"), "\(drained.context)")
+    }
+
+    @Test func aWorktreeAgentsContextPathsMeanItsOwnCheckout() async throws {
+        let repo = try await TempRepo()
+        try await repo.write("src/a.ts", "one\n")
+        try await repo.commit("init")
+        let worktree = URL(fileURLWithPath: repo.root.path + "-wt/fees")
+        try await repo.git("worktree", "add", "-q", "-b", "feature", worktree.path)
+        let repoBoard = registry.open(root: repo.root)
+        let agent = repoBoard.create(type: .terminal, props: .object(["cwd": .string(worktree.appendingPathComponent("src").path), "command": .array([])])).id
+        let home = repoBoard.create(type: .terminal, props: .object(["cwd": .string(repo.root.path), "command": .array([])])).id
+        func ask(_ context: JSONValue, caller: ObjectID) async throws -> CanvasObject {
+            let reply = try await call("object.create", .object(["type": "question", "board": .string(repoBoard.id), "caller": .string(caller),
+                                                                 "props": .object(["question": "Review this change?", "options": Self.options, "context": context])]))
+            return try repoBoard.object(try #require(reply["result"]?["object"]?["id"]?.string, "\(reply)"))
+        }
+        let asked = try await ask(.array([
+            .object(["path": "src/a.ts", "lines": .object(["start": 3, "end": 5])]), .object(["path": "/etc/hosts"]), .object(["url": "https://example.com"]),
+        ]), caller: agent)
+        #expect(asked.props["context"] == .array([
+            .object(["path": .string(worktree.appendingPathComponent("src/a.ts").path), "lines": .object(["start": 3, "end": 5])]),
+            .object(["path": "/etc/hosts"]), .object(["url": "https://example.com"]),
+        ]), "a relative path is the asker's checkout's file, stored absolute")
+        let inWorktree = worktree.appendingPathComponent("src/b.ts").path
+        let updated = try await call("object.update", .object(["id": .string(asked.id), "caller": .string(agent),
+                                                               "props": .object(["context": .array([.object(["path": "src/b.ts", "lines": .object(["start": 2, "end": 2])])])])]))
+        #expect(updated["result"]?["object"]?["props"]?["context"] == .array([.object(["path": .string(inWorktree), "lines": .object(["start": 2, "end": 2])])]), "\(updated)")
+        // From the board's own checkout a relative path stays board-relative.
+        #expect(try await ask(.array([.object(["path": "src/a.ts"])]), caller: home).props["context"] == .array([.object(["path": "src/a.ts"])]))
+
+        try repoBoard.answerQuestion(asked.id, option: "now", note: nil)
+        let drained = await repoBoard.drain(peek: true, caller: agent)
+        #expect(drained.context.contains("    context: \(inWorktree):2\n"), "the mention names the worktree's file: \(drained.context)")
+    }
 }

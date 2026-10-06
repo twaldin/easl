@@ -149,7 +149,8 @@ final class TileFrameView: NSView {
     private var accessibilityDetail: String?
 
     /// An agent terminal's lifecycle ("done", "blocked: approve Bash?"), a code tile's lines and
-    /// caption ("lines 1321–1331, Step 1/4 · …"), an image's caption; nil for anything else.
+    /// caption ("lines 1321–1331, Step 1/4 · …"), an image's caption, a question's status
+    /// ("open", "answered"); nil for anything else.
     static func accessibilityDetail(for object: CanvasObject) -> String? {
         let props = object.props
         func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }
@@ -166,6 +167,7 @@ final class TileFrameView: NSView {
             if let caption = nonEmpty(props["caption"]) { parts.append(CodeCaption.plain(caption)) }
             return parts.isEmpty ? nil : parts.joined(separator: ", ")
         case .image: return nonEmpty(props["caption"])
+        case .question: return QuestionSpec.status(of: props).rawValue
         default: return nil
         }
     }

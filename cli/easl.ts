@@ -674,6 +674,12 @@ function questionOutcome(object: QuestionObject): number | undefined {
   return 2;
 }
 
+/** A question gone from the board: why on stderr, 2. */
+function questionDeleted(id: string): number {
+  console.error(`deleted: question ${id} was deleted`);
+  return 2;
+}
+
 /** Read events until question `id` is answered, closed or deleted; a dropped connection is an error. */
 async function awaitQuestion(id: string, events: EventStream): Promise<number> {
   for (;;) {
@@ -681,10 +687,7 @@ async function awaitQuestion(id: string, events: EventStream): Promise<number> {
     if (!message) throw new CanvasError("unavailable", `the event connection closed before question ${id} was answered (\`easl ask wait ${id}\` resumes)`);
     const object = message.data as QuestionObject | undefined;
     if (object?.id !== id) continue;
-    if (message.event === "object.deleted") {
-      console.error(`deleted: question ${id} was deleted`);
-      return 2;
-    }
+    if (message.event === "object.deleted") return questionDeleted(id);
     const outcome = message.event === "object.updated" ? questionOutcome(object) : undefined;
     if (outcome !== undefined) return outcome;
   }
@@ -723,7 +726,15 @@ async function ask(args: string[]): Promise<number> {
       // Subscribe first, then read: a change in between is still on the stream.
       const events = await openEvents(client.socketPath, last("board"));
       try {
-        const { object } = (await client.call("object.get", { id }, [])) as { object: QuestionObject };
+        let object: QuestionObject;
+        try {
+          ({ object } = (await client.call("object.get", { id }, [])) as { object: QuestionObject });
+        } catch (error) {
+          // Deleted before the subscription, or after it and before this read (its object.deleted
+          // is queued unread): the same outcome as a deletion during the wait.
+          if (error instanceof CanvasError && error.code === "not_found") return questionDeleted(id);
+          throw error;
+        }
         if (object.type !== "question") throw new CanvasError("invalid_params", `${id} is a ${object.type}, not a question`);
         return questionOutcome(object) ?? (await awaitQuestion(id, events));
       } finally {

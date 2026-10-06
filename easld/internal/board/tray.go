@@ -213,9 +213,22 @@ func (b *Board) HandOff(targets []map[string]any, terminal, from, fromName strin
 }
 
 // resolveHandoffs is the mentions handed to caller, resolved now and numbered from index, with
-// one context block per sending terminal (or board header), in the order they were sent.
+// one context block per sending terminal (or board header), in the order they were sent. A
+// question's answer whose question is no longer answered (or gone) is dropped, not delivered.
 func (b *Board) resolveHandoffs(caller string, index int) ([]mention.Resolved, []string) {
-	waiting := b.handoffs[caller]
+	var waiting []Handoff
+	for _, h := range b.handoffs[caller] {
+		if b.handoffStands(h) {
+			waiting = append(waiting, h)
+		}
+	}
+	switch {
+	case len(waiting) == len(b.handoffs[caller]):
+	case len(waiting) == 0:
+		delete(b.handoffs, caller)
+	default:
+		b.handoffs[caller] = waiting
+	}
 	type sender struct{ from, header string }
 	var senders []sender
 	seen := map[sender]bool{}

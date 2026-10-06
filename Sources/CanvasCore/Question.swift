@@ -391,13 +391,44 @@ extension Board {
         return Frame(x: before.frame.x, y: before.frame.y, w: before.frame.w, h: height)
     }
 
-    /// After a write of a question (`Board.write`): one just answered is handed to its asker's
-    /// terminal, when that is a terminal on this board, as a mention of the question delivered
-    /// with its next prompt (`handOff`), never typed into what the agent is writing.
+    /// The block header over an answered question's hand-off to its asker.
+    static func answeredHeader(_ id: ObjectID) -> String { "Your question \(id) was answered (easl ask):" }
+
+    /// After a write or a restore of a question (`Board.write`, `restore`): the hand-off of its
+    /// answer waits for the asker only while the question is answered. One just answered is handed
+    /// to its asker's terminal, when that is a terminal on this board, as a mention of the
+    /// question delivered with its next prompt (`handOff`), never typed into what the agent is
+    /// writing; a redo that brings the answer back hands it off again. One no longer answered (its
+    /// answer undone, or reverted with a failed batch) takes back a hand-off not yet drained.
     func questionWritten(before: CanvasObject, after: CanvasObject) {
-        guard QuestionSpec.status(of: before.props) == .open, QuestionSpec.status(of: after.props) == .answered,
+        let was = QuestionSpec.status(of: before.props), now = QuestionSpec.status(of: after.props)
+        if was == .answered, now != .answered {
+            withdrawAnswer(of: after.id)
+            return
+        }
+        guard was == .open, now == .answered,
               let tile = after.props["asker"]?["tile"]?.string, objects[tile]?.type == .terminal else { return }
-        _ = try? handOff([.object(after.id)], to: tile, from: nil, fromName: nil, header: "Your question \(after.id) was answered (easl ask):")
+        _ = try? handOff([.object(after.id)], to: tile, from: nil, fromName: nil, header: Self.answeredHeader(after.id))
+    }
+
+    /// Drops the waiting hand-off of question `id`'s answer, from whichever terminal it waits for.
+    private func withdrawAnswer(of id: ObjectID) {
+        for (terminal, waiting) in handoffs {
+            let left = waiting.filter { !isAnswerHandoff($0, of: id) }
+            if left.count != waiting.count { handoffs[terminal] = left.isEmpty ? nil : left }
+        }
+    }
+
+    private func isAnswerHandoff(_ handoff: Handoff, of id: ObjectID) -> Bool {
+        handoff.from == nil && handoff.mention.target == .object(id) && handoff.header == Self.answeredHeader(id)
+    }
+
+    /// Still to be delivered: anything but a question's answer hand-off, and that one only while
+    /// its question is there and answered (the drain's guard; `questionWritten` keeps it so).
+    func handoffStands(_ handoff: Handoff) -> Bool {
+        guard case .object(let id) = handoff.mention.target, isAnswerHandoff(handoff, of: id) else { return true }
+        guard let question = objects[id], question.type == .question else { return false }
+        return QuestionSpec.status(of: question.props) == .answered
     }
 
     /// Open questions whose `expiresAt` is at or before `now` become `expired`, frames shrunk as

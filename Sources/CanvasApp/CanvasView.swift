@@ -350,7 +350,9 @@ final class CanvasView: NSScrollView {
                     syncAuthors(of: object.id)
                 }
             } else {
+                // Unarchived (or Archive undone): back in its place in the stack, not on top.
                 add(object)
+                restack()
             }
             scheduleGeometry()
         case .objectDeleted(let id):
@@ -541,7 +543,10 @@ final class CanvasView: NSScrollView {
         }
     }
 
+    /// Selects `ids`, less any archived question (`TileFactory.hidden`): it isn't on the canvas, so
+    /// no gesture or command (a ring, a move, Delete, ⌘W) acts on it there; the API still does.
     func setSelection(_ ids: Set<ObjectID>) {
+        let ids = ids.filter { board.objects[$0].map(TileFactory.hidden) != true }
         guard ids != selection else { return }
         let added = ids.subtracting(selection)
         let removed = selection.subtracting(ids)
@@ -630,9 +635,11 @@ final class CanvasView: NSScrollView {
         return ids.sorted()
     }
 
+    /// What ⌘A, the marquee and lasso, and Zoom to Fit consider: every object on the canvas, not
+    /// groups (they have their own regions) or archived questions (no view, `TileFactory.hidden`).
     private func selectableRects() -> [(id: ObjectID, rect: NSRect)] {
         board.objects.values.compactMap { object in
-            guard object.type != .group else { return nil }
+            guard object.type != .group, !TileFactory.hidden(object) else { return nil }
             // Drawn objects: rendered bounds (an arrow reroutes with its tiles without a frame write).
             return (object.id, tiles[object.id]?.frame ?? shapeOutline?(object.id) ?? Self.docRect(object.frame))
         }
@@ -1048,11 +1055,12 @@ final class CanvasView: NSScrollView {
             return
         }
         if type == .question {
-            // The canvas keeps it when the question is closed (enterKeyboard refuses).
+            // The canvas keeps it when the question is closed (it takes the keyboard only by
+            // Return, which then archives it: `QuestionTile.takesKeyboardFocus`).
             window?.makeFirstResponder(document)
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.selection == [id] else { return }
-                _ = self.tiles[id]?.content.enterKeyboard()
+                guard let self, self.selection == [id], let content = self.tiles[id]?.content, content.takesKeyboardFocus else { return }
+                _ = content.enterKeyboard()
             }
             return
         }

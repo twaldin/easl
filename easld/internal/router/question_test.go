@@ -1,10 +1,14 @@
 package router
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/model"
 )
 
@@ -324,6 +328,102 @@ func TestAnAnswerReachesTheAskingTerminalOnItsNextDrain(t *testing.T) {
 	}
 	if again := drain(false); len(again["mentions"].([]any)) != 0 {
 		t.Errorf("delivered twice: %v", again)
+	}
+}
+
+func TestAFailedBatchLeavesTheAnswersHandOffAsItWas(t *testing.T) {
+	f := newFixture(t)
+	terminal := f.terminal()
+	q := f.result("object.create", map[string]any{"type": "question", "caller": terminal, "props": map[string]any{
+		"question": "Ship it?", "options": []any{map[string]any{"id": "a", "label": "Yes"}},
+	}})["object"].(map[string]any)
+	id := q["id"].(string)
+	pending := func() map[string]any {
+		return f.result("tray.drain", map[string]any{"caller": terminal, "peek": true})
+	}
+	// The answer applies, then the stale rev fails the batch and reverts it.
+	code, message := errorOf(f.call("object.batch", map[string]any{"ops": []any{
+		map[string]any{"method": "object.update", "params": map[string]any{"id": id, "props": map[string]any{"status": "answered", "answer": map[string]any{"option": "a"}}}},
+		map[string]any{"method": "object.update", "params": map[string]any{"id": id, "rev": q["rev"], "props": map[string]any{"archived": true}}},
+	}}))
+	if code != "conflict" || propsOf(f.object(id))["status"] != "open" {
+		t.Fatalf("batch: %s %s, status %v", code, message, propsOf(f.object(id))["status"])
+	}
+	if got := pending(); len(got["mentions"].([]any)) != 0 {
+		t.Errorf("the reverted answer was handed off: %v", got)
+	}
+
+	// Answered for real, then a batch that deletes the question fails: the answer still waits.
+	f.result("object.update", map[string]any{"id": id, "props": map[string]any{"status": "answered", "answer": map[string]any{"option": "a"}}})
+	code, _ = errorOf(f.call("object.batch", map[string]any{"ops": []any{
+		map[string]any{"method": "object.delete", "params": map[string]any{"id": id}},
+		map[string]any{"method": "object.update", "params": map[string]any{"id": "obj_missing", "props": map[string]any{}}},
+	}}))
+	got := pending()
+	if code != "not_found" || len(got["mentions"].([]any)) != 1 || !strings.Contains(got["context"].(string), "Your question "+id+" was answered (easl ask):") {
+		t.Errorf("after the failed delete (%s): %v", code, got)
+	}
+}
+
+func git(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func TestAWorktreeAgentsContextPathsMeanItsOwnCheckout(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "src", "a.ts"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "init", "-q", "-b", "main")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-q", "-m", "init")
+	worktree := filepath.Join(dir, "fees")
+	git(t, repo, "worktree", "add", "-q", "-b", "feature", worktree)
+	reg := board.NewRegistry(filepath.Join(dir, "boards"), time.Hour, "")
+	reg.Mu.Lock()
+	b, err := reg.Open(repo)
+	reg.Mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fixture{t: t, router: New(reg), board: b, conn: &conn{}}
+	agent := b.Create(model.Terminal, map[string]any{"cwd": filepath.Join(worktree, "src")}, &model.Frame{W: 1000, H: 620}, "", "").ID
+	home := b.Create(model.Terminal, map[string]any{"cwd": repo}, &model.Frame{X: 2000, W: 1000, H: 620}, "", "").ID
+	ask := func(context []any, caller string) map[string]any {
+		return f.result("object.create", map[string]any{"type": "question", "board": b.ID(), "caller": caller, "props": map[string]any{
+			"question": "Review this change?", "options": []any{map[string]any{"id": "a", "label": "Yes"}}, "context": context,
+		}})["object"].(map[string]any)
+	}
+	lines := func(start, end float64) map[string]any { return map[string]any{"start": start, "end": end} }
+
+	asked := ask([]any{map[string]any{"path": "src/a.ts", "lines": lines(3, 5)}, map[string]any{"path": "/etc/hosts"}, map[string]any{"url": "https://example.com"}}, agent)
+	want := []any{map[string]any{"path": filepath.Join(worktree, "src", "a.ts"), "lines": lines(3, 5)}, map[string]any{"path": "/etc/hosts"}, map[string]any{"url": "https://example.com"}}
+	if got := propsOf(asked)["context"]; !model.Equal(got, want) {
+		t.Errorf("create: %v, want %v", got, want)
+	}
+	inWorktree := filepath.Join(worktree, "src", "b.ts")
+	updated := f.result("object.update", map[string]any{"id": asked["id"], "caller": agent, "props": map[string]any{"context": []any{map[string]any{"path": "src/b.ts", "lines": lines(2, 2)}}}})
+	if got := propsOf(updated["object"].(map[string]any))["context"]; !model.Equal(got, []any{map[string]any{"path": inWorktree, "lines": lines(2, 2)}}) {
+		t.Errorf("update: %v", got)
+	}
+	// From the board's own checkout a relative path stays board-relative.
+	if got := propsOf(ask([]any{map[string]any{"path": "src/a.ts"}}, home))["context"]; !model.Equal(got, []any{map[string]any{"path": "src/a.ts"}}) {
+		t.Errorf("from the board's checkout: %v", got)
+	}
+
+	f.result("object.update", map[string]any{"id": asked["id"], "props": map[string]any{"status": "answered", "answer": map[string]any{"option": "a"}}})
+	context := f.result("tray.drain", map[string]any{"caller": agent, "peek": true})["context"].(string)
+	if !strings.Contains(context, "    context: "+inWorktree+":2\n") {
+		t.Errorf("the mention names the worktree's file:\n%s", context)
 	}
 }
 

@@ -113,9 +113,11 @@ extension Board {
     }
 
     /// The mentions handed to `caller`, resolved now and numbered from `index`, with one context
-    /// block per sending terminal (or board header), in the order they were sent.
+    /// block per sending terminal (or board header), in the order they were sent. A question's
+    /// answer whose question is no longer answered (or gone) is dropped, not delivered.
     func resolveHandoffs(for caller: ObjectID, from index: Int) async -> (mentions: [MentionContext.Resolved], blocks: [String]) {
-        let waiting = handoffs[caller] ?? []
+        let waiting = (handoffs[caller] ?? []).filter(handoffStands)
+        if waiting.count != handoffs[caller]?.count ?? 0 { handoffs[caller] = waiting.isEmpty ? nil : waiting }
         var senders: [(from: ObjectID?, header: String?)] = []
         for handoff in waiting where !senders.contains(where: { $0.from == handoff.from && $0.header == handoff.header }) {
             senders.append((handoff.from, handoff.header))

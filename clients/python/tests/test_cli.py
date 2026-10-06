@@ -591,6 +591,19 @@ class CliAskTest(unittest.TestCase):
         result = self.run_cli("wait", "obj_n1")
         self.assertEqual((result.returncode, result.stderr), (1, "invalid_params: obj_n1 is a note, not a question\n"))
 
+    def test_ask_wait_on_a_deleted_question_is_the_deleted_outcome(self) -> None:
+        # Deleted before `ask wait` ran, and deleted between its subscription and its read (the event is queued unread).
+        self.app.replies["object.get"] = ("error", {"code": "not_found", "message": "no object obj_q1"})
+        for pushed in ([], [event("object.deleted", {"id": "obj_q1"})]):
+            with self.subTest(queued=bool(pushed)):
+                self.app.pushes["events.subscribe"] = pushed
+                result = self.run_cli("wait", "obj_q1")
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, "", "deleted: question obj_q1 was deleted\n"))
+        # Any other failure of the read is still an error.
+        self.app.replies["object.get"] = ("error", {"code": "unavailable", "message": "the app is quitting"})
+        result = self.run_cli("wait", "obj_q1")
+        self.assertEqual((result.returncode, result.stderr), (1, "unavailable: the app is quitting\n"))
+
 
 if __name__ == "__main__":
     unittest.main()

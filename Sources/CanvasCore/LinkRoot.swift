@@ -61,9 +61,10 @@ extension Board {
     /// relative paths meaning the caller's checkout when it works in another worktree of the
     /// board's repository (`callerCheckout`), as for a note's links: a code, image or diagram
     /// tile's relative `path` becomes absolute there (not a code tile's that reads a `ref` or
-    /// `pinnedCommit`), and a changes tile created without `root`, `ref` or `head`, or a note or
-    /// HTML tile created without `root`, gets that checkout as its `root`. From the board's own
-    /// checkout, or without a caller, the props are as given.
+    /// `pinnedCommit`), as does a question's relative `context` path, and a changes tile created
+    /// without `root`, `ref` or `head`, or a note or HTML tile created without `root`, gets that
+    /// checkout as its `root`. From the board's own checkout, or without a caller, the props are
+    /// as given.
     public func inCallersCheckout(_ props: JSONValue, type: ObjectType, caller: ObjectID?, existing: JSONValue? = nil) -> JSONValue {
         guard var fields = props.object, let checkout = callerCheckout(for: caller) else { return props }
         let merged = (existing ?? .object([:])).merging(props)
@@ -76,6 +77,13 @@ extension Board {
             guard existing == nil, fields["root"]?.string?.isEmpty != false else { break }
             if type == .changes, fields["ref"]?.string?.isEmpty == false || fields["head"]?.string?.isEmpty == false { break }
             fields["root"] = .string(checkout)
+        case .question:
+            guard let items = fields["context"]?.array else { break }
+            fields["context"] = .array(items.map { item in
+                guard var context = item.object, let path = context["path"]?.string, !path.isEmpty, !path.hasPrefix("/"), !path.hasPrefix("~") else { return item }
+                context["path"] = .string(URL(fileURLWithPath: checkout).appendingPathComponent(path).standardizedFileURL.path)
+                return .object(context)
+            })
         default: break
         }
         return .object(fields)

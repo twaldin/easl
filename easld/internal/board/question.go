@@ -67,12 +67,23 @@ func (b *Board) closedFrame(before model.Object, props map[string]any) *model.Fr
 	return &model.Frame{X: before.Frame.X, Y: before.Frame.Y, W: before.Frame.W, H: height}
 }
 
-// questionWritten is Board.questionWritten: after a write of a question (Board.write): one just
-// answered is handed to its asker's terminal, when that is a terminal on this board, as a
+// answeredHeader is Board.answeredHeader: the block header over an answered question's hand-off
+// to its asker.
+func answeredHeader(id string) string { return "Your question " + id + " was answered (easl ask):" }
+
+// questionWritten is Board.questionWritten: after a write or a restore of a question (Board.write,
+// restore): the hand-off of its answer waits for the asker only while the question is answered.
+// One just answered is handed to its asker's terminal, when that is a terminal on this board, as a
 // mention of the question delivered with its next prompt (HandOff), never typed into what the
-// agent is writing.
+// agent is writing. One no longer answered (reverted with a failed batch) takes back a hand-off
+// not yet drained.
 func (b *Board) questionWritten(before, after model.Object) {
-	if question.StatusOf(before.Props) != question.Open || question.StatusOf(after.Props) != question.Answered {
+	was, now := question.StatusOf(before.Props), question.StatusOf(after.Props)
+	if was == question.Answered && now != question.Answered {
+		b.withdrawAnswer(after.ID)
+		return
+	}
+	if was != question.Open || now != question.Answered {
 		return
 	}
 	asker, _ := after.Props["asker"].(map[string]any)
@@ -81,7 +92,48 @@ func (b *Board) questionWritten(before, after model.Object) {
 		return
 	}
 	target := map[string]any{"kind": "object", "object": after.ID}
-	_, _ = b.HandOff([]map[string]any{target}, tile, "", "", false, "Your question "+after.ID+" was answered (easl ask):")
+	_, _ = b.HandOff([]map[string]any{target}, tile, "", "", false, answeredHeader(after.ID))
+}
+
+// withdrawAnswer drops the waiting hand-off of question id's answer, from whichever terminal it
+// waits for.
+func (b *Board) withdrawAnswer(id string) {
+	for terminal, waiting := range b.handoffs {
+		var left []Handoff
+		for _, h := range waiting {
+			if answerOf(h) != id {
+				left = append(left, h)
+			}
+		}
+		switch {
+		case len(left) == len(waiting):
+		case len(left) == 0:
+			delete(b.handoffs, terminal)
+		default:
+			b.handoffs[terminal] = left
+		}
+	}
+}
+
+// answerOf is the question whose answer h hands off, "" for any other hand-off.
+func answerOf(h Handoff) string {
+	id, _ := h.Mention.Target["object"].(string)
+	if h.From != "" || h.Mention.Target["kind"] != "object" || id == "" || h.Header != answeredHeader(id) {
+		return ""
+	}
+	return id
+}
+
+// handoffStands is Board.handoffStands: still to be delivered: anything but a question's answer
+// hand-off, and that one only while its question is there and answered (the drain's guard;
+// questionWritten keeps it so).
+func (b *Board) handoffStands(h Handoff) bool {
+	id := answerOf(h)
+	if id == "" {
+		return true
+	}
+	q, ok := b.objects[id]
+	return ok && q.Type == model.Question && question.StatusOf(q.Props) == question.Answered
 }
 
 // ExpireQuestions is Board.expireQuestions: open questions whose `expiresAt` is at or before now

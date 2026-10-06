@@ -467,6 +467,7 @@ public final class Board {
             }
             markMentionsEdited(from: previous, to: object)
             onEvent?(.objectUpdated(object))
+            if object.type == .question { questionWritten(before: previous, after: object) }
         } else {
             log(.created, object, actor: replayActor, "restored \(ActivityLog.describe(object)) at \(ActivityLog.position(reported(object).frame))")
             onEvent?(.objectCreated(object))
@@ -523,12 +524,15 @@ public final class Board {
     }
 
     /// Runs `body` as one undo step and one board revision; when it throws, every change it
-    /// made is reverted (announced as normal changes) and the error rethrown.
+    /// made is reverted (announced as normal changes), the hand-offs waiting for terminals are put
+    /// back as they were (an answer it handed off withdrawn, one a delete took restored), and the
+    /// error rethrown.
     public func atomically<T>(_ body: () throws -> T) throws -> T {
         let outermost = pinnedRevision == nil
         if outermost { pinnedRevision = revision + 1 }
         history.begin()
         let mark = history.mark()
+        let handed = handoffs
         defer {
             endStep()
             if outermost { pinnedRevision = nil }
@@ -543,6 +547,7 @@ public final class Board {
                 replayActor = .user
             }
             revert(history.discard(from: mark))
+            handoffs = handed
             throw error
         }
     }
