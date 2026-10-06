@@ -138,7 +138,8 @@ final class ShapeLayer: NSView {
         canvas.onSelectionDrag = { [unowned layer] ids, offset in layer.previewDrag(ids, offset: offset) }
         canvas.moveProps = { object, dx, dy in ShapeLayer.moveProps(object, dx: dx, dy: dy) }
         canvas.board.arrowPath = { [unowned layer] id in
-            layer.items[id]?.arrow.map { $0.path.map(ShapeLayer.canvasPoint) }
+            layer.followNow(id)
+            return layer.items[id]?.arrow.map { $0.path.map(ShapeLayer.canvasPoint) }
         }
         canvas.board.settleArrows = { [unowned layer] in layer.settleArrows() }
         canvas.board.settledRouting = { [unowned layer] in layer.routing }
@@ -295,9 +296,50 @@ final class ShapeLayer: NSView {
         }
     }
 
+    /// Arrows bound to `id` follow it. A change the API is making (a write, each operation of
+    /// an `object.batch`) only marks them (`followPending`), and each follows once: as soon as
+    /// anything reads it (`followNow`), when the layer draws where it may show (`followInView`),
+    /// else on a wake of the main thread of its own (`MainTurns`). So a batch that moves a tile
+    /// several times, or many tiles one arrow joins, routes each arrow alone once, and the arrows
+    /// out of view don't lengthen the batch's own busy stretch.
     func reroute(boundTo id: ObjectID) {
         guard let arrows = arrowsBound[id] else { return }
-        for arrowID in arrows { reroute(arrow: arrowID) }
+        guard ApiActivity.shared.dispatching > 0 else {
+            for arrowID in arrows { reroute(arrow: arrowID) }
+            return
+        }
+        if followPending.isEmpty {
+            MainTurns.onWake { [weak self] in self?.followNow() }
+        }
+        followPending.formUnion(arrows)
+    }
+
+    private var followPending: Set<ObjectID> = []
+
+    /// Routes the arrows `reroute(boundTo:)` marked, or only `id` among them.
+    func followNow(_ id: ObjectID? = nil) {
+        if let id {
+            guard followPending.remove(id) != nil else { return }
+            reroute(arrow: id)
+            return
+        }
+        guard !followPending.isEmpty else { return }
+        let arrows = followPending
+        followPending = []
+        for arrowID in arrows.sorted() { reroute(arrow: arrowID) }
+    }
+
+    /// Before a draw, the marked arrows that may show in view: where one is drawn now, or the box
+    /// its ends span, meets the visible rect.
+    private func followInView() {
+        guard !followPending.isEmpty else { return }
+        let visible = visibleRect
+        let shown = followPending.filter { id in
+            guard let item = items[id], let spec = item.arrow?.spec else { return false }
+            return [spec.from, spec.to].compactMap { arrowEnd($0, of: id)?.aim }.reduce(item.bounds) { $0.union($1) }.intersects(visible)
+        }
+        followPending.subtract(shown)
+        for arrowID in shown.sorted() { reroute(arrow: arrowID) }
     }
 
     /// Routes one arrow alone, following a change to what it is bound to (a drag, a scroll, an
@@ -351,6 +393,7 @@ final class ShapeLayer: NSView {
     /// place in the board's routing now. Others report the route they are drawn on, which
     /// follows their ends; the board's routing catches up when the burst of changes ends.
     func settleArrows() {
+        followNow()
         settleProvisional()
     }
 
@@ -487,6 +530,9 @@ final class ShapeLayer: NSView {
                     continue
                 }
                 guard let path = result.paths[id] else { continue }
+                // The board's routing placed it where its ends are now: a follow still marked
+                // for it would only replace that with a route of its own.
+                followPending.remove(id)
                 let label = result.labels[id].map { ConnectorRouter.Label(rect: $0.rect.offsetBy(dx: origin.x, dy: origin.y), leader: $0.leader?.map(Self.docPoint)) }
                 let routed = DrawnItem.arrow(item.object, spec, path: path.map(Self.docPoint), label: label)
                 guard routed.arrow?.path != item.arrow?.path || routed.labelRect != item.labelRect || routed.labelLeader != item.labelLeader else { continue }
@@ -501,6 +547,7 @@ final class ShapeLayer: NSView {
     }
 
     override func viewWillDraw() {
+        followInView()
         settleProvisional()
         super.viewWillDraw()
     }
@@ -679,7 +726,10 @@ final class ShapeLayer: NSView {
         return nil
     }
 
+    /// Where `id` is drawn: an arrow marked to follow (`reroute(boundTo:)`) follows first, so a
+    /// selection ring or a fit never takes the route it is about to leave.
     func outlineRect(_ id: ObjectID) -> NSRect? {
+        followNow(id)
         guard let item = items[id] else { return nil }
         if item.arrow != nil {
             let union = item.labelRect.map { item.frame.union($0) } ?? item.frame

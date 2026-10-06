@@ -1,6 +1,6 @@
 # Third-party notices
 
-Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`; libghostty-spm is vendored under `Vendor/libghostty-spm` with one patch (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`).
+Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`; libghostty-spm is vendored under `Vendor/libghostty-spm` with two patches (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`).
 
 | Package | Version | License | Copyright |
 | --- | --- | --- | --- |

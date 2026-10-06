@@ -2,6 +2,12 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Measuring HTML pages (`object.measure`, `size: "fit"`, `layout.check`) reuses a few web views instead of making one per page, and a write's overlap check looks only at the written object, so an agent's measure-and-write burst costs about 40% less CPU.
+- A visible terminal printing now and then no longer starts a new display-link thread for every line: each terminal view keeps its own display link, paused while idle.
+- An agent's big `object.batch` no longer holds the main thread for its arrows out of view or the cards of its new tiles: those run after the batch's own stretch, each on its own, so the board keeps drawing between them (the longest stretch of a 101-write batch on a 339-object board went from about 95 to 55 ms).
+
 ## 0.2.0
 
 - **remote boards (client mode).** A board another Mac's easl hosts opens in a window of its own, `<board> @ <host>`, over ssh: notes, questions and drawings are native and editable, terminals are the host's live sessions, code, changes, HTML, browser, image and diagram tiles are the host's rendering under a read-only badge (↻ redraws), and the composer prompts the host's agents. Your moves, edits, answers and deletes show at once and go to the host, whose version wins; a lost link shows a banner and keeps the board as last seen. Nothing about a remote board is saved on your Mac, and it has no undo yet. API: `view.render` `inline: true` returns the PNG in the reply (`data`, base64); `agent.prompt` `composer: true` (with `answer`) sends as the user's composer does.

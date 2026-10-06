@@ -26,14 +26,16 @@ enum HtmlRuleLists {
 /// (`LocalImage.pageFile`). Everything else is 404, including other tiles' pages.
 @MainActor
 final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
-    private weak var tile: HtmlTile?
+    /// The tile whose page this serves; a pooled measure page (`HtmlMeasurePool`) serves one
+    /// tile per measure, and none while it waits.
+    weak var tile: HtmlTile?
     private static let kitRoot = AppPaths.asset("kit")
     /// Kit files never change while the app runs; mapped reads keep repeat loads cheap.
     private static var kitCache: [String: Data] = [:]
     /// Image requests still being read; a task WebKit stopped meanwhile gets no reply.
     private var reading: Set<ObjectIdentifier> = []
 
-    init(tile: HtmlTile) {
+    init(tile: HtmlTile?) {
         self.tile = tile
     }
 
@@ -87,9 +89,10 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
 /// top-level canvas-kit document may post; bodies are validated by `HtmlMessage` before use.
 @MainActor
 final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
-    private weak var tile: HtmlTile?
+    /// As `HtmlSchemeHandler.tile`.
+    weak var tile: HtmlTile?
 
-    init(tile: HtmlTile) {
+    init(tile: HtmlTile?) {
         self.tile = tile
     }
 

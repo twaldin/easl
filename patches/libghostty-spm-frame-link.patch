@@ -1,0 +1,127 @@
+diff --git a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
+index 44652fb..2d4ae2d 100644
+--- a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
++++ b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
+@@ -66,6 +66,11 @@
+ 
+         func commonInit() {
+             wantsLayer = true
++            if #available(macOS 14, *) {
++                core.makeFrameLink = { [weak self] tick in
++                    self.map { ViewFrameLink(view: $0, tick: tick) }
++                }
++            }
+ 
+             let metal = CAMetalLayer()
+             metal.device = MTLCreateSystemDefaultDevice()
+@@ -163,4 +168,40 @@
+             NotificationCenter.default.removeObserver(self)
+         }
+     }
++
++    /// The terminal view's own display link (`NSView.displayLink`): it follows the view's screen,
++    /// fires on the main run loop, and is paused between bursts of output instead of recreated
++    /// (`TerminalFrameLink`).
++    @available(macOS 14, *)
++    @MainActor
++    final class ViewFrameLink: NSObject, TerminalFrameLink {
++        private var link: CADisplayLink?
++        private let tick: @MainActor () -> Void
++
++        init(view: NSView, tick: @escaping @MainActor () -> Void) {
++            self.tick = tick
++            super.init()
++            let link = view.displayLink(target: self, selector: #selector(step))
++            // As the shared link: 60 at least while output streams (30 reads as flicker).
++            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
++            link.isPaused = true
++            link.add(to: .main, forMode: .common)
++            self.link = link
++        }
++
++        var isPaused: Bool {
++            get { link?.isPaused ?? true }
++            set { link?.isPaused = newValue }
++        }
++
++        /// The link retains its target: invalidating it lets both go.
++        func invalidate() {
++            link?.invalidate()
++            link = nil
++        }
++
++        @objc private func step(_: CADisplayLink) {
++            tick()
++        }
++    }
+ #endif
+diff --git a/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift b/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
+index db17f0d..4e0d797 100644
+--- a/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
++++ b/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
+@@ -9,6 +9,16 @@ import Foundation
+ import GhosttyKit
+ import MSDisplayLink
+ 
++/// A frame clock of the platform view's own (AppKit: `NSView.displayLink`), paused while no
++/// frame is owed and resumed when one is, never recreated. MSDisplayLink's macOS driver creates a
++/// new `CVDisplayLink` (and its thread) every time the link restarts, so a terminal that prints
++/// every few hundred milliseconds started a display-link thread per line.
++@MainActor
++protocol TerminalFrameLink: AnyObject {
++    var isPaused: Bool { get set }
++    func invalidate()
++}
++
+ /// Shared terminal state and logic used by both UIKit and AppKit views.
+ ///
+ /// Platform views own a `TerminalSurfaceCoordinator` instance and set platform-specific
+@@ -103,6 +113,12 @@ final class TerminalSurfaceCoordinator {
+     /// streams read as flicker on a scrolling screen. ProMotion displays may
+     /// go to 120.
+     private var displayLink: DisplayLink?
++    /// The platform view's frame clock, when it offers one (`makeFrameLink`); used instead of
++    /// `displayLink` and paused rather than released.
++    private var frameLink: (any TerminalFrameLink)?
++    /// Makes the view's frame clock, calling `tick` each frame; nil (or a nil result) uses the
++    /// shared MSDisplayLink.
++    var makeFrameLink: ((_ tick: @escaping @MainActor () -> Void) -> (any TerminalFrameLink)?)?
+     private var idleFrameCount = 0
+     private static let displayLinkFrameRateRange = DisplayLinkFrameRateRange(
+         minimum: 60,
+@@ -527,6 +543,7 @@ final class TerminalSurfaceCoordinator {
+         // inline without crossing isolation.
+         MainActor.assumeIsolated {
+             tearDownSurface(removingBridgeFrom: controller)
++            frameLink?.invalidate()
+         }
+     }
+ 
+@@ -581,6 +598,15 @@ final class TerminalSurfaceCoordinator {
+             return
+         }
+         idleFrameCount = 0
++        if frameLink == nil, let makeFrameLink {
++            frameLink = makeFrameLink { [weak self] in self?.tick() }
++        }
++        if let frameLink {
++            guard frameLink.isPaused else { return }
++            frameLink.isPaused = false
++            TerminalDebugLog.log(.lifecycle, "frame link resumed")
++            return
++        }
+         guard displayLink == nil else { return }
+         let link = DisplayLink(preferredFrameRateRange: Self.displayLinkFrameRateRange)
+         link.delegatingObject(self)
+@@ -589,6 +615,11 @@ final class TerminalSurfaceCoordinator {
+     }
+ 
+     private func releaseDisplayLink() {
++        if let frameLink, !frameLink.isPaused {
++            frameLink.isPaused = true
++            idleFrameCount = 0
++            TerminalDebugLog.log(.lifecycle, "frame link paused")
++        }
+         guard displayLink != nil else { return }
+         displayLink = nil
+         idleFrameCount = 0
