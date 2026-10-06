@@ -39,14 +39,16 @@ final class BoardMirrorTests {
     }
 
     func mirror() async throws -> (BoardMirror, Board) {
+        // The whole suite keeps the main actor (the router's) busy for seconds at a time.
         let fast = EaslConnection.Backoff(initial: .milliseconds(50), maximum: .milliseconds(200))
-        let mirror = BoardMirror(hostName: "home", board: host.id, connection: .unixSocket(socket, backoff: fast), renders: .unixSocket(socket, backoff: fast))
+        func link() -> EaslConnection { .unixSocket(socket, backoff: fast, handshakeTimeout: .seconds(60)) }
+        let mirror = BoardMirror(hostName: "home", board: host.id, connection: link(), renders: link())
         mirrors.append(mirror)
         return (mirror, try await mirror.load())
     }
 
     func eventually(_ condition: () -> Bool) async throws {
-        for _ in 0..<150 where !condition() { try await Task.sleep(for: .milliseconds(20)) }
+        for _ in 0..<500 where !condition() { try await Task.sleep(for: .milliseconds(20)) }
         #expect(condition())
     }
 
