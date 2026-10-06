@@ -241,7 +241,7 @@ public final class ApiRouter {
         return Date().timeIntervalSince(prompted) < promptStartGrace
     }
 
-    static func restarting(_ tile: ObjectID) -> Failure {
+    static func restartingFailure(_ tile: ObjectID) -> Failure {
         Failure("conflict", "\(tile) is restarting (agent.restart): nothing reaches it until its agent is relaunched; send again once it reports")
     }
 
@@ -665,13 +665,13 @@ public final class ApiRouter {
     /// terminal's text was read (released, died, replaced: `Board.agentSession(of:)`) gets
     /// nothing, and the sender `unavailable`.
     private func queueMessage(_ text: String, to terminal: CanvasObject, on board: Board, mentions: [JSONValue], caller: ObjectID?, label: String?, when: AgentMessage.When) async throws -> JSONValue {
-        if restarting.contains(terminal.id) { throw Self.restarting(terminal.id) }
+        if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         let attached = try board.messageMentions(try mentions.map { try HandoffMention(json: $0).target(on: board) })
         let sender = caller.flatMap { caller in registry.boards.values.contains { $0.objects[caller]?.type == .terminal } ? caller : nil }
         let session = board.agentSession(of: terminal.id)
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
-        if restarting.contains(terminal.id) { throw Self.restarting(terminal.id) }
+        if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         if board.agentExited(terminal.id) { throw Self.agentExited(current) }
         guard PromptTarget.takesMessages(current), board.agentSession(of: terminal.id) == session else {
             throw Failure("unavailable", "\(terminal.id)'s agent session ended while the message was being sent (its agent was released, exited, "
@@ -824,7 +824,7 @@ public final class ApiRouter {
     }
 
     private func submitPrompt(_ text: String, to terminal: CanvasObject, on board: Board, attached: Attached, caller sender: ObjectID?, force: Bool) async throws -> JSONValue {
-        if restarting.contains(terminal.id) { throw Self.restarting(terminal.id) }
+        if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         let answering: Bool
         if case .composer(_, let answer) = attached { answering = answer } else { answering = false }
         if Self.state(of: terminal) == LifecycleState.blocked.rawValue, !force, !answering {
@@ -869,7 +869,7 @@ public final class ApiRouter {
         }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
-        if restarting.contains(terminal.id) { throw Self.restarting(terminal.id) }
+        if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         // Queued before the text goes in: the target's integration drains them with this prompt.
         var handed: [Mention] = []
         var queued: String?

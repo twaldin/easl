@@ -244,8 +244,9 @@ final class AgentControlTests {
             restarted.append((tile, argv))
         }
         #expect(try await call("agent.restart", ["target": "worker", "mode": "resume"])["ok"] == .bool(true))
-        #expect(during["message"]?["error"] == .object(["code": "conflict", "message": .string(restarting)]))
-        #expect(during["composer"]?["error"] == .object(["code": "conflict", "message": .string(restarting)]))
+        for refused in [during["message"], during["composer"]] {
+            #expect(refused?["error"]?["code"] == "conflict" && refused?["error"]?["message"] == .string(restarting), "\(String(describing: refused))")
+        }
         #expect(during["inbox"]?["result"]?["messages"] == .array([]), "\(String(describing: during["inbox"]))")
         #expect(during["restart"]?["error"]?["message"] == .string("\(worker) is already restarting (another agent.restart): wait for that one to finish"))
         #expect(restarted.count == 1)
