@@ -1,5 +1,5 @@
 {
-  "description": "Agent control: agent.report keeps draft and pid in props.agent (a report without them forgets them), agent.report_session keeps model and thinking (a report without them keeps the last), agent.list says open, focused, draft, model and thinking, and agent.restart's checks: target, mode, args, then its refusals in order (blocked, working, a draft), and resume without a recorded session. Never a restart that goes through: the app really relaunches the session.",
+  "description": "Agent control: agent.report keeps draft and pid in props.agent (a report without them forgets them), agent.report_session keeps model and thinking (a report without them keeps the last), agent.list says open, focused, draft, model and thinking, and agent.restart's checks: target, mode, args, then its refusals in order (blocked, working, a draft, a draft nothing reports), and resume without a recorded session. Never a restart that goes through: the app really relaunches the session.",
   "ignore": {
     "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
     "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
@@ -194,6 +194,14 @@
           "board": "{{board}}"
         }
       }
+    },
+    {
+      "call": "agent.restart",
+      "params": {
+        "target": "worker",
+        "mode": "resume"
+      },
+      "note": "idle, and nothing says whether its editor holds a draft: one the user may have"
     }
   ]
 }

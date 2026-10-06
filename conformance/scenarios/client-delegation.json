@@ -18,7 +18,7 @@
     },
     {
       "call": "agent.report",
-      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "seq": 1, "source": "main" }
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "seq": 1, "source": "main", "draft": false }
     },
     {
       "call": "client.attach",
