@@ -854,12 +854,13 @@ final class LineClient: @unchecked Sendable {
         String(decoding: try await nextLine(timeout: timeout), as: UTF8.self)
     }
 
-    /// The blocking read runs on a GCD thread, never on Swift's cooperative pool: suites run in
-    /// parallel, and a pool full of threads parked in poll() starves the server tasks that would
-    /// answer them.
+    /// The blocking read runs on a thread of its own, never on Swift's cooperative pool or GCD's
+    /// global queues: suites run in parallel, and a pool full of threads parked in poll() starves
+    /// the server tasks that would answer them, or starts this read after a peer's deadline (the
+    /// relay gate's 5 s handshake) has passed.
     private func nextLine(timeout: Double) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global().async {
+            Thread.detachNewThread {
                 continuation.resume(with: Result { try self.readLine(timeout: timeout) })
             }
         }
