@@ -205,7 +205,6 @@ public struct NeedsYouItem: Equatable, Sendable {
     /// around; the first without one. Visiting a marked object clears its marker, so `last` is
     /// often gone from `items`: the next is still the one after its place.
     public static func next(after last: NeedsYouItem?, in items: [NeedsYouItem]) -> NeedsYouItem? {
-        guard let last else { return items.first }
-        return items.first { precedes(last, $0) && $0.id != last.id } ?? items.first
+        last.flatMap { following($0, in: items) } ?? items.first
     }
 }

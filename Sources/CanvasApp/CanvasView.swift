@@ -1820,27 +1820,34 @@ final class CanvasView: NSScrollView {
     /// What Go to Next Needs-You visited last, as it was then.
     private var lastNeedsYou: NeedsYouItem?
 
-    /// Go to Next Needs-You (⌘J): the next blocked agent's terminal, then the next open question
-    /// (which takes the keyboard: number keys pick, Return answers), then the next marked object,
-    /// then the next done agent's terminal not seen yet, on this board (`NeedsYouItem`), framed
-    /// like Go to, selected (which acknowledges a marker), and given the keyboard (a terminal
-    /// focuses, which sees a done agent). Pressed again from there, the one after it, around;
-    /// from anywhere else, the first. When nothing needs the user, a notice says so.
-    func goToNextNeedsYou() {
-        goToNext(NeedsYouItem.all(board.objects, attention: board.attention), none: "Nothing needs you")
+    /// What Go to Next Needs-You visits on this board, in order (`NeedsYouItem`): the blocked
+    /// agents' terminals, then the open questions, then the marked objects, then the done agents'
+    /// terminals not seen yet.
+    var needsYouItems: [NeedsYouItem] {
+        NeedsYouItem.all(board.objects, attention: board.attention)
     }
 
-    /// The open-asks count's click: the same, through the open questions only.
-    func goToNextAsk() {
-        goToNext(NeedsYouItem.all(board.objects, attention: board.attention).filter { $0.reason == .question }, none: "No open asks")
-    }
-
-    private func goToNext(_ items: [NeedsYouItem], none: String) {
+    /// The item Go to Next Needs-You visited last, while the user is still on it (the keyboard or
+    /// the one selected tile): the next press moves to the one after it. Nil from anywhere else.
+    var needsYouCursor: NeedsYouItem? {
         let current = focusedTile ?? (selection.count == 1 ? selection.first : nil)
-        let last = lastNeedsYou.flatMap { $0.id == current ? $0 : nil }
-        guard let next = NeedsYouItem.next(after: last, in: items) else { return showNotice(none) }
-        lastNeedsYou = next
-        go(to: next.id)
+        return lastNeedsYou.flatMap { $0.id == current ? $0 : nil }
+    }
+
+    /// Goes to `item` as Go to Next Needs-You does: framed like Go to, selected (which
+    /// acknowledges a marker), and given the keyboard (a terminal focuses, which sees a done
+    /// agent; an open question takes it for its number keys and Return), and remembered as where
+    /// the next press goes on from.
+    func visit(_ item: NeedsYouItem) {
+        lastNeedsYou = item
+        go(to: item.id)
+    }
+
+    /// The open-asks count's click: the next open question on this board, from the one visited
+    /// last as Go to Next Needs-You goes on, around; a notice says when none is open.
+    func goToNextAsk() {
+        guard let next = NeedsYouItem.next(after: needsYouCursor, in: needsYouItems.filter { $0.reason == .question }) else { return showNotice("No open asks") }
+        visit(next)
     }
 
     /// "Zoom in" on the canvas: this tile at 100%, centered, selected, and focused if it types.
