@@ -218,6 +218,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for controller in controllers.values { controller.saveComposer() }
         server?.stop()
         cmuxServer?.stop()
+        // Normal quitting closes no sheet or connection, and a relay left to see its stdin close
+        // may outlive the app (an `nc` without `-N`): end every ssh before exiting, and wait.
+        OpenRemotePanel.shutdown()
+        RemoteProcesses.shared.terminateAll()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

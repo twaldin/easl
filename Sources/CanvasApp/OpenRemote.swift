@@ -19,11 +19,10 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
         controller.present(over: parent)
     }
 
-    private struct HostRow {
-        var name: String
-        var target: String
-        var detail: String
-        var online: Bool
+    /// The app is quitting: ends the picker's connection and whatever waits on it, now. Its ssh
+    /// processes are ended by `RemoteProcesses.terminateAll`.
+    static func shutdown() {
+        shown?.ended()
     }
 
     private let open: (RemoteHost, BoardID) -> Void
@@ -32,7 +31,7 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
     private let hostTable = NSTableView()
     private let hostField = NSTextField()
     private let hostStatus = OpenRemotePanel.note("")
-    private var hosts: [HostRow] = []
+    private var hosts: [RemoteHost.Candidate] = []
 
     private let boardTitle = NSTextField(labelWithString: "")
     private let boardTable = NSTableView()
@@ -133,7 +132,7 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     private func loadHosts() {
         let recents = RemoteHost.Recents.load(AppPaths.remoteHosts)
-        hosts = recents.map { HostRow(name: $0.name, target: $0.sshTarget, detail: "opened before", online: true) }
+        hosts = RemoteHost.candidates(peers: [], recents: recents)
         hostTable.reloadData()
         hostStatus.stringValue = "Asking Tailscale for the tailnet's Macs…"
         work.append(Task { [weak self] in
@@ -141,27 +140,18 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
                 let peers = try await Tailnet.peers()
                 self?.merge(peers, recents: recents)
             } catch {
+                guard !Task.isCancelled else { return }
                 self?.hostStatus.stringValue = Self.message(error)
             }
         })
     }
 
-    /// Online Macs first, then hosts opened before that aren't among them (offline when the
-    /// tailnet says so).
     private func merge(_ peers: [TailnetPeer], recents: [RemoteHost]) {
-        let used = Set(recents.map(\.sshTarget))
-        let macs = peers.filter { $0.isMac && $0.online }
-        var rows = macs.map { HostRow(name: $0.name, target: $0.name, detail: "Mac, online" + (used.contains($0.name) ? ", opened before" : ""), online: true) }
-        for recent in recents where !macs.contains(where: { $0.name == recent.sshTarget }) {
-            let peer = peers.first { $0.name == recent.sshTarget }
-            rows.append(HostRow(name: recent.name, target: recent.sshTarget, detail: peer.map { $0.online ? "\($0.os), online, opened before" : "offline" } ?? "opened before",
-                                online: peer?.online ?? true))
-        }
-        let selected = hostTable.selectedRow >= 0 && hostTable.selectedRow < hosts.count ? hosts[hostTable.selectedRow].target : nil
-        hosts = rows
+        let selected = hostTable.selectedRow >= 0 && hostTable.selectedRow < hosts.count ? hosts[hostTable.selectedRow].sshTarget : nil
+        hosts = RemoteHost.candidates(peers: peers, recents: recents)
         hostTable.reloadData()
-        if let selected, let index = hosts.firstIndex(where: { $0.target == selected }) { hostTable.selectRowIndexes([index], byExtendingSelection: false) }
-        hostStatus.stringValue = macs.isEmpty ? "No Mac on your tailnet is online. Type an ssh host to connect to one anyway." : ""
+        if let selected, let index = hosts.firstIndex(where: { $0.sshTarget == selected }) { hostTable.selectRowIndexes([index], byExtendingSelection: false) }
+        hostStatus.stringValue = peers.contains { $0.isMac && $0.online } ? "" : "No Mac on your tailnet is online. Type an ssh host to connect to one anyway."
     }
 
     @objc private func connect(_ sender: Any?) {
@@ -170,7 +160,7 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
             showBoards(name: typed.split(separator: "@").last.map(String.init) ?? typed, sshTarget: typed)
         } else if hostTable.selectedRow >= 0, hostTable.selectedRow < hosts.count {
             let row = hosts[hostTable.selectedRow]
-            showBoards(name: row.name, sshTarget: row.target)
+            showBoards(name: row.name, sshTarget: row.sshTarget)
         } else {
             hostStatus.stringValue = "Choose a host, or type one."
         }
@@ -252,16 +242,14 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
         switch connection.relayStatus {
         case 255?: idle("\(host.name) is offline: \(problem)", retry: true)
         case nil: idle("easl on \(host.name) doesn't answer: \(problem)", retry: true)
-        default: idle("easl isn't running on \(host.name).", retry: true, start: host.isMac)
+        default: idle("easl isn't running on \(host.name).", retry: true, start: host.startCommand != nil)
         }
     }
 
     private func loadBoards(_ connection: EaslConnection, on host: RemoteHost) async {
         busy("Reading \(host.name)'s boards…")
         do {
-            async let list = connection.request("board.list", timeout: .seconds(20))
-            async let agents = connection.request("agent.list", timeout: .seconds(20))
-            let rows = RemoteBoard.list(boards: try await list, agents: (try? await agents) ?? .null)
+            let rows = try await RemoteBoard.load(on: connection)
             guard self.connection === connection else { return }
             boards = rows
             boardTable.reloadData()
@@ -277,12 +265,17 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
     }
 
     @objc private func startEasl(_ sender: Any?) {
-        guard let host, let connection else { return }
+        guard let host, let connection, let command = host.startCommand else { return }
         busy("Starting easl on \(host.name)…")
         startButton.isHidden = true
         work.append(Task { [weak self] in
-            let command = host.startCommand
-            let result = await RemoteHost.run(command[0], Array(command.dropFirst()), timeout: 30)
+            let result: (status: Int32, output: String, errors: String)
+            do {
+                result = try await RemoteHost.run(command[0], Array(command.dropFirst()), timeout: 30)
+            } catch {
+                // Cancelled: the picker moved on, and the ssh was ended with it.
+                return
+            }
             guard !Task.isCancelled else { return }
             guard result.status == 0 else {
                 self?.idle("Couldn't start easl on \(host.name): \(RemoteHost.lastLine(result.errors) ?? "ssh exited with status \(result.status)")", retry: true, start: true)
@@ -298,7 +291,15 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
     }
 
     @objc private func retry(_ sender: Any?) {
-        if let connection { connection.reconnect() } else { discover() }
+        switch RemoteBoard.Retry(connection: connection?.state) {
+        case .discover:
+            discover()
+        case .reload:
+            guard let connection, let host else { return }
+            work.append(Task { [weak self] in await self?.loadBoards(connection, on: host) })
+        case .reconnect:
+            connection?.reconnect()
+        }
     }
 
     @objc private func back(_ sender: Any?) {
