@@ -38,7 +38,7 @@ BOARD_ID = "brd_" + "0" * 20
 # Each type's props (`ObjectType.knownProps`, schema `TerminalProps` ... `GroupProps`). Any other
 # key is an agent's own prop: its key and value are replaced.
 KNOWN_PROPS = {
-    "terminal": {"cwd", "command", "zmxSession", "title", "name", "agent", "lifecycle", "follow", "zoom", "worktree", "branch"},
+    "terminal": {"cwd", "command", "zmxSession", "host", "title", "name", "agent", "lifecycle", "follow", "zoom", "worktree", "branch"},
     "browser": {"url", "title", "pageTitle", "zoom"},
     "code": {"path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "ref", "refSha", "zoom"},
     "note": {"markdown", "title", "root", "ref", "refSha", "zoom"},

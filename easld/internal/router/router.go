@@ -21,6 +21,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/server"
+	"github.com/twaldin/easl/easld/internal/session"
 	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
@@ -58,6 +59,8 @@ type Router struct {
 	FirstReportGrace time.Duration
 	// PromptStartGrace: how long agent.wait gives a prompt to start the agent's turn.
 	PromptStartGrace time.Duration
+	// Sessions runs hosted terminals' zmx sessions (session.*); nil: none (`unavailable`).
+	Sessions *session.Manager
 }
 
 // New is a router over reg; it observes every board's events (agent.wait), and measures the
@@ -85,6 +88,9 @@ func (r *Router) Handle(req any, c *server.Conn) any {
 
 // HandleConn is Handle for any connection.
 func (r *Router) HandleConn(req any, c Conn) any {
+	if reply, ok := r.sessionCall(req); ok {
+		return reply
+	}
 	r.reg.Mu.Lock()
 	defer r.reg.Mu.Unlock()
 	return r.handle(req, c)

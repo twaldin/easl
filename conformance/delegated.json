@@ -5,5 +5,8 @@
   "agent.prompt": "types into the terminal through the client's live terminal surface (bracketed paste, Return after the paste lands); easld queues `mentions` itself. Forwarded until easld runs zmx sessions; replayed through a scripted client",
   "agent.read": "the live-terminal modes only (the screen's tail, `lines`, `since: \"prompt\"`, `block`): they read the terminal through the client's terminal tile (zmx scrollback joined by the live surface's soft-wrap flags; `block` from Ghostty prompt marks), and easld takes them over together with zmx sessions; until then they are forwarded and replayed through a scripted client. `final` (the answer an integration reported, Board.finalAnswers) is the server's: the agents scenario replays it",
   "object.reload": "reloads a browser tile's page in the client's WebKit view, or recomputes a diagram through language servers. Forwarded; replayed through a scripted client",
-  "text.measure": "AppKit text layout (SF Pro, SF Mono, Shantell Sans with kerning): exact only from a client, else easld's glyph-table approximation (`approximate: true`), so app-recorded measurements of notes and text shapes differ from easld's by a few points"
+  "text.measure": "AppKit text layout (SF Pro, SF Mono, Shantell Sans with kerning): exact only from a client, else easld's glyph-table approximation (`approximate: true`), so app-recorded measurements of notes and text shapes differ from easld's by a few points",
+  "session.spawn": "easld only, the reverse of the others: a hosted terminal's zmx session started as easld's child on the host (docs/contracts.md \"Hosted terminals\"); the Mac app answers `unsupported`, so there is nothing to record. easld's own tests (internal/session, internal/router) cover it",
+  "session.list": "easld only (session.spawn); the Mac app answers `unsupported`",
+  "session.kill": "easld only (session.spawn); the Mac app answers `unsupported`"
 }

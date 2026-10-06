@@ -14,6 +14,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/router"
 	"github.com/twaldin/easl/easld/internal/server"
+	"github.com/twaldin/easl/easld/internal/session"
 	"github.com/twaldin/easl/easld/internal/store"
 )
 
@@ -44,6 +45,7 @@ func run(args []string, stderr io.Writer) int {
 	home := flags.String("home", defaultHome(), "state directory; boards live in <home>/boards")
 	// Not $EASL_SOCKET: every terminal tile of the app exports it, pointing at the app's socket.
 	socket := flags.String("socket", "", "unix socket to serve (default <home>/easl.sock)")
+	zmx := flags.String("zmx", "", "zmx binary for hosted terminals' sessions (default: zmx on PATH, else ~/.local/bin/zmx)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -71,6 +73,7 @@ func run(args []string, stderr io.Writer) int {
 	// Integrations spool undelivered reports in `agent-reports/` beside the socket.
 	reg := board.NewRegistry(filepath.Join(*home, "boards"), store.DefaultDebounce, filepath.Join(filepath.Dir(path), "agent-reports"))
 	r := router.New(reg)
+	r.Sessions = session.New(session.Locate(*zmx))
 	srv, err := server.Listen(path, r.Handle, r.Answer)
 	if err != nil {
 		return fail(err)

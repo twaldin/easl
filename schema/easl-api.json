@@ -87,6 +87,7 @@
         "cwd": { "type": "string" },
         "command": { "type": "array", "items": { "type": "string" }, "description": "argv run inside the zmx session" },
         "zmxSession": { "type": "string" },
+        "host": { "type": "string", "description": "an ssh target (`deckbox`): the terminal's session runs on that machine under its easld (`session.spawn`), and the tile attaches to it over ssh with this app's socket forwarded back, so the agent's integration and the `easl` CLI there reach this board (docs/contracts.md \"Hosted terminals\"). `cwd` is a directory on that machine. Absent: this Mac" },
         "title": { "type": "string" },
         "name": { "type": "string", "description": "a name other agents address this terminal by (agent.prompt/wait/read `target`)" },
         "agent": {
@@ -1628,6 +1629,71 @@
           "scale": { "type": "number", "description": "image pixels per board point (backing scale × zoom); the board fills the image from its top-left: pixel (px, py) = board (viewport.rect.x + px / scale, viewport.rect.y + py / scale)" },
           "objects": { "type": "array", "items": { "$ref": "#/definitions/RenderedObject" }, "description": "objects at least partly visible, bottom to top (state is always rendered)" }
         }
+      }
+    },
+    "session.spawn": {
+      "description": "easld only (the Mac app answers `unsupported`): start terminal tile `tile`'s zmx session, `canvas-<tile>`, on the machine easld runs on, as easld's own child, so the session and everything it runs stay in easld's cgroup (a hosted terminal's session: docs/contracts.md \"Hosted terminals\"). `command` runs in the user's login shell, which stays when it exits (`$SHELL -l -c '<command>; exec $SHELL -l'`); without one the session is the login shell. A session that exists already is left as it is (`created: false`), unless its `canvas.home` label names another home than `labels` does (`conflict`, naming that home). Clients attach to it with `zmx attach canvas-<tile>`.",
+      "params": {
+        "type": "object",
+        "required": ["tile"],
+        "properties": {
+          "tile": { "$ref": "#/definitions/Id", "description": "the terminal tile: the session is `canvas-<tile>`" },
+          "command": { "type": "array", "items": { "type": "string" }, "description": "argv run in the login shell; absent or empty: just the login shell" },
+          "cwd": { "type": "string", "description": "an existing directory on easld's machine (default: the user's home)" },
+          "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "variables the session gets over easld's own environment (`EASL_SOCKET`, `EASL_TILE_ID`, `EASL_BOARD_ID`, …); `PATH` goes before easld's own" },
+          "labels": { "type": "object", "additionalProperties": { "type": "string" }, "description": "zmx labels the session is created with (`canvas.board`, `canvas.tile`, `canvas.home`); keys and values in [A-Za-z0-9._-]" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["session", "created"],
+        "properties": {
+          "session": { "type": "string", "description": "`canvas-<tile>`" },
+          "created": { "type": "boolean", "description": "false: the session was already running" }
+        }
+      }
+    },
+    "session.list": {
+      "description": "easld only (the Mac app answers `unsupported`): the terminal tiles' zmx sessions on easld's machine (`canvas-…`, whoever started them).",
+      "params": { "type": "object", "properties": {}, "additionalProperties": false },
+      "result": {
+        "type": "object",
+        "required": ["sessions"],
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["session", "tile", "labels"],
+              "properties": {
+                "session": { "type": "string" },
+                "tile": { "type": "string", "description": "the session name without `canvas-`" },
+                "pid": { "type": "integer", "description": "the session's process (zmx's), absent while it doesn't answer" },
+                "clients": { "type": "integer", "description": "attached clients" },
+                "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+                "unreachable": { "type": "boolean", "description": "zmx lists the session but it doesn't answer (its daemon stopped or wedged)" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "session.kill": {
+      "description": "easld only (the Mac app answers `unsupported`): end terminal tile `tile`'s zmx session on easld's machine and delete zmx's log of it. A session labelled for another home than `home` is left alone (`conflict`).",
+      "params": {
+        "type": "object",
+        "required": ["tile"],
+        "properties": {
+          "tile": { "$ref": "#/definitions/Id" },
+          "home": { "type": "string", "description": "the caller's `canvas.home` label: only a session without one or with this one is ended" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["killed"],
+        "properties": { "killed": { "type": "boolean", "description": "false: there was no such session" } }
       }
     },
     "events.subscribe": {

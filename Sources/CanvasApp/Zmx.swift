@@ -1,18 +1,25 @@
 import CanvasCore
 import Foundation
 
-/// zmx, which keeps terminal tiles' sessions (`AppPaths.zmx`). Every call blocks until zmx
-/// exits: call them off the main actor.
+/// zmx, which keeps terminal tiles' sessions (`AppPaths.zmx`), or a host's zmx over ssh for a
+/// hosted tile's (`HostRoute`, `HostedTerminal.zmx`). Every call blocks until zmx exits: call
+/// them off the main actor.
 enum Zmx {
-    /// Runs zmx with `arguments`, handing `consume` its output chunk by chunk while it writes
-    /// (it blocks once the pipe buffer fills, so waiting first would deadlock). False when zmx is
-    /// missing, doesn't start, or fails.
+    /// Runs zmx with `arguments`, here or on `host`, handing `consume` its output chunk by chunk
+    /// while it writes (it blocks once the pipe buffer fills, so waiting first would deadlock).
+    /// False when zmx is missing, doesn't start, or fails (on a host: or isn't reachable).
     @discardableResult
-    static func run(_ arguments: [String], _ consume: (Data) -> Void) -> Bool {
-        guard let zmx = AppPaths.zmx else { return false }
+    static func run(_ arguments: [String], on host: HostRoute? = nil, _ consume: (Data) -> Void) -> Bool {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: zmx)
-        process.arguments = arguments
+        if let host {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            process.arguments = host.ssh(HostedTerminal.zmx(arguments))
+            process.standardInput = FileHandle.nullDevice
+        } else {
+            guard let zmx = AppPaths.zmx else { return false }
+            process.executableURL = URL(fileURLWithPath: zmx)
+            process.arguments = arguments
+        }
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice

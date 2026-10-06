@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "65888bbbea318252"
+const SchemaHash = "5d1e3c4b7788f265"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -190,6 +190,18 @@ var Methods = map[string]ParamSpec{
 		Accepted: []string{"board", "out", "format"},
 		Required: nil,
 	},
+	"session.spawn": {
+		Accepted: []string{"tile", "command", "cwd", "env", "labels"},
+		Required: []string{"tile"},
+	},
+	"session.list": {
+		Accepted: nil,
+		Required: nil,
+	},
+	"session.kill": {
+		Accepted: []string{"tile", "home"},
+		Required: []string{"tile"},
+	},
 	"events.subscribe": {
 		Accepted: []string{"board", "events"},
 		Required: nil,
@@ -274,7 +286,9 @@ type TerminalProps struct {
 	// argv run inside the zmx session
 	Command    []string `json:"command"`
 	ZmxSession *string  `json:"zmxSession,omitempty"`
-	Title      *string  `json:"title,omitempty"`
+	// an ssh target (`deckbox`): the terminal's session runs on that machine under its easld (`session.spawn`), and the tile attaches to it over ssh with this app's socket forwarded back, so the agent's integration and the `easl` CLI there reach this board (docs/contracts.md "Hosted terminals"). `cwd` is a directory on that machine. Absent: this Mac
+	Host  *string `json:"host,omitempty"`
+	Title *string `json:"title,omitempty"`
 	// a name other agents address this terminal by (agent.prompt/wait/read `target`)
 	Name *string `json:"name,omitempty"`
 	// the agent reporting in this tile. When the tile's session is gone (a reboot) it resumes `sessionId` (`omp --resume`, `claude --resume`, `codex resume`). Removed when the agent exits (agent.release)
