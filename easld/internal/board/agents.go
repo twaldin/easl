@@ -59,6 +59,9 @@ type Report struct {
 	Final             *string
 	Serial            bool
 	Error             *string
+	// Protocol is the integration's protocol version (props.agent.protocol; 1 takes out-of-band
+	// messages, TakesMessages); nil or 0 says none.
+	Protocol *int
 }
 
 // ReportLifecycle applies an agent's lifecycle report (Board.reportLifecycle): the staleness rule
@@ -140,7 +143,11 @@ func (b *Board) ReportLifecycle(r Report) error {
 	if state == "unknown" {
 		lifecycle["via"] = NotifyingVia
 	}
-	agent, _ := model.Merge(orEmpty(terminal.Props["agent"]), map[string]any{"kind": r.Kind}).(map[string]any)
+	var version any
+	if r.Protocol != nil && *r.Protocol > 0 {
+		version = float64(*r.Protocol)
+	}
+	agent, _ := model.Merge(orEmpty(terminal.Props["agent"]), map[string]any{"kind": r.Kind, "protocol": version}).(map[string]any)
 	if _, err := b.Update(r.Tile, nil, nil, nil, map[string]any{"lifecycle": lifecycle, "agent": agent}, r.Tile, ""); err != nil {
 		return err
 	}
@@ -198,6 +205,9 @@ func (b *Board) ReportParams(p map[string]any) error {
 	r.Final = optString(p["final"])
 	r.Serial, _ = p["serial"].(bool)
 	r.Error = optString(p["error"])
+	if n, ok := TruncInt(p["protocol"]); ok {
+		r.Protocol = &n
+	}
 	return b.ReportLifecycle(r)
 }
 
@@ -241,7 +251,8 @@ func (b *Board) ReportSession(tile, kind string, sessionID, sessionPath *string)
 	return err
 }
 
-// ReleaseAgent: the agent exited; the tile is a plain shell again.
+// ReleaseAgent: the agent exited; the tile is a plain shell again, and the messages its
+// integration never took are dropped.
 func (b *Board) ReleaseAgent(tile string) error {
 	if _, err := b.Object(tile); err != nil {
 		return err
@@ -250,6 +261,7 @@ func (b *Board) ReleaseAgent(tile string) error {
 	if _, err := b.Update(tile, nil, nil, nil, map[string]any{"lifecycle": nil, "agent": nil}, tile, ""); err != nil {
 		return err
 	}
+	delete(b.messages, tile)
 	b.emit(EventAgentLifecycle, map[string]any{"tile": tile, "lifecycle": nil})
 	return nil
 }

@@ -33,6 +33,8 @@ type Snapshot struct {
 	TurnErrors   map[string]string
 	LifecycleSeq map[string]int
 	Repo         *RepoRecord
+	// Aliases are renamed terminals' old names, alias → tile id (Board.aliases); nil when absent.
+	Aliases map[string]string
 	// Unknown holds the file's top-level keys easld doesn't know (written by a newer app), so a
 	// board easld rewrites keeps them.
 	Unknown map[string]any
@@ -41,7 +43,7 @@ type Snapshot struct {
 // snapshotKeys are the top-level keys of BoardSnapshot.
 var snapshotKeys = map[string]bool{
 	"format": true, "id": true, "root": true, "revision": true, "objects": true, "tray": true, "attention": true,
-	"promptTarget": true, "finalAnswers": true, "turnErrors": true, "lifecycleSeq": true, "repo": true,
+	"promptTarget": true, "finalAnswers": true, "turnErrors": true, "lifecycleSeq": true, "repo": true, "aliases": true,
 }
 
 // Attention is an agent's "look here" marker on one object (Attention.swift).
@@ -172,6 +174,9 @@ func (s *Snapshot) JSON() map[string]any {
 	}
 	if s.Repo != nil {
 		m["repo"] = s.Repo.json()
+	}
+	if s.Aliases != nil {
+		m["aliases"] = stringMap(s.Aliases)
 	}
 	return m
 }
@@ -321,6 +326,9 @@ func DecodeSnapshot(data []byte) (*Snapshot, error) {
 			return nil, err
 		}
 		s.Repo = r
+	}
+	if s.Aliases, err = decodeStringMap(m, "aliases"); err != nil {
+		return nil, err
 	}
 	return s, nil
 }

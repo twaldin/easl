@@ -89,6 +89,12 @@ type Board struct {
 	handoffs        map[string][]Handoff
 	finalAnswers    map[string]string
 	turnErrors      map[string]string
+	// aliases are names terminals had before a rename, each still addressing its terminal
+	// (AgentAddress) until another terminal on this board takes it; saved with the board.
+	aliases map[string]string
+	// messages are the out-of-band messages queued for each terminal, oldest first, until its
+	// integration acks them (messages.go); in memory only.
+	messages map[string][]Message
 
 	changedAt        map[string]int
 	keyHolders       map[string]map[string]bool
@@ -141,6 +147,7 @@ func New(id, root string) *Board {
 		objects: map[string]model.Object{}, attention: map[string]store.Attention{}, handoffs: map[string][]Handoff{},
 		finalAnswers: map[string]string{}, turnErrors: map[string]string{}, changedAt: map[string]int{},
 		keyHolders: map[string]map[string]bool{}, seenSinceWorking: map[string]bool{}, lifecycleSeq: map[string]int{},
+		aliases: map[string]string{}, messages: map[string][]Message{},
 		pendingApprovals: map[string][]approval{}, revHighWater: map[string]int{}, history: newHistory(),
 		Activity: NewActivityLog(DefaultActivityCapacity, nil), replayActor: UserActor, cascades: map[string]cascade{}, cascadeRev: -1,
 		workingDirectories: map[string]string{}, promptTarget: store.PromptTargetState{FocusOrder: []string{}},
@@ -234,6 +241,11 @@ func FromSnapshot(s *store.Snapshot) *Board {
 			b.lifecycleSeq[k] = v
 		}
 	}
+	for alias, tile := range s.Aliases {
+		if o, ok := b.objects[tile]; ok && o.Type == model.Terminal {
+			b.aliases[alias] = tile
+		}
+	}
 	if s.Repo != nil {
 		r := *s.Repo
 		r.Worktrees = append([]store.WorktreeRecord{}, s.Repo.Worktrees...)
@@ -307,6 +319,9 @@ func (b *Board) Snapshot() *store.Snapshot {
 	}
 	if len(b.lifecycleSeq) > 0 {
 		s.LifecycleSeq = copyMap(b.lifecycleSeq)
+	}
+	if len(b.aliases) > 0 {
+		s.Aliases = copyMap(b.aliases)
 	}
 	if b.Repo != nil {
 		r := *b.Repo
@@ -620,6 +635,7 @@ func (b *Board) Delete(id, caller string) error {
 	delete(b.objects, id)
 	delete(b.changedAt, id)
 	b.reindexKey(id, removed.Props, nil)
+	b.forgetAliases(id)
 	b.bumpRevision()
 	b.countWrite(caller, "")
 	var unstaged []placedMention
@@ -751,6 +767,7 @@ func (b *Board) commit(o model.Object) {
 		old = prev.Props
 	}
 	b.reindexKey(o.ID, old, o.Props)
+	b.renamed(o.ID, old, o.Props, o.Type)
 	b.objects[o.ID] = o
 	b.changedAt[o.ID] = b.revision
 	if o.Rev > b.revHighWater[o.ID] {

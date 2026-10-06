@@ -10,7 +10,9 @@ import (
 	"github.com/twaldin/easl/easld/internal/api"
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/clients"
+	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/store"
 )
 
 type waiter struct {
@@ -54,34 +56,125 @@ func stateOf(terminal model.Object) string {
 	return "unknown"
 }
 
-// agentTile is a terminal tile by id, or by its user-given name, across all open boards.
-func (r *Router) agentTile(target string) (*board.Board, model.Object, error) {
-	for _, b := range r.reg.SortedBoards() {
+// agentTile is the terminal target addresses (AgentAddress.resolve: a tile id, `name` or
+// `name@board`) on the open boards; a bare name on caller's board first, when caller is a
+// terminal on one ("" for none). Fails not_found and ambiguous.
+func (r *Router) agentTile(target, caller string) (*board.Board, model.Object, error) {
+	boards := r.reg.SortedBoards()
+	for _, b := range boards {
 		if o, ok := b.Objects()[target]; ok && o.Type == model.Terminal {
 			return b, o, nil
 		}
 	}
-	for _, b := range r.reg.SortedBoards() {
-		ids := make([]string, 0)
-		for id := range b.Objects() {
-			ids = append(ids, id)
+	if at := strings.LastIndex(target, "@"); at >= 0 {
+		name, part := target[:at], target[at+1:]
+		// Only a board whose root folder still exists is found by name; any by its id.
+		var live, named []*board.Board
+		for _, b := range boards {
+			exists := store.IsDirectory(b.Root())
+			if exists {
+				live = append(live, b)
+			}
+			if b.ID() == part || (exists && board.BoardName(b.Root()) == part) {
+				named = append(named, b)
+			}
 		}
-		sort.Strings(ids)
-		for _, id := range ids {
-			o := b.Objects()[id]
-			if o.Type == model.Terminal && o.Props["name"] == target {
-				return b, o, nil
+		if len(named) == 0 {
+			open := make([]string, len(live))
+			for i, b := range live {
+				open[i] = board.BoardName(b.Root())
+			}
+			sort.Strings(open)
+			list := strings.Join(open, ", ")
+			if list == "" {
+				list = "none"
+			}
+			return nil, model.Object{}, fail(api.CodeNotFound, "no open board named %s (open boards: %s)", part, list)
+		}
+		if len(named) > 1 {
+			listed := make([]string, len(named))
+			for i, b := range named {
+				listed[i] = board.BoardName(b.Root()) + " (" + b.ID() + ", " + b.Root() + ")"
+			}
+			return nil, model.Object{}, fail(api.CodeAmbiguous, "%s names %d open boards: %s; address the board by its id, %s@%s", part, len(named), strings.Join(listed, ", "), name, named[0].ID())
+		}
+		b, o, err := lookUpAgent(name, target, named)
+		if err != nil || b != nil {
+			return b, o, err
+		}
+		return nil, model.Object{}, fail(api.CodeNotFound, "no terminal tile named %s on board %s", name, part)
+	}
+	if caller != "" {
+		for _, own := range boards {
+			if o, ok := own.Objects()[caller]; ok && o.Type == model.Terminal {
+				if b, o, err := lookUpAgent(target, target, []*board.Board{own}); err != nil || b != nil {
+					return b, o, err
+				}
+				break
 			}
 		}
 	}
+	if b, o, err := lookUpAgent(target, target, boards); err != nil || b != nil {
+		return b, o, err
+	}
 	return nil, model.Object{}, fail(api.CodeNotFound, "no terminal tile named or with id %s", target)
+}
+
+// lookUpAgent is the terminal named name on boards: current names first, then aliases; nil
+// board for none, ambiguous for more than one.
+func lookUpAgent(name, target string, boards []*board.Board) (*board.Board, model.Object, error) {
+	type match struct {
+		board    *board.Board
+		terminal model.Object
+	}
+	var named []match
+	for _, b := range boards {
+		for _, o := range sortedTerminals(b) {
+			if n, ok := board.AgentName(o); ok && n == name {
+				named = append(named, match{b, o})
+			}
+		}
+	}
+	if len(named) == 0 {
+		for _, b := range boards {
+			if id, ok := b.Alias(name); ok {
+				if o, ok := b.Objects()[id]; ok && o.Type == model.Terminal {
+					named = append(named, match{b, o})
+				}
+			}
+		}
+	}
+	switch len(named) {
+	case 0:
+		return nil, model.Object{}, nil
+	case 1:
+		return named[0].board, named[0].terminal, nil
+	}
+	listed := make([]string, len(named))
+	for i, m := range named {
+		listed[i] = board.Address(m.terminal, m.board) + " (" + m.terminal.ID + ")"
+	}
+	sort.Strings(listed)
+	return nil, model.Object{}, fail(api.CodeAmbiguous, "%s matches %d terminals: %s; address one as name@board, or by its tile id", target, len(named), strings.Join(listed, ", "))
+}
+
+// sortedTerminals are b's terminal tiles by id.
+func sortedTerminals(b *board.Board) []model.Object {
+	var out []model.Object
+	for _, o := range b.Objects() {
+		if o.Type == model.Terminal {
+			out = append(out, o)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 // agentEntry is a terminal as agent.list reports it; title, program and last command come from
 // the app's terminal surface, which easld doesn't have.
 func agentEntry(terminal model.Object, b *board.Board) map[string]any {
 	agent := asMap(terminal.Props["agent"])
-	entry := map[string]any{"tile": terminal.ID, "board": b.ID(), "root": b.Root(), "kind": "unknown"}
+	entry := map[string]any{"tile": terminal.ID, "board": b.ID(), "root": b.Root(), "address": board.Address(terminal, b), "kind": "unknown"}
 	if agent != nil {
 		if k, present := agent["kind"]; present {
 			entry["kind"] = k
@@ -89,9 +182,19 @@ func agentEntry(terminal model.Object, b *board.Board) map[string]any {
 		if s, present := agent["sessionId"]; present {
 			entry["sessionId"] = s
 		}
+		if v, present := agent["protocol"]; present {
+			entry["protocol"] = v
+		}
 	}
 	if name, present := terminal.Props["name"]; present {
 		entry["name"] = name
+	}
+	if aliases := b.Aliases(terminal.ID); len(aliases) > 0 {
+		list := make([]any, len(aliases))
+		for i, a := range aliases {
+			list[i] = a
+		}
+		entry["aliases"] = list
 	}
 	if lc, present := terminal.Props["lifecycle"]; present {
 		entry["lifecycle"] = lc
@@ -143,7 +246,8 @@ func (r *Router) wait(id any, p map[string]any, c Conn) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, terminal, err := r.agentTile(target)
+	caller, _ := optStr(p, "caller")
+	b, terminal, err := r.agentTile(target, caller)
 	if err != nil {
 		return nil, err
 	}
@@ -199,6 +303,10 @@ func (r *Router) reply(w *waiter, b *board.Board, exited bool) map[string]any {
 			return nil
 		}
 		return errorReply(w.id, lifecycleUnknown(terminal))
+	}
+	// A message the terminal's integration hasn't delivered yet: its turn hasn't started.
+	if len(b.Messages(w.tile)) > 0 {
+		return nil
 	}
 	if prompted, ok := r.pendingPrompts[w.tile]; ok {
 		if time.Since(prompted) < r.PromptStartGrace {
@@ -271,7 +379,7 @@ func (r *Router) recheck(w *waiter) {
 	if w.done {
 		return
 	}
-	b, _, err := r.agentTile(w.tile)
+	b, _, err := r.agentTile(w.tile, "")
 	if err != nil {
 		return
 	}
@@ -310,7 +418,8 @@ func (r *Router) read(p map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, terminal, err := r.agentTile(target)
+	caller, _ := optStr(p, "caller")
+	b, terminal, err := r.agentTile(target, caller)
 	if err != nil {
 		return nil, err
 	}
@@ -360,6 +469,7 @@ func (r *Router) finalAnswer(terminal model.Object, b *board.Board, p map[string
 	}
 	state := stateOf(terminal)
 	_, prompted := r.pendingPrompts[terminal.ID]
+	prompted = prompted || len(b.Messages(terminal.ID)) > 0
 	if prompted || state == "working" || state == "blocked" {
 		why := state
 		if prompted {
@@ -389,8 +499,9 @@ func (r *Router) finalAnswer(terminal model.Object, b *board.Board, p map[string
 	return result, nil
 }
 
-// prompt is agent.prompt: its refusals and the mentions it hands over are the board's; a client
-// types it into the terminal.
+// prompt is agent.prompt: to a terminal whose integration takes messages it queues one
+// (queueMessage); into any other a client types it, after the board's refusals, with the
+// mentions the board hands over.
 func (r *Router) prompt(p map[string]any) (any, error) {
 	if err := checkComposer(p); err != nil {
 		return nil, err
@@ -399,12 +510,37 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, terminal, err := r.agentTile(target)
+	caller, _ := optStr(p, "caller")
+	b, terminal, err := r.agentTile(target, caller)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := str(p, "text"); err != nil {
+	text, err := str(p, "text")
+	if err != nil {
 		return nil, err
+	}
+	mentions, _ := p["mentions"].([]any)
+	when := "now"
+	if value, present := p["when"]; present && value != nil {
+		s, _ := value.(string)
+		if s != "now" && s != "next-turn" {
+			return nil, invalid("when is \"now\" (the default) or \"next-turn\"")
+		}
+		when = s
+	}
+	label := ""
+	if value, present := p["from"]; present && value != nil {
+		s, ok := value.(string)
+		if !ok || measure.TrimWS(s) == "" {
+			return nil, invalid("from is a sender label such as \"machine-watch\"")
+		}
+		label = s
+	}
+	if board.TakesMessages(terminal) {
+		return r.queueMessage(text, terminal, b, mentions, caller, label, when)
+	}
+	if when == "next-turn" && stateOf(terminal) == "working" {
+		return nil, fail(api.CodeConflict, "%s is in its turn and its integration takes no messages, so typed text would join that turn; agent.wait for it and send again, or send with when: \"now\"", terminal.ID)
 	}
 	force := boolParam(p, "force")
 	// The user's answer from a composer (a remote board's viewer) passes the blocked check alone.
@@ -442,14 +578,13 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 		return nil, fail(api.CodeUnavailable, "%s runs no agent with an easl integration, so nothing there would take the mentions; name the objects in the text instead", terminal.ID)
 	}
 	// Queued before the text goes in: the target's integration drains them with this prompt.
-	sender, _ := optStr(p, "caller")
 	name, named := "", false
-	if sender != "" {
-		if _, tile, err := r.agentTile(sender); err == nil {
-			name, named = senderName(tile), true
+	if caller != "" {
+		if _, tile, err := r.agentTile(caller, ""); err == nil {
+			name, named = board.PromptLabel(tile), true
 		}
 	}
-	handed, err := b.HandOff(targets, terminal.ID, sender, name, named, "")
+	handed, err := b.HandOff(targets, terminal.ID, caller, name, named, "")
 	if err != nil {
 		return nil, err
 	}

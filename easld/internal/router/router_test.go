@@ -16,8 +16,10 @@ import (
 )
 
 type conn struct {
-	mu   sync.Mutex
-	sent []map[string]any
+	mu     sync.Mutex
+	sent   []map[string]any
+	closed bool
+	done   chan struct{}
 }
 
 func (c *conn) Send(v any) bool {
@@ -27,10 +29,33 @@ func (c *conn) Send(v any) bool {
 	return true
 }
 
-func (c *conn) IsOpen() bool { return true }
+func (c *conn) IsOpen() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.closed
+}
 
-// Done never closes: the test connections stay open.
-func (c *conn) Done() <-chan struct{} { return nil }
+func (c *conn) Done() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done == nil {
+		c.done = make(chan struct{})
+	}
+	return c.done
+}
+
+// close is the client hanging up.
+func (c *conn) close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done == nil {
+		c.done = make(chan struct{})
+	}
+	if !c.closed {
+		c.closed = true
+		close(c.done)
+	}
+}
 
 func (c *conn) messages() []map[string]any {
 	c.mu.Lock()
@@ -101,8 +126,13 @@ func TestBoardFileEasldCantReadIsNeverOverwritten(t *testing.T) {
 }
 
 func (f *fixture) call(method string, params map[string]any) map[string]any {
+	return f.on(f.conn, method, params)
+}
+
+// on calls method over c; nil when the reply is deferred.
+func (f *fixture) on(c *conn, method string, params map[string]any) map[string]any {
 	f.seq++
-	reply := f.router.HandleConn(map[string]any{"id": fmt.Sprintf("r%d", f.seq), "method": method, "params": params}, f.conn)
+	reply := f.router.HandleConn(map[string]any{"id": fmt.Sprintf("r%d", f.seq), "method": method, "params": params}, c)
 	if reply == nil {
 		return nil
 	}
@@ -400,5 +430,264 @@ func TestOpeningAUrlShowsItBesideTheCallerAndReusesTheTile(t *testing.T) {
 	}
 	if browsers() != 1 {
 		t.Errorf("%d browser tiles after refusals, want 1", browsers())
+	}
+}
+
+// namedTerminal creates a terminal tile named name ("" for none) on board ("" for the
+// fixture's).
+func (f *fixture) namedTerminal(name, board string) string {
+	f.t.Helper()
+	props := map[string]any{}
+	if name != "" {
+		props["name"] = name
+	}
+	params := map[string]any{"type": "terminal", "props": props, "frame": map[string]any{"x": 0.0, "y": 0.0, "w": 600.0, "h": 400.0}}
+	if board != "" {
+		params["board"] = board
+	}
+	return idOf(f.result("object.create", params))
+}
+
+// messagesOf is what an agent.inbox reply hands out.
+func messagesOf(t *testing.T, reply map[string]any) []map[string]any {
+	t.Helper()
+	if reply["ok"] != true {
+		t.Fatalf("agent.inbox: %v", reply["error"])
+	}
+	var out []map[string]any
+	for _, m := range reply["result"].(map[string]any)["messages"].([]any) {
+		out = append(out, m.(map[string]any))
+	}
+	return out
+}
+
+// addressed is the agent entry of the terminal target names (as caller, "" for none), or the
+// failure as "code: message".
+func (f *fixture) addressed(target, caller string) (map[string]any, string) {
+	params := map[string]any{"target": target, "until": []any{"blocked", "done", "idle", "unknown", "working"}}
+	if caller != "" {
+		params["caller"] = caller
+	}
+	c := &conn{}
+	if reply := f.on(c, "agent.wait", params); reply != nil {
+		code, message := errorOf(reply)
+		return nil, code + ": " + message
+	}
+	return c.messages()[0]["result"].(map[string]any)["agent"].(map[string]any), ""
+}
+
+// A prompt to a terminal whose integration takes messages is queued, not typed: agent.inbox
+// hands it out with its sender and mentions resolved, the connection that took it holds it
+// until it acks it or hangs up, and agent.wait and agent.read final see the turn it starts.
+func TestAMessageWaitsOutOfBandUntilItsIntegrationAcksIt(t *testing.T) {
+	f := newFixture(t)
+	reviewer := f.namedTerminal("reviewer", "")
+	lead := f.namedTerminal("lead", "")
+	attached := idOf(f.result("object.create", note(2000, map[string]any{"markdown": "The cache key must include the locale."})))
+	f.result("agent.report", map[string]any{"tile": reviewer, "kind": "omp", "state": "idle", "protocol": 1.0})
+	sent := f.result("agent.prompt", map[string]any{"target": "reviewer", "text": "Check the key.", "caller": lead, "mentions": []any{map[string]any{"object": attached}}})
+	id, _ := sent["message"].(string)
+	if sent["delivery"] != "message" || sent["waitable"] != true || !strings.HasPrefix(id, "msg_") || len(sent["mentions"].([]any)) != 1 {
+		t.Fatalf("%v", sent)
+	}
+	waiter := &conn{}
+	if reply := f.on(waiter, "agent.wait", map[string]any{"target": "reviewer", "caller": lead}); reply != nil {
+		t.Fatalf("agent.wait answered while the message was queued: %v", reply)
+	}
+	if _, message := errorOf(f.call("agent.read", map[string]any{"target": reviewer, "final": true})); message != reviewer+" is still in its turn (prompted): agent.wait for it, then read final" {
+		t.Fatal(message)
+	}
+
+	integration, other := &conn{}, &conn{}
+	got := messagesOf(t, f.on(integration, "agent.inbox", map[string]any{"tile": reviewer}))
+	if len(got) != 1 || got[0]["id"] != id || got[0]["text"] != "Check the key." || got[0]["attribution"] != "agent" || got[0]["when"] != "now" {
+		t.Fatalf("%v", got)
+	}
+	if from := got[0]["from"]; !reflect.DeepEqual(from, map[string]any{"tile": lead, "name": "lead", "address": "lead@root", "board": f.board.ID()}) {
+		t.Errorf("from %v", from)
+	}
+	context, _ := got[0]["context"].(string)
+	if !strings.Contains(context, "Attached by terminal "+lead+` "lead" to its prompt to you (agent.prompt):`) || !strings.Contains(context, "The cache key must include the locale.") {
+		t.Errorf("context:\n%s", context)
+	}
+	if got := messagesOf(t, f.on(other, "agent.inbox", map[string]any{"tile": reviewer})); len(got) != 0 {
+		t.Fatalf("offered while another connection holds it: %v", got)
+	}
+	integration.close()
+	if got := messagesOf(t, f.on(other, "agent.inbox", map[string]any{"tile": reviewer})); len(got) != 1 || got[0]["id"] != id {
+		t.Fatalf("not offered again once its holder closed: %v", got)
+	}
+
+	if got := messagesOf(t, f.on(other, "agent.inbox", map[string]any{"tile": reviewer, "ack": []any{id}, "started": true})); len(got) != 0 {
+		t.Fatalf("acked, still offered: %v", got)
+	}
+	if len(waiter.messages()) != 0 {
+		t.Fatalf("agent.wait answered before the turn the message started: %v", waiter.messages())
+	}
+	f.result("agent.report", map[string]any{"tile": reviewer, "kind": "omp", "state": "working", "protocol": 1.0})
+	f.result("agent.report", map[string]any{"tile": reviewer, "kind": "omp", "state": "idle", "protocol": 1.0, "final": "Done."})
+	answered := waiter.messages()
+	if len(answered) != 1 || answered[0]["ok"] != true {
+		t.Fatalf("%v", answered)
+	}
+	if state := answered[0]["result"].(map[string]any)["agent"].(map[string]any)["lifecycle"].(map[string]any)["state"]; state != "done" {
+		t.Fatalf("state %v", state)
+	}
+	if text := f.result("agent.read", map[string]any{"target": reviewer, "final": true})["text"]; text != "Done." {
+		t.Fatal(text)
+	}
+
+	f.result("agent.prompt", map[string]any{"target": reviewer, "text": "Still there?", "caller": lead})
+	f.result("agent.release", map[string]any{"tile": reviewer, "kind": "omp"})
+	if got := messagesOf(t, f.on(other, "agent.inbox", map[string]any{"tile": reviewer})); len(got) != 0 {
+		t.Fatalf("a released agent's messages stayed: %v", got)
+	}
+}
+
+// A message whose delivery started a turn holds agent.wait for that turn as a typed prompt
+// does, and fails it when no turn starts within the grace.
+func TestAStartedDeliveryThatStartsNoTurnFailsTheWait(t *testing.T) {
+	f := newFixture(t)
+	f.router.PromptStartGrace = 50 * time.Millisecond
+	reviewer := f.namedTerminal("reviewer", "")
+	f.result("agent.report", map[string]any{"tile": reviewer, "kind": "omp", "state": "idle", "protocol": 1.0})
+	id := f.result("agent.prompt", map[string]any{"target": reviewer, "text": "/compact"})["message"]
+	waiter := &conn{}
+	f.on(waiter, "agent.wait", map[string]any{"target": reviewer})
+	f.call("agent.inbox", map[string]any{"tile": reviewer})
+	f.call("agent.inbox", map[string]any{"tile": reviewer, "ack": []any{id}, "started": true})
+	time.Sleep(300 * time.Millisecond)
+	answered := waiter.messages()
+	if len(answered) != 1 {
+		t.Fatalf("%v", answered)
+	}
+	if code, message := errorOf(answered[0]); code != "unavailable" || !strings.HasPrefix(message, reviewer+"'s last agent.prompt started no turn within 0.05 s") {
+		t.Fatalf("%s %s", code, message)
+	}
+}
+
+// A script's message (`from`, or no caller) is the user's, named by its label; a long poll is
+// answered by the next message queued; a terminal without a message integration is typed into
+// by a client (none is attached here).
+func TestAScriptsMessageIsTheUsersAndALongPollTakesIt(t *testing.T) {
+	f := newFixture(t)
+	reviewer := f.namedTerminal("reviewer", "")
+	lead := f.namedTerminal("lead", "")
+	f.result("agent.report", map[string]any{"tile": reviewer, "kind": "omp", "state": "idle", "protocol": 1.0})
+	poll := &conn{}
+	if reply := f.on(poll, "agent.inbox", map[string]any{"tile": reviewer, "waitMs": 10000.0}); reply != nil {
+		t.Fatalf("answered with nothing queued: %v", reply)
+	}
+	labelled := f.result("agent.prompt", map[string]any{"target": "reviewer@root", "text": "Nightly build failed.", "caller": lead, "from": "machine-watch", "when": "next-turn"})
+	answered := poll.messages()
+	if len(answered) != 1 {
+		t.Fatalf("the long poll wasn't answered: %v", answered)
+	}
+	got := messagesOf(t, answered[0])
+	if len(got) != 1 || got[0]["id"] != labelled["message"] || got[0]["attribution"] != "user" || got[0]["when"] != "next-turn" ||
+		!reflect.DeepEqual(got[0]["from"], map[string]any{"name": "machine-watch"}) || got[0]["context"] != nil {
+		t.Fatalf("%v", got)
+	}
+	unnamed := f.result("agent.prompt", map[string]any{"target": reviewer, "text": "ping"})
+	fromLead := f.result("agent.prompt", map[string]any{"target": reviewer, "text": "bye", "caller": lead})
+	f.result("object.delete", map[string]any{"id": lead})
+	got = messagesOf(t, f.on(poll, "agent.inbox", map[string]any{"tile": reviewer, "ack": []any{labelled["message"]}}))
+	if len(got) != 2 || got[0]["id"] != unnamed["message"] || got[0]["attribution"] != "user" || !reflect.DeepEqual(got[0]["from"], map[string]any{"name": "script"}) {
+		t.Fatalf("%v", got)
+	}
+	if got[1]["id"] != fromLead["message"] || got[1]["attribution"] != "agent" || !reflect.DeepEqual(got[1]["from"], map[string]any{"tile": lead, "name": lead}) {
+		t.Fatalf("a closed sender: %v", got[1])
+	}
+
+	for _, c := range []struct {
+		params map[string]any
+		want   string
+	}{
+		{map[string]any{"target": reviewer, "text": "x", "when": "later"}, `invalid_params: when is "now" (the default) or "next-turn"`},
+		{map[string]any{"target": reviewer, "text": "x", "from": "  "}, `invalid_params: from is a sender label such as "machine-watch"`},
+	} {
+		if code, message := errorOf(f.call("agent.prompt", c.params)); code+": "+message != c.want {
+			t.Errorf("%v: %s: %s", c.params, code, message)
+		}
+	}
+	if code, message := errorOf(f.call("agent.inbox", map[string]any{"tile": reviewer, "waitMs": 70000.0})); message != "waitMs is from 0 to 60000" {
+		t.Errorf("%s %s", code, message)
+	}
+
+	typed := f.namedTerminal("typed", "")
+	f.result("agent.report", map[string]any{"tile": typed, "kind": "claude", "state": "working"})
+	if code, message := errorOf(f.call("agent.prompt", map[string]any{"target": typed, "text": "after this", "when": "next-turn"})); code != "conflict" ||
+		message != typed+` is in its turn and its integration takes no messages, so typed text would join that turn; agent.wait for it and send again, or send with when: "now"` {
+		t.Fatalf("%s %s", code, message)
+	}
+	if code, _ := errorOf(f.call("agent.prompt", map[string]any{"target": typed, "text": "now then"})); code != "unavailable" {
+		t.Fatalf("a typed prompt with no client to type it: %s", code)
+	}
+}
+
+// name@board, the caller's board first, a renamed terminal's old name until another takes it,
+// ambiguity, and boards found by name only while their root folder exists.
+func TestAgentAddresses(t *testing.T) {
+	f := newFixture(t)
+	reviewer := f.namedTerminal("reviewer", "")
+	lead := f.namedTerminal("lead", "")
+	otherRoot := filepath.Join(filepath.Dir(f.board.Root()), "other")
+	if err := os.MkdirAll(otherRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	other := f.result("board.open", map[string]any{"root": otherRoot})["board"].(string)
+	elsewhere := f.namedTerminal("reviewer", other)
+	tile := func(target, caller string) string {
+		t.Helper()
+		agent, failure := f.addressed(target, caller)
+		if agent == nil {
+			return failure
+		}
+		return agent["tile"].(string)
+	}
+
+	for _, c := range []struct{ target, caller, want string }{
+		{"reviewer@other", "", elsewhere},
+		{"reviewer@" + f.board.ID(), "", reviewer},
+		{"reviewer", lead, reviewer},
+		{"reviewer", elsewhere, elsewhere},
+		{"reviewer", "", "ambiguous: reviewer matches 2 terminals: reviewer@other (" + elsewhere + "), reviewer@root (" + reviewer + "); address one as name@board, or by its tile id"},
+		{"nobody@root", "", "not_found: no terminal tile named nobody on board root"},
+		{"reviewer@nowhere", "", "not_found: no open board named nowhere (open boards: other, root)"},
+		{"nobody", lead, "not_found: no terminal tile named or with id nobody"},
+	} {
+		if got := tile(c.target, c.caller); got != c.want {
+			t.Errorf("%s (caller %q): %s, want %s", c.target, c.caller, got, c.want)
+		}
+	}
+
+	f.result("object.update", map[string]any{"id": reviewer, "props": map[string]any{"name": "critic"}})
+	if got := tile("reviewer", lead); got != reviewer {
+		t.Errorf("by its old name: %s", got)
+	}
+	if agent, _ := f.addressed(reviewer, ""); agent["address"] != "critic@root" || !reflect.DeepEqual(agent["aliases"], []any{"reviewer"}) {
+		t.Errorf("renamed: %v", agent)
+	}
+	taken := f.namedTerminal("reviewer", "")
+	if got := tile("reviewer", lead); got != taken {
+		t.Errorf("the name's new holder: %s", got)
+	}
+	if agent, _ := f.addressed(reviewer, ""); agent["aliases"] != nil {
+		t.Errorf("the taken alias stayed: %v", agent["aliases"])
+	}
+	f.result("object.update", map[string]any{"id": taken, "props": map[string]any{"name": "gone"}})
+	f.result("object.delete", map[string]any{"id": taken})
+	if got := tile("reviewer", lead); got != elsewhere {
+		t.Errorf("a deleted terminal's alias stayed: %s", got)
+	}
+
+	if err := os.RemoveAll(otherRoot); err != nil {
+		t.Fatal(err)
+	}
+	if got := tile("reviewer@other", ""); got != "not_found: no open board named other (open boards: root)" {
+		t.Errorf("a board whose folder is gone, by name: %s", got)
+	}
+	if got := tile("reviewer@"+other, ""); got != elsewhere {
+		t.Errorf("a board whose folder is gone, by id: %s", got)
 	}
 }
