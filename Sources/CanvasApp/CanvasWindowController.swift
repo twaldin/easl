@@ -246,6 +246,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             refreshTab()
         case .objectUpdated(let object) where object.type == .question:
             refreshAsks()
+            refreshTab()
+        case .attentionChanged:
+            refreshTab()
         default: break
         }
     }
@@ -302,12 +305,21 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// What the tab last showed (`NeedsYou`), so a terminal's frequent updates redraw nothing.
     private var tabState: NeedsYou?
 
+    /// How many things need the user on this board (`NeedsYouItem.all`) as its title last said.
+    private var titledCount = 0
+
     /// The board's tab says when an agent on it needs the user, so one waiting on a background
     /// tab is seen: an orange dot for a blocked agent, a quieter green one for an agent that
     /// finished unseen (`NeedsYou`); nothing for working or idle agents. The tooltip says who
-    /// and what.
+    /// and what. The window's title, which is the tab's and the Window menu's entry for the board,
+    /// carries how many things ⌘J would visit here, "easl (2)", markers included.
     private func refreshTab() {
         guard let window else { return }
+        let count = canvas.needsYouItems.count
+        if count != titledCount {
+            titledCount = count
+            window.title = NeedsYouTour.title(board.root.lastPathComponent, needing: count)
+        }
         let state = NeedsYou.of(board.objects.values)
         guard state != tabState else { return }
         tabState = state
@@ -907,8 +919,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: The context menus' actions in the menu bar
 
+    /// ⌘J goes on across the open boards (`AppDelegate.goToNextNeedsYou(from:)`), so the app runs it.
+    var onNextNeedsYou: ((CanvasWindowController) -> Void)?
+
     @objc func goToNextNeedsYou(_ sender: Any?) {
-        canvas.goToNextNeedsYou()
+        onNextNeedsYou?(self)
     }
 
     @objc func reviewChanges(_ sender: Any?) {

@@ -53,7 +53,7 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
   The user presses a number (or clicks) to pick, may add a note, and Return (or Answer) answers; the answer reaches the asker, and the tile collapses to it. Dismiss cancels it; Archive (or Return twice on a selected closed one: the first enters it) hides a closed one, which then is neither selected, ⌘A'd nor framed by Zoom to Fit, though the API still lists it; cancelled and expired ones are dimmed.
   VoiceOver reads the whole question (options with their why and the recommendation, context, asker, status, answer) and can press its options, links and buttons.
 - **Open asks**: the count beside the drawing toolbar of questions waiting on the user; clicking it goes to the next one.
-- **⌘J**: the next thing on this board that needs the user, blocked agents first, then open questions, then markers, then agents that finished unseen; "Nothing needs you" when there's nothing.
+- **⌘J**: the next thing that needs the user, blocked agents first, then open questions, then markers, then agents that finished unseen; once the board has nothing more it goes on to the user's next open board (that board's tab comes forward), around; "Nothing needs you" when no board has anything. Each board's tab title shows its count, "easl (2)".
 
 ## Agents' tiles
 

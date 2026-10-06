@@ -386,7 +386,7 @@ Give each branch's work its own region: a group titled with the branch (`props.k
 
 Help › easl Basics ⌥⌘/ is the user's legend of everything on screen (dots, rings, markers, follow tile, tray, keys); `references/ui.md` has the same text: answer "what is this?" and "which key?" from it, not from easl's source.
 ⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows (all four) move between tiles; Return gives the selected tile the keyboard, Esc gives it back (in a terminal or a web page Esc stays with the program or page: ⌘Esc leaves any tile).
-⌘J goes to the next thing on this board that needs the user; ⌘[ / ⌘] go back and forward; ⌘9 fits everything; ⌘Z undoes the user's last change or an agent's, and a notice names what it undid.
+⌘J goes to the next thing that needs the user, on this board and then on their other open boards; ⌘[ / ⌘] go back and forward; ⌘9 fits everything; ⌘Z undoes the user's last change or an agent's, and a notice names what it undid.
 Hyper-click (⌃⌥⇧⌘-click) or Edit › Mention ⇧⌘M stages a mention for the terminal the tray shows ("→ name ▾" picks another); Hyper-V pastes staged mentions into the terminal the user is typing in (else that one), for agents without an integration.
 Mouse users: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; don't tell a user without a trackpad that zooming needs a pinch.
 On a PC keyboard ⌘ is the Windows key and does what Ctrl does elsewhere, ⌥ is Alt (`macos-option-as-alt = true` in their Ghostty config for Meta), and Hyper is Ctrl+Alt+Shift+Win: point them at easl Basics' "Coming from Linux or Windows" section.

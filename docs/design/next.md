@@ -79,7 +79,7 @@ Shipped (docs/design.md, Browser): popups with `window.opener`, downloads, uploa
 
 ## Backlog in scope
 
-- An all-agents overview: ⌘J across every board and machine.
+- An all-agents overview across machines: ⌘J visits every board open on this Mac (docs/design.md, Interaction); boards hosted on another Mac or an offload host would join the same tour.
 - Agent supervision stats: each agent's branch, diff size and changed files, and a warning when two worktrees touch the same files.
 - Review passes: show only unstaged changes, and a "since last review" bookmark.
 

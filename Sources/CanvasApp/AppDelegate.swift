@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cmuxServer: SocketServer?
     private lazy var cmux = CmuxRouter(registry: registry, password: AppPaths.cmuxPassword)
     private var controllers: [BoardID: CanvasWindowController] = [:]
+    /// The boards in the order they were first opened, which orders windows that aren't tabs of
+    /// one another (`openBoardsInOrder`).
+    private var openedOrder: [BoardID] = []
     private var terminationSignal: DispatchSourceSignal?
     private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
@@ -231,6 +234,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let board = registry.open(root: root)
         let controller = controllers[board.id] ?? CanvasWindowController(board: board, registry: registry)
         controllers[board.id] = controller
+        if !openedOrder.contains(board.id) { openedOrder.append(board.id) }
+        controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
         let router = router
         controller.sendPrompt = { [weak board] text, terminal, mentions, answer in
             guard let board else { return }
@@ -252,16 +257,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return board
         }
         guard select else { return board }
-        // Selecting a tab of a minimized group also detaches it onto the current Space: bring the
-        // group back first (the user asked to see this board). An instance that never activates
-        // leaves the tab waiting in the minimized group.
+        bringForward(window)
+        return board
+    }
+
+    /// Brings `window`'s tab, or the window, forward. Selecting a tab of a minimized group also
+    /// detaches it onto the current Space: bring the group back first (the user asked to see
+    /// this board). An instance that never activates leaves the tab waiting in the minimized
+    /// group.
+    private func bringForward(_ window: NSWindow) {
+        let noActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
         if let minimized = window.tabGroup?.windows.first(where: \.isMiniaturized) {
-            if noActivate { return board }
+            if noActivate { return }
             minimized.deminiaturize(nil)
         }
         window.tabGroup?.selectedWindow = window
         if !noActivate { window.makeKeyAndOrderFront(nil) }
-        return board
+    }
+
+    /// The open boards (shown, minimized or a tab) in tab/window order: a tab group's boards
+    /// together in tab order, and groups and lone windows by when their first board was opened.
+    private func openBoardsInOrder() -> [CanvasWindowController] {
+        let open = openedOrder.compactMap { controllers[$0] }.filter { $0.window.map(isShown) ?? false }
+        var ordered: [CanvasWindowController] = []
+        for controller in open where !ordered.contains(where: { $0 === controller }) {
+            let windows = controller.window?.tabbedWindows ?? controller.window.map { [$0] } ?? []
+            ordered += windows.compactMap { window in open.first { $0.window === window } }
+        }
+        return ordered
+    }
+
+    /// ⌘J, Go to Next Needs-You, on `current`, the board the user is on: the next thing that needs
+    /// them there (blocked agents first, then markers, then agents that finished unseen, each in
+    /// reading order: `NeedsYouItem`), and once it has nothing after the item visited last, the
+    /// first on the next open board that has anything, in tab/window order and around (`NeedsYouTour`).
+    /// That board's tab or window comes forward and the item is framed, selected and focused
+    /// like Go to; a notice says when no board needs the user.
+    func goToNextNeedsYou(from current: CanvasWindowController) {
+        let boards = openBoardsInOrder()
+        let entries = boards.map { NeedsYouTour.Entry(board: $0.board.id, items: $0.canvas.needsYouItems) }
+        guard let stop = NeedsYouTour.next(from: current.board.id, after: current.canvas.needsYouCursor, in: entries) else {
+            return current.canvas.showNotice("Nothing needs you")
+        }
+        guard let target = boards.first(where: { $0.board.id == stop.board }) else { return }
+        if let window = target.window, target !== current {
+            bringForward(window)
+            // A tab never shown has not been laid out: the item is framed in the view's real size.
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+        target.canvas.visit(stop.item)
     }
 
     /// A tab that isn't selected is ordered out and a minimized window isn't visible, so "shown"
