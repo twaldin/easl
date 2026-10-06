@@ -213,11 +213,12 @@ struct HostedTerminalTests {
             DispatchQueue.global().async {
                 // `env` stands in for ssh: it runs the command line as sshd would, with `sh -c`.
                 continuation.resume(returning: HostedTerminal.request("/usr/bin/env", ["-i"] + env + ["/bin/sh", "-c", HostedTerminal.easldRelay],
-                                                                      line: Data(#"{"id":"1","method":"system.ping"}"#.utf8 + [0x0A]), timeout: 10))
+                                                                      line: Data(#"{"id":"1","method":"system.ping"}"#.utf8 + [0x0A]), timeout: 60))
             }
         }
         #expect(reply.line.map { String(decoding: $0, as: UTF8.self).contains(#""pong":true"#) } == true, "\(reply.errors)")
-        #expect(Date().timeIntervalSince(start) < 5, "the reply ends the call, not the timeout")
+        // Far below the timeout, and far above a slow runner's two python starts (6 s on CI).
+        #expect(Date().timeIntervalSince(start) < 30, "the reply ends the call, not the timeout")
         let pid = try #require(Int32(String(contentsOf: pids, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         #expect(kill(pid, 0) != 0, "nc exited with the call")
     }
