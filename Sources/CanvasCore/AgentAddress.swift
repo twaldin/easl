@@ -3,8 +3,8 @@ import Foundation
 /// How agents address a terminal (docs/contracts.md, Agent addresses): `name@board`, a bare
 /// `name`, or a tile id; never a host. A board's name is its root folder's name, a terminal's
 /// name its `props.name`, which only needs to be unique within its board. A bare name is looked
-/// up on the caller's board first, then on every open board; on a board a current name wins over
-/// an alias (`Board.aliases`: names a renamed terminal had, until another terminal takes them).
+/// up on the caller's board first, then on every open board; on each board a current name wins
+/// over an alias (`Board.aliases`: names a renamed terminal had, until another terminal takes them).
 public enum AgentAddress {
     /// A board's name in addresses: its root folder's name, as its window title shows it. Only a
     /// board whose root folder still exists is found by name (an archived one by its id alone).
@@ -15,10 +15,18 @@ public enum AgentAddress {
         terminal.props["name"]?.string.flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    /// Where a message to `terminal` goes from any board: `name@board` for a named terminal,
-    /// else its tile id.
-    @MainActor public static func address(of terminal: CanvasObject, on board: Board) -> String {
-        name(of: terminal).map { "\($0)@\(boardName(board.root))" } ?? terminal.id
+    /// Where a message to `terminal` goes from any board, an address that resolves to it alone
+    /// among `boards` (the open boards): `name@board` while its name is no other terminal's on
+    /// its board and its board is found by that name alone (its root folder there, no other open
+    /// board's folder of that name); `name@<board id>` when the board's name isn't; its tile id
+    /// when it has no name or shares it on its board.
+    @MainActor public static func address(of terminal: CanvasObject, on board: Board, among boards: [Board]) -> String {
+        guard let name = name(of: terminal),
+              !board.objects.values.contains(where: { $0.id != terminal.id && $0.type == .terminal && Self.name(of: $0) == name }) else { return terminal.id }
+        let folder = boardName(board.root)
+        let found = BoardStore.isDirectory(board.root.path)
+            && !boards.contains { $0 !== board && boardName($0.root) == folder && BoardStore.isDirectory($0.root.path) }
+        return "\(name)@\(found ? folder : board.id)"
     }
 
     /// The terminal `target` names among `boards` (the open boards). `caller`, the terminal
@@ -41,31 +49,35 @@ public enum AgentAddress {
                 let listed = named.map { "\(boardName($0.root)) (\($0.id), \($0.root.path))" }.joined(separator: ", ")
                 throw ApiRouter.Failure("ambiguous", "\(boardPart) names \(named.count) open boards: \(listed); address the board by its id, \(name)@\(named[0].id)")
             }
-            if let found = try lookUp(name, target: target, on: [board]) { return found }
+            if let found = try lookUp(name, target: target, on: [board], among: boards) { return found }
             throw ApiRouter.Failure("not_found", "no terminal tile named \(name) on board \(boardPart)")
         }
         if let caller, let own = boards.first(where: { $0.objects[caller]?.type == .terminal }),
-           let found = try lookUp(target, target: target, on: [own]) {
+           let found = try lookUp(target, target: target, on: [own], among: boards) {
             return found
         }
-        if let found = try lookUp(target, target: target, on: boards) { return found }
+        if let found = try lookUp(target, target: target, on: boards, among: boards) { return found }
         throw ApiRouter.Failure("not_found", "no terminal tile named or with id \(target)")
     }
 
-    /// The terminal named `name` on `boards`: current names first, then aliases.
+    /// The terminal named `name` on `boards`: on each board its current name first, else an
+    /// alias; more than one across them is `ambiguous`, each listed by its address among `all`.
     @MainActor
-    private static func lookUp(_ name: String, target: String, on boards: [Board]) throws -> (Board, CanvasObject)? {
+    private static func lookUp(_ name: String, target: String, on boards: [Board], among all: [Board]) throws -> (Board, CanvasObject)? {
         var named: [(Board, CanvasObject)] = []
         for board in boards {
-            for object in board.objects.values where object.type == .terminal && Self.name(of: object) == name { named.append((board, object)) }
-        }
-        if named.isEmpty {
-            for board in boards {
-                if let id = board.aliases[name], let object = board.objects[id], object.type == .terminal { named.append((board, object)) }
+            let current = board.objects.values.filter { $0.type == .terminal && Self.name(of: $0) == name }
+            if !current.isEmpty {
+                named += current.map { (board, $0) }
+            } else if let id = board.aliases[name], let object = board.objects[id], object.type == .terminal {
+                named.append((board, object))
             }
         }
         guard named.count <= 1 else {
-            let listed = named.map { "\(address(of: $0.1, on: $0.0)) (\($0.1.id))" }.sorted().joined(separator: ", ")
+            let listed = named.map { board, terminal in
+                let reach = Self.address(of: terminal, on: board, among: all)
+                return "\(reach == terminal.id ? name : reach) (\(terminal.id))"
+            }.sorted().joined(separator: ", ")
             throw ApiRouter.Failure("ambiguous", "\(target) matches \(named.count) terminals: \(listed); address one as name@board, or by its tile id")
         }
         return named.first

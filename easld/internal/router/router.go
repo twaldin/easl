@@ -76,6 +76,7 @@ type Router struct {
 func New(reg *board.Registry) *Router {
 	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[string]Conn{}, FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
 	reg.Hook = r.observe
+	reg.Bounced = r.bounce
 	reg.Texts = r.clients
 	return r
 }

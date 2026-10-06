@@ -154,8 +154,8 @@ extension Board {
         }
     }
 
-    /// A deleted object takes the mentions of it with it; a deleted terminal its queue, its
-    /// messages and its last answer.
+    /// A deleted object takes the mentions of it with it; a deleted terminal its queue and its
+    /// last answer.
     func forgetHandoffs(of id: ObjectID) {
         handoffs[id] = nil
         finalAnswers[id] = nil
@@ -164,6 +164,5 @@ extension Board {
             let left = waiting.filter { !$0.mention.target.objectIDs.contains(id) }
             handoffs[terminal] = left.isEmpty ? nil : left
         }
-        forgetMessages(of: id)
     }
 }

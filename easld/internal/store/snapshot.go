@@ -35,6 +35,9 @@ type Snapshot struct {
 	Repo         *RepoRecord
 	// Aliases are renamed terminals' old names, alias → tile id (Board.aliases); nil when absent.
 	Aliases map[string]string
+	// Messages are the peer messages each terminal's integration hasn't acked yet
+	// (Board.messages); nil when absent.
+	Messages map[string][]Message
 	// Unknown holds the file's top-level keys easld doesn't know (written by a newer app), so a
 	// board easld rewrites keeps them.
 	Unknown map[string]any
@@ -44,6 +47,47 @@ type Snapshot struct {
 var snapshotKeys = map[string]bool{
 	"format": true, "id": true, "root": true, "revision": true, "objects": true, "tray": true, "attention": true,
 	"promptTarget": true, "finalAnswers": true, "turnErrors": true, "lifecycleSeq": true, "repo": true, "aliases": true,
+	"messages": true,
+}
+
+// Message is an out-of-band agent.prompt queued for a terminal (AgentMessage), saved with the
+// board until its integration acks it.
+type Message struct {
+	ID   string
+	Text string
+	// From is the sending terminal; "" for a script.
+	From string
+	// Label is a script's sender label (`from`); set, the message is the user's even with a
+	// caller.
+	Label string
+	// When is "now" or "next-turn".
+	When string
+	// Mentions are the board objects the sender attached, as a hand-off's.
+	Mentions []model.Mention
+	QueuedAt time.Time
+}
+
+// Attribution is `agent` when a terminal sent the message, `user` for a script.
+func (m Message) Attribution() string {
+	if m.From == "" {
+		return "user"
+	}
+	return "agent"
+}
+
+func (m Message) json(timeOf func(time.Time) any) map[string]any {
+	mentions := make([]any, len(m.Mentions))
+	for i, men := range m.Mentions {
+		mentions[i] = men.FileJSON()
+	}
+	out := map[string]any{"id": m.ID, "text": m.Text, "when": m.When, "mentions": mentions, "queuedAt": timeOf(m.QueuedAt)}
+	if m.From != "" {
+		out["from"] = m.From
+	}
+	if m.Label != "" {
+		out["label"] = m.Label
+	}
+	return out
 }
 
 // Attention is an agent's "look here" marker on one object (Attention.swift).
@@ -177,6 +221,17 @@ func (s *Snapshot) JSON() map[string]any {
 	}
 	if s.Aliases != nil {
 		m["aliases"] = stringMap(s.Aliases)
+	}
+	if s.Messages != nil {
+		queues := make(map[string]any, len(s.Messages))
+		for tile, waiting := range s.Messages {
+			list := make([]any, len(waiting))
+			for i, message := range waiting {
+				list[i] = message.json(file)
+			}
+			queues[tile] = list
+		}
+		m["messages"] = queues
 	}
 	return m
 }
@@ -330,7 +385,70 @@ func DecodeSnapshot(data []byte) (*Snapshot, error) {
 	if s.Aliases, err = decodeStringMap(m, "aliases"); err != nil {
 		return nil, err
 	}
+	if v, present := m["messages"]; present && v != nil {
+		queues, ok := v.(map[string]any)
+		if !ok {
+			return nil, decodeError("messages is not an object")
+		}
+		s.Messages = map[string][]Message{}
+		for tile, x := range queues {
+			items, ok := x.([]any)
+			if !ok {
+				return nil, decodeError("messages.%s is not an array", tile)
+			}
+			s.Messages[tile] = []Message{}
+			for i, item := range items {
+				message, err := decodeMessage(item)
+				if err != nil {
+					return nil, decodeError("messages.%s[%d]: %v", tile, i, err)
+				}
+				s.Messages[tile] = append(s.Messages[tile], message)
+			}
+		}
+	}
 	return s, nil
+}
+
+func decodeMessage(v any) (Message, error) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return Message{}, fmt.Errorf("not an object")
+	}
+	message := Message{}
+	if message.ID, ok = m["id"].(string); !ok {
+		return message, fmt.Errorf("missing id")
+	}
+	if message.Text, ok = m["text"].(string); !ok {
+		return message, fmt.Errorf("missing text")
+	}
+	if message.When, _ = m["when"].(string); message.When != "now" && message.When != "next-turn" {
+		return message, fmt.Errorf("when is not now or next-turn")
+	}
+	if message.QueuedAt, ok = decodeTime(m["queuedAt"]); !ok {
+		return message, fmt.Errorf("queuedAt is not an ISO 8601 date")
+	}
+	for _, key := range []string{"from", "label"} {
+		if x, present := m[key]; present && x != nil {
+			if _, ok := x.(string); !ok {
+				return message, fmt.Errorf("%s is not a string", key)
+			}
+		}
+	}
+	message.From, _ = m["from"].(string)
+	message.Label, _ = m["label"].(string)
+	list, ok := m["mentions"].([]any)
+	if !ok {
+		return message, fmt.Errorf("missing mentions")
+	}
+	message.Mentions = []model.Mention{}
+	for i, item := range list {
+		men, err := decodeMention(item)
+		if err != nil {
+			return message, fmt.Errorf("mentions[%d]: %v", i, err)
+		}
+		message.Mentions = append(message.Mentions, men)
+	}
+	return message, nil
 }
 
 func decodeStringMap(m map[string]any, key string) (map[string]string, error) {

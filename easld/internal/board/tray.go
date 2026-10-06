@@ -298,8 +298,8 @@ func (b *Board) commitHandoffs(ids []string) {
 	}
 }
 
-// forgetHandoffs: a deleted object takes the mentions of it along; a deleted terminal its
-// queue, its messages and its last answer.
+// forgetHandoffs: a deleted object takes the mentions of it along; a deleted terminal its queue
+// and its last answer.
 func (b *Board) forgetHandoffs(id string) {
 	delete(b.handoffs, id)
 	delete(b.finalAnswers, id)
@@ -317,5 +317,4 @@ func (b *Board) forgetHandoffs(id string) {
 			b.handoffs[terminal] = left
 		}
 	}
-	b.forgetMessages(id)
 }

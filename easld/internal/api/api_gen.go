@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "61d537a134175502"
+const SchemaHash = "452dcf28ac5f2aa1"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -817,11 +817,11 @@ type Agent struct {
 	// that board's root directory
 	Root string  `json:"root"`
 	Name *string `json:"name,omitempty"`
-	// how to reach this terminal as a `target` from any board: `name@board` (the board's name is its root folder's name) for a named terminal, else its tile id
+	// how to reach this terminal as a `target` from any board, resolving to it alone: `name@board` (the board's name is its root folder's name) for a named terminal, `name@<board id>` while another open board's folder has that name too (or its own is gone), its tile id when it has no name or another terminal on its board has the same one
 	Address string `json:"address"`
 	// names it had before a rename that still reach it on its board (until another terminal there takes them); absent when none
 	Aliases []string `json:"aliases,omitempty"`
-	// the integration protocol version its agent's integration last reported (agent.report `protocol`); 1 and later take out-of-band messages (agent.inbox). Absent: none reported
+	// the integration protocol version its agent's integration last reported (agent.report `protocol`); 1 and later take out-of-band messages (agent.inbox). Absent: none reported, or the integration died without releasing the terminal (killed: its shell came back to the prompt)
 	Protocol *int `json:"protocol,omitempty"`
 	// the integrated agent that reported (omp, claude, codex, gemini, opencode), or the program of an agent reporting by notification (aider; lifecycle `via: "notifications"`), else unknown
 	Kind string `json:"kind"`
@@ -859,7 +859,7 @@ type MessageSender struct {
 	Tile *Id `json:"tile,omitempty"`
 	// the sending terminal's name as the tray shows it now (its `name`, else its title, else `Terminal`), or the script's `from` label (default `script`)
 	Name string `json:"name"`
-	// where a reply goes: the sending terminal's `name@board`, else its tile id; absent for a script (nothing to reply to)
+	// where a reply goes: the sending terminal's address (as Agent's: `name@board`, `name@<board id>` or its tile id); absent for a script (nothing to reply to)
 	Address *string `json:"address,omitempty"`
 	// the sending terminal's board
 	Board *Id `json:"board,omitempty"`
@@ -950,7 +950,7 @@ type HistoryEntry struct {
 	At string `json:"at"`
 	// `user`, `system`, or `agent:<terminal tile id>`; a cascade is credited to whoever made the change that caused it
 	Actor string `json:"actor"`
-	// One of "created", "updated", "deleted", "viewport", "selection", "follow", "restart".
+	// One of "created", "updated", "deleted", "viewport", "selection", "follow", "restart", "message".
 	Kind string `json:"kind"`
 	// the object (for follow: the follow tile)
 	ID   *Id         `json:"id,omitempty"`

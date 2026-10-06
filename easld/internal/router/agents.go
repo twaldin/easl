@@ -98,7 +98,7 @@ func (r *Router) agentTile(target, caller string) (*board.Board, model.Object, e
 			}
 			return nil, model.Object{}, fail(api.CodeAmbiguous, "%s names %d open boards: %s; address the board by its id, %s@%s", part, len(named), strings.Join(listed, ", "), name, named[0].ID())
 		}
-		b, o, err := lookUpAgent(name, target, named)
+		b, o, err := lookUpAgent(name, target, named, boards)
 		if err != nil || b != nil {
 			return b, o, err
 		}
@@ -107,40 +107,38 @@ func (r *Router) agentTile(target, caller string) (*board.Board, model.Object, e
 	if caller != "" {
 		for _, own := range boards {
 			if o, ok := own.Objects()[caller]; ok && o.Type == model.Terminal {
-				if b, o, err := lookUpAgent(target, target, []*board.Board{own}); err != nil || b != nil {
+				if b, o, err := lookUpAgent(target, target, []*board.Board{own}, boards); err != nil || b != nil {
 					return b, o, err
 				}
 				break
 			}
 		}
 	}
-	if b, o, err := lookUpAgent(target, target, boards); err != nil || b != nil {
+	if b, o, err := lookUpAgent(target, target, boards, boards); err != nil || b != nil {
 		return b, o, err
 	}
 	return nil, model.Object{}, fail(api.CodeNotFound, "no terminal tile named or with id %s", target)
 }
 
-// lookUpAgent is the terminal named name on boards: current names first, then aliases; nil
-// board for none, ambiguous for more than one.
-func lookUpAgent(name, target string, boards []*board.Board) (*board.Board, model.Object, error) {
+// lookUpAgent is the terminal named name on boards: on each board its current name first, else
+// an alias; nil board for none, ambiguous for more than one across them, each listed by its
+// address among all.
+func lookUpAgent(name, target string, boards, all []*board.Board) (*board.Board, model.Object, error) {
 	type match struct {
 		board    *board.Board
 		terminal model.Object
 	}
 	var named []match
 	for _, b := range boards {
+		current := false
 		for _, o := range sortedTerminals(b) {
 			if n, ok := board.AgentName(o); ok && n == name {
-				named = append(named, match{b, o})
+				named, current = append(named, match{b, o}), true
 			}
 		}
-	}
-	if len(named) == 0 {
-		for _, b := range boards {
-			if id, ok := b.Alias(name); ok {
-				if o, ok := b.Objects()[id]; ok && o.Type == model.Terminal {
-					named = append(named, match{b, o})
-				}
+		if id, ok := b.Alias(name); ok && !current {
+			if o, ok := b.Objects()[id]; ok && o.Type == model.Terminal {
+				named = append(named, match{b, o})
 			}
 		}
 	}
@@ -152,7 +150,11 @@ func lookUpAgent(name, target string, boards []*board.Board) (*board.Board, mode
 	}
 	listed := make([]string, len(named))
 	for i, m := range named {
-		listed[i] = board.Address(m.terminal, m.board) + " (" + m.terminal.ID + ")"
+		reach := board.Address(m.terminal, m.board, all)
+		if reach == m.terminal.ID {
+			reach = name
+		}
+		listed[i] = reach + " (" + m.terminal.ID + ")"
 	}
 	sort.Strings(listed)
 	return nil, model.Object{}, fail(api.CodeAmbiguous, "%s matches %d terminals: %s; address one as name@board, or by its tile id", target, len(named), strings.Join(listed, ", "))
@@ -172,9 +174,9 @@ func sortedTerminals(b *board.Board) []model.Object {
 
 // agentEntry is a terminal as agent.list reports it; title, program and last command come from
 // the app's terminal surface, which easld doesn't have.
-func agentEntry(terminal model.Object, b *board.Board) map[string]any {
+func (r *Router) agentEntry(terminal model.Object, b *board.Board) map[string]any {
 	agent := asMap(terminal.Props["agent"])
-	entry := map[string]any{"tile": terminal.ID, "board": b.ID(), "root": b.Root(), "address": board.Address(terminal, b), "kind": "unknown"}
+	entry := map[string]any{"tile": terminal.ID, "board": b.ID(), "root": b.Root(), "address": board.Address(terminal, b, r.reg.SortedBoards()), "kind": "unknown"}
 	if agent != nil {
 		if k, present := agent["kind"]; present {
 			entry["kind"] = k
@@ -319,7 +321,7 @@ func (r *Router) reply(w *waiter, b *board.Board, exited bool) map[string]any {
 	if !w.until[state] {
 		return nil
 	}
-	return okReply(w.id, map[string]any{"agent": agentEntry(terminal, b)})
+	return okReply(w.id, map[string]any{"agent": r.agentEntry(terminal, b)})
 }
 
 // formatSeconds is Double.formatted(): `60`, `1.5`.
@@ -490,7 +492,7 @@ func (r *Router) finalAnswer(terminal model.Object, b *board.Board, p map[string
 		return nil, fail(api.CodeUnavailable, "no final answer is known for %s's last turn: its agent (%s) reported none, or the turn was interrupted. Read the screen with since: \"prompt\" instead", terminal.ID, kind)
 	}
 	result := map[string]any{
-		"agent": agentEntry(terminal, b), "text": answer,
+		"agent": r.agentEntry(terminal, b), "text": answer,
 		"lines": float64(strings.Count(answer, "\n") + 1),
 	}
 	if hasCutOff {

@@ -65,7 +65,9 @@ type Report struct {
 }
 
 // ReportLifecycle applies an agent's lifecycle report (Board.reportLifecycle): the staleness rule
-// by seq per tile and source, pending approvals by call, final answers and turn errors.
+// by seq per tile and source, pending approvals by call, final answers and turn errors. A report
+// of another agent kind, or of no protocol where it took messages, ends the agent session its
+// messages were queued for (endAgentSession).
 func (b *Board) ReportLifecycle(r Report) error {
 	terminal, err := b.Object(r.Tile)
 	if err != nil {
@@ -147,9 +149,13 @@ func (b *Board) ReportLifecycle(r Report) error {
 	if r.Protocol != nil && *r.Protocol > 0 {
 		version = float64(*r.Protocol)
 	}
+	before, _ := terminal.Props["agent"].(map[string]any)
 	agent, _ := model.Merge(orEmpty(terminal.Props["agent"]), map[string]any{"kind": r.Kind, "protocol": version}).(map[string]any)
 	if _, err := b.Update(r.Tile, nil, nil, nil, map[string]any{"lifecycle": lifecycle, "agent": agent}, r.Tile, ""); err != nil {
 		return err
+	}
+	if took, _ := TruncInt(before["protocol"]); took >= 1 && (before["kind"] != r.Kind || version == nil) {
+		b.endAgentSession(r.Tile)
 	}
 	b.emit(EventAgentLifecycle, map[string]any{"tile": r.Tile, "lifecycle": model.Clone(lifecycle)})
 	return nil
@@ -230,7 +236,9 @@ func TruncInt(v any) (int, bool) {
 // jsonInt reads an integral number (Codable Int).
 func jsonInt(v any) (int, bool) { return model.Int(v) }
 
-// ReportSession records an agent's session on its terminal.
+// ReportSession records an agent's session on its terminal. Another session where one was
+// recorded (a new conversation, or a replacement agent) ends the agent session its messages
+// were queued for (endAgentSession).
 func (b *Board) ReportSession(tile, kind string, sessionID, sessionPath *string) error {
 	terminal, err := b.Object(tile)
 	if err != nil {
@@ -240,6 +248,7 @@ func (b *Board) ReportSession(tile, kind string, sessionID, sessionPath *string)
 	if agent == nil {
 		agent = map[string]any{}
 	}
+	previous, recorded := agent["sessionId"].(string)
 	agent["kind"] = kind
 	if sessionID != nil {
 		agent["sessionId"] = *sessionID
@@ -247,12 +256,17 @@ func (b *Board) ReportSession(tile, kind string, sessionID, sessionPath *string)
 	if sessionPath != nil {
 		agent["sessionPath"] = *sessionPath
 	}
-	_, err = b.Update(tile, nil, nil, nil, map[string]any{"agent": agent}, tile, "")
-	return err
+	if _, err = b.Update(tile, nil, nil, nil, map[string]any{"agent": agent}, tile, ""); err != nil {
+		return err
+	}
+	if recorded && sessionID != nil && *sessionID != previous {
+		b.endAgentSession(tile)
+	}
+	return nil
 }
 
 // ReleaseAgent: the agent exited; the tile is a plain shell again, and the messages its
-// integration never took are dropped.
+// integration never took bounce (endAgentSession).
 func (b *Board) ReleaseAgent(tile string) error {
 	if _, err := b.Object(tile); err != nil {
 		return err
@@ -261,7 +275,7 @@ func (b *Board) ReleaseAgent(tile string) error {
 	if _, err := b.Update(tile, nil, nil, nil, map[string]any{"lifecycle": nil, "agent": nil}, tile, ""); err != nil {
 		return err
 	}
-	delete(b.messages, tile)
+	b.endAgentSession(tile)
 	b.emit(EventAgentLifecycle, map[string]any{"tile": tile, "lifecycle": nil})
 	return nil
 }

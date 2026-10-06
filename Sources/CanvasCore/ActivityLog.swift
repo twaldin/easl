@@ -42,7 +42,8 @@ public enum ActivityActor: Equatable, Sendable {
 
 public struct ActivityEntry: Equatable, Sendable {
     public enum Kind: String, CaseIterable, Sendable {
-        case created, updated, deleted, viewport, selection, follow, restart
+        /// `message`: a peer message that bounced, its receiver's agent gone before taking it.
+        case created, updated, deleted, viewport, selection, follow, restart, message
     }
 
     public var seq: Int

@@ -12,6 +12,8 @@ public final class BoardRegistry {
     public var onEvent: ((Board, BoardEvent) -> Void)?
     /// The router's own observer (agent.wait), kept apart from the app-level hook.
     var routerHook: ((Board, BoardEvent) -> Void)?
+    /// The router's handler of messages that bounced on any open board (`Board.onMessagesBounced`).
+    var messagesBounced: ((Board, MessageBounce) -> Void)?
     /// Terminal tiles deleted for good on any open board (`Board.onTerminalsEnded`), as they last
     /// were: the app ends their sessions.
     public var onTerminalsEnded: ((Board, [CanvasObject]) -> Void)?
@@ -46,6 +48,10 @@ public final class BoardRegistry {
         board.onTerminalsEnded = { [weak self, weak board] ended in
             guard let self, let board else { return }
             self.onTerminalsEnded?(board, ended)
+        }
+        board.onMessagesBounced = { [weak self, weak board] bounce in
+            guard let self, let board else { return }
+            self.messagesBounced?(board, bounce)
         }
         boards[id] = board
         board.activity.record(.restart, actor: .system, rev: board.revision,
@@ -216,6 +222,7 @@ public final class ApiRouter {
     public init(registry: BoardRegistry) {
         self.registry = registry
         registry.routerHook = { [weak self] board, event in self?.observe(event, on: board) }
+        registry.messagesBounced = { [weak self] board, bounce in self?.bounce(bounce, on: board) }
     }
 
     /// Entry point for SocketServer. Returns the response line, or nil when the reply is deferred
@@ -363,8 +370,9 @@ public final class ApiRouter {
 
     /// The response for a satisfied waiter, or nil while it must keep waiting. A terminal with no
     /// lifecycle gets `firstReportGrace` to start reporting; one whose agent exited (`exited`, a
-    /// release) or that stays silent can never satisfy it. An agent reporting by notification
-    /// (`NotifyingAgent`) at `unknown` waits for its next notification.
+    /// release; or its message integration died, `Board.agentExited`) or that stays silent can
+    /// never satisfy it. An agent reporting by notification (`NotifyingAgent`) at `unknown`
+    /// waits for its next notification.
     private func reply(to waiter: Waiter, on board: Board, exited: Bool = false) -> JSONValue? {
         guard let terminal = board.objects[waiter.tile] else {
             return Self.error(waiter.id, Failure("not_found", "terminal \(waiter.tile) was closed"))
@@ -375,6 +383,7 @@ public final class ApiRouter {
             guard exited || Date() >= waiter.firstReportDeadline else { return nil }
             return Self.error(waiter.id, Self.lifecycleUnknown(terminal))
         }
+        if board.agentExited(waiter.tile) { return Self.error(waiter.id, Self.agentExited(terminal)) }
         // A message the terminal's integration hasn't delivered yet: its turn hasn't started.
         if board.messages[waiter.tile]?.isEmpty == false { return nil }
         if let prompted = pendingPrompts[waiter.tile] {
@@ -385,6 +394,13 @@ public final class ApiRouter {
         }
         guard waiter.until.contains(state) else { return nil }
         return Self.ok(waiter.id, .object(["agent": agentEntry(terminal, on: board)]))
+    }
+
+    /// An integration that took messages died without its release (`Board.agentExited`).
+    static func agentExited(_ terminal: CanvasObject) -> Failure {
+        let kind = terminal.props["agent"]?["kind"]?.string.map { " (\($0))" } ?? ""
+        return Failure("unavailable", "\(terminal.id)'s agent\(kind) exited without releasing the terminal (killed or crashed: its shell is back at the prompt), "
+            + "so nothing there takes a prompt; what was queued for it bounced")
     }
 
     static func lifecycleUnknown(_ terminal: CanvasObject) -> Failure {
@@ -462,7 +478,7 @@ public final class ApiRouter {
         let aliases = board.aliases(of: terminal.id)
         let entry: [String: JSONValue] = [
             "tile": .string(terminal.id), "board": .string(board.id), "root": .string(board.root.path),
-            "address": .string(AgentAddress.address(of: terminal, on: board)),
+            "address": .string(AgentAddress.address(of: terminal, on: board, among: Array(registry.boards.values))),
             "kind": agent?["kind"] ?? .string("unknown"),
             "name": terminal.props["name"] ?? .null,
             "aliases": aliases.isEmpty ? .null : .array(aliases.map(JSONValue.string)),
@@ -551,11 +567,12 @@ public final class ApiRouter {
     /// `since: "prompt"`), then pastes and presses Enter. From then on `agent.wait` ignores the
     /// state the agent was in before this prompt, unless the agent was in its turn (`working`):
     /// the prompt joins that turn, whose end answers it. A `blocked` agent is refused unless
-    /// `force`: its screen holds a dialog or selector, which would take the text.
+    /// `force`: its screen holds a dialog or selector, which would take the text. A terminal whose
+    /// message integration died (`Board.agentExited`) takes neither: `unavailable`.
     private func prompt(_ p: JSONValue) async throws -> JSONValue {
         try Self.checkComposer(p)
         let caller = p["caller"]?.string
-        let (board, terminal) = try agentTile(try string(p, "target"), caller: caller)
+        let (board, resolved) = try agentTile(try string(p, "target"), caller: caller)
         let text = try string(p, "text")
         let mentions = p["mentions"]?.array ?? []
         if p["composer"]?.bool == true {
@@ -565,7 +582,7 @@ public final class ApiRouter {
                 let target = try HandoffMention(json: json).target(on: board)
                 return Mention(id: IDs.make("men"), target: target, label: MentionContext.label(for: target, on: board), stagedAt: Date())
             }
-            return try await submitPrompt(text, to: terminal, on: board, attached: .composer(given, answer: answer), caller: nil, force: false)
+            return try await submitPrompt(text, to: resolved, on: board, attached: .composer(given, answer: answer), caller: nil, force: false)
         }
         let when: AgentMessage.When
         switch p["when"] {
@@ -579,6 +596,11 @@ public final class ApiRouter {
             guard let text = value.string, !text.trimmingCharacters(in: .whitespaces).isEmpty else { throw Failure("invalid_params", "from is a sender label such as \"machine-watch\"") }
             label = text
         }
+        // The foreground program now: a message integration killed since it last reported is
+        // found here (`Board.terminalProgram`), before anything is queued for it.
+        _ = terminalStatus?(board, resolved.id)
+        guard let terminal = board.objects[resolved.id] else { throw Failure("not_found", "terminal \(resolved.id) was closed") }
+        if board.agentExited(terminal.id) { throw Self.agentExited(terminal) }
         if PromptTarget.takesMessages(terminal) {
             return try await queueMessage(text, to: terminal, on: board, mentions: mentions, caller: caller, label: label, when: when)
         }
@@ -592,12 +614,21 @@ public final class ApiRouter {
     /// An out-of-band `agent.prompt` (docs/contracts.md, Peer messages): queued for `terminal`,
     /// whose integration takes it with `agent.inbox`; nothing is typed, so none of typing's
     /// refusals apply. From a terminal (`caller`, honored when it is a terminal on an open
-    /// board) the message is the agent's; with a `label` (`from`) or none, the user's.
+    /// board) the message is the agent's; with a `label` (`from`) or none, the user's. It is
+    /// queued for the agent session there when the prompt arrived: one that ended while the
+    /// terminal's text was read (released, died, replaced: `Board.agentSession(of:)`) gets
+    /// nothing, and the sender `unavailable`.
     private func queueMessage(_ text: String, to terminal: CanvasObject, on board: Board, mentions: [JSONValue], caller: ObjectID?, label: String?, when: AgentMessage.When) async throws -> JSONValue {
         let attached = try board.messageMentions(try mentions.map { try HandoffMention(json: $0).target(on: board) })
         let sender = caller.flatMap { caller in registry.boards.values.contains { $0.objects[caller]?.type == .terminal } ? caller : nil }
+        let session = board.agentSession(of: terminal.id)
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
+        if board.agentExited(terminal.id) { throw Self.agentExited(current) }
+        guard PromptTarget.takesMessages(current), board.agentSession(of: terminal.id) == session else {
+            throw Failure("unavailable", "\(terminal.id)'s agent session ended while the message was being sent (its agent was released, exited, "
+                + "or another session took the terminal), so nothing was queued; agent.list shows what runs there now")
+        }
         let message = AgentMessage(text: text, from: sender, label: label, when: when, mentions: attached)
         try board.queueMessage(message, to: terminal.id)
         promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
@@ -689,6 +720,32 @@ public final class ApiRouter {
         guard composer else { return }
         if p["caller"].map({ $0 != .null }) == true { throw Failure("invalid_params", "a composer's prompt is the user's: it takes no caller") }
         if p["force"]?.bool == true { throw Failure("invalid_params", "a composer's prompt never forces: answer: true answers a blocked target") }
+    }
+
+    /// Messages whose receiver's agent session ended before its integration took them
+    /// (`Board.endAgentSession`): never dropped silently. Each goes back to a sending terminal
+    /// whose integration takes messages, as a message from easl ("undelivered to bob@canvas: its
+    /// first line…"); a script's, or one whose sender takes no messages or has closed, is logged
+    /// in the receiver's board.history (`message`). Waits on the receiver look again.
+    private func bounce(_ bounce: MessageBounce, on board: Board) {
+        let boards = Array(registry.boards.values)
+        let receiver = board.objects[bounce.tile].map { AgentAddress.address(of: $0, on: board, among: boards) }
+            ?? bounce.name.map { "\($0)@\(AgentAddress.boardName(board.root))" } ?? bounce.tile
+        for message in bounce.messages {
+            messageHolds.removeValue(forKey: message.id)
+            let notice = "undelivered to \(receiver): \(message.gist)"
+            let home = message.from.flatMap { registry.board(containing: $0) }
+            if let sender = message.from, let home, let tile = home.objects[sender], PromptTarget.takesMessages(tile),
+               (try? home.queueMessage(AgentMessage(text: notice, from: nil, label: AgentMessage.bounceSender, when: .now, mentions: []), to: sender)) != nil {
+                serveInbox(sender, on: home)
+                continue
+            }
+            let from = message.label ?? message.from.map { sender in
+                home.flatMap { home in home.objects[sender].map { AgentAddress.address(of: $0, on: home, among: boards) } } ?? sender
+            } ?? AgentMessage.scriptName
+            board.activity.record(.message, actor: .system, rev: board.revision, id: bounce.tile, type: .terminal, summary: "\(notice) (from \(from))")
+        }
+        for waiter in waiters where waiter.tile == bounce.tile { recheck(waiter.token) }
     }
 
     /// What goes with a prompt: an agent's `mentions` (`Board.handOff`), or the composer's.

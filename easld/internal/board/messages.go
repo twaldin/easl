@@ -3,11 +3,13 @@ package board
 import (
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/mention"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/store"
 )
 
 // --- addresses (AgentAddress.swift) ---
@@ -22,13 +24,32 @@ func AgentName(terminal model.Object) (string, bool) {
 	return name, ok && name != ""
 }
 
-// Address is where a message to terminal goes from any board: `name@board` for a named
-// terminal, else its tile id.
-func Address(terminal model.Object, b *Board) string {
-	if name, ok := AgentName(terminal); ok {
-		return name + "@" + BoardName(b.root)
+// Address is where a message to terminal goes from any board, an address that resolves to it
+// alone among boards (the open boards; AgentAddress.address): `name@board` while its name is no
+// other terminal's on b and b is found by that name alone (its root folder there, no other open
+// board's folder of that name); `name@<board id>` when b's name isn't; its tile id when it has
+// no name or shares it on b.
+func Address(terminal model.Object, b *Board, boards []*Board) string {
+	name, ok := AgentName(terminal)
+	if !ok {
+		return terminal.ID
 	}
-	return terminal.ID
+	for _, o := range b.objects {
+		if other, named := AgentName(o); named && other == name && o.ID != terminal.ID && o.Type == model.Terminal {
+			return terminal.ID
+		}
+	}
+	folder := BoardName(b.root)
+	found := store.IsDirectory(b.root)
+	for _, other := range boards {
+		if other != b && BoardName(other.root) == folder && store.IsDirectory(other.root) {
+			found = false
+		}
+	}
+	if !found {
+		return name + "@" + b.id
+	}
+	return name + "@" + folder
 }
 
 // renamed keeps aliases as a terminal's props.name changes (commit): its old name becomes its
@@ -81,24 +102,15 @@ func (b *Board) Alias(name string) (string, bool) {
 
 // Message is an out-of-band agent.prompt (AgentMessage), queued for a terminal whose agent
 // integration takes messages (TakesMessages) until that integration acks it through
-// agent.inbox. In memory only.
-type Message struct {
-	ID   string
-	Text string
-	// From is the sending terminal; "" for a script.
-	From string
-	// Label is a script's sender label (`from`); set, the message is the user's even with a
-	// caller.
-	Label string
-	// When is "now" or "next-turn".
-	When string
-	// Mentions are the board objects the sender attached, as a hand-off's.
-	Mentions []model.Mention
-	QueuedAt time.Time
-}
+// agent.inbox; saved with the board. When the agent session it was queued for ends first, it
+// bounces (endAgentSession).
+type Message = store.Message
 
 // ScriptName is what a script with no label is called.
 const ScriptName = "script"
+
+// BounceSender is the sender a bounce names (a script's label): easl itself.
+const BounceSender = "easl"
 
 // NewMessage is a message queued now; a label makes it a script's, whoever the caller.
 func NewMessage(text, from, label, when string, mentions []model.Mention) Message {
@@ -108,12 +120,28 @@ func NewMessage(text, from, label, when string, mentions []model.Mention) Messag
 	return Message{ID: model.NewID("msg"), Text: text, From: from, Label: label, When: when, Mentions: mentions, QueuedAt: time.Now()}
 }
 
-// Attribution is `agent` when a terminal sent the message, `user` for a script.
-func (m Message) Attribution() string {
-	if m.From == "" {
-		return "user"
+// Gist is what a bounce quotes of m (AgentMessage.gist): its first line, cut at 80 characters,
+// with "…" when anything was cut.
+func Gist(m Message) string {
+	first, _, more := strings.Cut(strings.TrimSpace(m.Text), "\n")
+	if runes := []rune(first); len(runes) > 80 {
+		first, more = string(runes[:80]), true
 	}
-	return "agent"
+	if more {
+		return first + "…"
+	}
+	return first
+}
+
+// Bounce is messages whose receiver's agent session ended before its integration took them
+// (MessageBounce), handed to OnMessagesBounced once no step is open.
+type Bounce struct {
+	// Tile is the terminal they were queued for, Name its name then ("" for none).
+	Tile, Name string
+	Messages   []Message
+	// deleted: its terminal was deleted, so it bounces only when the step closes with it
+	// still gone (a failed batch puts it back, queue and all).
+	deleted bool
 }
 
 // TakesMessages: the terminal's integration takes out-of-band messages (agent.report
@@ -145,6 +173,7 @@ func (b *Board) QueueMessage(m Message, terminal string) error {
 		return InvalidParams("%s is not a terminal tile", terminal)
 	}
 	b.messages[terminal] = append(b.messages[terminal], m)
+	b.changed()
 	return nil
 }
 
@@ -186,24 +215,49 @@ func (b *Board) AckMessages(ids []string, terminal string) []Message {
 			left = append(left, m)
 		}
 	}
+	if len(acked) == 0 {
+		return nil
+	}
 	if len(left) == 0 {
 		delete(b.messages, terminal)
 	} else {
 		b.messages[terminal] = left
 	}
+	b.changed()
 	return acked
 }
 
-// forgetMessages: a deleted terminal takes its undelivered messages along; a deleted object
-// leaves the messages that mentioned it, without that mention.
-func (b *Board) forgetMessages(id string) {
-	delete(b.messages, id)
+// endAgentSession: the agent session in terminal ended (released, or another agent or another
+// session of it took the tile), and the messages still queued for it bounce. (The app also
+// numbers sessions, Board.agentSession, for the terminal read its agent.prompt awaits; easld
+// queues under the registry's lock with nothing awaited.)
+func (b *Board) endAgentSession(terminal string) {
+	waiting, ok := b.messages[terminal]
+	if !ok {
+		return
+	}
+	delete(b.messages, terminal)
+	name, _ := AgentName(b.objects[terminal])
+	b.bouncing = append(b.bouncing, Bounce{Tile: terminal, Name: name, Messages: waiting})
+	b.changed()
+	b.flushBounces()
+}
+
+// forgetMessages: a deleted terminal's undelivered messages bounce once the step that deleted it
+// closes with it still gone; a deleted object leaves the messages that mentioned it, without
+// that mention.
+func (b *Board) forgetMessages(removed model.Object) {
+	if waiting, ok := b.messages[removed.ID]; ok {
+		delete(b.messages, removed.ID)
+		name, _ := AgentName(removed)
+		b.bouncing = append(b.bouncing, Bounce{Tile: removed.ID, Name: name, Messages: waiting, deleted: true})
+	}
 	for terminal, waiting := range b.messages {
 		kept := make([]Message, len(waiting))
 		for i, m := range waiting {
-			var mentions []model.Mention
+			mentions := []model.Mention{}
 			for _, men := range m.Mentions {
-				if !contains(model.MentionObjects(men.Target), id) {
+				if !contains(model.MentionObjects(men.Target), removed.ID) {
 					mentions = append(mentions, men)
 				}
 			}
@@ -211,6 +265,24 @@ func (b *Board) forgetMessages(id string) {
 			kept[i] = m
 		}
 		b.messages[terminal] = kept
+	}
+}
+
+// flushBounces hands the bounces due to OnMessagesBounced once no step is open: a deleted
+// terminal's only if it is still gone.
+func (b *Board) flushBounces() {
+	if b.history.isOpen() || len(b.bouncing) == 0 {
+		return
+	}
+	due := b.bouncing
+	b.bouncing = nil
+	for _, bounce := range due {
+		if _, back := b.objects[bounce.Tile]; bounce.deleted && back {
+			continue
+		}
+		if b.OnMessagesBounced != nil {
+			b.OnMessagesBounced(bounce)
+		}
 	}
 }
 
@@ -232,7 +304,7 @@ func (b *Board) InboxMessage(m Message, terminal string, boards []*Board) map[st
 		if sender != nil {
 			tile := sender.objects[m.From]
 			senderName, hasName = PromptLabel(tile), true
-			from["name"], from["address"], from["board"] = senderName, Address(tile, sender), sender.id
+			from["name"], from["address"], from["board"] = senderName, Address(tile, sender, boards), sender.id
 		} else {
 			// Closed since it sent: its id still names it.
 			from["name"] = m.From

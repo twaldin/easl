@@ -22,7 +22,9 @@ type inboxWaiter struct {
 // queueMessage is an out-of-band agent.prompt: queued for terminal, whose integration takes it
 // with agent.inbox; nothing is typed, so none of typing's refusals apply. From a terminal
 // (caller, honoured when it is a terminal on an open board) the message is the agent's; with a
-// label (`from`) or none, the user's.
+// label (`from`) or none, the user's. It is queued under the registry's lock with nothing
+// awaited, so always for the agent session the call resolved (ApiRouter.swift reads the
+// terminal first and checks Board.agentSession again).
 func (r *Router) queueMessage(text string, terminal model.Object, b *board.Board, mentions []any, caller, label, when string) (any, error) {
 	targets := make([]map[string]any, len(mentions))
 	for i, m := range mentions {
@@ -48,7 +50,7 @@ func (r *Router) queueMessage(text string, terminal model.Object, b *board.Board
 	}
 	r.serveInbox(terminal.ID, b)
 	result := map[string]any{
-		"agent":       agentEntry(terminal, b),
+		"agent":       r.agentEntry(terminal, b),
 		"submittedAt": model.FileTime(message.QueuedAt),
 		"waitable":    true,
 		"delivery":    "message",
@@ -170,6 +172,50 @@ func (r *Router) messagesDelivered(tile string, b *board.Board, started bool) {
 	}
 	for _, w := range append([]*waiter(nil), r.waiters...) {
 		if w.tile == tile {
+			r.recheck(w)
+		}
+	}
+}
+
+// bounce: messages whose receiver's agent session ended before its integration took them
+// (Board.endAgentSession), never dropped silently. Each goes back to a sending terminal whose
+// integration takes messages, as a message from easl ("undelivered to bob@canvas: its first
+// line…"); a script's, or one whose sender takes no messages or has closed, is logged in the
+// receiver's board.history (`message`). Waits on the receiver look again.
+func (r *Router) bounce(b *board.Board, bounce board.Bounce) {
+	boards := r.reg.SortedBoards()
+	receiver := bounce.Tile
+	if terminal, ok := b.Objects()[bounce.Tile]; ok {
+		receiver = board.Address(terminal, b, boards)
+	} else if bounce.Name != "" {
+		receiver = bounce.Name + "@" + board.BoardName(b.Root())
+	}
+	for _, m := range bounce.Messages {
+		delete(r.messageHolds, m.ID)
+		notice := "undelivered to " + receiver + ": " + board.Gist(m)
+		home, sent := r.reg.Containing(m.From)
+		if m.From != "" && sent {
+			if tile := home.Objects()[m.From]; board.TakesMessages(tile) {
+				if err := home.QueueMessage(board.NewMessage(notice, "", board.BounceSender, "now", nil), m.From); err == nil {
+					r.serveInbox(m.From, home)
+					continue
+				}
+			}
+		}
+		from := m.Label
+		switch {
+		case from != "":
+		case m.From != "" && sent:
+			from = board.Address(home.Objects()[m.From], home, boards)
+		case m.From != "":
+			from = m.From
+		default:
+			from = board.ScriptName
+		}
+		b.Activity.Record(board.KindMessage, board.SystemActor, b.Revision(), bounce.Tile, model.Terminal, notice+" (from "+from+")", "")
+	}
+	for _, w := range append([]*waiter(nil), r.waiters...) {
+		if w.tile == bounce.Tile {
 			r.recheck(w)
 		}
 	}
