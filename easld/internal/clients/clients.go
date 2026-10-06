@@ -124,21 +124,19 @@ func New() *Registry {
 }
 
 // Attach makes conn a client, or updates the client it already is: what it serves (names it
-// doesn't know are dropped), the boards it shows, and its focus. A client whose schema version
-// differs from the server's is refused.
+// doesn't know are dropped), the boards it shows, and its focus. A client built from an older
+// schema version than the server's is refused; a newer one is accepted and speaks the server's
+// version (the reply names it), using what both know.
 func (r *Registry) Attach(conn Conn, a Attachment) (*Client, error) {
-	who := "a client"
-	if a.App != "" {
-		who = "easl " + a.App
-	}
-	if a.Host != "" {
-		who += " on " + a.Host
-	}
-	switch {
-	case a.Version < api.SchemaVersion:
+	if a.Version < api.SchemaVersion {
+		who := "a client"
+		if a.App != "" {
+			who = "easl " + a.App
+		}
+		if a.Host != "" {
+			who += " on " + a.Host
+		}
 		return nil, &Failure{api.CodeUnavailable, fmt.Sprintf("%s is older than this board's server (schema version %d, the server's %d); update it", who, a.Version, api.SchemaVersion)}
-	case a.Version > api.SchemaVersion:
-		return nil, &Failure{api.CodeUnavailable, fmt.Sprintf("%s is newer than this board's server (schema version %d, the server's %d); update easld", who, a.Version, api.SchemaVersion)}
 	}
 	if a.Focused != "" && !slices.Contains(a.Boards, a.Focused) {
 		return nil, &Failure{api.CodeInvalidParams, "focused names " + a.Focused + ", which isn't one of boards"}

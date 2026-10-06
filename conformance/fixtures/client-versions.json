@@ -1,0 +1,274 @@
+{
+  "scenario": "client-versions",
+  "description": "Scripted Mac clients on other easl versions (client.attach): one built from an older schema version is refused `unavailable` and serves nothing; one with the server's version and another schema hash, and one built from a newer version, are accepted and serve the methods both sides know. easld ignores the attach params and `serves` names it doesn't know and never sends a client a method it doesn't list. easld only: the app doesn't speak the client protocol yet.",
+  "recordedOn": "easld (the app doesn't speak the client protocol yet; scripted clients serve it)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "old",
+      "request": {
+        "app": "0.1.0",
+        "boards": [
+          "<board>"
+        ],
+        "focused": "<board>",
+        "host": "studio",
+        "schema": "5a0c1d7e9b3f2a64",
+        "serves": [
+          "view.get",
+          "view.render"
+        ],
+        "version": 0
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "easl 0.1.0 on studio is older than this board's server (schema version 0, the server's 1); update it"
+        },
+        "id": "r1",
+        "ok": false
+      }
+    },
+    {
+      "step": "view.get",
+      "method": "view.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: view.get reads its window (viewport, selection, focus)"
+        },
+        "id": "r2",
+        "ok": false
+      }
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "peer",
+      "request": {
+        "app": "0.2.1",
+        "boards": [
+          "<board>"
+        ],
+        "host": "laptop",
+        "schema": "0123456789abcdef",
+        "serves": [
+          "view.get",
+          "view.render",
+          "view.zoom"
+        ],
+        "version": 1,
+        "windows": [
+          {
+            "board": "<board>",
+            "tab": 1
+          }
+        ]
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:1>",
+          "version": 1
+        }
+      },
+      "ignored": {
+        "response.result.schema": "the server's schema hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "view.get",
+      "method": "view.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "appearance": "dark",
+          "board": "<board>",
+          "selection": [],
+          "viewport": {
+            "rect": {
+              "h": 900,
+              "w": 1440,
+              "x": 0,
+              "y": 0
+            },
+            "zoom": 1
+          },
+          "visible": true
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "peer",
+          "method": "view.get",
+          "params": {
+            "board": "<board>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "view.snapshot",
+      "method": "view.snapshot",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: view.snapshot is a picture of its window"
+        },
+        "id": "r4",
+        "ok": false
+      }
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "next",
+      "request": {
+        "app": "0.3.0",
+        "boards": [
+          "<board>"
+        ],
+        "focused": "<board>",
+        "host": "studio",
+        "schema": "fedcba9876543210",
+        "serves": [
+          "view.get",
+          "view.zoom"
+        ],
+        "version": 2,
+        "windows": [
+          {
+            "board": "<board>",
+            "tab": 2
+          }
+        ]
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:2>",
+          "version": 1
+        }
+      },
+      "ignored": {
+        "response.result.schema": "the server's schema hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "view.get",
+      "method": "view.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "appearance": "dark",
+          "board": "<board>",
+          "selection": [],
+          "viewport": {
+            "rect": {
+              "h": 1117,
+              "w": 1728,
+              "x": 100,
+              "y": 50
+            },
+            "zoom": 0.5
+          },
+          "visible": true
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "next",
+          "method": "view.get",
+          "params": {
+            "board": "<board>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "h": 100,
+          "w": 100,
+          "x": 0,
+          "y": 0
+        }
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "height": 200,
+          "objects": [],
+          "path": "/tmp/easl-render-peer.png",
+          "scale": 2,
+          "width": 200
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "peer",
+          "method": "view.render",
+          "params": {
+            "board": "<board>",
+            "target": {
+              "h": 100,
+              "w": 100,
+              "x": 0,
+              "y": 0
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,953 @@
+{
+  "scenario": "no-client",
+  "description": "No Mac client attached (client.attach): every delegated method fails `unavailable` saying what it needed of the app, and what measures text (text.measure, object.measure, `size: fit`, a layout.check finding that rests on a measured size) answers from easld's glyph table, marked `approximate: true`. A layout.check whose findings rest on no measured size isn't. easld only: the app measures with AppKit and draws itself.",
+  "recordedOn": "easld with no client attached (the app measures and draws itself)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 280,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "# Plan\n\nShip it."
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Plan\n\nShip it."
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Plan\n\nShip it."
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 400,
+          "y": 0
+        },
+        "props": {
+          "url": "https://example.com/"
+        },
+        "type": "browser"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 1200,
+          "y": 0
+        },
+        "props": {
+          "kind": "calls",
+          "path": "main.go",
+          "symbol": "main"
+        },
+        "type": "diagram"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 1200,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "calls",
+              "path": "main.go",
+              "symbol": "main"
+            },
+            "rev": "<rev:1>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 1200,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "kind": "calls",
+              "path": "main.go",
+              "symbol": "main"
+            },
+            "rev": "<rev:1>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>",
+          "name": "worker"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:4>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:4>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 4
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "view.get",
+      "method": "view.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: view.get reads its window (viewport, selection, focus)"
+        },
+        "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "target": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: view.render is drawn by the app, as the user sees the board"
+        },
+        "id": "r7",
+        "ok": false
+      }
+    },
+    {
+      "step": "view.snapshot",
+      "method": "view.snapshot",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: view.snapshot is a picture of its window"
+        },
+        "id": "r8",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "target": "worker",
+        "text": "hello"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: agent.prompt types through the terminal's live surface"
+        },
+        "id": "r9",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "lines": 10,
+        "target": "<obj:4>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: agent.read reads the terminal's screen through its live surface (final: true needs none)"
+        },
+        "id": "r10",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "since": "prompt",
+        "target": "<obj:4>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: agent.read reads the terminal's screen through its live surface (final: true needs none)"
+        },
+        "id": "r11",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.read",
+      "method": "agent.read",
+      "request": {
+        "block": "last",
+        "target": "<obj:4>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: agent.read reads the terminal's screen through its live surface (final: true needs none)"
+        },
+        "id": "r12",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.reload",
+      "method": "object.reload",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: object.reload reloads the page in its browser tile"
+        },
+        "id": "r13",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.reload",
+      "method": "object.reload",
+      "request": {
+        "id": "<obj:3>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: object.reload computes the diagram through its language servers"
+        },
+        "id": "r14",
+        "ok": false
+      }
+    },
+    {
+      "step": "text.measure",
+      "method": "text.measure",
+      "request": {
+        "board": "<board>",
+        "items": [
+          {
+            "kind": "note",
+            "text": "fits\n\nits text",
+            "width": 280
+          },
+          {
+            "kind": "text",
+            "text": "Label text"
+          },
+          {
+            "kind": "label",
+            "text": "box",
+            "width": 120
+          },
+          {
+            "kind": "arrowLabel",
+            "text": "input"
+          },
+          {
+            "kind": "caption",
+            "text": "the `answer`"
+          }
+        ]
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "approximate": true,
+          "sizes": [
+            {
+              "h": 86,
+              "tableShortfall": 0,
+              "w": 280
+            },
+            {
+              "h": 28,
+              "w": 99
+            },
+            {
+              "h": 26,
+              "w": 33
+            },
+            {
+              "h": 20,
+              "w": 44
+            },
+            {
+              "h": 20,
+              "w": 83
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "markdown": "fits"
+        },
+        "type": "note",
+        "width": 300
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "approximate": true,
+          "h": 63,
+          "w": 300
+        }
+      }
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "kind": "text",
+          "text": "Label text"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "approximate": true,
+          "h": 28,
+          "w": 99
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "w": 300,
+          "x": 0,
+          "y": 600
+        },
+        "props": {
+          "markdown": "# Fit\n\nA note sized to its text."
+        },
+        "size": "fit",
+        "type": "note"
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "approximate": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 93,
+              "w": 300,
+              "x": 0,
+              "y": 600
+            },
+            "id": "<obj:5>",
+            "props": {
+              "markdown": "# Fit\n\nA note sized to its text."
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 5
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 93,
+              "w": 300,
+              "x": 0,
+              "y": 600
+            },
+            "id": "<obj:5>",
+            "props": {
+              "markdown": "# Fit\n\nA note sized to its text."
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 5
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 800,
+          "w": 1600,
+          "x": 0,
+          "y": 1000
+        },
+        "props": {
+          "markdown": "under"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 800,
+              "w": 1600,
+              "x": 0,
+              "y": 1000
+            },
+            "id": "<obj:6>",
+            "props": {
+              "markdown": "under"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 6
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 800,
+              "w": 1600,
+              "x": 0,
+              "y": 1000
+            },
+            "id": "<obj:6>",
+            "props": {
+              "markdown": "under"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 6
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "from": {
+            "point": [
+              400,
+              1400
+            ]
+          },
+          "label": "a caption on the note",
+          "to": {
+            "point": [
+              1200,
+              1400
+            ]
+          }
+        },
+        "type": "arrow"
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 800,
+              "x": 400,
+              "y": 1400
+            },
+            "id": "<obj:7>",
+            "props": {
+              "from": {
+                "point": [
+                  400,
+                  1400
+                ]
+              },
+              "label": "a caption on the note",
+              "to": {
+                "point": [
+                  1200,
+                  1400
+                ]
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 7
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:7>",
+            "props": {
+              "from": {
+                "point": [
+                  400,
+                  1400
+                ]
+              },
+              "label": "a caption on the note",
+              "to": {
+                "point": [
+                  1200,
+                  1400
+                ]
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "arrow",
+            "updatedAt": "<time:number>",
+            "z": 7
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "layout.check",
+      "method": "layout.check",
+      "request": {
+        "ids": [
+          "<obj:7>"
+        ]
+      },
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {
+          "approximate": true,
+          "arrowCrossings": [],
+          "arrowIntersections": [],
+          "arrowOverlaps": [],
+          "labelOverlaps": [
+            {
+              "arrow": "<obj:7>",
+              "frame": {
+                "h": 20,
+                "w": 165,
+                "x": 717,
+                "y": 1374
+              },
+              "label": "a caption on the note",
+              "lines": [],
+              "overlaps": [
+                "<obj:6>"
+              ]
+            }
+          ],
+          "overflow": [],
+          "overlaps": [],
+          "scrolls": [],
+          "truncated": []
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 500,
+          "y": 100
+        },
+        "props": {
+          "url": "https://example.org/"
+        },
+        "type": "browser"
+      },
+      "response": {
+        "id": "r22",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 500,
+              "y": 100
+            },
+            "id": "<obj:8>",
+            "props": {
+              "url": "https://example.org/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 8
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 500,
+              "y": 100
+            },
+            "id": "<obj:8>",
+            "props": {
+              "url": "https://example.org/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 8
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "layout.check",
+      "method": "layout.check",
+      "request": {
+        "ids": [
+          "<obj:8>"
+        ]
+      },
+      "response": {
+        "id": "r23",
+        "ok": true,
+        "result": {
+          "arrowCrossings": [],
+          "arrowIntersections": [],
+          "arrowOverlaps": [],
+          "labelOverlaps": [],
+          "overflow": [],
+          "overlaps": [
+            [
+              "<obj:2>",
+              "<obj:8>"
+            ]
+          ],
+          "scrolls": [],
+          "truncated": []
+        }
+      }
+    }
+  ]
+}

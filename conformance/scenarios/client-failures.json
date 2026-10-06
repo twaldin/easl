@@ -1,0 +1,102 @@
+{
+  "description": "Three scripted Mac clients (client.attach) show one board. A call goes to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call `unavailable`, naming it, and nothing is retried on another client; the next call goes to the client the choice order picks then. easld only: the app doesn't speak the client protocol yet.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "browser", "props": { "url": "https://example.com/" }, "frame": { "x": 0, "y": 0, "w": 600, "h": 400 } },
+      "save": "web"
+    },
+    {
+      "call": "client.attach",
+      "conn": "studio",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "{{schemaHash}}",
+        "app": "0.2.0",
+        "host": "studio",
+        "serves": ["view.render", "object.reload"],
+        "boards": ["{{board}}"],
+        "focused": "{{board}}"
+      },
+      "replies": {
+        "object.reload": [{ "silent": true }],
+        "view.render": [{ "result": { "path": "/tmp/easl-render-studio.png", "width": 200, "height": 200, "scale": 2, "objects": [] } }]
+      },
+      "ignore": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "call": "client.attach",
+      "conn": "laptop",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "{{schemaHash}}",
+        "app": "0.2.0",
+        "host": "laptop",
+        "serves": ["view.render", "object.reload"],
+        "boards": ["{{board}}"]
+      },
+      "replies": {
+        "object.reload": [{ "result": { "loaded": true, "url": "https://example.com/" } }],
+        "view.render": [{ "hangUp": true }]
+      },
+      "ignore": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "call": "client.attach",
+      "conn": "mini",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "{{schemaHash}}",
+        "app": "0.2.0",
+        "host": "mini",
+        "serves": ["view.render", "object.reload"],
+        "boards": ["{{board}}"]
+      },
+      "ignore": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      },
+      "note": "attached last, never focused: chosen only when no other client has a focus"
+    },
+    {
+      "call": "object.reload",
+      "params": { "id": "{{web.object.id}}", "timeoutMs": 100 },
+      "note": "studio focused the board: it gets the call and never answers; easld gives up at the caller's timeoutMs plus 5 s"
+    },
+    {
+      "call": "client.attach",
+      "conn": "laptop",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "{{schemaHash}}",
+        "app": "0.2.0",
+        "host": "laptop",
+        "serves": ["view.render", "object.reload"],
+        "boards": ["{{board}}"],
+        "focused": "{{board}}"
+      },
+      "ignore": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      },
+      "note": "laptop's user focuses the board: attaching again keeps the client and moves the focus"
+    },
+    { "call": "object.reload", "params": { "id": "{{web.object.id}}", "timeoutMs": 100 }, "note": "laptop focused the board last: it serves the call" },
+    {
+      "call": "view.render",
+      "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 } },
+      "note": "laptop hangs up mid-call: the call fails, and it isn't retried on another client"
+    },
+    {
+      "call": "view.render",
+      "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 } },
+      "note": "laptop is gone: studio, which focused the board, comes before mini, which attached last"
+    }
+  ]
+}
