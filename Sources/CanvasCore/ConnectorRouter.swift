@@ -1415,7 +1415,8 @@ public struct ConnectorRouter: Sendable {
     /// when that one can move, else the spot with the fewest collisions (`layout.check` reports it).
     ///
     /// `keep` (by connector index) are labels that stand as they are (`keptLabels`): the others
-    /// are placed around them.
+    /// are placed around them, and one moves only when it is the single label in the way of one
+    /// left without a clear spot (a caption that came or grew beside it) and has another.
     static func placeLabels(connectors: [Connector], routes: [[CGPoint]], obstacles: [CGRect], titles: [CGRect], groups: [CGRect] = [],
                             keep: [Int: Label] = [:]) -> [ObjectID: Label] {
         let labelled = connectors.indices.filter { connectors[$0].label != nil && routes[$0].count >= 2 && keep[$0] == nil }
@@ -1425,10 +1426,10 @@ public struct ConnectorRouter: Sendable {
         let segments = LabelSegments(routes: routes, obstacles: obstacles, titles: titles, groups: groups)
         var candidates: [Int: [LabelCandidate]] = [:]
         var clear: [Int: Int] = [:]
-        for index in labelled {
+        /// A label's acceptable spots, best first (clear beside or on the route, then beside it
+        /// with another line close by, then a clear leader), and how many are clear.
+        func prepare(_ index: Int) {
             let all = labelCandidates(route: routes[index], owner: index, size: connectors[index].label!, segments: segments)
-            // Acceptable spots, best first: clear beside or on the route, then beside it with
-            // another line close by, then a clear leader.
             let open = all.enumerated().compactMap { order, spot -> (score: Int, order: Int, spot: LabelCandidate)? in
                 let score = segments.collisions(spot, owner: index, labels: [], limit: underCost)
                 return score < underCost ? (score, order, spot) : nil
@@ -1436,6 +1437,7 @@ public struct ConnectorRouter: Sendable {
             candidates[index] = open.isEmpty ? all : open
             clear[index] = open.count
         }
+        for index in labelled { prepare(index) }
         /// Whether two placed labels get in each other's way: chips closer than 2 points, or a
         /// leader through the other chip.
         func clash(_ a: LabelCandidate, _ b: LabelCandidate) -> Bool {
@@ -1469,8 +1471,9 @@ public struct ConnectorRouter: Sendable {
         for index in stuck where clear[index]! > 0 {
             search: for spot in candidates[index]! {
                 let blocking = chosen.filter { $0.key != index && clash(spot, $0.value) }.map(\.key)
-                // Kept labels (`keep`) never move.
-                guard blocking.count == 1, let other = blocking.first, let room = clear[other], room > 0 else { continue }
+                guard blocking.count == 1, let other = blocking.first else { continue }
+                if keep[other] != nil, candidates[other] == nil { prepare(other) }
+                guard let room = clear[other], room > 0 else { continue }
                 for move in candidates[other]! where !clash(move, spot) {
                     guard !chosen.contains(where: { $0.key != index && $0.key != other && clash(move, $0.value) }) else { continue }
                     chosen[other] = move
@@ -1479,7 +1482,7 @@ public struct ConnectorRouter: Sendable {
                 }
             }
         }
-        for (index, spot) in chosen where keep[index] == nil { result[connectors[index].id] = Label(rect: spot.rect, leader: spot.leader) }
+        for (index, spot) in chosen { result[connectors[index].id] = Label(rect: spot.rect, leader: spot.leader) }
         return result
     }
 

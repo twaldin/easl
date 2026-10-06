@@ -530,6 +530,9 @@ final class ShapeLayer: NSView {
                     continue
                 }
                 guard let path = result.paths[id] else { continue }
+                // The board's routing placed it where its ends are now: a follow still marked
+                // for it would only replace that with a route of its own.
+                followPending.remove(id)
                 let label = result.labels[id].map { ConnectorRouter.Label(rect: $0.rect.offsetBy(dx: origin.x, dy: origin.y), leader: $0.leader?.map(Self.docPoint)) }
                 let routed = DrawnItem.arrow(item.object, spec, path: path.map(Self.docPoint), label: label)
                 guard routed.arrow?.path != item.arrow?.path || routed.labelRect != item.labelRect || routed.labelLeader != item.labelLeader else { continue }
@@ -723,7 +726,10 @@ final class ShapeLayer: NSView {
         return nil
     }
 
+    /// Where `id` is drawn: an arrow marked to follow (`reroute(boundTo:)`) follows first, so a
+    /// selection ring or a fit never takes the route it is about to leave.
     func outlineRect(_ id: ObjectID) -> NSRect? {
+        followNow(id)
         guard let item = items[id] else { return nil }
         if item.arrow != nil {
             let union = item.labelRect.map { item.frame.union($0) } ?? item.frame

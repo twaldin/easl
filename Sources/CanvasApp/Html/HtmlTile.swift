@@ -386,9 +386,13 @@ final class HtmlTile: NSView, TileContent {
                                   z: 0, createdBy: .user, createdAt: Date(), props: props)
         let tile = HtmlTile(object: object, board: Board(id: IDs.make("brd"), root: root), live: false)
         guard await tile.beginOffscreen() else { throw ObjectMeasure.Failure.unavailable("the page is busy") }
-        defer { tile.endOffscreen() }
+        var measuredFine = false
+        // A page that failed or was cancelled may be stuck (a script that never yields): it is
+        // discarded, never emptied for reuse (`HtmlMeasurePool`).
+        defer { tile.endOffscreen(keepPage: measuredFine && !Task.isCancelled) }
         switch await tile.loadOffscreen(size: CGSize(width: width, height: 1), appearance: NSApp.effectiveAppearance, limit: measureLimit, pooled: true) {
         case .success(let extent):
+            measuredFine = true
             if let key {
                 if measured.count >= 64 { measured = measured.filter { ContinuousClock.now - $0.value.at < measureReuse } }
                 measured[key] = (extent, ContinuousClock.now)
@@ -442,12 +446,14 @@ final class HtmlTile: NSView, TileContent {
         return true
     }
 
-    private func endOffscreen() {
+    /// `keepPage`: a pooled measure page goes back to the pool (it measured fine); otherwise it
+    /// is discarded.
+    private func endOffscreen(keepPage: Bool = false) {
         renderBusy = false
         if let page = measurePage {
             measurePage = nil
             renderWebView = nil
-            HtmlMeasurePool.give(page)
+            if keepPage { HtmlMeasurePool.give(page) } else { HtmlMeasurePool.discard(page) }
             return
         }
         renderWebView?.stopLoading()

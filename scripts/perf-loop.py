@@ -139,6 +139,23 @@ class Instance:
         view = self.cli("view.get")["viewport"]
         return view["rect"], view["zoom"]
 
+    def bursts_ended(self):
+        """How many replayed input bursts have ended their DevPerf span (its `settle` line)."""
+        with open(os.path.join(self.home, "app.log"), errors="replace") as f:
+            return sum(1 for l in f if "DevPerf: burst of " in l and re.search(r"DevPerf: burst of \d+ \w+ settle ", l))
+
+    def scroll_burst(self, *args, n, at=("700", "400")):
+        """A burst of `n` scroll steps, returning once its DevPerf span has ended. DevInput ends
+        it unconditionally 1.5 s after the last step (`DevPerf.settle`), whatever span is open
+        then, so a span opened before that would be cut short."""
+        ended = self.bursts_ended()
+        self.dev("input", "scroll", *at, *args, "--repeat", str(n))
+        if n < 2:
+            return
+        deadline = time.time() + n * 0.008 + 10
+        while self.bursts_ended() <= ended and time.time() < deadline:
+            time.sleep(0.1)
+
     def pan(self, dx, dy=0, steps=60, at=("700", "400")):
         """Moves the viewport about (dx, dy) canvas points in a burst of mouse-wheel notches.
         Sideways ones are ⌘-scrolls, which the window hands to the canvas whatever tile is under
@@ -155,8 +172,7 @@ class Instance:
             step = [0, 0]
             step[axis] = -per if delta > 0 else per
             mods = ["--mods", "cmd"] if axis == 0 else []
-            self.dev("input", "scroll", *at, str(step[0]), str(step[1]), "--lines", *mods, "--repeat", str(n))
-            time.sleep(0.3)
+            self.scroll_burst(str(step[0]), str(step[1]), "--lines", *mods, n=n, at=at)
 
     def zoom_to_cards(self):
         """100% zoom, the viewport centred on the html tiles' densest area (the first column's top):
@@ -167,8 +183,7 @@ class Instance:
         time.sleep(1)
         # Screen points one ⌘-wheel notch pans.
         before, _ = self.viewport()
-        self.dev("input", "scroll", "700", "400", "-1", "0", "--lines", "--mods", "cmd", "--repeat", "10")
-        time.sleep(0.5)
+        self.scroll_burst("-1", "0", "--lines", "--mods", "cmd", n=10)
         after, _ = self.viewport()
         self.notch = abs(after["x"] - before["x"]) / 10 or 10
         objects = self.cli("board.get")["objects"]
@@ -195,7 +210,7 @@ class Instance:
 
     def span_resume(self):
         """(Re)opens the idle DevPerf span: an input burst opens a span of its own, which ends the
-        open one (both log their line), and nothing is measured once the burst's has ended."""
+        open one (both log their lines), and nothing is measured once the burst's has ended."""
         self.dev("input", "perf", "900000")
 
     def span_end(self):
@@ -219,8 +234,8 @@ def pan_zoom(inst):
     for _ in range(2):
         for dx in (3000, -3000):
             inst.pan(dx)
-            time.sleep(1)
             inst.span_resume()
+            time.sleep(1)
         for item in ["View/Zoom Out"] * 3 + ["View/Zoom In"] * 3 + ["View/Zoom to Fit", "View/Back"]:
             inst.dev("input", "mainmenu", item)
             time.sleep(0.7)

@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 import Testing
-import CanvasCore
+@testable import CanvasCore
 
 /// A board's `avoid` arrows routed together (`ConnectorRouter`): ports, tracks, labels, flow,
 /// stability, and what `layout.check` reports about arrows.
@@ -270,6 +270,30 @@ final class RoutingTests {
                 #expect(others.allSatisfy { DrawingGeometry.distance(foot, toPath: $0) >= spacing / 2 }, "\(caption)'s leader starts where its line runs alone")
             }
         }
+    }
+
+    /// A caption that comes beside a kept label (the label stands from the last routing: its line
+    /// and caption unchanged, nothing changed near it) whose only clear spot that label holds:
+    /// the kept one moves to another clear spot instead of the two overlapping.
+    @Test func aKeptLabelMakesRoomForACaptionThatCameBesideIt() throws {
+        // B: a short line over a pocket between four tiles that holds its chip in one place only,
+        // below it. A: a line further down with room beside it, its kept chip in that pocket.
+        let chip = CGSize(width: 80, height: 18)
+        let b = ConnectorRouter.Connector(id: "obj_b", from: .point(CGPoint(x: 0, y: 0)), to: .point(CGPoint(x: 60, y: 0)), label: chip)
+        let a = ConnectorRouter.Connector(id: "obj_a", from: .point(CGPoint(x: -200, y: 600)), to: .point(CGPoint(x: 200, y: 600)), label: chip)
+        let routes = [[CGPoint(x: 0, y: 0), CGPoint(x: 60, y: 0)], [CGPoint(x: -200, y: 600), CGPoint(x: 200, y: 600)]]
+        let tiles = [CGRect(x: -500, y: -400, width: 1000, height: 398), CGRect(x: -500, y: 30, width: 1000, height: 370),
+                     CGRect(x: -500, y: -2, width: 482, height: 32), CGRect(x: 66, y: -2, width: 434, height: 32)]
+        let pocket = CGRect(x: -16, y: DrawingGeometry.labelClearance, width: chip.width, height: chip.height)
+        let labels = ConnectorRouter.placeLabels(connectors: [b, a], routes: routes, obstacles: tiles, titles: [],
+                                                 keep: [1: ConnectorRouter.Label(rect: pocket, leader: nil)])
+        let placedB = try #require(labels["obj_b"]), placedA = try #require(labels["obj_a"])
+        #expect(placedB.rect == pocket, "B takes its only clear spot")
+        #expect(!placedA.rect.insetBy(dx: -2, dy: -2).intersects(placedB.rect), "\(placedA.rect) \(placedB.rect)")
+        #expect(tiles.allSatisfy { !$0.intersects(placedA.rect) }, "A moved to another clear spot")
+        // Placed from scratch, the same.
+        let fresh = ConnectorRouter.placeLabels(connectors: [b, a], routes: routes, obstacles: tiles, titles: [])
+        #expect(fresh["obj_b"]?.rect == pocket)
     }
 
     @Test func layoutCheckReportsArrowsOnTopOfOrCrossingEachOther() {
