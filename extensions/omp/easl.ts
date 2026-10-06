@@ -54,6 +54,8 @@ type Details = Record<string, any>;
 type Select = (this: unknown, title: unknown, ...rest: unknown[]) => Promise<unknown>;
 // What the agent runs, as agent.report_session `model` and `thinking` say it.
 type RunsWith = { model?: string; thinking?: string };
+// A `thinking_level_change` entry of omp's session, as the extension reads it.
+type ThinkingChange = { timestamp: string; thinkingLevel?: string | null; configured?: string | null };
 
 export default function canvas(pi: ExtensionAPI): void {
   const tile = process.env.EASL_TILE_ID;
@@ -188,7 +190,7 @@ export default function canvas(pi: ExtensionAPI): void {
   function editorDraft(ctx: ExtensionContext): boolean | undefined {
     if (ctx.mode !== "tui") return undefined;
     try {
-      return ctx.ui.getEditorText().trim() !== "";
+      return /\S/.test(ctx.ui.getEditorText());
     } catch {
       return undefined;
     }
@@ -208,9 +210,9 @@ export default function canvas(pi: ExtensionAPI): void {
   // at omp's default auto, before its first turn): easl keeps what it had, and a relaunch what
   // its command gave.
   function thinkingSelector(ctx: ExtensionContext): string | undefined {
-    let last: { timestamp: string; thinkingLevel?: string | null; configured?: string | null } | undefined;
+    let last: ThinkingChange | undefined;
     try {
-      for (const entry of ctx.sessionManager.getBranch()) if (entry.type === "thinking_level_change") last = entry;
+      last = lastThinkingChange(ctx);
     } catch {
       return undefined;
     }
@@ -218,6 +220,33 @@ export default function canvas(pi: ExtensionAPI): void {
     if (last && Date.parse(last.timestamp) >= STARTED_AT) return recorded;
     if (launch.thinking && !launch.switched && ctx.sessionManager.getSessionId() === launch.session) return launch.thinking;
     return recorded;
+  }
+
+  // The branch's newest thinking_level_change as of a leaf (its session and entry id). The branch
+  // is read from its leaf back to that change, or to the leaf read last time: a check that finds
+  // the same leaf reads nothing, and one after the session grew reads only what was added, so
+  // the RECONCILE_MS checks cost the same however long the session is.
+  let thinkingScan: { session: string; leaf: string | null; change?: ThinkingChange } | undefined;
+
+  function lastThinkingChange(ctx: ExtensionContext): ThinkingChange | undefined {
+    const manager = ctx.sessionManager;
+    const session = manager.getSessionId();
+    const leaf = manager.getLeafId();
+    const known = thinkingScan?.session === session ? thinkingScan : undefined;
+    if (known && known.leaf === leaf) return known.change;
+    let change: ThinkingChange | undefined;
+    for (let entry = manager.getLeafEntry(); entry; entry = entry.parentId ? manager.getEntry(entry.parentId) : undefined) {
+      if (known && entry.id === known.leaf) {
+        change = known.change;
+        break;
+      }
+      if (entry.type === "thinking_level_change") {
+        change = entry;
+        break;
+      }
+    }
+    thinkingScan = { session, leaf, change };
+    return change;
   }
 
   // omp asks for every tool approval through its UI's select dialog, titled `Allow tool: <name>`.

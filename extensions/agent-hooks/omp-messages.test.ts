@@ -176,6 +176,8 @@ function fakeOmp(easl: { socketPath: string }, entries: Params[] = [], sessionId
     branch(): Params[] {
       return (omp.branches[state.sessionId] ??= []);
     },
+    /** How many session entries the extension read (getLeafEntry, getEntry). */
+    read: 0,
     ctx: {
       hasUI: true,
       /** What `ctx.model` says now; the extension reads it as it reconciles. */
@@ -186,7 +188,15 @@ function fakeOmp(easl: { socketPath: string }, entries: Params[] = [], sessionId
         getEntries: () => entries,
         getSessionId: () => state.sessionId,
         getSessionFile: () => `/tmp/${state.sessionId}.jsonl`,
-        getBranch: (): Params[] => omp.branch(),
+        getLeafId: (): string | null => omp.branch().at(-1)?.id ?? null,
+        getLeafEntry: (): Params | undefined => {
+          omp.read++;
+          return omp.branch().at(-1);
+        },
+        getEntry: (id: string): Params | undefined => {
+          omp.read++;
+          return omp.branch().find((entry) => entry.id === id);
+        },
       },
       ui: { notify: (text: string) => omp.notices.push(text), select: async () => undefined },
     },
@@ -407,4 +417,25 @@ test("the --thinking omp was launched with is the launch session's until the age
   await omp.emit("session_switch");
   await until(() => reported(easl, "thinking").length === 3);
   expect(reported(easl, "thinking")).toEqual(["auto", undefined, "high"]);
+});
+
+test("the checks while omp runs read only what its session added since the last one", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  grow(omp.branch(), { type: "thinking_level_change", thinkingLevel: "low", configured: "low" });
+  grow(omp.branch(), ...Array.from({ length: 200 }, () => ({ type: "message" })));
+  await omp.emit("session_start");
+  await until(() => reported(easl, "thinking").length === 1);
+  expect(reported(easl, "thinking")).toEqual(["low"]);
+  // Four checks with nothing new read nothing.
+  const read = omp.read;
+  let ticks = 0;
+  await until(() => ++ticks > 400);
+  expect(omp.read).toBe(read);
+  // A new message: the next check reads it and stops at the leaf it read before.
+  grow(omp.branch(), { type: "message" });
+  ticks = 0;
+  await until(() => ++ticks > 200);
+  expect(omp.read - read).toBeLessThanOrEqual(2);
+  expect(reported(easl, "thinking")).toEqual(["low"]);
 });
