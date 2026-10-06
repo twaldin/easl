@@ -621,6 +621,9 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 		}
 		label = s
 	}
+	if _, restarting := r.restarts[terminal.ID]; restarting {
+		return nil, restartingFailure(terminal.ID)
+	}
 	composer := boolParam(p, "composer")
 	if !composer && board.TakesMessages(terminal) {
 		return r.queueMessage(text, terminal, b, mentions, caller, label, when)
@@ -681,7 +684,12 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 	params := copyParams(p)
 	delete(params, "mentions")
 	params["target"] = terminal.ID
+	// From here until its turn reports, agent.restart counts the prompt as work (promptPending).
+	r.typing[terminal.ID]++
 	result, err := r.await(c, "agent.prompt", params, clients.TerminalDeadline)
+	if r.typing[terminal.ID]--; r.typing[terminal.ID] <= 0 {
+		delete(r.typing, terminal.ID)
+	}
 	if err != nil {
 		b.Commit(ids)
 		return nil, err
@@ -738,12 +746,14 @@ func checkComposer(p map[string]any) error {
 // restartKinds are the agents agent.restart relaunches by kind (AgentResume's grammars).
 var restartKinds = []string{"omp", "claude", "codex", "gemini", "opencode"}
 
-// restart is agent.restart: its refusals are the board's; a client kills the tile's zmx session
-// and relaunches it through its terminal tile. While the client does, no inbox poll takes what
-// was queued for the agent (restartHold); once it has, the killed agent's session is over and
-// that bounces (Board.EndAgentSession; the app ends the session between the kill and the
-// relaunch), so none of it reaches the relaunched agent. Refused, the session goes on and its
-// messages are offered again.
+// restart is agent.restart: its refusals are the board's (ApiRouter.restart's but focus, which
+// needs a window), and one restart of a terminal at a time; then a client kills the tile's zmx
+// session and relaunches it through its terminal tile, checking again just before the kill.
+// While the client does, the terminal is held (restarts, owned by this restart): agent.prompt to
+// it is refused and no inbox poll takes what is queued for it. Once the client has relaunched
+// it, the killed agent's session is over and what was queued bounces (Board.EndAgentSession; the
+// app ends the session between the kill and the relaunch), so none of it reaches the relaunched
+// agent. Refused or failed, the session goes on and its messages are offered again.
 func (r *Router) restart(p map[string]any) (any, error) {
 	target, err := str(p, "target")
 	if err != nil {
@@ -772,9 +782,12 @@ func (r *Router) restart(p map[string]any) (any, error) {
 			return nil, invalid("args is an array of strings")
 		}
 	}
+	if _, busy := r.restarts[terminal.ID]; busy {
+		return nil, fail(api.CodeConflict, "%s is already restarting (another agent.restart): wait for that one to finish", terminal.ID)
+	}
 	agent := asMap(terminal.Props["agent"])
 	if !boolParam(p, "force") {
-		if err := restartRefusal(terminal, agent); err != nil {
+		if err := r.restartRefusal(terminal, agent); err != nil {
 			return nil, err
 		}
 	}
@@ -793,23 +806,24 @@ func (r *Router) restart(p map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	held := b.Messages(terminal.ID)
-	for _, m := range held {
-		r.messageHolds[m.ID] = restartHold{}
-	}
+	r.restartSeq++
+	op := r.restartSeq
+	r.restarts[terminal.ID] = op
 	result, err := r.await(c, "agent.restart", params, clients.TerminalDeadline)
-	if err != nil {
-		for _, m := range held {
-			if _, ours := r.messageHolds[m.ID].(restartHold); ours {
-				delete(r.messageHolds, m.ID)
-			}
-		}
-		r.serveInbox(terminal.ID, b)
-		return nil, err
+	if r.restarts[terminal.ID] == op {
+		delete(r.restarts, terminal.ID)
 	}
-	delete(r.pendingPrompts, terminal.ID)
-	b.EndAgentSession(terminal.ID)
-	return result, nil
+	if err == nil {
+		delete(r.pendingPrompts, terminal.ID)
+		b.EndAgentSession(terminal.ID)
+	}
+	r.serveInbox(terminal.ID, b)
+	return result, err
+}
+
+// restartingFailure is agent.prompt's answer for a terminal agent.restart holds.
+func restartingFailure(tile string) error {
+	return fail(api.CodeConflict, "%s is restarting (agent.restart): nothing reaches it until its agent is relaunched; send again once it reports", tile)
 }
 
 // restartHold holds a restarting terminal's queued messages while its client relaunches it: a
@@ -833,10 +847,11 @@ func resumedSession(agent map[string]any) string {
 	return session
 }
 
-// restartRefusal is why agent.restart leaves a terminal alone without force: the dialog, turn or
-// draft a restart would lose. (The app also refuses while the user may be typing in it: easld
-// has no window to have keyboard focus.)
-func restartRefusal(terminal model.Object, agent map[string]any) error {
+// restartRefusal is why agent.restart leaves a terminal alone without force: the dialog, turn,
+// prompt or draft a restart would lose, in that order; a draft no integration reports is one the
+// user may have. (The app also refuses while the user may be typing in it: easld has no window
+// to have keyboard focus.)
+func (r *Router) restartRefusal(terminal model.Object, agent map[string]any) error {
 	switch stateOf(terminal) {
 	case "blocked":
 		blocker := ""
@@ -847,10 +862,28 @@ func restartRefusal(terminal model.Object, agent map[string]any) error {
 	case "working":
 		return fail(api.CodeConflict, "%s is working: restarting would kill its turn. Wait for it (agent.wait), or force: true restarts anyway", terminal.ID)
 	}
-	if agent["draft"] == true {
+	if r.promptPending(terminal.ID) {
+		return fail(api.CodeConflict, "%s was just prompted and hasn't started that turn: restarting would lose the prompt. Wait for it (agent.wait), or force: true restarts anyway", terminal.ID)
+	}
+	switch draft, reported := agent["draft"].(bool); {
+	case !reported:
+		return fail(api.CodeConflict, "nothing in %s reports whether its input holds a draft the user hasn't sent (omp's easl extension does), so restarting could lose one; force: true restarts anyway", terminal.ID)
+	case draft:
 		return fail(api.CodeConflict, "%s's input editor holds a draft the user hasn't sent: restarting would lose it; force: true restarts anyway", terminal.ID)
 	}
 	return nil
+}
+
+// promptPending: a prompt to tile whose turn hasn't started, one a client is typing or one
+// submitted (or a message its integration delivered as a new turn) that its agent hasn't
+// reported working on within PromptStartGrace, the interval agent.wait waits out
+// (ApiRouter.promptPending).
+func (r *Router) promptPending(tile string) bool {
+	if r.typing[tile] > 0 {
+		return true
+	}
+	prompted, ok := r.pendingPrompts[tile]
+	return ok && time.Since(prompted) < r.PromptStartGrace
 }
 
 // drain is tray.drain. Without a window there is no prompt target, so anyone drains the tray.
