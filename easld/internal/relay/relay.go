@@ -5,11 +5,17 @@
 //
 // Why not ssh's own forward of a unix socket: Tailscale SSH creates it owned by root and
 // readable by root only, so the user's programs can't connect. A loopback port can be reached
-// by every user of the machine, so each connection starts with a token only easld and the
-// client know, and the client's end closes any connection without it.
+// by every user of the machine, and once the client's forward is gone anyone can listen on it.
+// So neither end sends the token the client gave: each connection starts with both proving
+// they hold it (Proof), and nothing passes to an end that can't.
 package relay
 
 import (
+	"bufio"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +24,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,21 +37,26 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 
-// Sockets are the names of an instance's sockets, each passed on with its name after the token.
+// Sockets are the names of an instance's sockets, each named to the client as a connection to it
+// starts.
 var Sockets = []string{"easl", "cmux"}
 
 // Relays are the open relays of easld's machine, by client instance.
 type Relays struct {
 	// Dir holds an instance's sockets in `<Dir>/<instance>/`.
 	Dir string
-	// DialTimeout bounds connecting to the client's port.
-	DialTimeout time.Duration
+	// DialTimeout bounds connecting to the client's port; HandshakeTimeout the client's proof.
+	DialTimeout      time.Duration
+	HandshakeTimeout time.Duration
 
 	mu   sync.Mutex
 	open map[string]*relay
 }
 
 type relay struct {
+	// port and token are where the client's forward is and the secret it proves; port is 0 once
+	// a connection there failed (the forward is gone, or what listens can't prove the token),
+	// until the client opens the relay again.
 	port      int
 	token     string
 	listeners []net.Listener
@@ -52,16 +64,23 @@ type relay struct {
 
 // New is the relays of `dir` (easld's `<home>/run`).
 func New(dir string) *Relays {
-	return &Relays{Dir: dir, DialTimeout: 5 * time.Second, open: map[string]*relay{}}
+	return &Relays{Dir: dir, DialTimeout: 5 * time.Second, HandshakeTimeout: 5 * time.Second, open: map[string]*relay{}}
 }
 
 var (
 	instancePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	tokenPattern    = regexp.MustCompile(`^[A-Za-z0-9]{16,128}$`)
+	noncePattern    = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	proofPattern    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
-// Open starts serving `instance`'s sockets, or points a relay already open at the new port and
-// token: their paths, by name, and whether the sockets were made now (false: they were open).
+// Open serves `instance`'s sockets through the client's forward at `port`, whose end holds
+// `token`: their paths, by name, and whether integrations may have spooled reports the client
+// should fetch (opened). Opening again with the same token (the client's keepalive) only takes
+// the port and re-arms a relay a failed connection disarmed (opened then). A new token is a new
+// connection of the client's (its app restarted, or it reconnected): the sockets are bound anew
+// at the same paths, so the integrations watching their socket's identity see the board come back
+// and report again (extensions/agent-hooks/report.ts `watchCanvasReturn`).
 func (r *Relays) Open(instance string, port int, token string) (map[string]string, bool, error) {
 	if !instancePattern.MatchString(instance) || instance == "." || instance == ".." {
 		return nil, false, &Error{"invalid_params", fmt.Sprintf("instance must be [A-Za-z0-9._-], at most 64 characters, got %q", instance)}
@@ -79,9 +98,11 @@ func (r *Relays) Open(instance string, port int, token string) (map[string]strin
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if existing := r.open[instance]; existing != nil {
-		existing.port, existing.token = port, token
-		return paths, false, nil
+	existing := r.open[instance]
+	if existing != nil && existing.token == token {
+		disarmed := existing.port == 0
+		existing.port = port
+		return paths, disarmed, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, false, &Error{"unavailable", err.Error()}
@@ -90,35 +111,57 @@ func (r *Relays) Open(instance string, port int, token string) (map[string]strin
 	_ = os.Chmod(dir, 0o700)
 	opened := &relay{port: port, token: token}
 	for _, name := range Sockets {
-		listener, err := listen(paths[name])
+		listener, err := bind(paths[name])
 		if err != nil {
-			for _, l := range opened.listeners {
+			// The sockets bound so far replaced the open relay's: neither serves any more.
+			for i, l := range opened.listeners {
 				l.Close()
+				_ = os.Remove(paths[Sockets[i]])
+			}
+			if existing != nil {
+				for _, l := range existing.listeners {
+					l.Close()
+				}
+				delete(r.open, instance)
 			}
 			return nil, false, &Error{"unavailable", fmt.Sprintf("can't serve %s: %v", paths[name], err)}
 		}
 		opened.listeners = append(opened.listeners, listener)
-		go r.serve(instance, name, listener)
+	}
+	if existing != nil {
+		// Its paths are the new listeners' now.
+		for _, listener := range existing.listeners {
+			listener.Close()
+		}
 	}
 	r.open[instance] = opened
+	for i, name := range Sockets {
+		go r.serve(instance, name, opened.listeners[i])
+	}
 	return paths, true, nil
 }
 
-// listen binds `path` for the user only, replacing a socket a previous easld left there.
-func listen(path string) (net.Listener, error) {
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSocket == 0 {
-			return nil, errors.New("a file that isn't a socket is in the way")
-		}
-		_ = os.Remove(path)
+// bind serves `path` for the user only. The socket is bound beside it and renamed over it, so a
+// socket already there (the relay's previous one, or one a previous easld left) is replaced in
+// one step and a client never finds the path missing; a file that isn't a socket is left alone.
+func bind(path string) (net.Listener, error) {
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSocket == 0 {
+		return nil, errors.New("a file that isn't a socket is in the way")
 	}
-	listener, err := net.Listen("unix", path)
+	fresh := filepath.Join(filepath.Dir(path), "."+filepath.Base(path))
+	_ = os.Remove(fresh)
+	listener, err := net.Listen("unix", fresh)
 	if err != nil {
 		return nil, err
 	}
-	listener.(*net.UnixListener).SetUnlinkOnClose(true)
-	if err := os.Chmod(path, 0o600); err != nil {
+	// Once renamed, the path is no longer this listener's to unlink (Close).
+	listener.(*net.UnixListener).SetUnlinkOnClose(false)
+	if err := os.Chmod(fresh, 0o600); err == nil {
+		err = os.Rename(fresh, path)
+	}
+	if err != nil {
 		listener.Close()
+		_ = os.Remove(fresh)
 		return nil, err
 	}
 	return listener, nil
@@ -134,28 +177,31 @@ func (r *Relays) serve(instance, name string, listener net.Listener) {
 	}
 }
 
-// pass connects `client` to the instance's port, announces it with the token and its socket's
-// name, and copies both ways until both sides are done. While the client's machine can't be
-// reached the connection just closes: the integration spools its report (`unavailable`).
+// pass connects `client` to the instance's port, proves the token there and has the other end
+// prove it (`handshake`), then copies both ways until both sides are done. A connection the
+// client's end doesn't take (nothing listens, or what does can't prove the token) closes at once
+// (the integration spools its report: `unavailable`) and disarms the relay until the client opens
+// it again: whatever has the port now gets no more connections.
 func (r *Relays) pass(instance, name string, client net.Conn) {
 	defer client.Close()
 	r.mu.Lock()
-	current := r.open[instance]
 	var port int
 	var token string
-	if current != nil {
+	if current := r.open[instance]; current != nil {
 		port, token = current.port, current.token
 	}
 	r.mu.Unlock()
-	if current == nil {
+	if port == 0 {
 		return
 	}
 	remote, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), r.DialTimeout)
 	if err != nil {
+		r.disarm(instance, port, token)
 		return
 	}
 	defer remote.Close()
-	if _, err := io.WriteString(remote, token+" "+name+"\n"); err != nil {
+	if err := handshake(remote, token, name, r.HandshakeTimeout); err != nil {
+		r.disarm(instance, port, token)
 		return
 	}
 	done := make(chan struct{})
@@ -173,13 +219,68 @@ func (r *Relays) pass(instance, name string, client net.Conn) {
 	<-done
 }
 
+// disarm stops passing `instance`'s connections on, unless the client opened the relay again
+// since `port` and `token` were read.
+func (r *Relays) disarm(instance string, port int, token string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if current := r.open[instance]; current != nil && current.port == port && current.token == token {
+		current.port = 0
+	}
+}
+
+// handshake starts a connection to the client's end for socket `name`: easld sends
+// `<name> <nonce>`, the end answers `<its nonce> <Proof(token, "gate", …)>`, and easld, once
+// that proves the token, sends `<Proof(token, "easld", …)>`, which the end checks before it
+// splices. Neither sends the token: what listens on the port after the client's forward is gone
+// learns nothing from a connection, and gets no report.
+func handshake(conn net.Conn, token, name string, timeout time.Duration) error {
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
+	ours := make([]byte, 16)
+	if _, err := rand.Read(ours); err != nil {
+		return err
+	}
+	nonce := hex.EncodeToString(ours)
+	if _, err := io.WriteString(conn, name+" "+nonce+"\n"); err != nil {
+		return err
+	}
+	// Small enough that a listener sending without end can't fill memory; the gate sends nothing
+	// after its line until it has easld's proof.
+	reader := bufio.NewReaderSize(conn, 256)
+	line, err := reader.ReadSlice('\n')
+	if err != nil {
+		return err
+	}
+	theirs, proof, _ := strings.Cut(strings.TrimSuffix(string(line), "\n"), " ")
+	if !noncePattern.MatchString(theirs) || !proofPattern.MatchString(proof) || reader.Buffered() > 0 ||
+		!hmac.Equal([]byte(proof), []byte(Proof(token, "gate", name, nonce, theirs))) {
+		return errors.New("the client's end didn't prove the token")
+	}
+	if _, err := io.WriteString(conn, Proof(token, "easld", name, nonce, theirs)+"\n"); err != nil {
+		return err
+	}
+	return conn.SetDeadline(time.Time{})
+}
+
+// Proof is `role`'s proof ("easld" or "gate") that it holds `token`, for a connection to socket
+// `name` that easld started with nonce `easld` and the client's end answered with nonce `gate`:
+// HMAC-SHA256 keyed by the token, in hex (RelayGate.proof).
+func Proof(token, role, name, easld, gate string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	mac.Write([]byte("easl-relay " + role + " " + name + " " + easld + " " + gate))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 // Close stops every relay and removes its sockets.
 func (r *Relays) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for instance, open := range r.open {
-		for _, listener := range open.listeners {
+		for i, listener := range open.listeners {
 			listener.Close()
+			_ = os.Remove(filepath.Join(r.Dir, instance, Sockets[i]+".sock"))
 		}
 		delete(r.open, instance)
 	}

@@ -16,11 +16,12 @@ struct HostRoute: Sendable {
 /// The app's connection to a machine hosting terminal tiles (`props.host`; `HostedTerminal`):
 /// one ssh master per host and app instance, which the tiles' attaches and the app's calls to
 /// the host's easld multiplex over. It forwards a loopback port on the host to this instance's
-/// `RelayGate`, which the host's easld serves as this instance's sockets there (`relay.open`).
-/// While a hosted tile is open it reconnects after a loss, every 1 s, doubling to 30 s
-/// (Reconnect on the tile tries at once), and on each connect asks easld
-/// to start every open tile's session that isn't running (after a reboot of the host, with the
-/// agent's recorded session, as a local tile resumes).
+/// `RelayGate`, under a new token each connection, which the host's easld serves as this
+/// instance's sockets there (`relay.open`). While a hosted tile is open it reconnects after a
+/// loss, every 1 s, doubling to 30 s (Reconnect on the tile tries at once), and on each connect
+/// replays what the open tiles' integrations spooled there, then asks easld to start every open
+/// tile's session that isn't running (after a reboot of the host, with the agent's recorded
+/// session, as a local tile resumes).
 @MainActor
 final class TerminalHost {
     enum State: Equatable {
@@ -86,12 +87,13 @@ final class TerminalHost {
 
     // MARK: Tiles
 
-    /// A hosted tile opened: it follows this host's state, and its session is started once the
-    /// connection is up.
+    /// A hosted tile opened: it follows this host's state, and once the connection is up its
+    /// spooled reports replay and its session starts (`catchUp`); on a host already online, at
+    /// once.
     func add(_ tile: TerminalTile) {
         tiles.add(tile)
         switch state {
-        case .online: Task { await spawn(tile) }
+        case .online: Task { await catchUp([tile]) }
         case .connecting: connect()
         case .offline: if retry == nil { connect() }
         }
@@ -128,8 +130,7 @@ final class TerminalHost {
                 self.delay = 1
                 NSLog("easl: connected to %@ (sockets relayed at %@)", self.target, found.run)
                 self.notify()
-                for tile in self.tiles.allObjects { await self.spawn(tile) }
-                await self.replaySpooled(run: found.run)
+                await self.catchUp(self.tiles.allObjects)
                 self.keepRelayOpen()
             case .failure(let failure):
                 self.lost(failure.message)
@@ -140,10 +141,14 @@ final class TerminalHost {
     private struct Failure: Error { let message: String }
 
     /// The master up, a loopback port on the host forwarded to the gate, and easld relaying this
-    /// instance's sockets to it: the host's home and the sockets' directory.
+    /// instance's sockets to it: the host's home and the sockets' directory. Every attempt gives
+    /// the gate a new token before easld hears of the port (`RelayGate.rotate`): after a drop the
+    /// old port was free for anyone on the host to listen on, while easld still dialed it.
     private func establish() async -> Result<(home: String, run: String), Failure> {
         let route = route
         if master == nil {
+            // A new master forwards nothing yet.
+            port = nil
             // A master a crashed run of the app left forwards nothing this run set up.
             _ = await offPool { Self.ssh(["-S", route.controlPath, "-O", "exit", route.target]) }
             let process = Process()
@@ -178,20 +183,27 @@ final class TerminalHost {
         guard found.easld else {
             return .failure(Failure(message: "easld isn't running on \(target): install it with scripts/offload-setup.sh \(target), then start its easld@<user> unit"))
         }
-        if gate == nil {
+        let gate: RelayGate
+        if let existing = self.gate {
+            existing.rotate()
+            gate = existing
+        } else {
             let key = URL(fileURLWithPath: route.controlPath).lastPathComponent.replacingOccurrences(of: "easl-ssh-", with: "")
-            let gate = RelayGate(path: FileManager.default.temporaryDirectory.appendingPathComponent("easl-gate-\(key).sock").path,
-                                 targets: ["easl": AppPaths.apiSocket, "cmux": AppPaths.cmuxSocket])
+            gate = RelayGate(path: FileManager.default.temporaryDirectory.appendingPathComponent("easl-gate-\(key).sock").path,
+                             targets: ["easl": AppPaths.apiSocket, "cmux": AppPaths.cmuxSocket])
             do { try gate.start() } catch { return .failure(Failure(message: "the relay's socket didn't start: \(error)")) }
             self.gate = gate
         }
-        guard let gate else { return .failure(Failure(message: "no relay")) }
-        // A dynamic port on the host's loopback; ssh prints the one it got.
-        let forward = await offPool { Self.ssh(["-S", route.controlPath, "-O", "forward", "-R", "127.0.0.1:0:\(gate.path)", route.target]) }
-        guard forward.status == 0, let port = Int(forward.output.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            return .failure(Failure(message: "ssh couldn't forward a port on \(target) back to easl: \(forward.errors)"))
+        // A dynamic port on the host's loopback; ssh prints the one it got. A master that outlived
+        // a failed attempt keeps its forward, which now takes only the new token.
+        if port == nil {
+            let forward = await offPool { Self.ssh(["-S", route.controlPath, "-O", "forward", "-R", "127.0.0.1:0:\(gate.path)", route.target]) }
+            guard forward.status == 0, let forwarded = Int(forward.output.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                return .failure(Failure(message: "ssh couldn't forward a port on \(target) back to easl: \(forward.errors)"))
+            }
+            port = forwarded
         }
-        self.port = port
+        guard let port else { return .failure(Failure(message: "no forwarded port")) }
         do {
             let relay = try await call("relay.open", .object(["instance": .string(Self.instance), "port": .number(Double(port)), "token": .string(gate.token)]))
             guard let socket = relay["easl"]?.string else { return .failure(Failure(message: "\(target)'s easld didn't say where it relays easl's socket")) }
@@ -214,19 +226,18 @@ final class TerminalHost {
     }
 
     /// While connected, opens the relay again every 30 s (one `relay.open`, a no-op while it is
-    /// open), so it comes back when the host's easld restarts; what the integrations spooled while
-    /// it was down replays then.
+    /// open), so it comes back when the host's easld restarts, or a connection that didn't reach
+    /// the gate disarmed it; what the integrations spooled meanwhile replays then (`catchUp`).
     private func keepRelayOpen() {
         keepAlive?.cancel()
         keepAlive = Task { [weak self] in
             while true {
                 try? await Task.sleep(for: .seconds(30))
-                guard !Task.isCancelled, let self, self.state == .online, let port = self.port, let gate = self.gate, let run = self.run else { return }
+                guard !Task.isCancelled, let self, self.state == .online, let port = self.port, let gate = self.gate else { return }
                 let relay = try? await self.call("relay.open", .object(["instance": .string(Self.instance), "port": .number(Double(port)), "token": .string(gate.token)]))
                 if relay?["opened"]?.bool == true {
                     NSLog("easl: %@'s easld relays easl's sockets again", self.target)
-                    for tile in self.tiles.allObjects { await self.spawn(tile) }
-                    await self.replaySpooled(run: run)
+                    await self.catchUp(self.tiles.allObjects)
                 }
             }
         }
@@ -250,6 +261,17 @@ final class TerminalHost {
     }
 
     // MARK: Sessions
+
+    /// Brings `tiles` up to date with the host, in this order: the reports their integrations
+    /// spooled there while this instance was away (`replaySpooled`), then their sessions
+    /// (`spawn`), started from the objects as those reports left them: an agent the user exited
+    /// while the app was away released its tile, so a host that rebooted meanwhile must not
+    /// resume it.
+    private func catchUp(_ tiles: [TerminalTile]) async {
+        guard let run else { return }
+        await replaySpooled(tiles, run: run)
+        for tile in tiles { await spawn(tile) }
+    }
 
     /// Asks easld to start `tile`'s session unless it runs (`session.spawn`).
     private func spawn(_ tile: TerminalTile) async {
@@ -285,11 +307,10 @@ final class TerminalHost {
         }
     }
 
-    /// Replays the reports the tiles' integrations spooled on the host while they couldn't reach
+    /// Replays the reports `tiles`' integrations spooled on the host while they couldn't reach
     /// this instance (`HostedTerminal.spooled`), as a board replays its local spool when it opens
     /// (the staleness rule drops what a live report already overtook), then deletes them there.
-    private func replaySpooled(run: String) async {
-        let tiles = tiles.allObjects
+    private func replaySpooled(_ tiles: [TerminalTile], run: String) async {
         guard !tiles.isEmpty else { return }
         let route = route, ids = tiles.map(\.objectID)
         let local = FileManager.default.temporaryDirectory.appendingPathComponent("easl-spool-\(UUID().uuidString)", isDirectory: true)

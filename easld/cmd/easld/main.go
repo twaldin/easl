@@ -74,7 +74,13 @@ func run(args []string, stderr io.Writer) int {
 	// Integrations spool undelivered reports in `agent-reports/` beside the socket.
 	reg := board.NewRegistry(filepath.Join(*home, "boards"), store.DefaultDebounce, filepath.Join(filepath.Dir(path), "agent-reports"))
 	r := router.New(reg)
-	r.Sessions = session.New(session.Locate(*zmx))
+	// Hosted terminals' sessions keep their zmx sockets and logs in `<home>/zmx`, the user's own.
+	r.Sessions = session.New(session.Locate(*zmx), filepath.Join(*home, "zmx"))
+	if r.Sessions.Zmx != "" {
+		if err := r.Sessions.Secure(); err != nil {
+			fmt.Fprintln(stderr, "easld: hosted terminals can't start:", err)
+		}
+	}
 	// Hosted terminals reach their board through `<home>/run/<instance>/` (relay.open).
 	r.Relays = relay.New(filepath.Join(*home, "run"))
 	defer r.Relays.Close()

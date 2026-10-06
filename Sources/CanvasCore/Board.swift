@@ -403,6 +403,13 @@ public final class Board {
                 object.props = object.props.merging(.object(["anchor": .null]))
             }
         }
+        // A terminal's host is where its session runs, fixed for its life: the live terminal stays
+        // attached there, so a board naming another host (or none) would read its history from,
+        // and end, a session elsewhere.
+        if object.type == .terminal, HostedTerminal.host(of: object) != HostedTerminal.host(of: before) {
+            let was = HostedTerminal.host(of: before) ?? "the local machine", now = HostedTerminal.host(of: object) ?? "the local machine"
+            throw BoardError.invalidParams("terminal \(id) runs on \(was): a terminal's host can't change (create a terminal on \(now) instead)")
+        }
         if let fitted = fittedFrame(ofGroup: object) { object.frame = fitted }
         object.rev += 1
         object.updatedAt = Date()

@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "d17e652062f8e4e8"
+const SchemaHash = "59bdc6ad51bb03b1"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -290,7 +290,7 @@ type TerminalProps struct {
 	// argv run inside the zmx session
 	Command    []string `json:"command"`
 	ZmxSession *string  `json:"zmxSession,omitempty"`
-	// an ssh target (`deckbox`): the terminal's session runs on that machine under its easld (`session.spawn`), and the tile attaches to it over ssh with this app's socket forwarded back, so the agent's integration and the `easl` CLI there reach this board (docs/contracts.md "Hosted terminals"). `cwd` is a directory on that machine. Absent: this Mac
+	// an ssh target (`deckbox`): the terminal's session runs on that machine under its easld (`session.spawn`), and the tile attaches to it over ssh with this app's socket forwarded back, so the agent's integration and the `easl` CLI there reach this board (docs/contracts.md "Hosted terminals"). `cwd` is a directory on that machine. Absent: this Mac. Fixed at creation: an update that changes or removes it is `invalid_params`
 	Host  *string `json:"host,omitempty"`
 	Title *string `json:"title,omitempty"`
 	// a name other agents address this terminal by (agent.prompt/wait/read `target`)

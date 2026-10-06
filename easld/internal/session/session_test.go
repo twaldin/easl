@@ -8,11 +8,12 @@ import (
 	"testing"
 )
 
-// fakeZmx is a zmx that keeps its sessions as files in `state`: `attach` records the labels,
+// fakeZmx is a zmx that keeps its sessions as files in `$ZMX_DIR`: `attach` records the labels,
 // the directory, the environment and the command of a session it creates; `list`, `kill` and
-// `version` answer from them as zmx 0.8.1 does.
+// `version` answer from them as zmx 0.8.1 does. A session file holding `dead` is one whose
+// daemon died: `list` finds its socket refused and deletes it, as zmx does.
 const fakeZmx = `#!/bin/sh
-state="$FAKE_ZMX_STATE"
+state="$ZMX_DIR"
 case "$1" in
 attach)
   shift; labels=""
@@ -25,6 +26,7 @@ list)
   found=""
   for f in "$state"/*; do
     [ -f "$f" ] || continue; found=1; name=$(basename "$f")
+    if grep -qx dead "$f"; then rm "$f"; printf '  name=%s\terr=ConnectionRefused\tstatus=cleaning up\n' "$name"; continue; fi
     labels=$(sed -n 's/^labels=//p' "$f" | tr ' ' '\t')
     printf '  name=%s\tpid=4242\tclients=0\tcreated=1\tcwd=file://h/tmp\tcmd=sh' "$name"
     [ -n "$labels" ] && printf '\t%s' "$labels"
@@ -57,7 +59,7 @@ func fixture(t *testing.T) (*Manager, string) {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	m := &Manager{Zmx: zmx, Shell: "/bin/bash", Home: home, Env: []string{"PATH=/usr/bin:/bin", "FAKE_ZMX_STATE=" + state, "EASL_SOCKET=/inherited"}}
+	m := &Manager{Zmx: zmx, Dir: state, Shell: "/bin/bash", Home: home, Env: []string{"PATH=/usr/bin:/bin", "EASL_SOCKET=/inherited"}}
 	return m, state
 }
 
@@ -139,20 +141,115 @@ func TestSpawnWithoutCommandIsTheLoginShell(t *testing.T) {
 	}
 }
 
-// Another instance's session (its `canvas.home` label) is neither taken over nor ended.
-func TestAnotherHomesSessionIsRefused(t *testing.T) {
+// A session whose owner labels aren't the caller's (another home's: a board copied there has the
+// same ids; another board's; one without them) is neither taken over nor ended.
+func TestAnotherOwnersSessionIsRefused(t *testing.T) {
 	m, state := fixture(t)
-	if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_c", Labels: map[string]string{HomeLabel: "mac-1"}}); err != nil {
+	mine := map[string]string{HomeLabel: "mac-1", "canvas.board": "brd_1", "canvas.tile": "obj_c"}
+	if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_c", Labels: mine}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_c", Labels: map[string]string{HomeLabel: "mac-2"}}); code(err) != "conflict" || !strings.Contains(err.Error(), "mac-1") {
-		t.Errorf("spawn from another home: %v", err)
+	for key, other := range map[string]string{HomeLabel: "mac-2", "canvas.board": "brd_2", "canvas.tile": "obj_x"} {
+		labels := map[string]string{}
+		for k, v := range mine {
+			labels[k] = v
+		}
+		labels[key] = other
+		if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_c", Labels: labels}); code(err) != "conflict" || !strings.Contains(err.Error(), mine[key]) {
+			t.Errorf("spawn with another %s: %v", key, err)
+		}
 	}
 	if _, err := m.Kill("obj_c", "mac-2"); code(err) != "conflict" {
 		t.Errorf("kill from another home: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(state, "canvas-obj_c")); err != nil {
 		t.Errorf("the session should still run: %v", err)
+	}
+	if _, created, err := m.Spawn(SpawnRequest{Tile: "obj_c", Labels: mine}); err != nil || created {
+		t.Errorf("its owner's spawn: created %v, %v", created, err)
+	}
+
+	// A session nobody labelled (started by hand) can't be shown to be the caller's.
+	if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_u"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_u", Labels: map[string]string{HomeLabel: "mac-1"}}); code(err) != "conflict" || !strings.Contains(err.Error(), "none") {
+		t.Errorf("spawn over an unlabelled session: %v", err)
+	}
+	if _, err := m.Kill("obj_u", "mac-1"); code(err) != "conflict" {
+		t.Errorf("kill of an unlabelled session: %v", err)
+	}
+}
+
+// zmx runs only in the user's own directory: made 0700 when missing, closed to others when they
+// can only read it, and refused (zmx never runs) when it is a symlink, another user's, or others
+// can write to it. A spawn's `env` can't point zmx elsewhere.
+func TestZmxRunsOnlyInTheUsersOwnDirectory(t *testing.T) {
+	m, _ := fixture(t)
+	m.Dir = filepath.Join(t.TempDir(), "state", "zmx")
+	if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_z", Env: map[string]string{"ZMX_DIR": t.TempDir()}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(m.Dir, "canvas-obj_z")); err != nil {
+		t.Errorf("the session should be in Dir whatever the spawn's env says: %v", err)
+	}
+	if info, _ := os.Stat(m.Dir); info.Mode().Perm() != 0o700 {
+		t.Errorf("a new directory is %v, want 0700", info.Mode().Perm())
+	}
+	if err := os.Chmod(m.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.List(); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(m.Dir); info.Mode().Perm() != 0o700 {
+		t.Errorf("a directory others could read is %v, want 0700", info.Mode().Perm())
+	}
+
+	writable := filepath.Join(t.TempDir(), "zmx")
+	if err := os.Mkdir(writable, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(writable, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "zmx")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct{ dir, written string }{
+		"others can write": {writable, writable},
+		"a symlink":        {link, target},
+	} {
+		bad := &Manager{Zmx: m.Zmx, Dir: c.dir, Shell: m.Shell, Home: m.Home, Env: m.Env}
+		if _, _, err := bad.Spawn(SpawnRequest{Tile: "obj_z"}); code(err) != "unavailable" || !strings.Contains(err.Error(), c.dir) {
+			t.Errorf("%s: %v", name, err)
+		}
+		if entries, _ := os.ReadDir(c.written); len(entries) > 0 {
+			t.Errorf("%s: zmx ran there", name)
+		}
+	}
+	if err := secure(m.Dir, os.Getuid()+1); code(err) != "unavailable" || !strings.Contains(err.Error(), "belongs to uid") {
+		t.Errorf("another user's directory: %v", err)
+	}
+}
+
+// A session zmx found dead (it deletes the socket as it lists it) is gone: spawn starts the
+// tile's session again instead of answering that it runs.
+func TestSpawnReplacesASessionZmxFoundDead(t *testing.T) {
+	m, state := fixture(t)
+	if err := os.WriteFile(filepath.Join(state, "canvas-obj_g"), []byte("dead\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := m.Spawn(SpawnRequest{Tile: "obj_g", Labels: map[string]string{HomeLabel: "mac-1"}}); err != nil || !created {
+		t.Fatalf("spawn: created %v, %v", created, err)
+	}
+	if got := record(t, state, "canvas-obj_g"); got["labels"][0] != "canvas.home=mac-1" {
+		t.Errorf("the new session: %v", got)
 	}
 }
 
@@ -202,11 +299,13 @@ func TestSpawnChecksItsParams(t *testing.T) {
 	}
 }
 
-// `zmx list` lines: other sessions are left out, labels kept, an unreachable session marked.
+// `zmx list` lines: other sessions are left out, labels kept, one that didn't answer in time
+// marked unreachable, and one zmx found dead (and deleted) left out.
 func TestParseListsCanvasSessions(t *testing.T) {
 	out := "  name=dev\tpid=1\tclients=1\tcreated=1\tcwd=file://h/\n" +
-		"* name=canvas-obj_2\tpid=22\tclients=1\tcreated=1\tcwd=file://h/\tcmd=bash -l\tcanvas.home=mac-1\tcanvas.tile=obj_2\n" +
-		"  name=canvas-obj_1\terr=Timeout\tstatus=unreachable\n"
+		"→ name=canvas-obj_2\tpid=22\tclients=1\tcreated=1\tcwd=file://h/\tcmd=bash -l\tended=5\texit_code=0\tcanvas.home=mac-1\tcanvas.tile=obj_2\n" +
+		"  name=canvas-obj_1\terr=Timeout\tstatus=unreachable\n" +
+		"  name=canvas-obj_3\terr=ConnectionRefused\tstatus=cleaning up\n"
 	got := Parse(out)
 	if len(got) != 2 || got[0].Name != "canvas-obj_1" || got[1].Name != "canvas-obj_2" {
 		t.Fatalf("sessions %+v", got)

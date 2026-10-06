@@ -24,7 +24,7 @@ esac
 	if err := os.WriteFile(zmx, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	f.router.Sessions = &session.Manager{Zmx: zmx, Shell: "/bin/sh", Home: dir, Env: os.Environ()}
+	f.router.Sessions = &session.Manager{Zmx: zmx, Dir: filepath.Join(dir, "zmx-dir"), Shell: "/bin/sh", Home: dir, Env: os.Environ()}
 	call := func(method string, params map[string]any) map[string]any {
 		f.seq++
 		return f.router.HandleConn(map[string]any{"id": f.seq, "method": method, "params": params}, f.conn).(map[string]any)

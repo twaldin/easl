@@ -610,7 +610,7 @@ class SessionApi:
         self._call = call
 
     def spawn(self, *, tile: "Id", command: list[str] | None = None, cwd: str | None = None, env: dict[str, Any] | None = None, labels: dict[str, Any] | None = None) -> dict[str, Any]:
-        """easld only (the Mac app answers `unsupported`): start terminal tile `tile`'s zmx session, `canvas-<tile>`, on the machine easld runs on, as easld's own child, so the session and everything it runs stay in easld's cgroup (a hosted terminal's session: docs/contracts.md "Hosted terminals"). `command` runs in the user's login shell, which stays when it exits (`$SHELL -l -c '<command>; exec $SHELL -l'`); without one the session is the login shell. A session that exists already is left as it is (`created: false`), unless its `canvas.home` label names another home than `labels` does (`conflict`, naming that home). Clients attach to it with `zmx attach canvas-<tile>`."""
+        """easld only (the Mac app answers `unsupported`): start terminal tile `tile`'s zmx session, `canvas-<tile>`, on the machine easld runs on, as easld's own child, so the session and everything it runs stay in easld's cgroup (a hosted terminal's session: docs/contracts.md "Hosted terminals"). `command` runs in the user's login shell, which stays when it exits (`$SHELL -l -c '<command>; exec $SHELL -l'`); without one the session is the login shell. zmx keeps its sockets and logs in `<easld home>/zmx`, the user's own (a symlink, another user's directory or one others can write to is `unavailable`). A session that exists already is left as it is (`created: false`), unless one of its `canvas.home`, `canvas.board` and `canvas.tile` labels isn't the one `labels` gives (`conflict`, naming it). zmx's dead sessions (`status=cleaning up`) don't exist. Clients attach to it with `zmx attach canvas-<tile>` in that directory, once they have checked its labels."""
         params = {"tile": tile, "command": command, "cwd": cwd, "env": env, "labels": labels}
         return self._call("session.spawn", params, [])
 
@@ -620,7 +620,7 @@ class SessionApi:
         return self._call("session.list", params, [])
 
     def kill(self, *, tile: "Id", home: str | None = None) -> dict[str, Any]:
-        """easld only (the Mac app answers `unsupported`): end terminal tile `tile`'s zmx session on easld's machine and delete zmx's log of it. A session labelled for another home than `home` is left alone (`conflict`)."""
+        """easld only (the Mac app answers `unsupported`): end terminal tile `tile`'s zmx session on easld's machine and delete zmx's log of it. A session not labelled with `home` is left alone (`conflict`)."""
         params = {"tile": tile, "home": home}
         return self._call("session.kill", params, [])
 
@@ -630,7 +630,7 @@ class RelayApi:
         self._call = call
 
     def open(self, *, instance: str, port: int, token: str) -> dict[str, Any]:
-        """easld only (the Mac app answers `unsupported`): serve a client's sockets to the programs on easld's machine, so a hosted terminal's integration and the `easl` CLI there reach the board that shows it (docs/contracts.md "Hosted terminals"). easld listens on `<home>/run/<instance>/easl.sock` and `cmux.sock` (the user's only) and passes each connection on to `127.0.0.1:<port>`, the client's ssh forward of a loopback port back to itself, starting with the line `<token> easl` or `<token> cmux`; the client closes any connection without its token, since every user of the machine can reach that port. Opening it again for the same instance takes the new port and token and keeps the sockets. While the port doesn't answer a connection closes at once, and the integration spools its report."""
+        """easld only (the Mac app answers `unsupported`): serve a client's sockets to the programs on easld's machine, so a hosted terminal's integration and the `easl` CLI there reach the board that shows it (docs/contracts.md "Hosted terminals"). easld listens on `<home>/run/<instance>/easl.sock` and `cmux.sock` (the user's only) and passes each connection on to `127.0.0.1:<port>`, the client's ssh forward of a loopback port back to itself. Every user of the machine can reach that port, and anyone can listen on it once the forward is gone, so neither end sends the token: easld sends `<socket name> <nonce>`, the client's end answers `<nonce> <proof>` and easld `<proof>`, each proof the hex HMAC-SHA256, keyed by the token, of `easl-relay <gate|easld> <socket name> <easld's nonce> <the client's nonce>`; nothing passes until both check. A connection the client's end doesn't take (refused, or no proof) closes at once, the integration spooling its report, and disarms the relay until the client opens it again. Opening it again with the same token takes the port; with a new one (the client's app restarted, or it reconnected) the sockets are bound anew at the same paths, so integrations watching them report again."""
         params = {"instance": instance, "port": port, "token": token}
         return self._call("relay.open", params, [])
 

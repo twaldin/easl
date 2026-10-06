@@ -14,9 +14,10 @@ import Foundation
 /// - `~/.local/bin/zmx`, `~/.local/bin/easld`, `~/.local/bin/easl`;
 /// - `~/.local/share/easl/`: what the app bundle's Resources hold for agents (bin, cli, clients,
 ///   extensions, skills, schema) and Ghostty's shell integration (`ghostty/shell-integration`);
-/// - `~/.local/state/easl/`: easld's home and its socket `easl.sock`; `run/<instance>/` holds this
-///   app instance's relayed `easl.sock` and `cmux.sock` (and the reports integrations spool
-///   while the app is away, `agent-reports/`).
+/// - `~/.local/state/easl/`: easld's home and its socket `easl.sock`; `zmx/` holds the hosted
+///   sessions' zmx sockets and logs (`zmxDir`); `run/<instance>/` holds this app instance's
+///   relayed `easl.sock` and `cmux.sock` (and the reports integrations spool while the app is
+///   away, `agent-reports/`).
 public enum HostedTerminal {
     /// The ssh target `object`'s session runs on; nil for a terminal of this Mac.
     public static func host(of object: CanvasObject) -> String? {
@@ -42,10 +43,14 @@ public enum HostedTerminal {
         ShellWords.quote(["/bin/sh", "-c", script, "easl"] + args)
     }
 
-    /// zmx on the host, in the hosted sessions' socket directory (easld's `session.New`: a system
-    /// unit and an ssh session don't get the same `TMPDIR` or `XDG_RUNTIME_DIR`).
+    /// The hosted sessions' zmx directory on the host, as a shell word: easld's `<home>/zmx`, the
+    /// user's only (easld's `session.Manager.Secure`). Never zmx's default, `/tmp/zmx-<uid>`,
+    /// which another user of the host could make first.
+    public static let zmxDir = #""$HOME/.local/state/easl/zmx""#
+
+    /// zmx on the host, in the hosted sessions' directory (`zmxDir`).
     public static func zmx(_ arguments: [String]) -> String {
-        remote(#"ZMX_DIR="/tmp/zmx-$(id -u)" exec "$HOME/.local/bin/zmx" "$@""#, arguments)
+        remote(#"ZMX_DIR=\#(zmxDir) exec "$HOME/.local/bin/zmx" "$@""#, arguments)
     }
 
     /// easld's socket on the host, relayed by `nc`: one JSON line per request.
@@ -70,23 +75,39 @@ public enum HostedTerminal {
     }
 
     /// The host side of a tile's attach: waits until easld has started the session (the app asks
-    /// it to as the connection comes up), then attaches. Never creates one: `zmx attach` to a
-    /// missing session would start a login shell under ssh, outside easld's slice, so in the
+    /// it to as the connection comes up), then attaches, only if the session is this tile's:
+    /// labelled with this instance's `home` label, `board` and `tile`, as easld labels the
+    /// sessions it starts (`spawnParams`). A board copied into another home has the same ids, so
+    /// another instance's session of the same name is refused, as a local tile's `ownerGuard`
+    /// does: the host prints whose it is and exits `refused`. Never creates a session: `zmx attach`
+    /// to a missing one would start a login shell under ssh, outside easld's slice, so in the
     /// moment between the check and the attach `SHELL=/bin/false` makes that one exit at once.
-    public static func attach(session: String) -> String {
+    public static func attach(session: String, home: String, board: BoardID, tile: ObjectID) -> String {
         remote(#"""
-        export ZMX_DIR="/tmp/zmx-$(id -u)"
+        export ZMX_DIR=\#(zmxDir)
         z="$HOME/.local/bin/zmx"
         if [ ! -x "$z" ]; then printf 'zmx is not installed on %s: run scripts/offload-setup.sh %s on the Mac.\r\n' "$(hostname)" "$(hostname)"; exit 2; fi
         shown=
-        until "$z" list --short 2>/dev/null | grep -qx -- "$1"; do
+        while :; do
+          fields=$("$z" list 2>/dev/null | awk -F'\t' -v n="name=$1" '{ s = $1; sub(/^.*name=/, "name=", s) } s == n { for (i = 2; i <= NF; i++) print $i }')
+          case "$fields" in pid=*) break ;; esac
           if [ -z "$shown" ]; then shown=1; printf '\r\033[K\033[2mWaiting for %s to start on %s…\033[0m' "$1" "$(hostname)"; fi
           sleep 1
         done
         [ -z "$shown" ] || printf '\r\033[K'
+        for label in "canvas.home=$2" "canvas.board=$3" "canvas.tile=$4"; do
+          if ! printf '%s\n' "$fields" | grep -qxF -- "$label"; then
+            owner=$(printf '%s\n' "$fields" | sed -n 's/^canvas\.home=//p')
+            printf '\r\nThis terminal session (%s on %s) belongs to another easl instance or board (%s).\r\nNot attaching: this copy of the board can neither type into it nor end it.\r\n' "$1" "$(hostname)" "${owner:-no owner}"
+            exit \#(refused)
+          fi
+        done
         SHELL=/bin/false exec "$z" attach "$1"
-        """#, [session])
+        """#, [session, home, board, tile])
     }
+
+    /// `attach`'s status when the session isn't this tile's (zmx's own attach exits 0 or 1).
+    public static let refused: Int32 = 3
 
     /// A tar on standard output of the reports integrations spooled on the host for `tiles` while
     /// this instance was away (`<run>/agent-reports/<tile>/…`, as `AgentReportSpool` reads
@@ -110,10 +131,12 @@ public enum HostedTerminal {
     }
 
     /// The Mac side, Ghostty's command (`sh -c` with $1 ssh, $2 the connection's control path,
-    /// $3 the host, $4 the session, $5 `attach(session:)`): attaches through the app's
-    /// connection to the host once it is up, and again whenever ssh fails (255: the connection
-    /// dropped), so the tile reattaches to the same session after a network loss. Any other exit
-    /// is zmx's (the session ended, or a detach) and ends the command, as a local tile's does.
+    /// $3 the host, $4 the session, $5 `attach`): attaches through the app's connection to the
+    /// host once it is up, and again whenever ssh fails (255: the connection dropped), so the tile
+    /// reattaches to the same session after a network loss. A session the host refused (another
+    /// instance's: `refused`) is never attached: the tile keeps saying whose it is, as a local
+    /// tile's `ownerGuard` does. Any other exit is zmx's (the session ended, or a detach) and ends
+    /// the command, as a local tile's does.
     public static let attachLoop = #"""
     waiting=
     while :; do
@@ -121,6 +144,7 @@ public enum HostedTerminal {
         waiting=
         "$1" -S "$2" -o ControlMaster=no -tt "$3" "$5"
         status=$?
+        [ "$status" -ne \#(refused) ] || exec sleep 2147483647
         [ "$status" -eq 255 ] || exit "$status"
         printf '\r\n\033[2m[%s: the connection dropped; reattaching to %s]\033[0m\r\n' "$3" "$4"
       elif [ -z "$waiting" ]; then

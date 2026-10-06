@@ -63,7 +63,7 @@ final class TerminalTile: NSView, TileContent {
                 // A hosted session's `cwd` is the host's; ssh runs here.
                 workingDirectory: host == nil ? object.props["cwd"]?.string ?? board.root.path : board.root.path,
                 envVars: environment,
-                command: host.map { Self.hostedCommand(session: sessionName, route: $0.route, keep: keep) }
+                command: host.map { Self.hostedCommand(session: sessionName, tile: object.id, board: board.id, route: $0.route, keep: keep) }
                     ?? Self.command(session: sessionName, object: object, board: board, keep: keep)
             )
         }
@@ -196,11 +196,13 @@ final class TerminalTile: NSView, TileContent {
 
     /// A hosted terminal's command: the attach loop through the app's connection to its host
     /// (`HostedTerminal.attachLoop`), with the app's inherited variables unset as for a local one.
-    /// The session itself is easld's to start (`hostedSpawnParams`).
-    static func hostedCommand(session: String, route: HostRoute, keep: Set<String>) -> String {
+    /// The session itself is easld's to start (`hostedSpawnParams`); the host attaches only to one
+    /// labelled with this instance's home, `board` and `tile`, as that starts it.
+    static func hostedCommand(session: String, tile: ObjectID, board: BoardID, route: HostRoute, keep: Set<String>) -> String {
         let strip = LoginSession.strippedForTile(ProcessInfo.processInfo.environment, keep: keep).flatMap { ["-u", $0] }
+        let attach = HostedTerminal.attach(session: session, home: homeLabel, board: board, tile: tile)
         return ShellWords.quote(["/usr/bin/env"] + strip + ["/bin/sh", "-c", HostedTerminal.attachLoop, "canvas-host",
-                                 "/usr/bin/ssh", route.controlPath, route.target, session, HostedTerminal.attach(session: session)])
+                                 "/usr/bin/ssh", route.controlPath, route.target, session, attach])
     }
 
     /// `session.spawn`'s params for this hosted terminal, read from the object as it is now (a
