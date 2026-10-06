@@ -109,7 +109,8 @@ struct HostedTerminalTests {
         try gate.start()
         defer { gate.stop() }
         func exchange(_ header: String) throws -> String {
-            let (status, output) = try sh(#"(printf '%s\n%s\n' "$1" '{"id":"1","method":"system.ping"}'; sleep 1) | nc -U "$2""#,
+            // The request stays open until the reply line is in (a loaded runner answers late).
+            let (status, output) = try sh(#"(printf '%s\n%s\n' "$1" '{"id":"1","method":"system.ping"}'; sleep 4) | nc -U "$2" | head -n 1"#,
                                           ["relay", header, gate.path])
             _ = status
             return String(decoding: output, as: UTF8.self)
