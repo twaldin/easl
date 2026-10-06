@@ -866,6 +866,12 @@ final class LineClient: @unchecked Sendable {
         }
     }
 
+    /// `nextText`, blocking the calling thread: for an exchange that must run on one thread
+    /// from start to end (never this from a task on the cooperative pool).
+    func nextTextNow(timeout: Double = 30) throws -> String {
+        String(decoding: try readLine(timeout: timeout), as: UTF8.self)
+    }
+
     private func readLine(timeout: Double) throws -> Data {
         let deadline = Date().addingTimeInterval(timeout)
         while true {
