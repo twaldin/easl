@@ -1,0 +1,227 @@
+{
+  "description": "Peer messages: agent.prompt to a terminal whose integration takes messages (agent.report protocol 1) queues out of band; agent.inbox takes them (held per connection, acked, started), agent.wait waits while one is queued and for the turn it started, agent.read final is unavailable meanwhile; a script's message (from, user attribution, next-turn); addresses: name@board, a renamed terminal's alias until another terminal takes the name, the caller's board first, ambiguity and unknown boards; release drops what is queued; a typed next-turn into a working terminal is a conflict.",
+  "files": {
+    "elsewhere/README.md": "# Another board\n"
+  },
+  "ignore": {
+    "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+    "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)",
+    "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+    "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)"
+  },
+  "steps": [
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "reviewer" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } },
+      "save": "t"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "lead" }, "frame": { "x": 50700, "y": 50000, "w": 600, "h": 400 } },
+      "save": "u"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "The cache key must include the locale." }, "frame": { "x": 51400, "y": 50000, "w": 300, "h": 120 } },
+      "save": "n"
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "seq": 1, "source": "canvas-omp", "protocol": 1 }
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{u.object.id}}", "kind": "omp", "state": "working", "seq": 1, "source": "canvas-omp", "protocol": 1 }
+    },
+    {
+      "call": "agent.list",
+      "params": {},
+      "keep": { "result.agents": { "board": "{{board}}" } }
+    },
+    {
+      "note": "from a terminal: queued as a message, attributed to the agent",
+      "call": "agent.prompt",
+      "params": { "target": "reviewer", "text": "Please check the cache key.", "caller": "{{u.object.id}}", "mentions": [{ "object": "{{n.object.id}}" }] },
+      "save": "p"
+    },
+    {
+      "call": "agent.wait",
+      "params": { "target": "reviewer", "caller": "{{u.object.id}}" },
+      "conn": "waiter",
+      "save": "w1",
+      "async": true
+    },
+    {
+      "call": "agent.read",
+      "params": { "target": "reviewer", "final": true }
+    },
+    {
+      "note": "the integration takes it: sender and mentions resolved now",
+      "call": "agent.inbox",
+      "params": { "tile": "{{t.object.id}}" },
+      "conn": "integration"
+    },
+    {
+      "note": "held by the integration's connection: not offered to another",
+      "call": "agent.inbox",
+      "params": { "tile": "{{t.object.id}}" },
+      "conn": "other"
+    },
+    {
+      "call": "agent.inbox",
+      "params": { "tile": "{{t.object.id}}", "ack": ["{{p.message}}"], "started": true },
+      "conn": "integration"
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "working", "seq": 2, "source": "canvas-omp", "protocol": 1 }
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "seq": 3, "source": "canvas-omp", "protocol": 1, "final": "The key now includes the locale." }
+    },
+    {
+      "await": "w1"
+    },
+    {
+      "call": "agent.read",
+      "params": { "target": "reviewer", "final": true }
+    },
+    {
+      "note": "a script: user attribution, its label, no reply address; next-turn",
+      "call": "agent.prompt",
+      "params": { "target": "reviewer@messages", "text": "Nightly build failed on main.", "from": "machine-watch", "when": "next-turn" },
+      "save": "q"
+    },
+    {
+      "note": "a long poll answers at once when a message waits",
+      "call": "agent.inbox",
+      "params": { "tile": "{{t.object.id}}", "waitMs": 5000 },
+      "conn": "integration"
+    },
+    {
+      "call": "agent.inbox",
+      "params": { "tile": "{{t.object.id}}", "ack": ["{{q.message}}"] },
+      "conn": "integration"
+    },
+    {
+      "note": "a long poll that a message answers",
+      "call": "agent.inbox",
+      "params": { "tile": "{{t.object.id}}", "waitMs": 10000 },
+      "conn": "integration",
+      "save": "poll",
+      "async": true
+    },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "{{t.object.id}}", "text": "One more thing.", "caller": "{{u.object.id}}", "from": "deploy-bot" },
+      "save": "r"
+    },
+    {
+      "await": "poll"
+    },
+    {
+      "call": "agent.inbox",
+      "params": { "tile": "{{t.object.id}}", "ack": ["{{r.message}}"] },
+      "conn": "integration"
+    },
+    {
+      "note": "renamed: the old name is an alias",
+      "call": "object.update",
+      "params": { "id": "{{t.object.id}}", "props": { "name": "critic" } }
+    },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "reviewer", "text": "Still there?", "caller": "{{u.object.id}}" },
+      "save": "s"
+    },
+    {
+      "call": "agent.list",
+      "params": {},
+      "keep": { "result.agents": { "board": "{{board}}" } }
+    },
+    {
+      "note": "another terminal takes the name: the alias goes",
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "reviewer" }, "frame": { "x": 50000, "y": 50500, "w": 600, "h": 400 } },
+      "save": "v"
+    },
+    {
+      "call": "agent.read",
+      "params": { "target": "reviewer", "final": true }
+    },
+    {
+      "call": "agent.read",
+      "params": { "target": "critic@messages", "final": true }
+    },
+    {
+      "note": "the caller's board first, then every open board",
+      "call": "board.open",
+      "params": { "root": "{{root}}/elsewhere" },
+      "save": "b2"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{b2.board}}", "type": "terminal", "props": { "cwd": "{{root}}/elsewhere", "command": ["/bin/cat"], "name": "reviewer" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } },
+      "save": "x"
+    },
+    {
+      "call": "agent.read",
+      "params": { "target": "reviewer", "caller": "{{x.object.id}}", "final": true }
+    },
+    {
+      "call": "agent.read",
+      "params": { "target": "reviewer", "caller": "{{u.object.id}}", "final": true }
+    },
+    {
+      "call": "agent.read",
+      "params": { "target": "reviewer", "final": true }
+    },
+    {
+      "call": "agent.read",
+      "params": { "target": "reviewer@elsewhere", "final": true }
+    },
+    {
+      "call": "agent.read",
+      "params": { "target": "nobody@messages", "final": true }
+    },
+    {
+      "call": "agent.read",
+      "params": { "target": "reviewer@nowhere", "final": true },
+      "mask": {
+        "response.error.message": { "match": "\\(open boards: .*\\)$", "as": "(open boards: …)", "why": "every board the server has open, other scenarios' included" }
+      }
+    },
+    {
+      "call": "object.delete",
+      "params": { "id": "{{x.object.id}}" }
+    },
+    {
+      "note": "released: what was queued is dropped",
+      "call": "agent.release",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "source": "canvas-omp" }
+    },
+    {
+      "call": "agent.inbox",
+      "params": { "tile": "{{t.object.id}}" },
+      "conn": "integration"
+    },
+    {
+      "note": "no message integration: a typed next-turn would join the running turn",
+      "call": "agent.report",
+      "params": { "tile": "{{v.object.id}}", "kind": "claude", "state": "working", "seq": 1, "source": "canvas-claude" }
+    },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "{{v.object.id}}", "text": "after this", "when": "next-turn" }
+    },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "lead", "text": "x", "when": "later" }
+    },
+    {
+      "call": "agent.inbox",
+      "params": { "tile": "{{u.object.id}}", "waitMs": 70000 }
+    }
+  ]
+}

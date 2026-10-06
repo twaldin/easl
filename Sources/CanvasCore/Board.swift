@@ -73,6 +73,9 @@ public struct BoardSnapshot: Codable, Sendable {
     /// on a board for a directory outside git, and on boards saved before boards were per
     /// repository (legacy boards, `RepoBoardMigration`).
     public var repo: RepoRecord?
+    /// Old names of renamed terminals that still address them (`Board.aliases`); optional so
+    /// older board files still load.
+    public var aliases: [String: ObjectID]?
 }
 
 /// One canvas: all objects for one root directory, the selection tray, and agent lifecycle.
@@ -116,6 +119,12 @@ public final class Board {
     /// as its integration reported it with `idle`: that turn's `finalAnswers` entry is cut off.
     /// A new turn clears it; saved with the board.
     public internal(set) var turnErrors: [ObjectID: String] = [:]
+    /// Names terminals had before a rename, each still addressing its terminal (AgentAddress)
+    /// until another terminal on this board takes it; saved with the board.
+    public internal(set) var aliases: [String: ObjectID] = [:]
+    /// Out-of-band messages queued for each terminal, oldest first, until its integration acks
+    /// them (AgentMessages.swift); in memory only.
+    public internal(set) var messages: [ObjectID: [AgentMessage]] = [:]
 
     /// Board revision at which each object last changed (for `board.get since`).
     private var changedAt: [ObjectID: Int] = [:]
@@ -279,6 +288,7 @@ public final class Board {
         finalAnswers = (snapshot.finalAnswers ?? [:]).filter { objects[$0.key] != nil }
         turnErrors = (snapshot.turnErrors ?? [:]).filter { objects[$0.key] != nil }
         lifecycleSeq = (snapshot.lifecycleSeq ?? [:]).filter { objects[String($0.key.prefix { $0 != "|" })] != nil }
+        aliases = (snapshot.aliases ?? [:]).filter { objects[$0.value]?.type == .terminal }
         repo = snapshot.repo
     }
 
@@ -287,7 +297,7 @@ public final class Board {
                       attention: attention.isEmpty ? nil : attention.values.sorted { $0.object < $1.object },
                       promptTarget: promptTarget == PromptTarget.State() ? nil : promptTarget,
                       finalAnswers: finalAnswers.isEmpty ? nil : finalAnswers, turnErrors: turnErrors.isEmpty ? nil : turnErrors,
-                      lifecycleSeq: lifecycleSeq.isEmpty ? nil : lifecycleSeq, repo: repo)
+                      lifecycleSeq: lifecycleSeq.isEmpty ? nil : lifecycleSeq, repo: repo, aliases: aliases.isEmpty ? nil : aliases)
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {
@@ -450,6 +460,7 @@ public final class Board {
         guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
         reindexKey(id, from: removed.props, to: nil)
+        forgetAliases(of: id)
         bumpRevision()
         countWrite(caller: caller)
         // Before the delete, so undo brings the object back first and then its chips.
@@ -548,6 +559,7 @@ public final class Board {
     private func commit(_ object: CanvasObject) {
         bumpRevision()
         reindexKey(object.id, from: objects[object.id]?.props, to: object.props)
+        renamed(object.id, from: objects[object.id]?.props, to: object.props, type: object.type)
         objects[object.id] = object
         changedAt[object.id] = revision
         revHighWater[object.id] = max(revHighWater[object.id] ?? 0, object.rev)
@@ -1047,8 +1059,10 @@ public final class Board {
     /// the error as its message, and the answer is known to be cut off (`turnErrors`). `unknown`:
     /// an agent without a lifecycle integration runs here (`bin/aider` says so as aider starts);
     /// its terminal notifications report when it waits (`NotifyingAgent`, `via: "notifications"`).
+    /// `protocol`: the integration's protocol version (`props.agent.protocol`; 1 takes
+    /// out-of-band messages, `PromptTarget.takesMessages`); a report without it says 0.
     public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil,
-                                serial: Bool = false, error: String? = nil) throws {
+                                serial: Bool = false, error: String? = nil, protocol version: Int? = nil) throws {
         let terminal = try object(tile)
         guard terminal.type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
         guard final == nil || state == .idle else { throw BoardError.invalidParams("final comes only with state idle: the answer of the turn that just ended") }
@@ -1100,7 +1114,7 @@ public final class Board {
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message { lifecycle["message"] = .string(message) }
         if state == .unknown { lifecycle["via"] = .string(NotifyingAgent.via) }
-        let agent = (terminal.props["agent"] ?? .object([:])).merging(.object(["kind": .string(kind)]))
+        let agent = (terminal.props["agent"] ?? .object([:])).merging(.object(["kind": .string(kind), "protocol": (version ?? 0) > 0 ? .number(Double(version!)) : .null]))
         try update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
         composerAgentReported(tile, state: state)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .object(lifecycle)))
@@ -1171,17 +1185,19 @@ public final class Board {
         }
         guard let state = LifecycleState(rawValue: name) else { throw BoardError.invalidParams("unknown state") }
         try reportLifecycle(tile: tile, kind: kind, state: state, message: p["message"]?.string, seq: p["seq"]?.int, source: p["source"]?.string,
-                            call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string)
+                            call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string, protocol: p["protocol"]?.int)
     }
 
     /// The agent exited (`agent.release`): the tile is a plain shell again. Its lifecycle and the
     /// recorded session go, so a reboot restores a shell instead of resuming a session the user quit,
-    /// and the composer's prompts it never drained return their mentions to the tray.
+    /// the composer's prompts it never drained return their mentions to the tray, and the
+    /// messages its integration never took are dropped.
     public func releaseAgent(tile: ObjectID) throws {
         _ = try object(tile)
         pendingApprovals[tile] = nil
         try update(tile, props: .object(["lifecycle": .null, "agent": .null]), caller: tile)
         dropComposerPrompts(of: tile)
+        messages[tile] = nil
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
     }
 

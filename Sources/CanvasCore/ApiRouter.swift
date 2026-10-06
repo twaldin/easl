@@ -182,6 +182,18 @@ public final class ApiRouter {
     /// Each prompted terminal's text just before its last `agent.prompt` submitted.
     private var promptMarks: [ObjectID: TerminalTail.Tail] = [:]
     private var waiters: [Waiter] = []
+    /// Which connection holds each message `agent.inbox` handed out and its integration hasn't
+    /// acked yet: offered again once that connection closes.
+    private var messageHolds: [String: SocketServer.Connection] = [:]
+    /// `agent.inbox` long polls waiting for a message to their terminal.
+    private var inboxWaiters: [InboxWaiter] = []
+
+    private struct InboxWaiter {
+        let token = UUID()
+        let id: JSONValue
+        let connection: SocketServer.Connection
+        let tile: ObjectID
+    }
 
     private struct Waiter {
         let token = UUID()
@@ -224,6 +236,7 @@ public final class ApiRouter {
                 return nil
             }
             if method == "agent.wait" { return try wait(id, params, connection) }
+            if method == "agent.inbox" { return try await inbox(id, params, connection) }
             if method == "agent.read" { return Self.ok(id, try await read(params)) }
             if method == "agent.prompt" { return Self.ok(id, try await prompt(params)) }
             if method == "view.render" { return Self.ok(id, try await render(params)) }
@@ -314,7 +327,7 @@ public final class ApiRouter {
     // MARK: agent.wait
 
     private func wait(_ id: JSONValue, _ p: JSONValue, _ connection: SocketServer.Connection) throws -> JSONValue? {
-        let (board, terminal) = try agentTile(try string(p, "target"))
+        let (board, terminal) = try agentTile(try string(p, "target"), caller: p["caller"]?.string)
         let until = try waitStates(p["until"])
         let waiter = Waiter(id: id, connection: connection, tile: terminal.id, until: until, firstReportDeadline: Date().addingTimeInterval(firstReportGrace))
         if let reply = reply(to: waiter, on: board) { return reply }
@@ -362,6 +375,8 @@ public final class ApiRouter {
             guard exited || Date() >= waiter.firstReportDeadline else { return nil }
             return Self.error(waiter.id, Self.lifecycleUnknown(terminal))
         }
+        // A message the terminal's integration hasn't delivered yet: its turn hasn't started.
+        if board.messages[waiter.tile]?.isEmpty == false { return nil }
         if let prompted = pendingPrompts[waiter.tile] {
             guard Date().timeIntervalSince(prompted) >= promptStartGrace else { return nil }
             return Self.error(waiter.id, Failure("unavailable", "\(terminal.id)'s last agent.prompt started no turn within \(promptStartGrace.formatted()) s "
@@ -435,24 +450,23 @@ public final class ApiRouter {
         terminal.props["lifecycle"]?["state"]?.string ?? LifecycleState.unknown.rawValue
     }
 
-    /// A terminal tile by id, or by its user-given `name`, across all open boards.
-    func agentTile(_ target: String) throws -> (Board, CanvasObject) {
-        for board in registry.boards.values {
-            if let object = board.objects[target], object.type == .terminal { return (board, object) }
-        }
-        for board in registry.boards.values {
-            if let object = board.objects.values.first(where: { $0.type == .terminal && $0.props["name"]?.string == target }) { return (board, object) }
-        }
-        throw Failure("not_found", "no terminal tile named or with id \(target)")
+    /// The terminal `target` addresses (AgentAddress: a tile id, `name` or `name@board`) on the
+    /// open boards; a bare name on `caller`'s board first.
+    func agentTile(_ target: String, caller: ObjectID? = nil) throws -> (Board, CanvasObject) {
+        try AgentAddress.resolve(target, caller: caller, boards: Array(registry.boards.values))
     }
 
     func agentEntry(_ terminal: CanvasObject, on board: Board) -> JSONValue {
         let agent = terminal.props["agent"]
         let status = terminalStatus?(board, terminal.id)
+        let aliases = board.aliases(of: terminal.id)
         let entry: [String: JSONValue] = [
             "tile": .string(terminal.id), "board": .string(board.id), "root": .string(board.root.path),
+            "address": .string(AgentAddress.address(of: terminal, on: board)),
             "kind": agent?["kind"] ?? .string("unknown"),
             "name": terminal.props["name"] ?? .null,
+            "aliases": aliases.isEmpty ? .null : .array(aliases.map(JSONValue.string)),
+            "protocol": agent?["protocol"] ?? .null,
             "title": status?.title.map(JSONValue.string) ?? .null,
             "program": status?.program.map(JSONValue.string) ?? .null,
             "sessionId": agent?["sessionId"] ?? .null,
@@ -468,7 +482,7 @@ public final class ApiRouter {
     /// answer as its integration reported it. The read runs off the main actor (it spawns
     /// `zmx history`), and the reply stays in order because each connection is served serially.
     private func read(_ p: JSONValue) async throws -> JSONValue {
-        let (board, terminal) = try agentTile(try string(p, "target"))
+        let (board, terminal) = try agentTile(try string(p, "target"), caller: p["caller"]?.string)
         if p["final"]?.bool == true { return try finalAnswer(of: terminal, on: board, p) }
         let since = p["since"]?.string
         guard since == nil || since == "prompt" else { throw Failure("invalid_params", "since must be \"prompt\"") }
@@ -531,14 +545,17 @@ public final class ApiRouter {
         return .object(result)
     }
 
-    /// `agent.prompt`: remembers the terminal's text as it is just before submitting (the reply
-    /// boundary for `agent.read` `since: "prompt"`), then pastes and presses Enter. From then on
-    /// `agent.wait` ignores the state the agent was in before this prompt, unless the agent was in
-    /// its turn (`working`): the prompt joins that turn, whose end answers it. A `blocked` agent is
-    /// refused unless `force`: its screen holds a dialog or selector, which would take the text.
+    /// `agent.prompt`: to a terminal whose integration takes messages (`PromptTarget.takesMessages`)
+    /// it queues an out-of-band message (`queueMessage`); to any other it remembers the
+    /// terminal's text as it is just before submitting (the reply boundary for `agent.read`
+    /// `since: "prompt"`), then pastes and presses Enter. From then on `agent.wait` ignores the
+    /// state the agent was in before this prompt, unless the agent was in its turn (`working`):
+    /// the prompt joins that turn, whose end answers it. A `blocked` agent is refused unless
+    /// `force`: its screen holds a dialog or selector, which would take the text.
     private func prompt(_ p: JSONValue) async throws -> JSONValue {
         try Self.checkComposer(p)
-        let (board, terminal) = try agentTile(try string(p, "target"))
+        let caller = p["caller"]?.string
+        let (board, terminal) = try agentTile(try string(p, "target"), caller: caller)
         let text = try string(p, "text")
         let mentions = p["mentions"]?.array ?? []
         if p["composer"]?.bool == true {
@@ -550,8 +567,116 @@ public final class ApiRouter {
             }
             return try await submitPrompt(text, to: terminal, on: board, attached: .composer(given, answer: answer), caller: nil, force: false)
         }
+        let when: AgentMessage.When
+        switch p["when"] {
+        case nil, .null?: when = .now
+        case let value?:
+            guard let parsed = value.string.flatMap(AgentMessage.When.init(rawValue:)) else { throw Failure("invalid_params", "when is \"now\" (the default) or \"next-turn\"") }
+            when = parsed
+        }
+        var label: String?
+        if let value = p["from"], value != .null {
+            guard let text = value.string, !text.trimmingCharacters(in: .whitespaces).isEmpty else { throw Failure("invalid_params", "from is a sender label such as \"machine-watch\"") }
+            label = text
+        }
+        if PromptTarget.takesMessages(terminal) {
+            return try await queueMessage(text, to: terminal, on: board, mentions: mentions, caller: caller, label: label, when: when)
+        }
+        if when == .nextTurn, Self.state(of: terminal) == LifecycleState.working.rawValue {
+            throw Failure("conflict", "\(terminal.id) is in its turn and its integration takes no messages, so typed text would join that turn; agent.wait for it and send again, or send with when: \"now\"")
+        }
         return try await submitPrompt(text, to: terminal, on: board, attached: .agent { try mentions.map { try HandoffMention(json: $0).target(on: board) } },
-                                      caller: p["caller"]?.string, force: p["force"]?.bool == true)
+                                      caller: caller, force: p["force"]?.bool == true)
+    }
+
+    /// An out-of-band `agent.prompt` (docs/contracts.md, Peer messages): queued for `terminal`,
+    /// whose integration takes it with `agent.inbox`; nothing is typed, so none of typing's
+    /// refusals apply. From a terminal (`caller`, honored when it is a terminal on an open
+    /// board) the message is the agent's; with a `label` (`from`) or none, the user's.
+    private func queueMessage(_ text: String, to terminal: CanvasObject, on board: Board, mentions: [JSONValue], caller: ObjectID?, label: String?, when: AgentMessage.When) async throws -> JSONValue {
+        let attached = try board.messageMentions(try mentions.map { try HandoffMention(json: $0).target(on: board) })
+        let sender = caller.flatMap { caller in registry.boards.values.contains { $0.objects[caller]?.type == .terminal } ? caller : nil }
+        let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
+        guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
+        let message = AgentMessage(text: text, from: sender, label: label, when: when, mentions: attached)
+        try board.queueMessage(message, to: terminal.id)
+        promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
+        serveInbox(terminal.id, on: board)
+        var result: [String: JSONValue] = [
+            "agent": agentEntry(current, on: board),
+            "submittedAt": .string(message.queuedAt.formatted(.iso8601)),
+            "waitable": .bool(true),
+            "delivery": .string("message"),
+            "message": .string(message.id),
+        ]
+        if !attached.isEmpty { result["mentions"] = try JSONValue.encode(attached) }
+        return .object(result)
+    }
+
+    /// `agent.inbox`: a terminal's integration acks what it delivered, then takes what waits
+    /// for it (held by this connection until acked, offered again once it closes), or waits up
+    /// to `waitMs` for a message.
+    private func inbox(_ id: JSONValue, _ p: JSONValue, _ connection: SocketServer.Connection) async throws -> JSONValue? {
+        let tile = try string(p, "tile")
+        let board = try board(forObject: tile)
+        guard board.objects[tile]?.type == .terminal else { throw Failure("invalid_params", "\(tile) is not a terminal tile") }
+        let waitMs = p["waitMs"]?.int ?? 0
+        guard (0...60_000).contains(waitMs) else { throw Failure("invalid_params", "waitMs is from 0 to 60000") }
+        messageHolds = messageHolds.filter { $0.value.isOpen }
+        let ack = p["ack"]?.array?.compactMap(\.string) ?? []
+        if !ack.isEmpty {
+            for message in ack { messageHolds.removeValue(forKey: message) }
+            if !board.ackMessages(ack, of: tile).isEmpty { messagesDelivered(to: tile, on: board, started: p["started"]?.bool == true) }
+        }
+        let offered = offer(tile, on: board, to: connection)
+        guard offered.isEmpty, waitMs > 0 else { return Self.ok(id, try await inboxResult(offered, to: tile, on: board)) }
+        let waiter = InboxWaiter(id: id, connection: connection, tile: tile)
+        inboxWaiters.append(waiter)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(waitMs)) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let index = self.inboxWaiters.firstIndex(where: { $0.token == waiter.token }) else { return }
+                self.inboxWaiters.remove(at: index)
+                waiter.connection.send(Self.ok(waiter.id, .object(["messages": .array([])])))
+            }
+        }
+        return nil
+    }
+
+    /// The messages for `tile` no open connection holds, now held by `connection`.
+    private func offer(_ tile: ObjectID, on board: Board, to connection: SocketServer.Connection) -> [AgentMessage] {
+        let free = (board.messages[tile] ?? []).filter { messageHolds[$0.id]?.isOpen != true }
+        for message in free { messageHolds[message.id] = connection }
+        return free
+    }
+
+    private func inboxResult(_ messages: [AgentMessage], to tile: ObjectID, on board: Board) async throws -> JSONValue {
+        var rendered: [JSONValue] = []
+        for message in messages { rendered.append(await board.delivered(message, to: tile, boards: Array(registry.boards.values))) }
+        return .object(["messages": .array(rendered)])
+    }
+
+    /// A message reached `tile`'s queue: the oldest open long poll for it takes it.
+    private func serveInbox(_ tile: ObjectID, on board: Board) {
+        inboxWaiters.removeAll { !$0.connection.isOpen }
+        guard let index = inboxWaiters.firstIndex(where: { $0.tile == tile }) else { return }
+        let waiter = inboxWaiters.remove(at: index)
+        let offered = offer(tile, on: board, to: waiter.connection)
+        Task { @MainActor in
+            let result = (try? await inboxResult(offered, to: tile, on: board)) ?? .object(["messages": .array([])])
+            waiter.connection.send(Self.ok(waiter.id, result))
+        }
+    }
+
+    /// `tile`'s integration delivered messages. One that started a new turn (`started`) is
+    /// waited on as a prompt to an idle agent is, unless that turn already reported; one that
+    /// joined the running turn ends with it.
+    private func messagesDelivered(to tile: ObjectID, on board: Board, started: Bool) {
+        guard let terminal = board.objects[tile] else { return }
+        let state = Self.state(of: terminal)
+        if started, state != LifecycleState.working.rawValue, state != LifecycleState.blocked.rawValue, state != LifecycleState.unknown.rawValue {
+            pendingPrompts[tile] = Date()
+        }
+        for waiter in waiters where waiter.tile == tile { recheck(waiter.token) }
     }
 
     /// `agent.prompt`'s `composer` and `answer`, checked before the target: only the user answers
@@ -658,6 +783,7 @@ public final class ApiRouter {
             "agent": agentEntry(current, on: board),
             "submittedAt": .string(Date().formatted(.iso8601)),
             "waitable": .bool(waitable),
+            "delivery": .string("typed"),
         ]
         if !handed.isEmpty { result["mentions"] = try JSONValue.encode(handed) }
         return .object(result)
@@ -668,8 +794,8 @@ public final class ApiRouter {
     private func finalAnswer(of terminal: CanvasObject, on board: Board, _ p: JSONValue) throws -> JSONValue {
         guard p["lines"] == nil, p["since"] == nil else { throw Failure("invalid_params", "final takes no lines or since: it returns the whole last answer") }
         let state = Self.state(of: terminal)
-        if pendingPrompts[terminal.id] != nil || state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
-            throw Failure("unavailable", "\(terminal.id) is still in its turn (\(pendingPrompts[terminal.id] != nil ? "prompted" : state)): agent.wait for it, then read final")
+        if pendingPrompts[terminal.id] != nil || board.messages[terminal.id]?.isEmpty == false || state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
+            throw Failure("unavailable", "\(terminal.id) is still in its turn (\(pendingPrompts[terminal.id] != nil || board.messages[terminal.id]?.isEmpty == false ? "prompted" : state)): agent.wait for it, then read final")
         }
         let cutOff = board.turnErrors[terminal.id]
         guard let answer = board.finalAnswers[terminal.id] else {
