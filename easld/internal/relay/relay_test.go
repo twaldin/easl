@@ -96,6 +96,11 @@ func roundTrip(t *testing.T, path, text string) string {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := io.WriteString(conn, text); err != nil {
+		// The relay closes a connection it won't pass on, and that close can land before the
+		// write: a broken pipe or reset is that close, so there is no reply.
+		if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+			return ""
+		}
 		t.Fatal(err)
 	}
 	_ = conn.(*net.UnixConn).CloseWrite()
