@@ -126,6 +126,8 @@ public struct ConnectorRouter: Sendable {
         var flows: [ObjectID: Flow] = [:]
         var obstacles: [ObjectID: CGRect] = [:]
         var regions: [ObjectID: CGRect] = [:]
+        /// Each labelled arrow's caption size, for keeping its label (`keptLabels`).
+        var labelSizes: [ObjectID: CGSize] = [:]
     }
 
     public var connectors: [Connector]
@@ -200,8 +202,9 @@ public struct ConnectorRouter: Sendable {
     /// whose ends, flow, and surroundings haven't changed keeps its route (so moving a tile never
     /// reshuffles routes it doesn't touch): only arrows that are new, whose ends moved, whose route
     /// runs within `avoidMargin` of a tile or group border that came, went, or moved, or that
-    /// share a side with one of those route again, around the rest. Tracks and labels are placed
-    /// afresh, so they follow.
+    /// share a side with one of those route again, around the rest. Tracks are placed afresh, so
+    /// they follow; a label stays where it was when its arrow's line and caption are unchanged and
+    /// nothing changed near the label (`keptLabels`), and the rest are placed around those.
     public func route(previous: Result? = nil) -> Result {
         var routes = connectors.map { $0.path ?? [] }
         var movable = [Bool](repeating: false, count: connectors.count)
@@ -210,6 +213,7 @@ public struct ConnectorRouter: Sendable {
         var memo = Memo()
         for obstacle in obstacles { memo.obstacles[obstacle.id] = obstacle.rect }
         for region in regions { memo.regions[region.id] = region.frame }
+        for connector in connectors { if let size = connector.label { memo.labelSizes[connector.id] = size } }
         if !pending.isEmpty {
             var planner = Planner(router: self)
             for (index, path) in planner.solve(pending, flows: flows, keep: kept(pending, flows: flows, previous: previous?.memo)) {
@@ -230,7 +234,8 @@ public struct ConnectorRouter: Sendable {
             Self.nudge(&routes, movable: movable, obstacles: rects + chips, soft: soft, vertical: true)
             Self.nudge(&routes, movable: movable, obstacles: rects + chips, soft: soft, vertical: false)
             for index in routes.indices where movable[index] { routes[index] = DrawingGeometry.simplified(routes[index]) }
-            return Self.placeLabels(connectors: connectors, routes: routes, obstacles: rects, titles: titles, groups: regions.map(\.frame))
+            return Self.placeLabels(connectors: connectors, routes: routes, obstacles: rects, titles: titles, groups: regions.map(\.frame),
+                                    keep: keptLabels(routes: routes, previous: previous))
         }
         var labels = settle(&routes, around: [])
         // A label left on another arrow's line: nudge that line's track clear of the chip, and
@@ -250,6 +255,51 @@ public struct ConnectorRouter: Sendable {
         var paths: [ObjectID: [CGPoint]] = [:]
         for (index, connector) in connectors.enumerated() where routes[index].count >= 2 { paths[connector.id] = routes[index] }
         return Result(paths: paths, labels: labels, memo: memo)
+    }
+
+    /// How far from a label a change makes it be placed again.
+    static let labelReach: CGFloat = 24
+
+    /// The labels of `previous` that stand: the arrow's line is the same as then, its caption the
+    /// same size, and no line, tile, title band or group border came, went or moved within
+    /// `labelReach` of the chip or its leader. Keyed by connector index.
+    func keptLabels(routes: [[CGPoint]], previous: Result?) -> [Int: Label] {
+        guard let previous, !previous.labels.isEmpty else { return [:] }
+        let memo = previous.memo
+        // Everything that changed, as boxes: segments only one routing has, obstacles and group
+        // frames (with their title bands) that moved, came or went.
+        var changed: [CGRect] = []
+        func box(_ a: CGPoint, _ b: CGPoint) -> CGRect { CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y)) }
+        func segments(_ route: [CGPoint]) -> Set<[CGFloat]> { Set(zip(route, route.dropFirst()).map { [$0.x, $0.y, $1.x, $1.y] }) }
+        var current: [ObjectID: [CGPoint]] = [:]
+        for (index, connector) in connectors.enumerated() where routes[index].count >= 2 { current[connector.id] = routes[index] }
+        for id in Set(current.keys).union(previous.paths.keys) {
+            let now = current[id] ?? [], before = previous.paths[id] ?? []
+            guard now != before else { continue }
+            let a = segments(now), b = segments(before)
+            for s in a.symmetricDifference(b) { changed.append(box(CGPoint(x: s[0], y: s[1]), CGPoint(x: s[2], y: s[3]))) }
+        }
+        var obstacleNow: [ObjectID: CGRect] = [:]
+        for obstacle in obstacles { obstacleNow[obstacle.id] = obstacle.rect }
+        for id in Set(obstacleNow.keys).union(memo.obstacles.keys) where obstacleNow[id] != memo.obstacles[id] {
+            changed += [obstacleNow[id], memo.obstacles[id]].compactMap { $0 }
+        }
+        var regionNow: [ObjectID: CGRect] = [:]
+        for region in regions { regionNow[region.id] = region.frame }
+        for id in Set(regionNow.keys).union(memo.regions.keys) where regionNow[id] != memo.regions[id] {
+            changed += [regionNow[id], memo.regions[id]].compactMap { $0 }
+        }
+        var kept: [Int: Label] = [:]
+        for (index, connector) in connectors.enumerated() {
+            guard let size = connector.label, let label = previous.labels[connector.id], memo.labelSizes[connector.id] == size,
+                  routes[index].count >= 2, previous.paths[connector.id] == routes[index] else { continue }
+            var area = label.rect
+            if let leader = label.leader { for point in leader { area = area.union(CGRect(origin: point, size: .zero)) } }
+            area = area.insetBy(dx: -Self.labelReach, dy: -Self.labelReach)
+            if changed.contains(where: { $0.insetBy(dx: -0.5, dy: -0.5).intersects(area) }) { continue }
+            kept[index] = label
+        }
+        return kept
     }
 
     /// Connectors whose label lies on another arrow's line, or on a tile or title.
@@ -1363,16 +1413,23 @@ public struct ConnectorRouter: Sendable {
     /// and is tried first tethered to a stretch where its line runs alone. Labels with the fewest
     /// clear spots go first; one left without takes a spot a single other label is in the way of
     /// when that one can move, else the spot with the fewest collisions (`layout.check` reports it).
-    static func placeLabels(connectors: [Connector], routes: [[CGPoint]], obstacles: [CGRect], titles: [CGRect], groups: [CGRect] = []) -> [ObjectID: Label] {
-        let labelled = connectors.indices.filter { connectors[$0].label != nil && routes[$0].count >= 2 }
-        guard !labelled.isEmpty else { return [:] }
+    ///
+    /// `keep` (by connector index) are labels that stand as they are (`keptLabels`): the others
+    /// are placed around them, and one moves only when it is the single label in the way of one
+    /// left without a clear spot (a caption that came or grew beside it) and has another.
+    static func placeLabels(connectors: [Connector], routes: [[CGPoint]], obstacles: [CGRect], titles: [CGRect], groups: [CGRect] = [],
+                            keep: [Int: Label] = [:]) -> [ObjectID: Label] {
+        let labelled = connectors.indices.filter { connectors[$0].label != nil && routes[$0].count >= 2 && keep[$0] == nil }
+        var result: [ObjectID: Label] = [:]
+        for (index, label) in keep { result[connectors[index].id] = label }
+        guard !labelled.isEmpty else { return result }
         let segments = LabelSegments(routes: routes, obstacles: obstacles, titles: titles, groups: groups)
         var candidates: [Int: [LabelCandidate]] = [:]
         var clear: [Int: Int] = [:]
-        for index in labelled {
+        /// A label's acceptable spots, best first (clear beside or on the route, then beside it
+        /// with another line close by, then a clear leader), and how many are clear.
+        func prepare(_ index: Int) {
             let all = labelCandidates(route: routes[index], owner: index, size: connectors[index].label!, segments: segments)
-            // Acceptable spots, best first: clear beside or on the route, then beside it with
-            // another line close by, then a clear leader.
             let open = all.enumerated().compactMap { order, spot -> (score: Int, order: Int, spot: LabelCandidate)? in
                 let score = segments.collisions(spot, owner: index, labels: [], limit: underCost)
                 return score < underCost ? (score, order, spot) : nil
@@ -1380,6 +1437,7 @@ public struct ConnectorRouter: Sendable {
             candidates[index] = open.isEmpty ? all : open
             clear[index] = open.count
         }
+        for index in labelled { prepare(index) }
         /// Whether two placed labels get in each other's way: chips closer than 2 points, or a
         /// leader through the other chip.
         func clash(_ a: LabelCandidate, _ b: LabelCandidate) -> Bool {
@@ -1390,6 +1448,7 @@ public struct ConnectorRouter: Sendable {
         }
         let order = labelled.sorted { (clear[$0]!, connectors[$0].id) < (clear[$1]!, connectors[$1].id) }
         var chosen: [Int: LabelCandidate] = [:]
+        for (index, label) in keep { chosen[index] = LabelCandidate(rect: label.rect, leader: label.leader) }
         var stuck: [Int] = []
         for index in order {
             if clear[index]! > 0, let spot = candidates[index]!.first(where: { spot in !chosen.values.contains { clash(spot, $0) } }) {
@@ -1412,7 +1471,9 @@ public struct ConnectorRouter: Sendable {
         for index in stuck where clear[index]! > 0 {
             search: for spot in candidates[index]! {
                 let blocking = chosen.filter { $0.key != index && clash(spot, $0.value) }.map(\.key)
-                guard blocking.count == 1, let other = blocking.first, clear[other]! > 0 else { continue }
+                guard blocking.count == 1, let other = blocking.first else { continue }
+                if keep[other] != nil, candidates[other] == nil { prepare(other) }
+                guard let room = clear[other], room > 0 else { continue }
                 for move in candidates[other]! where !clash(move, spot) {
                     guard !chosen.contains(where: { $0.key != index && $0.key != other && clash(move, $0.value) }) else { continue }
                     chosen[other] = move
@@ -1421,7 +1482,6 @@ public struct ConnectorRouter: Sendable {
                 }
             }
         }
-        var result: [ObjectID: Label] = [:]
         for (index, spot) in chosen { result[connectors[index].id] = Label(rect: spot.rect, leader: spot.leader) }
         return result
     }

@@ -94,11 +94,15 @@ final class HtmlTile: NSView, TileContent {
     /// The sandbox every page of this tile runs in: its own data store, the network rules, the
     /// kit scheme, and the validated `canvas` channel.
     private func configuration(rules: WKContentRuleList) -> WKWebViewConfiguration {
+        Self.configuration(rules: rules, scheme: HtmlSchemeHandler(tile: self), channel: HtmlChannelHandler(tile: self))
+    }
+
+    static func configuration(rules: WKContentRuleList, scheme: HtmlSchemeHandler, channel: HtmlChannelHandler) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController.add(rules)
-        configuration.setURLSchemeHandler(HtmlSchemeHandler(tile: self), forURLScheme: HtmlKit.scheme)
-        configuration.userContentController.addScriptMessageHandler(HtmlChannelHandler(tile: self), contentWorld: .page, name: "canvas")
+        configuration.setURLSchemeHandler(scheme, forURLScheme: HtmlKit.scheme)
+        configuration.userContentController.addScriptMessageHandler(channel, contentWorld: .page, name: "canvas")
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.preferences.isFraudulentWebsiteWarningEnabled = false
         return configuration
@@ -291,7 +295,7 @@ final class HtmlTile: NSView, TileContent {
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
                                         appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
         Task { @MainActor in
-            // Cards requested together (a batch of new tiles) render one per main turn.
+            // Cards requested together (a batch of new tiles) render one per wake of the main thread.
             await MainTurns.next()
             let render = await self.render(request)
             deliver(render.state == .rendered ? render.image : nil)
@@ -302,6 +306,8 @@ final class HtmlTile: NSView, TileContent {
 
     /// The page `render(_:)` or `measure` loaded; the channel accepts its messages (read-only).
     private(set) var renderWebView: WKWebView?
+    /// The pooled page `renderWebView` is while it measures (`HtmlMeasurePool`).
+    private var measurePage: HtmlMeasurePage?
     /// The offscreen page reported `view.rendered` since this was last reset.
     private var offscreenSettled = false
     private var renderBusy = false
@@ -347,7 +353,7 @@ final class HtmlTile: NSView, TileContent {
 
     /// Pages measured at once (`measure`); more wait their turn.
     private static var measuring = 0
-    private static let maxMeasuring = 3
+    static let maxMeasuring = 3
     /// How long a measured page gets to report `view.rendered`.
     static let measureLimit: Duration = .seconds(10)
 
@@ -380,9 +386,13 @@ final class HtmlTile: NSView, TileContent {
                                   z: 0, createdBy: .user, createdAt: Date(), props: props)
         let tile = HtmlTile(object: object, board: Board(id: IDs.make("brd"), root: root), live: false)
         guard await tile.beginOffscreen() else { throw ObjectMeasure.Failure.unavailable("the page is busy") }
-        defer { tile.endOffscreen() }
-        switch await tile.loadOffscreen(size: CGSize(width: width, height: 1), appearance: NSApp.effectiveAppearance, limit: measureLimit) {
+        var measuredFine = false
+        // A page that failed or was cancelled may be stuck (a script that never yields): it is
+        // discarded, never emptied for reuse (`HtmlMeasurePool`).
+        defer { tile.endOffscreen(keepPage: measuredFine && !Task.isCancelled) }
+        switch await tile.loadOffscreen(size: CGSize(width: width, height: 1), appearance: NSApp.effectiveAppearance, limit: measureLimit, pooled: true) {
         case .success(let extent):
+            measuredFine = true
             if let key {
                 if measured.count >= 64 { measured = measured.filter { ContinuousClock.now - $0.value.at < measureReuse } }
                 measured[key] = (extent, ContinuousClock.now)
@@ -436,8 +446,16 @@ final class HtmlTile: NSView, TileContent {
         return true
     }
 
-    private func endOffscreen() {
+    /// `keepPage`: a pooled measure page goes back to the pool (it measured fine); otherwise it
+    /// is discarded.
+    private func endOffscreen(keepPage: Bool = false) {
         renderBusy = false
+        if let page = measurePage {
+            measurePage = nil
+            renderWebView = nil
+            if keepPage { HtmlMeasurePool.give(page) } else { HtmlMeasurePool.discard(page) }
+            return
+        }
         renderWebView?.stopLoading()
         renderWebView?.configuration.userContentController.removeAllScriptMessageHandlers()
         renderWebView?.removeFromSuperview()
@@ -445,20 +463,28 @@ final class HtmlTile: NSView, TileContent {
     }
 
     /// Loads the page into `renderWebView`, `size` points, parked in the stage, and waits for the
-    /// kit's `view.rendered`; then the document's scroll width and height.
-    private func loadOffscreen(size: CGSize, appearance: NSAppearance, limit: Duration = .seconds(60)) async -> Result<CGSize, OffscreenFailure> {
+    /// kit's `view.rendered`; then the document's scroll width and height. `pooled` (a measure)
+    /// borrows a web view from `HtmlMeasurePool` instead of making one.
+    private func loadOffscreen(size: CGSize, appearance: NSAppearance, limit: Duration = .seconds(60), pooled: Bool = false) async -> Result<CGSize, OffscreenFailure> {
         let rules: WKContentRuleList
         do {
             rules = try await HtmlRuleLists.list(allowing: allowNetwork)
         } catch {
             return .failure(.rules("network rules failed to compile: \(error)"))
         }
-        let web = HtmlWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration(rules: rules))
+        let web: HtmlWebView
+        if pooled {
+            let page = HtmlMeasurePool.take(for: self, rules: rules)
+            measurePage = page
+            web = page.web
+        } else {
+            web = HtmlWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration(rules: rules))
+            WebStage.setOcclusionDetection(false, on: web)
+        }
         web.navigationDelegate = self
         web.uiDelegate = self
         web.appearance = appearance
         web.underPageBackgroundColor = .textBackgroundColor
-        WebStage.setOcclusionDetection(false, on: web)
         WebStage.park(web, frame: NSRect(origin: .zero, size: size))
         renderWebView = web
         offscreenSettled = false
