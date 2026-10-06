@@ -1,5 +1,5 @@
 {
-  "description": "Peer messages: agent.prompt to a terminal whose integration takes messages (agent.report protocol 1) queues out of band; agent.inbox takes them (held per connection, acked, started), agent.wait waits while one is queued and for the turn it started, agent.read final is unavailable meanwhile; a script's message (from, user attribution, next-turn); addresses: name@board, a renamed terminal's alias until another terminal takes the name, the caller's board first, ambiguity and unknown boards; release drops what is queued; a typed next-turn into a working terminal is a conflict.",
+  "description": "Peer messages: agent.prompt to a terminal whose integration takes messages (agent.report protocol 1) queues out of band; agent.inbox takes them (held per connection, acked, started), agent.wait waits while one is queued and for the turn it started, agent.read final is unavailable meanwhile; a script's message (from, user attribution, next-turn); addresses: name@board, a renamed terminal's alias until another terminal takes the name, the caller's board first, ambiguity and unknown boards; release bounces what is queued (back to a sending terminal that takes messages as a message from easl, a script's into board.history as kind message); a typed next-turn into a working terminal is a conflict.",
   "files": {
     "elsewhere/README.md": "# Another board\n"
   },
@@ -197,7 +197,12 @@
       "params": { "id": "{{x.object.id}}" }
     },
     {
-      "note": "released: what was queued is dropped",
+      "note": "a script's message, queued after the lead's",
+      "call": "agent.prompt",
+      "params": { "target": "{{t.object.id}}", "text": "Nightly build failed again.\nThe log is attached.", "from": "machine-watch" }
+    },
+    {
+      "note": "released: what was queued bounces, the lead's back to it (its omp takes messages), the script's into the board's history",
       "call": "agent.release",
       "params": { "tile": "{{t.object.id}}", "kind": "omp", "source": "canvas-omp" }
     },
@@ -205,6 +210,22 @@
       "call": "agent.inbox",
       "params": { "tile": "{{t.object.id}}" },
       "conn": "integration"
+    },
+    {
+      "note": "the lead's omp takes the bounce: a message from easl, on the user's behalf",
+      "call": "agent.inbox",
+      "params": { "tile": "{{u.object.id}}" },
+      "conn": "lead",
+      "save": "back"
+    },
+    {
+      "call": "agent.inbox",
+      "params": { "tile": "{{u.object.id}}", "ack": ["{{back.messages.0.id}}"] },
+      "conn": "lead"
+    },
+    {
+      "call": "board.history",
+      "params": { "board": "{{board}}", "kinds": ["message"] }
     },
     {
       "note": "no message integration: a typed next-turn would join the running turn",

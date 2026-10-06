@@ -1,7 +1,7 @@
 // bun test extensions/agent-hooks — how an integration hands out-of-band messages to its agent.
 import { expect, test } from "bun:test";
 import type { AgentMessage } from "../../clients/ts/src/index";
-import { deliveryText, header, peerAddress, plan, WakeBudget } from "./messages";
+import { deliveryText, header, peerAddress, plan, recordedIds, WakeBudget } from "./messages";
 
 const message = (from: AgentMessage["from"], text = "hi", context?: string): AgentMessage => ({
   id: "msg_1",
@@ -23,13 +23,33 @@ test("omp's agent:// paths name easl addresses; the broadcast and other paths do
   expect(peerAddress("local://notes.md")).toBeUndefined();
 });
 
-test("the header names the sender and how to reply; a script has no reply address", () => {
+test("the header names the message, its sender and how to reply; a script has no reply address", () => {
   expect(header(message({ tile: "obj_l", name: "lead", address: "lead@canvas", board: "brd_c" }))).toBe(
-    "[message from lead@canvas (terminal obj_l); reply with write agent://lead@canvas]",
+    "[message msg_1 from lead@canvas (terminal obj_l); reply with write agent://lead@canvas]",
   );
-  expect(header(message({ tile: "obj_l", name: "Terminal", address: "obj_l", board: "brd_c" }))).toBe("[message from terminal obj_l; reply with write agent://obj_l]");
-  expect(header(message({ tile: "obj_gone", name: "obj_gone" }))).toBe("[message from terminal obj_gone, closed since it sent this; no reply address]");
-  expect(header(message({ name: "machine-watch" }))).toBe("[message from machine-watch, a script; no reply address]");
+  expect(header(message({ tile: "obj_l", name: "Terminal", address: "obj_l", board: "brd_c" }))).toBe("[message msg_1 from terminal obj_l; reply with write agent://obj_l]");
+  expect(header(message({ tile: "obj_gone", name: "obj_gone" }))).toBe("[message msg_1 from terminal obj_gone, closed since it sent this; no reply address]");
+  expect(header(message({ name: "machine-watch" }))).toBe("[message msg_1 from machine-watch, a script; no reply address]");
+});
+
+test("the reply URI encodes the name and board, and omp's write path decodes back to the address", () => {
+  for (const address of ["lead agent@My Project", "a/b@c@d", "100%@x", "obj_01ABC"]) {
+    const line = header(message({ tile: "obj_l", name: "lead", address, board: "brd_c" }));
+    const uri = /reply with write (\S+)\]$/.exec(line)?.[1];
+    expect(uri).toBeDefined();
+    expect(peerAddress(uri!)).toBe(address);
+  }
+  expect(header(message({ tile: "obj_l", name: "lead agent", address: "lead agent@My Project", board: "brd_c" }))).toEndWith("reply with write agent://lead%20agent@My%20Project]");
+});
+
+test("a recorded user message names the messages it carries by their headers' ids", () => {
+  const lead = { tile: "obj_l", name: "lead", address: "lead@canvas", board: "brd_c" };
+  const text = deliveryText([
+    { ...message(lead, "See [message msg_quoted from x] above."), id: "msg_01A" },
+    { ...message({ name: "ci" }, "Build failed."), id: "msg_01B" },
+  ]);
+  expect(recordedIds(text)).toEqual(["msg_01A", "msg_01B"]);
+  expect(recordedIds("Nothing from easl here.")).toEqual([]);
 });
 
 test("a burst is one text: each message under its header, its mentions after its text", () => {
@@ -37,25 +57,33 @@ test("a burst is one text: each message under its header, its mentions after its
   const text = deliveryText([message(lead, "  Check the key.\n", "<canvas-mentions>…</canvas-mentions>"), message({ name: "ci" }, "Build failed.")]);
   expect(text).toBe(
     [
-      "[message from lead@canvas (terminal obj_l); reply with write agent://lead@canvas]",
+      "[message msg_1 from lead@canvas (terminal obj_l); reply with write agent://lead@canvas]",
       "Check the key.",
       "<canvas-mentions>…</canvas-mentions>",
       "",
-      "[message from ci, a script; no reply address]",
+      "[message msg_1 from ci, a script; no reply address]",
       "Build failed.",
     ].join("\n"),
   );
 });
 
 test("now steers a working agent and starts a turn when idle; next-turn never joins a running turn", () => {
-  expect(plan("now", true, true)).toBe("steer");
-  expect(plan("now", false, true)).toBe("turn");
-  expect(plan("next-turn", true, true)).toBe("after-turn");
-  expect(plan("next-turn", false, true)).toBe("turn");
+  const busy = { turn: true, streaming: true, mayWake: true };
+  const idle = { turn: false, streaming: false, mayWake: true };
+  expect(plan("now", busy)).toBe("steer");
+  expect(plan("now", idle)).toBe("turn");
+  expect(plan("next-turn", busy)).toBe("after-turn");
+  expect(plan("next-turn", idle)).toBe("turn");
   // Past the wake bound: no steer and no new turn.
-  expect(plan("now", true, false)).toBe("aside");
-  expect(plan("now", false, false)).toBe("next-start");
-  expect(plan("next-turn", true, false)).toBe("after-turn");
+  expect(plan("now", { ...busy, mayWake: false })).toBe("aside");
+  expect(plan("now", { ...idle, mayWake: false })).toBe("next-start");
+  expect(plan("next-turn", { ...busy, mayWake: false })).toBe("after-turn");
+});
+
+test("past the wake bound, a turn that streams nothing (omp awaiting background work) is not woken", () => {
+  // An aside into an omp that isn't streaming starts a turn, so it waits for the next one to start.
+  expect(plan("now", { turn: true, streaming: false, mayWake: false })).toBe("next-start");
+  expect(plan("now", { turn: true, streaming: false, mayWake: true })).toBe("steer");
 });
 
 test("each sender wakes the agent at most 20 times an hour, others unaffected", () => {

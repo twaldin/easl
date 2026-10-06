@@ -691,3 +691,238 @@ func TestAgentAddresses(t *testing.T) {
 		t.Errorf("a board whose folder is gone, by id: %s", got)
 	}
 }
+
+// bounced is what the board.history `message` entries on the fixture's board say.
+func (f *fixture) bounced() []string {
+	var out []string
+	for _, e := range f.result("board.history", map[string]any{"board": f.board.ID(), "kinds": []any{"message"}})["entries"].([]any) {
+		out = append(out, e.(map[string]any)["summary"].(string))
+	}
+	return out
+}
+
+func texts(messages []board.Message) []string {
+	var out []string
+	for _, m := range messages {
+		out = append(out, m.Text)
+	}
+	return out
+}
+
+// A message whose receiver's agent session ends before its integration takes it bounces: back to
+// a sending terminal whose integration takes messages, as a message from easl; a plain
+// terminal's or a script's into the receiver's board.history. A release ends that session, and
+// so do another session or another agent reported in the tile, and a report without protocol.
+func TestAMessageWhoseReceiversSessionEndsBounces(t *testing.T) {
+	f := newFixture(t)
+	reviewer := f.namedTerminal("reviewer", "")
+	lead := f.namedTerminal("lead", "")
+	shell := f.namedTerminal("shell", "")
+	report := func(tile, kind string, protocol any) {
+		f.result("agent.report", map[string]any{"tile": tile, "kind": kind, "state": "idle", "protocol": protocol})
+	}
+	report(reviewer, "omp", 1.0)
+	report(lead, "omp", 1.0)
+	f.result("agent.prompt", map[string]any{"target": "reviewer", "text": "Check the cache key.\nThen the locale.", "caller": lead})
+	f.result("agent.prompt", map[string]any{"target": "reviewer", "text": "From a plain shell.", "caller": shell})
+	f.result("agent.prompt", map[string]any{"target": "reviewer", "text": "Nightly failed.", "from": "machine-watch"})
+	f.result("agent.release", map[string]any{"tile": reviewer, "kind": "omp"})
+
+	back := messagesOf(t, f.on(&conn{}, "agent.inbox", map[string]any{"tile": lead}))
+	if len(back) != 1 || back[0]["text"] != "undelivered to reviewer@root: Check the cache key.…" ||
+		!reflect.DeepEqual(back[0]["from"], map[string]any{"name": "easl"}) || back[0]["attribution"] != "user" {
+		t.Fatalf("the lead's bounce: %v", back)
+	}
+	want := []string{"undelivered to reviewer@root: From a plain shell. (from shell@root)", "undelivered to reviewer@root: Nightly failed. (from machine-watch)"}
+	if got := f.bounced(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("history: %q", got)
+	}
+	if len(f.board.Messages(reviewer)) != 0 {
+		t.Fatalf("still queued: %v", f.board.Messages(reviewer))
+	}
+
+	f.board.AckMessages([]string{back[0]["id"].(string)}, lead)
+	report(reviewer, "omp", 1.0)
+	f.result("agent.report_session", map[string]any{"tile": reviewer, "kind": "omp", "sessionId": "ses_1"})
+	for _, end := range []struct {
+		text string
+		end  func()
+	}{
+		{"a new conversation", func() {
+			f.result("agent.report_session", map[string]any{"tile": reviewer, "kind": "omp", "sessionId": "ses_2"})
+		}},
+		{"another agent", func() { report(reviewer, "codex", 1.0) }},
+		{"no protocol", func() { report(reviewer, "omp", 1.0); report(reviewer, "omp", nil) }},
+	} {
+		report(reviewer, "omp", 1.0)
+		f.result("agent.prompt", map[string]any{"target": reviewer, "text": end.text, "caller": lead})
+		end.end()
+		if got := texts(f.board.Messages(lead)); !reflect.DeepEqual(got, []string{"undelivered to reviewer@root: " + end.text}) {
+			t.Errorf("%s: %q", end.text, got)
+		}
+		f.board.AckMessages([]string{f.board.Messages(lead)[0].ID}, lead)
+	}
+	// The same session reported again ends nothing.
+	report(reviewer, "omp", 1.0)
+	f.result("agent.report_session", map[string]any{"tile": reviewer, "kind": "omp", "sessionId": "ses_3"})
+	f.result("agent.prompt", map[string]any{"target": reviewer, "text": "kept", "caller": lead})
+	f.result("agent.report_session", map[string]any{"tile": reviewer, "kind": "omp", "sessionId": "ses_3"})
+	report(reviewer, "omp", 1.0)
+	if got := texts(f.board.Messages(reviewer)); !reflect.DeepEqual(got, []string{"kept"}) {
+		t.Fatalf("%q", got)
+	}
+}
+
+// A failed batch that deleted a terminal puts back its queue and old names; deleted for good,
+// its queue bounces under the name it had.
+func TestAFailedBatchPutsBackTheQueueAndOldNamesOfATerminalItDeleted(t *testing.T) {
+	f := newFixture(t)
+	reviewer := f.namedTerminal("reviewer", "")
+	lead := f.namedTerminal("lead", "")
+	for _, tile := range []string{reviewer, lead} {
+		f.result("agent.report", map[string]any{"tile": tile, "kind": "omp", "state": "idle", "protocol": 1.0})
+	}
+	f.result("object.update", map[string]any{"id": reviewer, "props": map[string]any{"name": "critic"}})
+	f.result("agent.prompt", map[string]any{"target": "reviewer", "text": "one", "caller": lead})
+	queued := f.board.Messages(reviewer)
+	failed := f.call("object.batch", map[string]any{"board": f.board.ID(), "ops": []any{
+		map[string]any{"method": "object.delete", "params": map[string]any{"id": reviewer}},
+		map[string]any{"method": "object.update", "params": map[string]any{"id": "obj_missing", "props": map[string]any{"x": 1.0}}},
+	}})
+	if code, _ := errorOf(failed); code == "" {
+		t.Fatalf("the batch applied: %v", failed)
+	}
+	if got := f.board.Messages(reviewer); len(queued) != 1 || !reflect.DeepEqual(got, queued) {
+		t.Fatalf("queue %v, want %v", got, queued)
+	}
+	if got := f.board.Aliases(reviewer); !reflect.DeepEqual(got, []string{"reviewer"}) {
+		t.Fatalf("aliases %v", got)
+	}
+	if len(f.board.Messages(lead)) != 0 {
+		t.Fatalf("bounced: %v", f.board.Messages(lead))
+	}
+	f.result("object.delete", map[string]any{"id": reviewer})
+	if got := texts(f.board.Messages(lead)); !reflect.DeepEqual(got, []string{"undelivered to critic@root: one"}) {
+		t.Fatalf("%q", got)
+	}
+}
+
+// On each board a bare name is its current name, else its alias; matches on two boards are
+// ambiguous even when one is an alias.
+func TestABareNameIsEachBoardsCurrentNameElseItsAlias(t *testing.T) {
+	f := newFixture(t)
+	renamed := f.namedTerminal("reviewer", "")
+	lead := f.namedTerminal("lead", "")
+	otherRoot := filepath.Join(filepath.Dir(f.board.Root()), "other")
+	if err := os.MkdirAll(otherRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	other := f.result("board.open", map[string]any{"root": otherRoot})["board"].(string)
+	elsewhere := f.namedTerminal("reviewer", other)
+	scout := f.namedTerminal("scout", other)
+	f.result("object.update", map[string]any{"id": renamed, "props": map[string]any{"name": "critic"}})
+	for _, c := range []struct{ caller, want string }{
+		{"", "ambiguous: reviewer matches 2 terminals: critic@root (" + renamed + "), reviewer@other (" + elsewhere + "); address one as name@board, or by its tile id"},
+		{lead, renamed},
+		{scout, elsewhere},
+	} {
+		agent, failure := f.addressed("reviewer", c.caller)
+		if agent != nil {
+			failure = agent["tile"].(string)
+		}
+		if failure != c.want {
+			t.Errorf("caller %q: %s, want %s", c.caller, failure, c.want)
+		}
+	}
+}
+
+// A terminal's address reaches it alone: name@<board id> where open boards' folders share a
+// name or its board's folder is gone, its tile id where its name is shared on its board. A
+// message's reply address is the same.
+func TestAnAddressReachesItsTerminalAlone(t *testing.T) {
+	f := newFixture(t)
+	parent := filepath.Dir(f.board.Root())
+	open := func(dir string) string {
+		root := filepath.Join(parent, dir)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return f.result("board.open", map[string]any{"root": root})["board"].(string)
+	}
+	first, second, archived := open("a/client"), open("b/client"), open("gone")
+	if err := os.RemoveAll(filepath.Join(parent, "gone")); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		f.namedTerminal("reviewer", first): "reviewer@" + first,
+		f.namedTerminal("lead", second):    "lead@" + second,
+		f.namedTerminal("scout", archived): "scout@" + archived,
+		f.namedTerminal("solo", ""):        "solo@root",
+	}
+	twin := f.namedTerminal("twin", "")
+	f.namedTerminal("twin", "")
+	want[twin] = twin
+	for _, a := range f.result("agent.list", map[string]any{})["agents"].([]any) {
+		agent := a.(map[string]any)
+		tile := agent["tile"].(string)
+		address, ok := want[tile]
+		if !ok {
+			continue
+		}
+		if agent["address"] != address {
+			t.Errorf("%s: address %v, want %s", tile, agent["address"], address)
+		}
+		if reached, failure := f.addressed(address, ""); reached == nil || reached["tile"] != tile {
+			t.Errorf("%s doesn't reach %s: %v %s", address, tile, reached, failure)
+		}
+	}
+
+	receiver := f.namedTerminal("receiver", "")
+	f.result("agent.report", map[string]any{"tile": receiver, "kind": "omp", "state": "idle", "protocol": 1.0})
+	var lead string
+	for tile, address := range want {
+		if address == "lead@"+second {
+			lead = tile
+		}
+	}
+	f.result("agent.prompt", map[string]any{"target": receiver, "text": "hi", "caller": lead})
+	got := messagesOf(t, f.on(&conn{}, "agent.inbox", map[string]any{"tile": receiver}))
+	if len(got) != 1 || got[0]["from"].(map[string]any)["address"] != "lead@"+second {
+		t.Fatalf("%v", got)
+	}
+}
+
+// Queued messages are saved with the board: easld started again offers them.
+func TestQueuedMessagesSurviveARestart(t *testing.T) {
+	f := newFixture(t)
+	reviewer := f.namedTerminal("reviewer", "")
+	lead := f.namedTerminal("lead", "")
+	f.result("agent.report", map[string]any{"tile": reviewer, "kind": "omp", "state": "working", "protocol": 1.0})
+	f.result("agent.prompt", map[string]any{"target": "reviewer", "text": "Check the key.", "caller": lead})
+	f.result("agent.prompt", map[string]any{"target": "reviewer", "text": "Nightly failed.", "from": "machine-watch", "when": "next-turn"})
+	queued := f.board.Messages(reviewer)
+	f.router.reg.Flush()
+
+	again := board.NewRegistry(filepath.Join(filepath.Dir(f.board.Root()), "boards"), time.Hour, "")
+	again.Mu.Lock()
+	b, err := again.Open(f.board.Root())
+	again.Mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := b.Messages(reviewer)
+	if len(got) != 2 {
+		t.Fatalf("%v", got)
+	}
+	for i, m := range got {
+		was := queued[i]
+		if m.ID != was.ID || m.Text != was.Text || m.From != was.From || m.Label != was.Label || m.When != was.When || !m.QueuedAt.Equal(was.QueuedAt.Truncate(time.Second)) {
+			t.Errorf("%d: %+v, want %+v", i, m, was)
+		}
+	}
+	r := New(again)
+	offered := messagesOf(t, r.HandleConn(map[string]any{"id": "1", "method": "agent.inbox", "params": map[string]any{"tile": reviewer}}, &conn{}).(map[string]any))
+	if len(offered) != 2 || offered[0]["text"] != "Check the key." || offered[1]["when"] != "next-turn" {
+		t.Fatalf("%v", offered)
+	}
+}

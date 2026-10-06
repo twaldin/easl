@@ -1,7 +1,7 @@
 {
   "scenario": "messages",
-  "description": "Peer messages: agent.prompt to a terminal whose integration takes messages (agent.report protocol 1) queues out of band; agent.inbox takes them (held per connection, acked, started), agent.wait waits while one is queued and for the turn it started, agent.read final is unavailable meanwhile; a script's message (from, user attribution, next-turn); addresses: name@board, a renamed terminal's alias until another terminal takes the name, the caller's board first, ambiguity and unknown boards; release drops what is queued; a typed next-turn into a working terminal is a conflict.",
-  "recordedOn": "easl peer/messages (Peer messages), dev instance",
+  "description": "Peer messages: agent.prompt to a terminal whose integration takes messages (agent.report protocol 1) queues out of band; agent.inbox takes them (held per connection, acked, started), agent.wait waits while one is queued and for the turn it started, agent.read final is unavailable meanwhile; a script's message (from, user attribution, next-turn); addresses: name@board, a renamed terminal's alias until another terminal takes the name, the caller's board first, ambiguity and unknown boards; release bounces what is queued (back to a sending terminal that takes messages as a message from easl, a script's into board.history as kind message); a typed next-turn into a working terminal is a conflict.",
+  "recordedOn": "easl peer/messages (Peer messages, review fixes), dev instance",
   "steps": [
     {
       "step": "board.open",
@@ -1648,6 +1648,44 @@
       }
     },
     {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "from": "machine-watch",
+        "target": "<obj:1>",
+        "text": "Nightly build failed again.\nThe log is attached."
+      },
+      "response": {
+        "id": "r30",
+        "ok": true,
+        "result": {
+          "agent": {
+            "address": "critic@messages",
+            "board": "<board>",
+            "kind": "omp",
+            "lifecycle": {
+              "seen": false,
+              "state": "done"
+            },
+            "name": "critic",
+            "protocol": 1,
+            "root": "<root>",
+            "tile": "<obj:1>"
+          },
+          "delivery": "message",
+          "message": "<msg:5>",
+          "submittedAt": "<time:iso>",
+          "waitable": true
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
       "step": "agent.release",
       "method": "agent.release",
       "request": {
@@ -1656,7 +1694,7 @@
         "tile": "<obj:1>"
       },
       "response": {
-        "id": "r30",
+        "id": "r31",
         "ok": true,
         "result": {}
       },
@@ -1731,6 +1769,100 @@
       }
     },
     {
+      "step": "agent.inbox",
+      "method": "agent.inbox",
+      "conn": "lead",
+      "request": {
+        "tile": "<obj:2>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "messages": [
+            {
+              "attribution": "user",
+              "from": {
+                "name": "easl"
+              },
+              "id": "<msg:6>",
+              "queuedAt": "<time:iso>",
+              "text": "undelivered to critic@messages: Still there?",
+              "when": "now"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "agent.inbox",
+      "method": "agent.inbox",
+      "conn": "lead",
+      "request": {
+        "ack": [
+          "<msg:6>"
+        ],
+        "tile": "<obj:2>"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "messages": []
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
+      "step": "board.history",
+      "method": "board.history",
+      "request": {
+        "board": "<board>",
+        "kinds": [
+          "message"
+        ]
+      },
+      "response": {
+        "id": "r32",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "cursor": "<cursor>",
+          "entries": [
+            {
+              "actor": "system",
+              "at": "<time:iso>",
+              "id": "<obj:1>",
+              "kind": "message",
+              "rev": "<board:1>",
+              "seq": "<seq:1>",
+              "summary": "undelivered to critic@messages: Nightly build failed again.… (from machine-watch)",
+              "type": "terminal"
+            }
+          ],
+          "restarted": false,
+          "truncated": false
+        }
+      },
+      "ignored": {
+        "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)",
+        "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+        "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)"
+      }
+    },
+    {
       "step": "agent.report",
       "method": "agent.report",
       "request": {
@@ -1741,7 +1873,7 @@
         "tile": "<obj:4>"
       },
       "response": {
-        "id": "r31",
+        "id": "r33",
         "ok": true,
         "result": {}
       },
@@ -1817,7 +1949,7 @@
           "code": "conflict",
           "message": "<obj:4> is in its turn and its integration takes no messages, so typed text would join that turn; agent.wait for it and send again, or send with when: \"now\""
         },
-        "id": "r32",
+        "id": "r34",
         "ok": false
       },
       "ignored": {
@@ -1840,7 +1972,7 @@
           "code": "invalid_params",
           "message": "when is \"now\" (the default) or \"next-turn\""
         },
-        "id": "r33",
+        "id": "r35",
         "ok": false
       },
       "ignored": {
@@ -1862,7 +1994,7 @@
           "code": "invalid_params",
           "message": "waitMs is from 0 to 60000"
         },
-        "id": "r34",
+        "id": "r36",
         "ok": false
       },
       "ignored": {

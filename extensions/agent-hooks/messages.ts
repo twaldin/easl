@@ -27,13 +27,25 @@ export function senderKey(message: AgentMessage): string {
   return message.from.tile ?? `script:${message.from.name}`;
 }
 
-/** The line ahead of a message: who sent it and how to reply. */
+/**
+ * The line ahead of a message: its id, who sent it and how to reply. The id is how the
+ * integration knows omp recorded the message (`recordedIds`); the reply's `agent://` URI has its
+ * name and board percent-encoded, which `peerAddress` decodes.
+ */
 export function header(message: AgentMessage): string {
   const from = message.from;
-  if (!from.tile) return `[message from ${from.name}, a script; no reply address]`;
-  if (!from.address) return `[message from terminal ${from.tile}, closed since it sent this; no reply address]`;
+  const intro = `[message ${message.id} from`;
+  if (!from.tile) return `${intro} ${from.name}, a script; no reply address]`;
+  if (!from.address) return `${intro} terminal ${from.tile}, closed since it sent this; no reply address]`;
   const named = from.address === from.tile ? `terminal ${from.tile}` : `${from.address} (terminal ${from.tile})`;
-  return `[message from ${named}; reply with write agent://${from.address}]`;
+  const at = from.address.lastIndexOf("@");
+  const uri = at < 0 ? encodeURIComponent(from.address) : `${encodeURIComponent(from.address.slice(0, at))}@${encodeURIComponent(from.address.slice(at + 1))}`;
+  return `${intro} ${named}; reply with write agent://${uri}]`;
+}
+
+/** The ids of the messages whose headers a user message carries: the messages omp recorded with it. */
+export function recordedIds(text: string): string[] {
+  return [...text.matchAll(/^\[message (msg_[\w-]+) from /gm)].map((match) => match[1]);
 }
 
 /** What one delivery hands the agent: each message under its header, its mentions' block after its text. */
@@ -45,15 +57,19 @@ export function deliveryText(messages: readonly AgentMessage[]): string {
 export type Plan =
   | "steer" // into the running turn, at its next step (cuts an interruptible tool short)
   | "turn" // a new turn: the agent is idle
-  | "aside" // into the running turn without interrupting it (no wake)
+  | "aside" // into the step omp is streaming, without interrupting it (over the wake bound: no wake)
   | "after-turn" // held until the running turn ends (`next-turn`)
-  | "next-start"; // held until the agent's next turn starts (over the wake bound, idle)
+  | "next-start"; // held until the agent's next turn starts (over the wake bound, nothing streaming)
 
-/** Where a message goes given the agent's state and whether its sender may wake it now. */
-export function plan(when: AgentMessage["when"], busy: boolean, mayWake: boolean): Plan {
-  if (busy && when === "next-turn") return "after-turn";
-  if (!mayWake) return busy ? "aside" : "next-start";
-  return busy ? "steer" : "turn";
+/**
+ * Where a message goes given whether its sender may wake the agent now and the agent's state:
+ * `turn`, in its turn as it reports (also while omp awaits background work that will resume
+ * it); `streaming`, omp running a step now, so an aside joins it instead of starting a turn.
+ */
+export function plan(when: AgentMessage["when"], state: { turn: boolean; streaming: boolean; mayWake: boolean }): Plan {
+  if (state.turn && when === "next-turn") return "after-turn";
+  if (!state.mayWake) return state.streaming ? "aside" : "next-start";
+  return state.turn ? "steer" : "turn";
 }
 
 /** At most `limit` wakes per sender within `windowMs`. */

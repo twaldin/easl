@@ -12,7 +12,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { type AgentMessage, CanvasClient, CanvasError } from "../../clients/ts/src/index";
 import { numberedDiffChanges } from "../agent-hooks/follow";
-import { COALESCE_MS, deliveryText, PROTOCOL, peerAddress, plan, senderKey, WakeBudget } from "../agent-hooks/messages";
+import { COALESCE_MS, deliveryText, PROTOCOL, peerAddress, plan, recordedIds, senderKey, WakeBudget } from "../agent-hooks/messages";
 import { release, report, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
@@ -21,6 +21,11 @@ const IDLE_DEBOUNCE_MS = 250;
 // The inbox's long poll (agent.inbox `waitMs`), and how long a failed poll waits to try again.
 const INBOX_WAIT_MS = 55_000;
 const INBOX_RETRY_MS = 2_000;
+// A message handed to omp that it hasn't recorded this long after, with nothing running or
+// queued, never went in (omp couldn't start its turn).
+const RECORD_MS = 5_000;
+// The session entries that list the messages omp recorded (`{ ids }`), for a restarted omp.
+const RECORDED_ENTRY = "easl.messages";
 // Marks our wrapper of omp's UI select with the function it wraps (process-wide, across reloads).
 const OMP_SELECT = Symbol.for("canvas-omp.select");
 
@@ -54,8 +59,6 @@ export default function canvas(pi: ExtensionAPI): void {
   // and the error that turn stopped on, if it didn't finish (an API error, an abort).
   let final: string | undefined;
   let failure: string | undefined;
-  // The tile's root session (the one with a UI), for `isIdle` when a held message may go in.
-  let session: ExtensionContext | undefined;
 
   const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
@@ -86,9 +89,9 @@ export default function canvas(pi: ExtensionAPI): void {
   // `working`) until we report again: say where we are as soon as it is back.
   watchCanvasReturn(client.socketPath, publish);
 
-  function reportSession(ctx: ExtensionContext): void {
-    if (!reporting) return;
-    void quietly(client.api.agent.report_session({ tile: tile!, kind: "omp", sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile() }));
+  function reportSession(ctx: ExtensionContext): Promise<unknown> {
+    if (!reporting) return Promise.resolve();
+    return quietly(client.api.agent.report_session({ tile: tile!, kind: "omp", sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile() }));
   }
 
   // omp asks for every tool approval through its UI's select dialog, titled `Allow tool: <name>`.
@@ -127,19 +130,28 @@ export default function canvas(pi: ExtensionAPI): void {
     blockers.clear();
     staged = [];
     if (reporting) watchApprovals(ctx.ui);
-    reportSession(ctx);
+    void reportSession(ctx);
     publish();
     if (reporting) {
-      session = ctx;
+      adopt(ctx);
       void pollInbox();
     }
   });
 
-  pi.on("session_switch", (_event, ctx) => {
+  pi.on("session_switch", async (_event, ctx) => {
     // A new or switched-to session starts settled; the old one's pending continuation is gone.
     active = !ctx.isIdle();
-    reportSession(ctx);
+    const reported = reportSession(ctx);
     publish();
+    if (!reporting) return;
+    // Messages easl offers until it has the new session were the old one's: on that report it
+    // bounces what the old session never recorded, so none of them go into this one.
+    adopt(ctx);
+    switching = true;
+    await reported;
+    switching = false;
+    // What this connection held is gone from easl's queue; the next poll takes this session's.
+    inbox.close();
   });
 
   pi.on("session_shutdown", () => {
@@ -148,7 +160,7 @@ export default function canvas(pi: ExtensionAPI): void {
     if (reporting) void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
     // Nothing reports for the released tile again (an easl coming back) until a session starts.
     reporting = false;
-    // Ends the long poll; easl offers what this session held but never delivered to the next one.
+    // Ends the long poll; what this session never recorded bounces with the release.
     inbox.close();
   });
 
@@ -179,18 +191,44 @@ export default function canvas(pi: ExtensionAPI): void {
   // Out-of-band messages (docs/contracts.md, Peer messages): easl queues `agent.prompt` for this
   // tile instead of typing into it, and the root session takes them with one long poll and hands
   // them to omp as user messages, so the editor (a half-typed draft) and an open question or
-  // approval stay as they are. Messages are acked once handed over; until then easl keeps them.
+  // approval stay as they are. A message is acked once omp has recorded it (the user message
+  // carrying its header, `message_end`); until then easl keeps it. Polls and acks go over the
+  // inbox connection only: what easl answers is held by that connection, and any call on it
+  // that fails closes it, so easl offers what it held again.
   const inbox = new CanvasClient({ timeoutMs: INBOX_WAIT_MS + 15_000, reconnectTimeoutMs: 0 });
   const wakes = new WakeBudget();
-  // Ids received, so a message easl offers again (a new poll connection) isn't delivered twice.
-  const received = new Set<string>();
+  // The session (with a UI) messages go into: whether omp streams, or holds queued messages.
+  let session: ExtensionContext | undefined;
+  // Messages this session took that omp hasn't recorded yet, by id: held below, or handed to omp
+  // (`handed`). One easl offers again (a new connection) is not delivered twice.
+  const waiting = new Map<string, AgentMessage>();
+  // Handed to omp and not recorded yet: whether that delivery started a turn, and when it went.
+  const handed = new Map<string, { started: boolean; at: number }>();
+  // What omp recorded in this session (its `easl.messages` entries): offered again (easl never
+  // took the ack: a lost connection, a restart), it is acked, not delivered.
+  let recorded = new Set<string>();
   // `next-turn` messages that came while a turn ran, delivered once it has ended.
   let afterTurn: AgentMessage[] = [];
-  // Messages over their senders' wake bound while idle, riding the next turn that starts.
+  // Messages over their senders' wake bound while nothing streams, riding the next turn that starts.
   let nextStart: AgentMessage[] = [];
-  // Acks easl didn't take (it was away): sent with the next poll.
+  // Acks easl didn't take: sent with the next poll.
   let unacked: string[] = [];
   let polling = false;
+  // A session switch whose report easl hasn't answered yet: messages arriving meanwhile were the old session's.
+  let switching = false;
+
+  // The session messages go into from now: nothing held is for it (easl bounces what the session
+  // before never recorded), and what it recorded is in its entries.
+  function adopt(ctx: ExtensionContext): void {
+    session = ctx;
+    waiting.clear();
+    handed.clear();
+    afterTurn = [];
+    nextStart = [];
+    recorded = new Set(
+      ctx.sessionManager.getEntries().flatMap((entry) => (entry.type === "custom" && entry.customType === RECORDED_ENTRY ? ((entry.data as { ids?: string[] } | undefined)?.ids ?? []) : [])),
+    );
+  }
 
   async function pollInbox(): Promise<void> {
     if (polling) return;
@@ -198,36 +236,62 @@ export default function canvas(pi: ExtensionAPI): void {
     while (reporting) {
       const ack = unacked;
       unacked = [];
+      let first: AgentMessage[];
       try {
-        const first = await inbox.api.agent.inbox({ tile: tile!, waitMs: INBOX_WAIT_MS, ack: ack.length ? ack : undefined });
-        if (first.messages.length === 0) continue;
-        // A burst (several senders, or one sending several) goes in as one delivery.
-        await Bun.sleep(COALESCE_MS);
-        const more = await inbox.api.agent.inbox({ tile: tile! });
-        receive([...first.messages, ...more.messages]);
+        first = (await inbox.api.agent.inbox({ tile: tile!, waitMs: INBOX_WAIT_MS, ack: ack.length ? ack : undefined })).messages;
       } catch {
         unacked.push(...ack);
+        inbox.close();
         if (reporting) await Bun.sleep(INBOX_RETRY_MS);
+        continue;
       }
+      if (first.length === 0) continue;
+      // A burst (several senders, or one sending several) goes in as one delivery; a follow-up
+      // that fails loses nothing already here.
+      await Bun.sleep(COALESCE_MS);
+      const more = await inbox.api.agent.inbox({ tile: tile! }).then(
+        (reply) => reply.messages,
+        () => {
+          inbox.close();
+          return [];
+        },
+      );
+      receive([...first, ...more]);
     }
     polling = false;
   }
 
   function receive(messages: readonly AgentMessage[]): void {
-    const fresh = messages.filter((message) => !received.has(message.id));
-    for (const message of fresh) received.add(message.id);
+    if (switching) return;
+    ack(messages.filter((message) => recorded.has(message.id)).map((message) => message.id), false);
+    const fresh = messages.filter((message) => !recorded.has(message.id) && !waiting.has(message.id));
+    for (const message of fresh) waiting.set(message.id, message);
     deliver(fresh);
+  }
+
+  // `started`: their delivery started a turn (agent.wait waits for it), else it joined one.
+  function ack(ids: readonly string[], started: boolean): void {
+    if (ids.length === 0) return;
+    inbox.api.agent.inbox({ tile: tile!, ack: [...ids], started }).then(
+      (reply) => receive(reply.messages),
+      () => {
+        unacked.push(...ids);
+        inbox.close();
+      },
+    );
   }
 
   // `now`: a steer while omp works (a question or approval keeps waiting, the message comes after
   // it), else a new turn; `next-turn`: held until the running turn ends. A sender past its wake
-  // bound joins a running turn without interrupting it, or waits for the next one to start.
+  // bound joins the step omp is streaming without interrupting it, or waits for the next turn to
+  // start (omp idle, or awaiting background work).
   function deliver(messages: readonly AgentMessage[]): void {
     const steer: AgentMessage[] = [];
     const turn: AgentMessage[] = [];
     const aside: AgentMessage[] = [];
+    const streaming = session ? !session.isIdle() : active;
     for (const message of messages) {
-      switch (plan(message.when, active, wakes.allows([senderKey(message)]))) {
+      switch (plan(message.when, { turn: active, streaming, mayWake: wakes.allows([senderKey(message)]) })) {
         case "steer":
           steer.push(message);
           break;
@@ -257,11 +321,51 @@ export default function canvas(pi: ExtensionAPI): void {
     const attribution = messages.some((message) => message.attribution === "user") ? "user" : "agent";
     // `aside` at an idle omp starts a turn (and stays non-interrupting should a run start meanwhile).
     pi.sendUserMessage(deliveryText(messages), { deliverAs: how === "steer" ? "steer" : "aside", attribution });
-    const ids = messages.map((message) => message.id);
-    client.api.agent.inbox({ tile: tile!, ack: ids, started: how === "turn" }).then(
-      (reply) => receive(reply.messages),
-      () => unacked.push(...ids),
-    );
+    const at = Date.now();
+    for (const message of messages) handed.set(message.id, { started: how === "turn", at });
+    recordCheck ??= setTimeout(unrecorded, RECORD_MS);
+  }
+
+  // omp recorded a user message: the messages whose headers it carries are in its session now.
+  // Their ids go into it too (a restarted omp offered them again acks them), then easl gets the ack.
+  pi.on("message_end", (event) => {
+    const message = event.message as { role?: unknown; content?: unknown };
+    if (message.role !== "user" || waiting.size === 0) return;
+    const text = typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.map((part) => (part?.type === "text" ? part.text : "")).join("\n") : "";
+    const ids = recordedIds(text).filter((id) => waiting.has(id));
+    if (ids.length === 0) return;
+    const started = ids.filter((id) => handed.get(id)?.started);
+    for (const id of ids) {
+      waiting.delete(id);
+      handed.delete(id);
+      recorded.add(id);
+    }
+    afterTurn = afterTurn.filter((held) => waiting.has(held.id));
+    nextStart = nextStart.filter((held) => waiting.has(held.id));
+    pi.appendEntry(RECORDED_ENTRY, { ids });
+    ack(started, true);
+    ack(ids.filter((id) => !started.includes(id)), false);
+  });
+
+  // Handed over RECORD_MS ago and still not recorded, with omp neither streaming nor holding
+  // queued messages: it never went in (omp couldn't start the turn: no model, say). It goes in
+  // with the next turn that starts, the user told; easl keeps it until then.
+  let recordCheck: NodeJS.Timeout | undefined;
+  function unrecorded(): void {
+    recordCheck = undefined;
+    if (handed.size === 0 || !session) return;
+    if (session.isIdle() && !session.hasPendingMessages()) {
+      const due = Date.now() - RECORD_MS;
+      const lost = [...handed].filter(([, sent]) => sent.at <= due).map(([id]) => waiting.get(id)!);
+      for (const message of lost) handed.delete(message.id);
+      nextStart.push(...lost);
+      if (lost.length > 0) {
+        const senders = [...new Set(lost.map((message) => message.from.address ?? message.from.name))].join(", ");
+        const what = lost.length === 1 ? "the message" : `${lost.length} messages`;
+        session.ui.notify(`easl: omp started no turn with ${what} from ${senders}; easl keeps ${lost.length === 1 ? "it" : "them"} for the next turn that starts`, "warning");
+      }
+    }
+    if (handed.size > 0) recordCheck = setTimeout(unrecorded, RECORD_MS);
   }
 
   // The turn ended: held `next-turn` messages go in as a new turn once omp is idle, unless another

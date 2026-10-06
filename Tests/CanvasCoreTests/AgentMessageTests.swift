@@ -113,9 +113,10 @@ final class AgentMessageTests {
         #expect(message["from"] == .object(["name": .string("machine-watch")]))
         #expect(message["attribution"] == .string("user") && message["when"] == .string("next-turn"))
 
-        // Released: what is queued is dropped.
+        // Released: what is queued bounces; a script's into the board's history.
         try board.releaseAgent(tile: reviewer)
         #expect(board.messages[reviewer] == nil)
+        #expect(board.activity.query(since: nil, limit: 10, kinds: [.message]).entries.map(\.summary) == ["undelivered to reviewer@root: Nightly failed. (from machine-watch)"])
 
         // No message integration: next-turn into a working agent would join its turn when typed.
         let claude = terminal("claude")
@@ -175,5 +176,188 @@ final class AgentMessageTests {
         _ = try board.update(taker, props: .object(["name": .string("auditor")]))
         let reloaded = Board(snapshot: board.snapshot)
         #expect(reloaded.aliases(of: taker) == ["reviewer"])
+    }
+
+    /// `agent.prompt` once more with its outcome: the error code, else the delivery.
+    func sent(_ client: LineClient, _ params: [String: JSONValue]) async throws -> JSONValue {
+        let reply = try await call(client, "agent.prompt", params)
+        return reply["error"]?["code"] ?? reply["result"]?["delivery"] ?? .null
+    }
+
+    @Test func aSessionThatEndsWhileAMessageIsSentGetsNothingAndTheSenderIsTold() async throws {
+        let reviewer = terminal("reviewer")
+        try omp(reviewer, .idle, seq: 1)
+        try board.reportSession(tile: reviewer, kind: "omp", sessionId: "ses_1", sessionPath: nil)
+        let client = try connect()
+        // The terminal's text is read before the message is queued: the agent exits meanwhile.
+        router.readTerminal = { board, tile, _ in
+            try? board.releaseAgent(tile: tile)
+            return nil
+        }
+        #expect(try await sent(client, ["target": .string(reviewer), "text": "one"]) == "unavailable")
+        #expect(board.messages[reviewer] == nil)
+
+        // Another conversation started there meanwhile: not the session it was sent to.
+        try omp(reviewer, .idle, seq: 2)
+        try board.reportSession(tile: reviewer, kind: "omp", sessionId: "ses_1", sessionPath: nil)
+        router.readTerminal = { board, tile, _ in
+            try? board.reportSession(tile: tile, kind: "omp", sessionId: "ses_2", sessionPath: nil)
+            return nil
+        }
+        #expect(try await sent(client, ["target": .string(reviewer), "text": "two"]) == "unavailable")
+        #expect(board.messages[reviewer] == nil)
+
+        router.readTerminal = nil
+        #expect(try await sent(client, ["target": .string(reviewer), "text": "three"]) == "message")
+        #expect(board.messages[reviewer]?.map(\.text) == ["three"])
+        #expect(typed.isEmpty)
+    }
+
+    @Test func anIdleIntegrationKilledWithoutItsReleaseTakesNothingMoreAndWhatWaitedBounces() async throws {
+        let reviewer = terminal("reviewer"), lead = terminal("lead")
+        try omp(reviewer, .idle, seq: 1)
+        try omp(lead, .working, seq: 1)
+        let client = try connect()
+        #expect(try await sent(client, ["target": "reviewer", "text": "Check the cache key.", "caller": .string(lead)]) == "message")
+
+        // SIGKILL: its shell is back at the prompt, with no agent.release.
+        board.terminalProgram(reviewer, is: nil)
+        #expect(board.objects[reviewer]?.props["agent"]?["kind"] == "omp" && board.objects[reviewer]?.props["agent"]?["protocol"] == nil, "it takes no messages")
+        #expect(board.objects[reviewer]?.props["lifecycle"]?["state"] == .string("idle"), "its last state and answer stay")
+        #expect(board.messages[reviewer] == nil)
+        #expect(board.messages[lead]?.map(\.text) == ["undelivered to reviewer@root: Check the cache key."])
+        let refused = try await call(client, "agent.prompt", ["target": "reviewer", "text": "again", "caller": .string(lead)])
+        #expect(refused["error"]?["code"] == "unavailable")
+        #expect(refused["error"]?["message"]?.string?.contains("exited without releasing the terminal") == true, "\(refused)")
+        #expect(try await call(client, "agent.wait", ["target": "reviewer"])["error"]?["code"] == "unavailable")
+        #expect(typed.isEmpty, "nothing typed into its shell either")
+
+        // An omp starting there again takes messages.
+        try omp(reviewer, .idle, seq: 2)
+        #expect(try await sent(client, ["target": "reviewer", "text": "welcome back"]) == "message")
+    }
+
+    @Test func aBounceGoesBackToASendingTerminalThatTakesMessagesElseIntoTheBoardsHistory() async throws {
+        let reviewer = terminal("reviewer"), lead = terminal("lead"), shell = terminal("shell")
+        try omp(reviewer, .working, seq: 1)
+        try omp(lead, .idle, seq: 1)
+        let client = try connect(), integration = try connect()
+        _ = try await sent(client, ["target": "reviewer", "text": "Check the cache key.\nThen the locale.", "caller": .string(lead)])
+        _ = try await sent(client, ["target": "reviewer", "text": "From a plain shell.", "caller": .string(shell)])
+        _ = try await sent(client, ["target": "reviewer", "text": "Nightly failed.", "from": "machine-watch"])
+        try board.releaseAgent(tile: reviewer)
+
+        // The lead's omp takes it as a message from easl, on the user's behalf.
+        let back = try await call(integration, "agent.inbox", ["tile": .string(lead)])
+        let bounce = try #require(back["result"]?["messages"]?.array?.first, "\(back)")
+        #expect(back["result"]?["messages"]?.array?.count == 1)
+        #expect(bounce["text"] == "undelivered to reviewer@root: Check the cache key.…")
+        #expect(bounce["from"] == .object(["name": "easl"]) && bounce["attribution"] == "user")
+        // A terminal that takes no messages, and a script: logged with the receiver's board.
+        let logged = board.activity.query(since: nil, limit: 10, kinds: [.message]).entries
+        #expect(logged.map(\.summary) == ["undelivered to reviewer@root: From a plain shell. (from shell@root)",
+                                          "undelivered to reviewer@root: Nightly failed. (from machine-watch)"])
+        #expect(logged.allSatisfy { $0.id == reviewer })
+        let history = try await call(client, "board.history", ["board": .string(board.id), "kinds": ["message"]])
+        #expect(history["result"]?["entries"]?.array?.count == 2, "\(history)")
+    }
+
+    @Test func aFailedBatchPutsBackTheQueueAndOldNamesOfATerminalItDeleted() async throws {
+        let reviewer = terminal("reviewer"), lead = terminal("lead")
+        try omp(reviewer, .idle, seq: 1)
+        try omp(lead, .idle, seq: 1)
+        _ = try board.update(reviewer, props: .object(["name": "critic"]))
+        let client = try connect()
+        #expect(try await sent(client, ["target": "reviewer", "text": "one", "caller": .string(lead)]) == "message")
+        let queued = board.messages[reviewer]
+
+        let batch = try await call(client, "object.batch", ["board": .string(board.id), "ops": .array([
+            .object(["method": "object.delete", "params": .object(["id": .string(reviewer)])]),
+            .object(["method": "object.update", "params": .object(["id": "obj_missing", "props": .object(["x": 1])])]),
+        ])])
+        #expect(batch["error"] != nil, "\(batch)")
+        #expect(board.objects[reviewer] != nil)
+        #expect(board.messages[reviewer] == queued)
+        #expect(board.aliases(of: reviewer) == ["reviewer"])
+        #expect(board.messages[lead] == nil, "nothing bounced")
+
+        // Deleted for good, it bounces under the name it had.
+        _ = try await call(client, "object.delete", ["id": .string(reviewer)])
+        #expect(board.messages[lead]?.map(\.text) == ["undelivered to critic@root: one"])
+    }
+
+    @Test func aBareNameIsEachBoardsCurrentNameElseItsAliasAndMatchesOnTwoBoardsAreAmbiguous() async throws {
+        let client = try connect()
+        func resolved(_ target: String, caller: ObjectID? = nil) async throws -> JSONValue {
+            var params: [String: JSONValue] = ["target": .string(target), "until": ["unknown"]]
+            if let caller { params["caller"] = .string(caller) }
+            let reply = try await call(client, "agent.wait", params)
+            return reply["result"]?["agent"]?["tile"] ?? reply["error"] ?? .null
+        }
+        let other = registry.open(root: dir.appendingPathComponent("other"))
+        let renamed = terminal("reviewer"), elsewhere = terminal("reviewer", on: other)
+        let lead = terminal("lead"), scout = terminal("scout", on: other)
+        _ = try board.update(renamed, props: .object(["name": "critic"]))
+
+        // root reaches `reviewer` by its alias, other by its name: neither wins for a script.
+        let ambiguous = try await resolved("reviewer")
+        #expect(ambiguous["code"] == "ambiguous")
+        #expect(ambiguous["message"]?.string?.contains("critic@root (\(renamed)), reviewer@other (\(elsewhere))") == true, "\(ambiguous)")
+        // The caller's own board first, its alias included.
+        #expect(try await resolved("reviewer", caller: lead) == .string(renamed))
+        #expect(try await resolved("reviewer", caller: scout) == .string(elsewhere))
+        #expect(try await resolved("reviewer@root") == .string(renamed))
+    }
+
+    @Test func anAddressReachesItsTerminalAloneWhereFolderNamesRepeatOrABoardsFolderIsGone() async throws {
+        let client = try connect()
+        let roots = ["a/client", "b/client", "gone"].map { dir.appendingPathComponent($0) }
+        for root in roots { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true) }
+        let (first, second, archived) = (registry.open(root: roots[0]), registry.open(root: roots[1]), registry.open(root: roots[2]))
+        try FileManager.default.removeItem(at: roots[2])
+        let tiles: [(ObjectID, String)] = [
+            (terminal("reviewer", on: first), "reviewer@\(first.id)"),
+            (terminal("lead", on: second), "lead@\(second.id)"),
+            (terminal("scout", on: archived), "scout@\(archived.id)"),
+            (terminal("solo"), "solo@root"),
+        ]
+        let twin = terminal("twin")
+        _ = terminal("twin")
+        let listed = try #require(try await call(client, "agent.list", [:])["result"]?["agents"]?.array)
+        func address(_ tile: ObjectID) -> JSONValue? { listed.first { $0["tile"] == .string(tile) }?["address"] }
+        for (tile, expected) in tiles {
+            #expect(address(tile) == .string(expected))
+            let reached = try await call(client, "agent.wait", ["target": .string(expected), "until": ["unknown"]])
+            #expect(reached["result"]?["agent"]?["tile"] == .string(tile), "\(expected): \(reached)")
+        }
+        #expect(address(twin) == .string(twin), "a name shared on its board: the tile id")
+
+        // A message's reply address is one of these.
+        let receiver = terminal("receiver")
+        try omp(receiver, .idle, seq: 1)
+        _ = try await sent(client, ["target": .string(receiver), "text": "hi", "caller": .string(tiles[1].0)])
+        let taken = try await call(client, "agent.inbox", ["tile": .string(receiver)])
+        #expect(taken["result"]?["messages"]?.array?.first?["from"]?["address"] == .string("lead@\(second.id)"), "\(taken)")
+    }
+
+    @Test func queuedMessagesAreSavedWithTheBoardAndLeftOutOfItsExport() async throws {
+        let reviewer = terminal("reviewer"), lead = terminal("lead")
+        let note = board.create(type: .note, props: .object(["markdown": "The cache key must include the locale."])).id
+        try omp(reviewer, .working, seq: 1)
+        let client = try connect()
+        _ = try await sent(client, ["target": "reviewer", "text": "Check the key.", "caller": .string(lead), "mentions": [.object(["object": .string(note)])]])
+        _ = try await sent(client, ["target": "reviewer", "text": "Nightly failed.", "from": "machine-watch", "when": "next-turn"])
+        registry.store.save(board)
+
+        let reloaded = registry.store.load(root: dir.appendingPathComponent("root"))
+        let saved = try #require(board.messages[reviewer]), loaded = try #require(reloaded.messages[reviewer])
+        #expect(loaded.map(\.id) == saved.map(\.id))
+        for (was, now) in zip(saved, loaded) {
+            #expect(now.text == was.text && now.from == was.from && now.label == was.label && now.when == was.when && now.mentions.map(\.id) == was.mentions.map(\.id))
+            #expect(abs(now.queuedAt.timeIntervalSince(was.queuedAt)) < 1, "ISO 8601 to the second")
+        }
+        let exported = dir.appendingPathComponent("export.json")
+        try BoardStore.export(board, to: exported)
+        #expect(!(try String(contentsOf: exported, encoding: .utf8)).contains("Nightly failed."))
     }
 }
