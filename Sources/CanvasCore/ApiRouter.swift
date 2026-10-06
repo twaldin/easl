@@ -229,8 +229,9 @@ public final class ApiRouter {
     /// Terminals agent.restart is killing and relaunching: until it is done nothing else reaches
     /// them (agent.prompt is refused, agent.inbox offers nothing, another restart is refused).
     var restarting: Set<ObjectID> = []
-    /// Terminals `agent.prompt` is typing into now, with how many prompts.
-    private var typing: [ObjectID: Int] = [:]
+    /// Terminals `agent.prompt` is typing into now (its checks, the screen read, the paste and
+    /// Enter), with how many prompts: no restart starts on one, forced or not.
+    private(set) var typing: [ObjectID: Int] = [:]
 
     /// A prompt to `tile` whose turn hasn't started: one being typed, or one submitted (or a
     /// message its integration delivered as a new turn) that its agent hasn't reported working on
@@ -243,6 +244,10 @@ public final class ApiRouter {
 
     static func restartingFailure(_ tile: ObjectID) -> Failure {
         Failure("conflict", "\(tile) is restarting (agent.restart): nothing reaches it until its agent is relaunched; send again once it reports")
+    }
+
+    static func typingFailure(_ tile: ObjectID) -> Failure {
+        Failure("conflict", "\(tile) is being prompted right now (agent.prompt is typing into it): restarting would cut that prompt off; try again in a moment")
     }
 
     private struct Waiter {
@@ -825,6 +830,14 @@ public final class ApiRouter {
 
     private func submitPrompt(_ text: String, to terminal: CanvasObject, on board: Board, attached: Attached, caller sender: ObjectID?, force: Bool) async throws -> JSONValue {
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
+        // From here until it is typed no restart starts (`typingFailure`), and until its turn
+        // reports an unforced one waits for it (`promptPending`). The agent session it is for:
+        // one that ends meanwhile (released, replaced, restarted) gets nothing typed.
+        typing[terminal.id, default: 0] += 1
+        defer {
+            typing[terminal.id] = typing[terminal.id].flatMap { $0 > 1 ? $0 - 1 : nil }
+        }
+        let session = board.agentSession(of: terminal.id)
         let answering: Bool
         if case .composer(_, let answer) = attached { answering = answer } else { answering = false }
         if Self.state(of: terminal) == LifecycleState.blocked.rawValue, !force, !answering {
@@ -862,14 +875,13 @@ public final class ApiRouter {
         if case .composer(let given, _) = attached, !given.isEmpty, PromptTarget.skipsDrain(text, in: terminal) {
             throw Failure("invalid_params", "a slash command or shell escape takes no mentions: its agent drains nothing for it")
         }
-        // From here until its turn reports, agent.restart counts the prompt as work (`promptPending`).
-        typing[terminal.id, default: 0] += 1
-        defer {
-            typing[terminal.id] = typing[terminal.id].flatMap { $0 > 1 ? $0 - 1 : nil }
-        }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
+        guard board.agentSession(of: terminal.id) == session else {
+            throw Failure("unavailable", "\(terminal.id)'s agent session ended while the prompt was being sent (its agent was released, exited, "
+                + "restarted, or another session took the terminal), so nothing was typed; agent.list shows what runs there now")
+        }
         // Queued before the text goes in: the target's integration drains them with this prompt.
         var handed: [Mention] = []
         var queued: String?

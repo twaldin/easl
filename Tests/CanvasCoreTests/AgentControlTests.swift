@@ -225,6 +225,38 @@ final class AgentControlTests {
         #expect(restarted.count == 2)
     }
 
+    @Test func aPromptBeingTypedHoldsOffEvenAForcedRestartAndGoesOnlyToItsSession() async throws {
+        let tile = terminal(name: "worker", command: ["omp"])
+        _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s1"])
+        try await report(tile, "idle", seq: 1, ["draft": .bool(false)])
+        var typed: [String] = []
+        router.submitToTerminal = { _, _, text in
+            typed.append(text)
+            return true
+        }
+        // While the prompt reads the screen before pasting, a forced restart arrives.
+        var forced: JSONValue?
+        router.readTerminal = { [unowned self] _, _, _ in
+            forced = try? await call("agent.restart", ["target": "worker", "mode": "resume", "force": .bool(true)])
+            return nil
+        }
+        #expect(try await call("agent.prompt", ["target": "worker", "text": "run the tests"])["result"]?["delivery"] == "typed")
+        #expect(forced?["error"]?["code"] == "conflict" && forced?["error"]?["message"]
+                == .string("\(tile) is being prompted right now (agent.prompt is typing into it): restarting would cut that prompt off; try again in a moment"))
+        #expect(typed == ["run the tests"] && restarted.isEmpty)
+
+        // The agent session the prompt was for ends meanwhile (another session took the tile): nothing is typed.
+        try await report(tile, "working", seq: 2, ["draft": .bool(false)])
+        try await report(tile, "idle", seq: 3, ["draft": .bool(false)])
+        router.readTerminal = { [unowned self] _, _, _ in
+            _ = try? await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s2"])
+            return nil
+        }
+        let late = try await call("agent.prompt", ["target": "worker", "text": "and the docs"])
+        #expect(late["error"]?["code"] == "unavailable", "\(late)")
+        #expect(typed == ["run the tests"])
+    }
+
     @Test func nothingReachesARestartingTerminalAndTheKillChecksAgain() async throws {
         let worker = terminal(name: "worker", command: ["omp"])
         try board.reportLifecycle(tile: worker, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 1, draft: false)

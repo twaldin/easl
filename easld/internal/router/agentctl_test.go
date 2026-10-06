@@ -521,3 +521,31 @@ func TestNothingReachesATerminalWhileAClientRestartsIt(t *testing.T) {
 		t.Errorf("relaunched, the terminal takes prompts again: %v", sent)
 	}
 }
+
+// While a client types a prompt into a terminal, no restart of it starts, forced or not: the
+// client would type the prompt into the relaunched agent.
+func TestNoRestartWhileAClientTypesAPrompt(t *testing.T) {
+	f := newFixture(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "draft": false})
+	app := &scriptedClient{router: f.router, replies: []map[string]any{
+		{"ok": true, "result": map[string]any{"agent": map[string]any{"tile": term}, "submittedAt": "2026-10-06T00:00:00Z", "waitable": true, "delivery": "typed"}},
+	}}
+	var code, message string
+	app.during = func() {
+		code, message = errorOf(f.call("agent.restart", map[string]any{"target": "worker", "mode": "fresh", "force": true}))
+	}
+	attached := f.router.HandleConn(map[string]any{"id": "a", "method": "client.attach", "params": map[string]any{
+		"version": float64(api.SchemaVersion), "schema": api.SchemaHash, "serves": []any{"agent.prompt", "agent.restart"}, "boards": []any{f.board.ID()},
+	}}, app).(map[string]any)
+	if attached["ok"] != true {
+		t.Fatalf("client.attach: %v", attached)
+	}
+	f.result("agent.prompt", map[string]any{"target": "worker", "text": "run the tests"})
+	if code != "conflict" || message != term+" is being prompted right now (agent.prompt is typing into it): restarting would cut that prompt off; try again in a moment" {
+		t.Errorf("a forced restart while the prompt was typed: %s %q", code, message)
+	}
+	if len(app.asked) != 1 || app.asked[0]["method"] != "agent.prompt" {
+		t.Errorf("the client was asked %v", app.asked)
+	}
+}

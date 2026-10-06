@@ -787,6 +787,10 @@ func (r *Router) restart(p map[string]any) (any, error) {
 	if _, busy := r.restarts[terminal.ID]; busy {
 		return nil, fail(api.CodeConflict, "%s is already restarting (another agent.restart): wait for that one to finish", terminal.ID)
 	}
+	// Even forced: the client would type the prompt into the relaunched agent (ApiRouter.typingFailure).
+	if r.typing[terminal.ID] > 0 {
+		return nil, fail(api.CodeConflict, "%s is being prompted right now (agent.prompt is typing into it): restarting would cut that prompt off; try again in a moment", terminal.ID)
+	}
 	agent := asMap(terminal.Props["agent"])
 	if !boolParam(p, "force") {
 		if err := r.restartRefusal(terminal, agent); err != nil {

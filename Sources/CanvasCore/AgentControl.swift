@@ -212,12 +212,13 @@ extension ApiRouter {
 
     /// agent.restart: refused while the agent works, has a prompt it hasn't started, waits on its
     /// user, may hold a draft, or the user is in its terminal (unless `force`), and while another
-    /// restart of it runs. The terminal is then reserved (`restarting`): nothing else reaches it
-    /// until the restart is done. The app checks again just before it kills the tile's session,
-    /// and once the session is confirmed gone the killed agent's session ends
-    /// (`Board.endAgentSession`: the messages still queued for it bounce, in either mode) and the
-    /// tile records the relaunch (`Board.restartedAgent`) before it starts, so what the
-    /// relaunched agent reports is its own.
+    /// restart of it runs or a prompt is being typed into it (`typing`, even with `force`: the
+    /// paste would land in the relaunched agent). The terminal is then reserved (`restarting`):
+    /// nothing else reaches it until the restart is done. The app checks again just before it
+    /// kills the tile's session, and once the session is confirmed gone the killed agent's
+    /// session ends (`Board.endAgentSession`: the messages still queued for it bounce, in either
+    /// mode) and the tile records the relaunch (`Board.restartedAgent`) before it starts, so what
+    /// the relaunched agent reports is its own.
     func restart(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"), caller: p["caller"]?.string)
         let mode = try string(p, "mode")
@@ -231,6 +232,7 @@ extension ApiRouter {
         guard !restarting.contains(terminal.id) else {
             throw Failure("conflict", "\(terminal.id) is already restarting (another agent.restart): wait for that one to finish")
         }
+        if typing[terminal.id] != nil { throw Self.typingFailure(terminal.id) }
         let force = p["force"]?.bool == true
         if !force { try refuseRestart(terminal, on: board) }
         let agent = terminal.props["agent"]
@@ -265,6 +267,7 @@ extension ApiRouter {
         try await restartTerminal(board, tile, launch.argv, {
             // Checked again at the kill: a turn, prompt, draft or focus that came since would be lost too.
             guard let current = board.objects[tile] else { throw Failure("not_found", "terminal \(tile) was closed") }
+            if self.typing[tile] != nil { throw Self.typingFailure(tile) }
             if !force { try self.refuseRestart(current, on: board) }
         }, {
             board.endAgentSession(tile)
