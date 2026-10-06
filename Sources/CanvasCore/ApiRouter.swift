@@ -229,9 +229,14 @@ public final class ApiRouter {
     /// Terminals agent.restart is killing and relaunching: until it is done nothing else reaches
     /// them (agent.prompt is refused, agent.inbox offers nothing, another restart is refused).
     var restarting: Set<ObjectID> = []
-    /// Terminals `agent.prompt` is typing into now (its checks, the screen read, the paste and
-    /// Enter), with how many prompts: no restart starts on one, forced or not.
-    private(set) var typing: [ObjectID: Int] = [:]
+    /// Terminals `agent.prompt` is typing into now (its checks, the screen reads, the paste and
+    /// Enter), with how many prompts: an unforced restart waits for them (`promptPending`).
+    private var typing: [ObjectID: Int] = [:]
+    /// Terminals whose surface is taking a prompt's paste and Enter now (`submitToTerminal`, a
+    /// bounded step), with how many: no restart starts on one, forced or not (`pastingFailure`).
+    /// The reads before it (tmux, the screen) have no deadline, so they don't hold a forced
+    /// restart off: a prompt whose agent session ended meanwhile types nothing.
+    private(set) var pasting: [ObjectID: Int] = [:]
 
     /// A prompt to `tile` whose turn hasn't started: one being typed, or one submitted (or a
     /// message its integration delivered as a new turn) that its agent hasn't reported working on
@@ -246,8 +251,8 @@ public final class ApiRouter {
         Failure("conflict", "\(tile) is restarting (agent.restart): nothing reaches it until its agent is relaunched; send again once it reports")
     }
 
-    static func typingFailure(_ tile: ObjectID) -> Failure {
-        Failure("conflict", "\(tile) is being prompted right now (agent.prompt is typing into it): restarting would cut that prompt off; try again in a moment")
+    static func pastingFailure(_ tile: ObjectID) -> Failure {
+        Failure("conflict", "\(tile) is taking a prompt right now (agent.prompt is pasting into it): restarting would cut that prompt off; try again in a moment")
     }
 
     private struct Waiter {
@@ -830,9 +835,9 @@ public final class ApiRouter {
 
     private func submitPrompt(_ text: String, to terminal: CanvasObject, on board: Board, attached: Attached, caller sender: ObjectID?, force: Bool) async throws -> JSONValue {
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
-        // From here until it is typed no restart starts (`typingFailure`), and until its turn
-        // reports an unforced one waits for it (`promptPending`). The agent session it is for:
-        // one that ends meanwhile (released, replaced, restarted) gets nothing typed.
+        // From here until its turn reports an unforced restart waits for it (`promptPending`).
+        // The agent session it is for: one that ends meanwhile (released, replaced, restarted,
+        // forced or not) gets nothing typed.
         typing[terminal.id, default: 0] += 1
         defer {
             typing[terminal.id] = typing[terminal.id].flatMap { $0 > 1 ? $0 - 1 : nil }
@@ -894,7 +899,12 @@ public final class ApiRouter {
                 queued = board.queueComposerPrompt(text, to: terminal.id, mentions: given, answer: answer)
             }
         }
-        guard await submitToTerminal(board, terminal.id, text) else {
+        // The paste and Enter: no restart starts until they are in (`pastingFailure`). Nothing
+        // suspends between the checks above and here.
+        pasting[terminal.id, default: 0] += 1
+        let submitted = await submitToTerminal(board, terminal.id, text)
+        pasting[terminal.id] = pasting[terminal.id].flatMap { $0 > 1 ? $0 - 1 : nil }
+        guard submitted else {
             board.commit(handed.map { $0.id })
             if let queued { board.withdrawComposerPrompt(queued) }
             throw Failure("unavailable", "terminal \(terminal.id) has no attached surface")
