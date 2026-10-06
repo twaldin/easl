@@ -428,7 +428,8 @@ final class NoteTile: NSView, TileContent {
     /// Links open beside the note: repo paths as code (`Board.openForNavigation`: the tile
     /// already showing those lines anywhere, else a plain tile in view re-aimed, else a new one
     /// beside the note), web URLs as browser tiles (`Board.openLink`: one already showing the
-    /// address is reused), or in the default browser with ⌥ held.
+    /// address is reused), or in the default browser with ⌥ held. A remote board's note opens no
+    /// file of this Mac and leaves its links out of app.log: they are its host's.
     private func open(_ link: NoteLink, defaultBrowser: Bool) {
         switch link {
         case .code(let path, let lines):
@@ -438,8 +439,10 @@ final class NoteTile: NSView, TileContent {
         case .web(let url) where WebLink.isWeb(url) && !defaultBrowser:
             let opened = board.openLink(url, near: object.id, caller: nil)
             onOpenedLink?(opened.object.id)
+        case .web(let url) where board.isRemote && url.isFileURL:
+            canvas?.showNotice("Files open on the host's own board")
         case .web(let url):
-            ExternalOpen.open(url, because: "note \(object.id) link\(WebLink.isWeb(url) ? " (⌥-click)" : "")")
+            ExternalOpen.open(url, because: "note \(object.id) link\(WebLink.isWeb(url) ? " (⌥-click)" : "")", naming: !board.isRemote)
         }
     }
 
@@ -452,6 +455,32 @@ final class NoteTile: NSView, TileContent {
         beginEditing(at: nil)
         enteredByKeyboard = true
         return true
+    }
+
+    /// What the user is typing into the note, not saved yet (`takeDraft`, `resume`).
+    struct Draft {
+        var text: String
+        var selection: NSRange
+        var byKeyboard: Bool
+    }
+
+    /// Ends editing without saving and returns what was typed: a remote board's new note is about
+    /// to become the host's, under the host's id (`Board.onHostRekey`), whose tile resumes it.
+    func takeDraft() -> Draft? {
+        guard session != nil else { return nil }
+        let draft = Draft(text: editor.string, selection: editor.selectedRange(), byKeyboard: enteredByKeyboard)
+        finishEditing(returningFocus: false)
+        return draft
+    }
+
+    /// Editing again with `draft` in the editor (`takeDraft`), saved when editing ends as usual.
+    func resume(_ draft: Draft) {
+        beginEditing(at: nil)
+        enteredByKeyboard = draft.byKeyboard
+        editor.string = draft.text
+        let length = (draft.text as NSString).length, location = min(draft.selection.location, length)
+        editor.setSelectedRange(NSRange(location: location, length: min(draft.selection.length, length - location)))
+        editor.scrollRangeToVisible(editor.selectedRange())
     }
 
     /// Whether this edit started from the keyboard (Return), so ending it returns to the canvas.
@@ -637,9 +666,8 @@ final class NoteTile: NSView, TileContent {
     func render(_ request: TileRenderRequest) async -> TileRender {
         let current = live && window != nil && pendingResolve == nil && resolveTask == nil && fences.allSatisfy { excerpts[$0.key] != nil }
         let resolved = current ? excerpts : await resolvedExcerpts()
-        let root = linkRoot
-        let sources = NoteImages.sources(in: document)
-        let pictures = await NoteImages.load(sources, root: root)
+        // A remote note's pictures are its host's files: none is read here.
+        let pictures = board.isRemote ? [:] : await NoteImages.load(NoteImages.sources(in: document), root: linkRoot)
         let inset = NSSize(width: 8, height: 10)
         let text = NoteRenderer(excerpts: resolved, images: pictures, width: request.size.width - 2 * inset.width, asWritten: board.isRemote).render(document, placeholder: Self.placeholder)
         let content = NSTextContentStorage()

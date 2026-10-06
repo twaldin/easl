@@ -203,6 +203,12 @@ final class TerminalCallbackBridge {
         )
     }
 
+    /// Whether the delegate keeps this surface's clipboard writes private
+    /// (``TerminalSurfaceClipboardPrivacyDelegate``).
+    var clipboardWritesArePrivate: Bool {
+        (delegate as? any TerminalSurfaceClipboardPrivacyDelegate)?.terminalClipboardWritesArePrivate ?? false
+    }
+
     // MARK: - Clipboard read confirmation bookkeeping
 
     /// Guards `pendingClipboardRequests`. Two independent callers can reach

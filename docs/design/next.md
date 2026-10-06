@@ -67,7 +67,7 @@ Shipped on the Swift app (docs/design.md "Client mode (remote boards)", docs/con
 - A remote note's anchored excerpts and images show as written: the viewer doesn't read the host's files, and `object.get` `fences` gives states, not text.
 - Attention markers raised before the window opened aren't shown (`board.get` has none); markers the viewer clears and agents it sees (`markSeen`) stay unseen on the host.
 - On easld with a client attached, `agent.prompt` `composer` mentions are queued as hand-offs, not as the composer's own (easld's `prompt` queues before forwarding).
-- A provisional object the user creates is replaced by the host's under a new id, so it loses the selection and keyboard.
+- A remote terminal's ⌘-clicked file references open nothing (a notice says the file is the host's): resolving them on the host needs an API call that resolves a reference against the host's checkout.
 
 ## The composer
 

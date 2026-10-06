@@ -179,4 +179,99 @@ final class BoardMirrorTests {
         try await eventually { board.objects[gone.id] == nil && board.objects[added.id] != nil && board.objects[kept.id] == host.objects[kept.id] }
         #expect(states.last == .online && states.contains { $0 != .online })
     }
+
+    /// Runs `body` once, on the main actor (a test's host changes, from a server's handler).
+    @MainActor final class Once {
+        var body: (() -> Void)?
+        func run() {
+            body?()
+            body = nil
+        }
+    }
+
+    @Test func whatTheHostChangesWhileTheViewerReadsItAgainStays() async throws {
+        let edited = note("before")
+        let doomed = note("doomed", at: 400)
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        server.stop()
+        try await eventually { mirror.state != .online }
+        // The read after the drop is answered with the board as it was, after the host changed
+        // it: the changes' events reach the viewer ahead of that answer.
+        var created: ObjectID?
+        let once = Once()
+        once.body = { [unowned self] in
+            _ = try? host.update(edited.id, props: .object(["markdown": .string("changed during the read")]))
+            try? host.delete(doomed.id)
+            created = note("created during the read", at: 800).id
+        }
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            if request["method"]?.string == "board.get" { await once.run() }
+            return reply
+        }
+        try server.start()
+        try await eventually { once.body == nil }
+        try await eventually { mirror.reading == nil }
+        let added = try #require(created)
+        #expect(board.objects[edited.id] == host.objects[edited.id])
+        #expect(board.objects[edited.id]?.props["markdown"]?.string == "changed during the read")
+        #expect(board.objects[doomed.id] == nil)
+        #expect(board.objects[added] == host.objects[added])
+    }
+
+    @Test func queuedWritesKeepTheHostRevisionTheyWereBasedOn() async throws {
+        let moved = note("moved")
+        let edited = note("edited", at: 400)
+        let chained = note("chained", at: 800)
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        var notices: [String] = []
+        mirror.onNotice = { notices.append($0) }
+        // Nothing reaches the host before the host's own edits below: each viewer write is based
+        // on the revision before them.
+        // A move, then an edit made on its preview; the host's edit crossed both.
+        _ = try board.update(moved.id, frame: Frame(x: 0, y: 300, w: 280, h: 200))
+        _ = try board.update(moved.id, props: .object(["markdown": .string("the viewer's")]))
+        _ = try host.update(moved.id, props: .object(["markdown": .string("the host's")]))
+        // Two edits, the second made on the first's preview; the host's crossed both.
+        _ = try board.update(edited.id, props: .object(["markdown": .string("first")]))
+        _ = try board.update(edited.id, props: .object(["markdown": .string("second")]))
+        _ = try host.update(edited.id, props: .object(["markdown": .string("the host's")]))
+        // A move and an edit nobody crossed: the edit builds on the answered move.
+        _ = try board.update(chained.id, frame: Frame(x: 800, y: 300, w: 280, h: 200))
+        _ = try board.update(chained.id, props: .object(["markdown": .string("after the move")]))
+        try await eventually { notices.count == 3 && host.objects[chained.id]?.props["markdown"]?.string == "after the move" }
+        #expect(notices.allSatisfy { $0.contains("changed on home meanwhile") })
+        #expect(host.objects[moved.id]?.frame.y == 300)
+        #expect(host.objects[moved.id]?.props["markdown"]?.string == "the host's")
+        #expect(host.objects[edited.id]?.props["markdown"]?.string == "the host's")
+        #expect(host.objects[chained.id]?.frame.y == 300)
+        try await eventually { [moved, edited, chained].allSatisfy { board.objects[$0.id] == host.objects[$0.id] } }
+    }
+
+    @Test func aNewObjectGoesOnUnderTheHostsIDWithWhatTheUserHadGoingOnIt() async throws {
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        var swaps: [(provisional: ObjectID, host: ObjectID)] = []
+        board.onHostRekey = { provisional, id in
+            // Heard while the provisional note is still here, so its open editor can be taken over.
+            #expect(board.objects[provisional] != nil && board.objects[id] == nil)
+            swaps.append((provisional, id))
+        }
+        let provisional = board.create(type: .note, props: .object(["markdown": .string("")]), frame: Frame(x: 0, y: 300, w: 280, h: 200))
+        _ = try board.update(provisional.id, frame: Frame(x: 40, y: 320, w: 280, h: 200))
+        try await eventually { swaps.count == 1 }
+        let id = try #require(swaps.first).host
+        #expect(swaps.first?.provisional == provisional.id)
+        // The preview, the move queued behind the create included, goes on under the host's id.
+        #expect(board.objects[provisional.id] == nil)
+        #expect(board.objects[id]?.frame.x == 40)
+        // The note's draft, saved under the host's id once editing ends, reaches the host.
+        _ = try board.update(id, props: .object(["markdown": .string("typed before the host answered")]))
+        try await eventually { host.objects[id]?.props["markdown"]?.string == "typed before the host answered" && host.objects[id]?.frame.x == 40 }
+        try await eventually { board.objects[id] == host.objects[id] }
+        #expect(host.objects.values.filter { $0.type == .note }.count == 1)
+    }
 }

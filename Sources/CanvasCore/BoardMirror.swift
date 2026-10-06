@@ -4,14 +4,15 @@ import Foundation
 public enum RemoteWrite: Equatable, Sendable {
     /// A provisional object (its id is this board's own until the host answers with its id).
     case create(CanvasObject)
-    case update(ObjectID, frame: Frame?, z: Double?, props: JSONValue?)
+    /// `seen`: the object's revision as the board showed it when the user made the change.
+    case update(ObjectID, seen: Int?, frame: Frame?, z: Double?, props: JSONValue?)
     case delete(ObjectID)
 
     /// The object written, by its id on this board.
     var object: ObjectID {
         switch self {
         case .create(let object): object.id
-        case .update(let id, _, _, _), .delete(let id): id
+        case .update(let id, _, _, _, _), .delete(let id): id
         }
     }
 }
@@ -28,10 +29,12 @@ protocol BoardHost: AnyObject {
 /// notes it cut), into a `Board` marked remote that nothing stores. The host's events replace
 /// objects with the host's (`rev` included) unless a newer host revision is already here. The
 /// user's writes on that board are previews sent here (`send`): one at a time per object, a props
-/// write carrying the host `rev` it was based on; while an object has writes in flight its events
-/// wait, and once the last is answered the board shows the newest host version, so a failed write
-/// puts the host's object back (and says why in `onNotice`). Back online after a drop, the board is
-/// read again and the difference applied.
+/// write carrying the host `rev` the user's change was based on; while an object has writes in
+/// flight its events wait, and once the last is answered the board shows the newest host version,
+/// so a failed write puts the host's object back (and says why in `onNotice`). A created object
+/// takes the host's id when its create is answered (`Board.rekeyHost`). Back online after a drop,
+/// the board is read again and the difference applied; the host's events wait while it is read
+/// and follow it, so none is undone by the read.
 @MainActor
 public final class BoardMirror: BoardHost {
     /// The host as the user knows it, for titles and notices.
@@ -52,16 +55,31 @@ public final class BoardMirror: BoardHost {
 
     /// The host's objects as last heard (a reply, an event, a read), by host id.
     private var known: [ObjectID: CanvasObject] = [:]
-    /// Objects the host deleted while writes to them were in flight.
-    private var deleted: Set<ObjectID> = []
     /// Writes not answered yet, by the written object's id here, oldest first (the first is in flight).
     private var queues: [ObjectID: [RemoteWrite]] = [:]
     /// A provisional object's id here → the host's id for it, once its create is answered.
     private var hostIDs: [ObjectID: ObjectID] = [:]
-    /// Events that arrived before the first read was applied.
-    private var early: [EaslConnection.Event]? = []
+
+    /// A read of the whole board in progress (`load`, `reread`), which may predate the host's
+    /// events that arrive meanwhile (they wait: `held`). `created` and `deleted` are what this
+    /// viewer's answered writes made or removed meanwhile.
+    struct Reading {
+        var created: Set<ObjectID> = []
+        var deleted: Set<ObjectID> = []
+    }
+
+    /// Nil unless the board is being read (from the start: events before the first read wait).
+    private(set) var reading: Reading? = Reading()
+    /// Creates sent and not answered yet: the created object's event comes ahead of the answer
+    /// that says it is the user's provisional one, so events wait until then.
+    private var creating = 0
+    /// The host's events that arrived while the board was being read or a create was in flight,
+    /// applied in order once neither is (`release`), so nothing they say is undone or doubled.
+    private var held: [EaslConnection.Event] = []
     /// The link went down after the board loaded: read it again once back online.
     private var stale = false
+    /// How many times the link went down after the board loaded (a read that spans one reads again).
+    private var drops = 0
     private var listeners: [Task<Void, Never>] = []
 
     public init(hostName: String, board: BoardID, connection: EaslConnection, renders: EaslConnection) {
@@ -77,20 +95,18 @@ public final class BoardMirror: BoardHost {
         connection.subscribe(board: boardID)
         listen()
         let manifest: JSONValue
+        let objects: [CanvasObject]
         do {
             manifest = try await connection.request("board.get", .object(["board": .string(boardID)]))
+            objects = try await whole(manifest["objects"])
         } catch let failure as EaslConnection.Failure {
             throw ApiRouter.Failure(failure.code, failure.message)
         }
         let board = Board(remote: boardID, root: URL(fileURLWithPath: manifest["root"]?.string ?? "/"), host: self)
         self.board = board
-        for object in try await whole(manifest["objects"]) {
-            known[object.id] = object
-            board.applyHost(object)
-        }
-        let waiting = early ?? []
-        early = nil
-        for event in waiting { received(event) }
+        install(objects, on: board)
+        reading = nil
+        release()
         return board
     }
 
@@ -116,12 +132,12 @@ public final class BoardMirror: BoardHost {
         guard state != self.state else { return }
         self.state = state
         guard board != nil else { return }
-        if state != .online { stale = true }
-        onState?(state)
-        if state == .online, stale {
-            stale = false
-            Task { await reread() }
+        if state != .online {
+            stale = true
+            drops += 1
         }
+        onState?(state)
+        if state == .online, stale { Task { await reread() } }
     }
 
     /// Why the link isn't online, for the user (ssh's reason); nil while online.
@@ -136,7 +152,7 @@ public final class BoardMirror: BoardHost {
     // MARK: The host's changes
 
     private func received(_ event: EaslConnection.Event) {
-        if early != nil { return early!.append(event) }
+        if reading != nil || creating > 0 { return held.append(event) }
         guard event.board == nil || event.board == boardID else { return }
         switch event.name {
         case "object.created", "object.updated":
@@ -161,7 +177,6 @@ public final class BoardMirror: BoardHost {
     private func learn(_ object: CanvasObject) {
         if let current = known[object.id], object.rev < current.rev { return }
         known[object.id] = object
-        deleted.remove(object.id)
     }
 
     private func hostChanged(_ object: CanvasObject) {
@@ -172,9 +187,7 @@ public final class BoardMirror: BoardHost {
 
     private func hostDeleted(_ id: ObjectID) {
         known.removeValue(forKey: id)
-        deleted.insert(id)
         guard !busy(id) else { return }
-        deleted.remove(id)
         board?.removeHost(id)
     }
 
@@ -189,30 +202,55 @@ public final class BoardMirror: BoardHost {
         if let current = known[id] {
             board.applyHost(current)
         } else {
-            deleted.remove(id)
             board.removeHost(id)
         }
     }
 
-    /// Reads the board again after the link came back: what changed meanwhile arrives as events.
+    /// Reads the board again after the link came back (one read at a time: one that a drop
+    /// interrupted or outlasted reads again), then applies the events that arrived meanwhile.
     private func reread() async {
-        guard let board else { return }
-        do {
-            let manifest = try await connection.request("board.get", .object(["board": .string(boardID)]))
-            let objects = try await whole(manifest["objects"])
-            let present = Set(objects.map(\.id))
-            for id in board.objects.keys where !present.contains(id) && !busy(id) && queues[id] == nil {
-                known.removeValue(forKey: id)
-                board.removeHost(id)
+        guard let board, reading == nil else { return }
+        reading = Reading()
+        var again: Bool
+        repeat {
+            let before = drops
+            stale = false
+            do {
+                let manifest = try await connection.request("board.get", .object(["board": .string(boardID)]))
+                install(try await whole(manifest["objects"]), on: board)
+            } catch {
+                // Down again: the next `online` reads it.
+                stale = true
             }
-            for object in objects {
-                known[object.id] = object
-                if !busy(object.id) { board.applyHost(object) }
-            }
-        } catch {
-            // Down again: the next `online` reads it.
-            stale = true
+            again = drops != before && state == .online
+        } while again
+        reading = nil
+        release()
+    }
+
+    /// Applies a read of the whole board: what the read has, unless newer is here already
+    /// (`learn`), the object has writes in flight, or this viewer deleted it since the read began;
+    /// what the read lacks leaves, unless it has writes in flight or this viewer created it since.
+    private func install(_ objects: [CanvasObject], on board: Board) {
+        let read = reading ?? Reading()
+        let present = Set(objects.map(\.id))
+        for id in Set(board.objects.keys).union(known.keys).sorted()
+        where !present.contains(id) && !read.created.contains(id) && !busy(id) && queues[id] == nil {
+            known.removeValue(forKey: id)
+            board.removeHost(id)
         }
+        for object in objects where !read.deleted.contains(object.id) {
+            learn(object)
+            if !busy(object.id), let current = known[object.id] { board.applyHost(current) }
+        }
+    }
+
+    /// The events that waited (`held`), in the order they came, once nothing holds them.
+    private func release() {
+        guard reading == nil, creating == 0, !held.isEmpty else { return }
+        let waiting = held
+        held = []
+        for event in waiting { received(event) }
     }
 
     /// `board.get`'s objects whole: a note it cut at 400 characters is read with `object.get`.
@@ -232,16 +270,32 @@ public final class BoardMirror: BoardHost {
     // MARK: The user's writes
 
     func send(_ write: RemoteWrite) {
-        let key = write.object
+        let key = queue(for: write.object)
         queues[key, default: []].append(write)
         if queues[key]?.count == 1 { Task { await pump(key) } }
     }
 
+    /// The queue a write to `id` joins: its own, or a created object's while the writes queued
+    /// behind its create (by its provisional id) are still going.
+    private func queue(for id: ObjectID) -> ObjectID {
+        if queues[id] != nil { return id }
+        return hostIDs.first { $0.value == id && queues[$0.key] != nil }?.key ?? id
+    }
+
     /// Sends `key`'s writes one at a time, then shows the host's version of what they touched.
+    /// The first is based on the revision the user saw (`seen`); each later one, made on the
+    /// preview of those before it, on the revision this viewer's write before it left, when the
+    /// host answered that one exactly one revision on (nothing else changed the object between).
+    /// Otherwise the base stays put, so an edit of the host's that crossed the user's (or one that
+    /// made the host refuse an earlier write) stays a conflict for the writes after it.
     private func pump(_ key: ObjectID) async {
         var touched: Set<ObjectID> = [key]
+        var base: Int?
+        if case .update(_, let seen, _, _, _) = queues[key]?.first { base = seen }
         while let write = queues[key]?.first {
-            if let target = await perform(write) { touched.insert(target) }
+            let done = await perform(write, base: base)
+            if let target = done.target { touched.insert(target) }
+            if let rev = done.rev, base.map({ rev == $0 + 1 }) ?? true { base = rev }
             queues[key]?.removeFirst()
         }
         queues.removeValue(forKey: key)
@@ -258,8 +312,9 @@ public final class BoardMirror: BoardHost {
     /// Provisional ids whose create failed (nothing on the host has them).
     private var failedCreates: Set<ObjectID> = []
 
-    /// Sends one write; returns the host id it touched.
-    private func perform(_ write: RemoteWrite) async -> ObjectID? {
+    /// Sends one write, a props write with `rev` `base`; returns the host id it touched and, when
+    /// the host made the change, the object's revision after it.
+    private func perform(_ write: RemoteWrite, base: Int?) async -> (target: ObjectID?, rev: Int?) {
         switch write {
         case .create(let provisional):
             var params: [String: JSONValue] = [
@@ -267,42 +322,52 @@ public final class BoardMirror: BoardHost {
                 "frame": RenderMath.json(provisional.frame),
             ]
             if let parent = provisional.parent { params["parent"] = .string(parent) }
+            // Its object's event, ahead of the answer, waits for it (`creating`).
+            creating += 1
+            defer {
+                creating -= 1
+                release()
+            }
             do {
                 let object = try await request("object.create", params)
                 hostIDs[provisional.id] = object.id
+                reading?.created.insert(object.id)
                 learn(object)
-                board?.removeHost(provisional.id)
-                return object.id
+                board?.rekeyHost(provisional.id, as: object)
+                return (object.id, object.rev)
             } catch {
                 failedCreates.insert(provisional.id)
                 notice("Not created on \(hostName): \(Self.reason(error))")
-                return nil
+                return (nil, nil)
             }
-        case .update(let id, let frame, _, let props):
-            guard let target = target(id) else { return nil }
+        case .update(let id, _, let frame, _, let props):
+            guard let target = target(id) else { return (nil, nil) }
             // The API sets no z: a restack isn't sent, and the host's version puts it back.
-            guard frame != nil || props != nil else { return target }
+            guard frame != nil || props != nil else { return (target, nil) }
             var params: [String: JSONValue] = ["id": .string(target)]
             if let frame { params["frame"] = RenderMath.json(frame) }
             if let props {
                 params["props"] = props
-                if let rev = known[target]?.rev { params["rev"] = .number(Double(rev)) }
+                if let base { params["rev"] = .number(Double(base)) }
             }
             do {
-                learn(try await request("object.update", params))
+                let object = try await request("object.update", params)
+                learn(object)
+                return (target, object.rev)
             } catch {
                 await refused(target, error, doing: "changed")
+                return (target, nil)
             }
-            return target
         case .delete(let id):
-            guard let target = target(id) else { return nil }
+            guard let target = target(id) else { return (nil, nil) }
             do {
                 _ = try await connection.request("object.delete", .object(["id": .string(target)]))
                 known.removeValue(forKey: target)
+                reading?.deleted.insert(target)
             } catch {
                 await refused(target, error, doing: "deleted")
             }
-            return target
+            return (target, nil)
         }
     }
 
@@ -321,10 +386,11 @@ public final class BoardMirror: BoardHost {
         let name = board?.objects[id].map(ActivityLog.describe) ?? id
         switch code {
         case "conflict":
-            if let current = try? await request("object.get", ["id": .string(id)]) { known[id] = current }
+            if let current = try? await request("object.get", ["id": .string(id)]) { learn(current) }
             notice("Not \(verb): \(name) changed on \(hostName) meanwhile")
         case "not_found":
             known.removeValue(forKey: id)
+            reading?.deleted.insert(id)
             notice("Not \(verb): \(name) is gone from \(hostName)")
         case "unavailable" where state != .online:
             notice("Not \(verb): \(hostName) is offline")
@@ -379,12 +445,16 @@ public final class BoardMirror: BoardHost {
         return result
     }
 
-    /// An object as the host draws it (`view.render` `inline`): the image's bytes and the board
-    /// rect they cover.
+    /// An object as the host draws it (`view.render` `inline`): the image's bytes, the board rect
+    /// they cover, and where the object is in them as the host laid it out when it drew it (a
+    /// move here meanwhile doesn't change what the image shows).
     public struct Render: Sendable {
         public var image: Data
         public var canvasRect: Frame
         public var scale: Double
+        /// The object's pixels in `image`, top-left origin (`RenderedObject.pixelRect`); nil from
+        /// a host that didn't say.
+        public var pixels: Frame?
     }
 
     public func render(_ id: ObjectID, scale: Double) async throws -> Render {
@@ -401,6 +471,7 @@ public final class BoardMirror: BoardHost {
         guard let data = result["data"]?.string.flatMap({ Data(base64Encoded: $0) }), let rect = result["canvasRect"] else {
             throw ApiRouter.Failure("unavailable", "\(hostName) sent no image (an easl without view.render inline)")
         }
-        return Render(image: data, canvasRect: try rect.decode(Frame.self), scale: result["scale"]?.number ?? scale)
+        let pixels = result["objects"]?.array?.first { $0["id"]?.string == id }?["pixelRect"].flatMap { try? $0.decode(Frame.self) }
+        return Render(image: data, canvasRect: try rect.decode(Frame.self), scale: result["scale"]?.number ?? scale, pixels: pixels)
     }
 }

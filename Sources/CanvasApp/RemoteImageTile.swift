@@ -100,7 +100,7 @@ final class RemoteImageTile: NSView, TileContent {
             }
             do {
                 let render = try await self.remote.mirror.render(id, scale: scale)
-                guard let image = Self.body(of: render, frame: self.object.frame) else {
+                guard let image = Self.body(of: render) else {
                     return self.showBadge("\(self.remote.host.name) sent an image this Mac can't read")
                 }
                 self.image = image
@@ -113,12 +113,13 @@ final class RemoteImageTile: NSView, TileContent {
     }
 
     /// The part of the host's render under the tile's body (below its title bar, which the tile
-    /// frame here draws itself).
-    static func body(of render: BoardMirror.Render, frame: Frame) -> NSImage? {
+    /// frame here draws itself), by where the host had the object when it drew it: the whole
+    /// image (the object alone) when the host didn't say.
+    static func body(of render: BoardMirror.Render) -> NSImage? {
         guard let source = NSBitmapImageRep(data: render.image)?.cgImage else { return nil }
-        let scale = render.scale, rect = render.canvasRect
-        let crop = CGRect(x: (frame.x - rect.x) * scale, y: (frame.y + RenderMath.tileTitleHeight - rect.y) * scale,
-                          width: frame.w * scale, height: max(1, frame.h - RenderMath.tileTitleHeight) * scale).integral
+        let scale = render.scale, title = RenderMath.tileTitleHeight * scale
+        let object = render.pixels ?? Frame(x: 0, y: 0, w: Double(source.width), h: Double(source.height))
+        let crop = CGRect(x: object.x, y: object.y + title, width: object.w, height: max(scale, object.h - title)).integral
         let cropped = source.cropping(to: crop.intersection(CGRect(x: 0, y: 0, width: source.width, height: source.height))) ?? source
         return NSImage(cgImage: cropped, size: NSSize(width: Double(cropped.width) / scale, height: Double(cropped.height) / scale))
     }

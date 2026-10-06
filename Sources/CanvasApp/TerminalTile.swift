@@ -26,6 +26,9 @@ final class TerminalTile: NSView, TileContent {
     /// A web link the terminal's text activated (⌘-click on a URL) opened or found this browser
     /// tile; the canvas shows it.
     var onOpenedLink: ((ObjectID) -> Void)?
+    /// Something asked of this terminal can't happen on this Mac (a remote terminal's file
+    /// reference: the file is on the host); the canvas says `text` for a moment (`CanvasView.showNotice`).
+    var onNotice: ((String) -> Void)?
     /// A remote board's terminal (docs/design.md "Client mode"): the host's session, attached
     /// over ssh; its programs, notifications and exit are the host's to watch, not this Mac's.
     let isRemote: Bool
@@ -53,10 +56,16 @@ final class TerminalTile: NSView, TileContent {
         terminal.controller = TerminalConfig.shared.controller
         handler.tile = self
         terminal.delegate = handler
-        terminal.linkAt = { [weak self] point in self?.link(at: point) }
-        terminal.onHover = { [weak self] hit in self?.showUnderline(hit) }
-        terminal.onOpen = { [weak self] hit, newTile in self?.open(hit, newTile: newTile) }
-        terminal.onMissedLink = { [weak self] point, newTile in self?.retryLink(at: point, newTile: newTile) }
+        if isRemote {
+            // Its paths are the host's: nothing here looks them up (on this Mac a reference would
+            // find, and open, a same-named file of its own).
+            terminal.onMissedLink = { [weak self] point, _ in self?.remoteReference(at: point) }
+        } else {
+            terminal.linkAt = { [weak self] point in self?.link(at: point) }
+            terminal.onHover = { [weak self] hit in self?.showUnderline(hit) }
+            terminal.onOpen = { [weak self] hit, newTile in self?.open(hit, newTile: newTile) }
+            terminal.onMissedLink = { [weak self] point, newTile in self?.retryLink(at: point, newTile: newTile) }
+        }
         // AppKit makes the view first responder only after `becomeFirstResponder` returns.
         terminal.onFocusChange = { [weak self] in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.updateSurfaceFocus() } }
@@ -169,11 +178,25 @@ final class TerminalTile: NSView, TileContent {
         argv.map { "'" + $0.replacingOccurrences(of: "'", with: "'\"'\"'") + "'" }.joined(separator: " ")
     }
 
-    /// A remote terminal's command: the host's attach, again every 2 s while it fails (the host's
-    /// own tile hasn't started the session yet, the link dropped), until the tile closes. An
-    /// attach that ends cleanly (the session's shell exited) ends it: the host closes the tile.
+    /// A remote terminal's command: the host's attach, again until the tile closes. An attach that
+    /// ends cleanly (a detach, or the session's shell exited) attaches again after a second, as a
+    /// local tile's detach reattaches (`surfaceClosed`). The host having no such session
+    /// (`RemoteHost.noSessionStatus`) before the first attach means its own tile hasn't started it
+    /// yet; after one, that the session ended: the command exits, and the host's delete of the
+    /// tile arrives. Any other failure (the link dropped) is retried every 2 s.
     static func remoteCommand(_ attach: [String]) -> String {
-        let loop = #"while :; do "$@" && exit 0; printf '\r\033[2K[easl] waiting for the host…'; sleep 2; done"#
+        let loop = #"""
+        attached=
+        while :; do
+          "$@"
+          case $? in
+            0) attached=1; sleep 1; continue ;;
+            \#(RemoteHost.noSessionStatus)) [ -z "$attached" ] || exit 0 ;;
+          esac
+          printf '\r\033[2K[easl] waiting for the host…'
+          sleep 2
+        done
+        """#
         return quote(["/bin/sh", "-c", loop, "easl-remote"] + attach)
     }
 
@@ -785,6 +808,16 @@ final class TerminalTile: NSView, TileContent {
         }
     }
 
+    /// A ⌘-click in a remote terminal: on what reads as a file reference (`TerminalReferences`,
+    /// not looked up: the file is on the host), says where it opens instead.
+    private func remoteReference(at point: NSPoint) {
+        guard hit(at: point, resolve: { $0 }) != nil else { return }
+        onNotice?(Self.remoteReferenceNotice)
+    }
+
+    /// What a remote terminal says to a ⌘-clicked file reference or path.
+    static let remoteReferenceNotice = "File references open on the host's own board"
+
     /// The cells `runs` cover in the underline's (flipped) coordinates, `height` tall at the
     /// bottom of each cell (the whole cell when nil).
     private func rects(_ runs: [TerminalTextRows.Run], grid: TerminalRender.Grid, height: CGFloat? = nil) -> [NSRect] {
@@ -832,17 +865,23 @@ final class TerminalTile: NSView, TileContent {
     /// a browser tile beside this terminal (`Board.openLink`: a tile already showing it is
     /// reused); ⌥ held (a ⌥⌘-click, which `CanvasTerminalView` hands Ghostty as a ⌘-click: Ghostty
     /// finds no link under ⌥⌘) opens it in the default browser instead, and any other scheme or a
-    /// file path goes to the system, as `open` would.
+    /// file path goes to the system, as `open` would. A remote terminal's text is its host's: a
+    /// path or `file:` URL there names the host's file, so nothing opens here (this Mac's file of
+    /// that name would) and the notice says so, and app.log never gets its links.
     func openLink(_ text: String) {
         let url = URL(string: text).flatMap { $0.scheme == nil ? nil : $0 }
             ?? URL(fileURLWithPath: (text as NSString).expandingTildeInPath)
+        if isRemote, url.isFileURL || TerminalReferences.reference(in: text, at: 0) != nil {
+            onNotice?(Self.remoteReferenceNotice)
+            return
+        }
         let forced = terminal.forcingDefaultBrowser || NSApp.currentEvent?.modifierFlags.contains(.option) == true
         guard WebLink.isWeb(url), !forced else {
-            ExternalOpen.open(url, because: "terminal \(objectID) link\(forced ? " (⌥-click)" : "")")
+            ExternalOpen.open(url, because: "terminal \(objectID) link\(forced ? " (⌥-click)" : "")", naming: !isRemote)
             return
         }
         let opened = board.openLink(url, near: objectID, caller: objectID)
-        NSLog("easl: terminal %@ link %@ → %@ %@", objectID, text, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
+        NSLog("easl: terminal %@ link %@ → %@ %@", objectID, isRemote ? "(remote, not logged)" : text, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
         onOpenedLink?(opened.object.id)
     }
 
@@ -1016,7 +1055,8 @@ final class TerminalTile: NSView, TileContent {
 @MainActor
 private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, TerminalSurfaceLifecycleDelegate, TerminalSurfaceGridResizeDelegate,
     TerminalSurfaceBellDelegate, TerminalSurfaceDesktopNotificationDelegate, TerminalSurfacePwdDelegate, TerminalSurfaceCloseDelegate,
-    TerminalSurfaceScrollbarDelegate, TerminalSurfaceCommandFinishedDelegate, TerminalSurfaceOpenURLDelegate {
+    TerminalSurfaceScrollbarDelegate, TerminalSurfaceCommandFinishedDelegate, TerminalSurfaceOpenURLDelegate,
+    TerminalSurfaceClipboardConfirmationDelegate, TerminalSurfaceClipboardPrivacyDelegate {
     weak var tile: TerminalTile?
 
     func terminalDidResize(_ size: TerminalGridMetrics) {
@@ -1064,5 +1104,20 @@ private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, Term
 
     func terminalDidRequestOpenURL(_ url: String, kind: TerminalOpenURLKind) {
         tile?.openLink(url)
+    }
+
+    /// Ghostty asks before a program writes the clipboard (tiles run `clipboard-write = ask`,
+    /// `TerminalConfig`): a local terminal's write lands as the user's config says; a remote one's
+    /// never does (its text is the host's). A program's read and an unsafe paste stay denied, as
+    /// they were with no delegate to ask.
+    func terminalDidRequestClipboardConfirmation(_ request: TerminalClipboardConfirmationRequest) {
+        let write = request.kind == .osc52Write || request.kind == .kittyWrite
+        request.respond(allow: write && tile?.isRemote == false && TerminalConfig.shared.programsMayWriteClipboard)
+    }
+
+    /// The user's copy from a remote terminal is the host's text: kept to this Mac and out of
+    /// clipboard managers. A local terminal's copies are ordinary.
+    var terminalClipboardWritesArePrivate: Bool {
+        tile?.isRemote == true
     }
 }

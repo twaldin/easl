@@ -10,10 +10,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var cmux = CmuxRouter(registry: registry, password: AppPaths.cmuxPassword)
     private var controllers: [BoardID: CanvasWindowController] = [:]
     /// The boards in the order they were first opened, which orders windows that aren't tabs of
-    /// one another (`openBoardsInOrder`).
-    private var openedOrder: [BoardID] = []
-    /// Remote boards' windows (docs/design.md "Client mode"), by host and board: another host's
-    /// board may have the id of one of ours (two checkouts of one repository).
+    /// one another (`openBoardsInOrder`): a board's id, or a remote board's `remoteKey`.
+    private var openedOrder: [String] = []
+    /// Remote boards' windows (docs/design.md "Client mode"), by host and board (`remoteKey`):
+    /// another host's board may have the id of one of ours (two checkouts of one repository).
     private var remoteControllers: [String: CanvasWindowController] = [:]
     private var terminationSignal: DispatchSourceSignal?
     private let notifier = AgentNotifier()
@@ -282,7 +282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The open boards (shown, minimized or a tab) in tab/window order: a tab group's boards
     /// together in tab order, and groups and lone windows by when their first board was opened.
     private func openBoardsInOrder() -> [CanvasWindowController] {
-        let open = openedOrder.compactMap { controllers[$0] }.filter { $0.window.map(isShown) ?? false }
+        let open = openedOrder.compactMap { controllers[$0] ?? remoteControllers[$0] }.filter { $0.window.map(isShown) ?? false }
         var ordered: [CanvasWindowController] = []
         for controller in open where !ordered.contains(where: { $0 === controller }) {
             let windows = controller.window?.tabbedWindows ?? controller.window.map { [$0] } ?? []
@@ -291,19 +291,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return ordered
     }
 
+    /// A remote board's window by its host and board (`remoteControllers`, `openedOrder`).
+    private static func remoteKey(_ host: RemoteHost, _ board: BoardID) -> String { "\(host.sshTarget)|\(board)" }
+
+    /// A board window in ⌘J's tour: its board's id, a remote board's with its host (another
+    /// host's board may have the id of one of ours).
+    private func tourKey(_ controller: CanvasWindowController) -> String {
+        controller.remote.map { Self.remoteKey($0.host, controller.board.id) } ?? controller.board.id
+    }
+
     /// ⌘J, Go to Next Needs-You, on `current`, the board the user is on: the next thing that needs
     /// them there (blocked agents first, then markers, then agents that finished unseen, each in
     /// reading order: `NeedsYouItem`), and once it has nothing after the item visited last, the
-    /// first on the next open board that has anything, in tab/window order and around (`NeedsYouTour`).
-    /// That board's tab or window comes forward and the item is framed, selected and focused
-    /// like Go to; a notice says when no board needs the user.
+    /// first on the next open board that has anything, in tab/window order and around (`NeedsYouTour`),
+    /// remote boards' windows included. That board's tab or window comes forward and the item is
+    /// framed, selected and focused like Go to; a notice says when no board needs the user.
     func goToNextNeedsYou(from current: CanvasWindowController) {
         let boards = openBoardsInOrder()
-        let entries = boards.map { NeedsYouTour.Entry(board: $0.board.id, items: $0.canvas.needsYouItems) }
-        guard let stop = NeedsYouTour.next(from: current.board.id, after: current.canvas.needsYouCursor, in: entries) else {
+        let entries = boards.map { NeedsYouTour.Entry(board: tourKey($0), items: $0.canvas.needsYouItems) }
+        guard let stop = NeedsYouTour.next(from: tourKey(current), after: current.canvas.needsYouCursor, in: entries) else {
             return current.canvas.showNotice("Nothing needs you")
         }
-        guard let target = boards.first(where: { $0.board.id == stop.board }) else { return }
+        guard let target = boards.first(where: { tourKey($0) == stop.board }) else { return }
         if let window = target.window, target !== current {
             bringForward(window)
             // A tab never shown has not been laid out: the item is framed in the view's real size.
@@ -317,7 +326,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The board is read before the window opens, so a host that can't be reached, or that has no
     /// such board, says so in an alert instead. Nothing about the board is written on this Mac.
     func openRemoteBoard(host: RemoteHost, board: BoardID) {
-        let key = "\(host.sshTarget)|\(board)"
+        let key = Self.remoteKey(host, board)
         if let open = remoteControllers[key], let window = open.window {
             window.tabGroup?.selectedWindow = window
             if ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] != "1" { window.makeKeyAndOrderFront(nil) }
@@ -340,7 +349,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return mirror.close() }
             let controller = CanvasWindowController(board: loaded, registry: self.registry, remote: RemoteSource(host: host, mirror: mirror))
             self.remoteControllers[key] = controller
+            if !self.openedOrder.contains(key) { self.openedOrder.append(key) }
             loaded.onEvent = { [weak controller] event in controller?.apply(event) }
+            controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
             controller.onClose = { [weak self] in self?.remoteControllers.removeValue(forKey: key) }
             self.show(controller)
         }

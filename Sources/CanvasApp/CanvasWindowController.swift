@@ -63,7 +63,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         window.title = remote?.title(of: board) ?? board.root.lastPathComponent
         window.subtitle = remote.map { "\(board.root.path) on \($0.host.name)" } ?? board.root.path
         window.acceptsMouseMovedEvents = true
-        if remote == nil { window.setFrameAutosaveName("Canvas-\(board.id)") }
+        if remote == nil {
+            window.setFrameAutosaveName("Canvas-\(board.id)")
+        } else {
+            // Nothing of another Mac's board is kept here: AppKit saves a titled window's state
+            // and a snapshot of it for restoration unless told not to.
+            window.isRestorable = false
+            window.disableSnapshotRestoration()
+        }
         // Boards open as tabs of one window (AppDelegate.open adds them to the frontmost group).
         window.tabbingMode = .preferred
         window.tabbingIdentifier = "net.waldin.easl.board"
@@ -345,7 +352,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         let count = canvas.needsYouItems.count
         if count != titledCount {
             titledCount = count
-            window.title = NeedsYouTour.title(board.root.lastPathComponent, needing: count)
+            window.title = NeedsYouTour.title(remote?.title(of: board) ?? board.root.lastPathComponent, needing: count)
         }
         let state = NeedsYou.of(board.objects.values)
         guard state != tabState else { return }

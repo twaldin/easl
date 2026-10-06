@@ -208,6 +208,9 @@ public final class Board {
     public let isRemote: Bool
     /// Where a remote board's writes go.
     weak var host: BoardHost?
+    /// A remote board's provisional object (first) is about to become the host's (second):
+    /// whoever shows it carries what the user had going on it (`rekeyHost`).
+    public var onHostRekey: ((_ provisional: ObjectID, _ host: ObjectID) -> Void)?
     /// How deep the user's write calls are nested on a remote board: only the outermost one goes
     /// to the host (its cascades, a group re-fit or an arrow detaching, are the host's to make).
     private var hostWriteDepth = 0
@@ -326,8 +329,9 @@ public final class Board {
     public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil, actor: ActivityActor? = nil) throws -> CanvasObject {
         if isRemote {
             if actor == .system { return try object(id) }
+            let seen = objects[id]?.rev
             let object = try toHost { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: []) }
-            if hostWriteDepth == 0 { host?.send(.update(id, frame: frame, z: z, props: props)) }
+            if hostWriteDepth == 0 { host?.send(.update(id, seen: seen, frame: frame, z: z, props: props)) }
             return object
         }
         if actor == .system { return try unrecorded { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: []) } }
@@ -981,6 +985,19 @@ public final class Board {
         }
         markMentionsEdited(from: previous, to: object)
         onEvent?(.objectUpdated(object))
+    }
+
+    /// A provisional object whose create the host answered with `object`: the user's preview of
+    /// it (with any later writes) goes on under the host's id until those are answered too.
+    /// `onHostRekey` hears of it first, while the provisional object is still here. Nothing when
+    /// the user deleted it meanwhile (the delete follows to the host).
+    func rekeyHost(_ provisional: ObjectID, as object: CanvasObject) {
+        guard var shown = objects[provisional] else { return }
+        onHostRekey?(provisional, object.id)
+        removeHost(provisional)
+        shown.id = object.id
+        shown.rev = object.rev
+        applyHost(shown)
     }
 
     /// The host has no object `id` (deleted there, or a provisional create made way for the

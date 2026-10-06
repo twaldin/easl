@@ -32,11 +32,16 @@ final class TerminalConfig {
     /// Ghostty's shell integration for tiles to load (`TerminalShellIntegration`): nil when the
     /// user's config says `shell-integration = none`.
     let shellIntegration: String?
+    /// Whether a program in a local terminal may write the clipboard (OSC 52, Kitty's OSC 5522):
+    /// the user's `clipboard-write` is `allow`, Ghostty's default. Tiles run with `ask` instead
+    /// (`askBeforeClipboardWrite`), and each tile's delegate answers (`TerminalEvents`).
+    let programsMayWriteClipboard: Bool
 
     private init() {
         // easl's base: the library's defaults (14 pt, block cursor); without a user theme, its
-        // Alabaster (light) and Afterglow (dark) colors.
-        let base = TerminalConfiguration.default.rendered
+        // Alabaster (light) and Afterglow (dark) colors. Program clipboard writes are asked about
+        // even when the user's config is rejected and tiles fall back to this.
+        let base = TerminalConfiguration.default.rendered + "\n" + Self.askBeforeClipboardWrite.line
         // The controller initializes Ghostty's runtime, which the config API below needs.
         controller = TerminalController(configSource: .generated(base), theme: TerminalTheme())
 
@@ -55,8 +60,13 @@ final class TerminalConfig {
         }
         let lightSettings = Self.validated(user.settings(theme: theme(user.lightTheme, fallback: .alabaster)), base: base)
         let darkSettings = Self.validated(user.settings(theme: theme(user.darkTheme, fallback: .afterglow)), base: base)
+        // A remote terminal's program must never write this Mac's clipboard, so Ghostty asks the
+        // tile before every program write; the user's `deny` refuses them all in Ghostty already.
+        let clipboardWrite = GhosttyConfig.value("clipboard-write", in: darkSettings) ?? "allow"
+        programsMayWriteClipboard = clipboardWrite == "allow"
+        let asked = clipboardWrite == "deny" ? [] : [Self.askBeforeClipboardWrite]
         func configuration(_ settings: [GhosttyConfig.Entry]) -> TerminalConfiguration {
-            TerminalConfiguration { builder in settings.forEach { builder.withCustom($0.key, $0.value) } }
+            TerminalConfiguration { builder in (settings + asked).forEach { builder.withCustom($0.key, $0.value) } }
         }
         if !controller.setTheme(TerminalTheme(light: configuration(lightSettings), dark: configuration(darkSettings))) || controller.lastConfigurationIssue != nil {
             NSLog("easl: Ghostty config rejected, tiles use the defaults: %@", controller.lastConfigurationIssue ?? "unknown")
@@ -87,6 +97,11 @@ final class TerminalConfig {
     func style(for appearance: NSAppearance) -> Style {
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
     }
+
+    /// Ghostty hands each program clipboard write to the tile's delegate (`TerminalEvents`), which
+    /// allows a local terminal's as the user's config says (`programsMayWriteClipboard`) and
+    /// refuses a remote one's. The copy bindings write without asking.
+    private static let askBeforeClipboardWrite = GhosttyConfig.Entry("clipboard-write", "ask")
 
     // MARK: Ghostty's config API
 

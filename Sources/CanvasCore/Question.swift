@@ -432,9 +432,11 @@ extension Board {
     }
 
     /// Open questions whose `expiresAt` is at or before `now` become `expired`, frames shrunk as
-    /// a closing question's are, written by the app itself (no undo step). Returns their ids.
+    /// a closing question's are, written by the app itself (no undo step). Returns their ids. A
+    /// remote board's questions expire on their host.
     @discardableResult
     public func expireQuestions(now: Date = Date()) -> [ObjectID] {
+        guard !isRemote else { return [] }
         let due = objects.values.filter { object in
             guard object.type == .question else { return false }
             let spec = QuestionSpec(object.props)
@@ -450,10 +452,11 @@ extension Board {
 
     /// Sets the board's expiry timer for its earliest open `expiresAt` (at most a day out, then
     /// again); a question already past it expires on the next turn. Called when the board opens
-    /// and whenever a question changes.
+    /// and whenever a question changes. None on a remote board: its host's timer expires them.
     public func scheduleQuestionExpiry(now: Date = Date()) {
         questionExpiry?.cancel()
         questionExpiry = nil
+        guard !isRemote else { return }
         let next = objects.values.compactMap { object -> Date? in
             guard object.type == .question else { return nil }
             let spec = QuestionSpec(object.props)
