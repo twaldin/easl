@@ -91,8 +91,15 @@
     { "call": "agent.read", "params": { "target": "{{t.object.id}}", "final": true }, "note": "final is easld's: not forwarded" },
     {
       "call": "agent.restart",
+      "params": { "target": "worker", "mode": "fresh" },
+      "note": "the prompt the client typed hasn't started its turn: easld refuses, nothing is forwarded"
+    },
+    { "call": "agent.report", "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "working", "seq": 2, "source": "main", "draft": false } },
+    { "call": "agent.report", "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "seq": 3, "source": "main", "draft": false } },
+    {
+      "call": "agent.restart",
       "params": { "target": "worker", "mode": "fresh", "args": ["--plan"] },
-      "note": "easld's checks pass (an omp tile, nothing to lose): forwarded with the target as its id, and the client's relaunch is the caller's"
+      "note": "that turn over, easld's checks pass (an omp tile, nothing to lose): forwarded with the target as its id, and the client's relaunch is the caller's"
     },
     { "call": "agent.restart", "params": { "target": "{{t.object.id}}", "mode": "resume" }, "note": "no session recorded to resume: easld refuses, nothing is forwarded" },
     { "call": "object.reload", "params": { "id": "{{web.object.id}}", "timeoutMs": 1000 } },

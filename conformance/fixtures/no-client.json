@@ -440,6 +440,7 @@
       "step": "agent.restart",
       "method": "agent.restart",
       "request": {
+        "force": true,
         "mode": "fresh",
         "target": "worker"
       },
