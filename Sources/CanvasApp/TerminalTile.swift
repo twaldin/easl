@@ -311,7 +311,7 @@ final class TerminalTile: NSView, TileContent {
     /// attach loop starts again. Throws, with nothing relaunched, when the old session can't be
     /// confirmed gone. A remote board's terminal is never restarted here: its host's easl does
     /// that, through its own API.
-    func restart(running argv: [String], killing: @MainActor () throws -> Void, ended: @escaping @MainActor () -> Void) async throws {
+    func restart(running argv: [String], killing: @MainActor () throws -> Void, ended: @MainActor () throws -> Void) async throws {
         guard !isRemote else {
             throw ApiRouter.Failure("unsupported", "terminal \(objectID) is on a remote board: its host restarts it (agent.restart on the host's easl)")
         }
@@ -331,13 +331,13 @@ final class TerminalTile: NSView, TileContent {
             restartedAt = nil
             throw ApiRouter.Failure("unavailable", failure)
         }
-        ended()
+        try ended()
         // The old session's shell and program are gone with it.
         shell = nil
         shellName = nil
         shellLookup = nil
         restartedAt = Date()
-        guard let object = board.objects[objectID] else { return }
+        guard let object = board.objects[objectID] else { throw ApiRouter.Failure("not_found", "terminal \(objectID) was closed while it restarted") }
         var options = terminal.configuration
         options.command = Self.command(session: sessionName, object: object, board: board, keep: Set(options.envVars.keys), start: ShellWords.quote(argv))
         // The coordinator rebuilds only on a configuration that differs.

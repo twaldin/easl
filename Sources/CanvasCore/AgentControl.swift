@@ -270,11 +270,15 @@ extension ApiRouter {
             if self.typing[tile] != nil { throw Self.typingFailure(tile) }
             if !force { try self.refuseRestart(current, on: board) }
         }, {
+            // Closed while its session was killed: its delete ended the agent session and
+            // bounced the queue; there is nothing to relaunch into.
+            guard board.objects[tile] != nil else { throw Failure("not_found", "terminal \(tile) was closed while it restarted: nothing was relaunched") }
             board.endAgentSession(tile)
             self.forgetPrompts(to: tile)
-            try? board.restartedAgent(tile: tile, command: launch.command, agent: relaunched)
+            try board.restartedAgent(tile: tile, command: launch.command, agent: relaunched)
         })
-        return .object(["agent": agentEntry(board.objects[tile] ?? terminal, on: board), "command": .array(launch.argv.map(JSONValue.string))])
+        guard let current = board.objects[tile] else { throw Failure("not_found", "terminal \(tile) was closed while it restarted") }
+        return .object(["agent": agentEntry(current, on: board), "command": .array(launch.argv.map(JSONValue.string))])
     }
 
     /// Why agent.restart leaves `terminal` alone without `force`: the dialog, turn, prompt or

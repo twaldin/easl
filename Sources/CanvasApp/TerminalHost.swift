@@ -312,7 +312,7 @@ final class TerminalHost {
     /// 3 s), `ended` runs and easld starts the relaunch running `argv` in a new one
     /// (`session.spawn`). Fails `unavailable` while the host isn't online, leaving the session as
     /// it was, and when the host still lists it, before `ended`.
-    func restart(_ tile: TerminalTile, running argv: [String], killing: @MainActor () throws -> Void, ended: @escaping @MainActor () -> Void) async throws {
+    func restart(_ tile: TerminalTile, running argv: [String], killing: @MainActor () throws -> Void, ended: @MainActor () throws -> Void) async throws {
         let id = tile.objectID
         guard state == .online, let home, let run else {
             throw ApiRouter.Failure("unavailable", "\(target) is offline: terminal \(id)'s session there can't be restarted until it is back")
@@ -327,7 +327,7 @@ final class TerminalHost {
             }
             try? await Task.sleep(for: .milliseconds(100))
         }
-        ended()
+        try ended()
         guard let params = tile.hostedSpawnParams(home: home, run: run, argv: argv) else {
             throw ApiRouter.Failure("not_found", "terminal \(id) was closed")
         }

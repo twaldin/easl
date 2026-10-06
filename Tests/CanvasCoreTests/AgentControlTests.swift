@@ -33,7 +33,7 @@ final class AgentControlTests {
         router.terminalStatus = { [unowned self] _, tile in TerminalStatus(pid: foreground[tile], focused: tile == focused) }
         router.restartTerminal = { [unowned self] _, tile, argv, killing, ended in
             try killing()
-            ended()
+            try ended()
             restarted.append((tile, argv))
         }
     }
@@ -272,7 +272,7 @@ final class AgentControlTests {
             during["inbox"] = try await call("agent.inbox", ["tile": .string(tile)])
             during["restart"] = try await call("agent.restart", ["target": "worker", "mode": "fresh", "force": .bool(true)])
             try killing()
-            ended()
+            try ended()
             restarted.append((tile, argv))
         }
         #expect(try await call("agent.restart", ["target": "worker", "mode": "resume"])["ok"] == .bool(true))
@@ -292,7 +292,7 @@ final class AgentControlTests {
             try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 3, source: "canvas-omp", protocol: 1, draft: false)
             try killing()
             killed = true
-            ended()
+            try ended()
         }
         let generation = board.agentSession(of: worker)
         let refused = try await call("agent.restart", ["target": "worker", "mode": "resume"])
@@ -307,7 +307,7 @@ final class AgentControlTests {
         try await report(tile, "idle", seq: 1, ["draft": .bool(false)])
         router.restartTerminal = { [unowned self] _, tile, argv, killing, ended in
             try killing()
-            ended()
+            try ended()
             // A hosted relaunch reports through the relay before the host's session.spawn answers.
             _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s2", "model": "anthropic/claude-opus-4-5", "thinking": "auto"])
             try await report(tile, "working", seq: 2, ["draft": .bool(false), "pid": .number(Self.alive)])
@@ -319,6 +319,21 @@ final class AgentControlTests {
         #expect(agent["sessionId"] == "s2" && agent["thinking"] == "auto" && agent["pid"] == .number(Self.alive))
         #expect(board.objects[tile]?.props["lifecycle"]?["state"] == "working")
         #expect(reply["result"]?["agent"]?["lifecycle"]?["state"] == "working")
+    }
+
+    @Test func aTileClosedWhileItsSessionIsKilledFailsTheRestart() async throws {
+        let tile = terminal(name: "worker", command: ["omp"])
+        try await report(tile, "idle", seq: 1, ["draft": .bool(false)])
+        var relaunched = false
+        router.restartTerminal = { [unowned self] _, tile, _, killing, ended in
+            try killing()
+            board.transaction { try? board.delete(tile) }
+            try ended()
+            relaunched = true
+        }
+        let reply = try await call("agent.restart", ["target": "worker", "mode": "fresh"])
+        #expect(reply["error"]?["code"] == "not_found", "\(reply)")
+        #expect(!relaunched)
     }
 
     @Test func restartBouncesWhatWasQueuedForTheKilledSessionBeforeTheRelaunchStarts() async throws {
@@ -338,7 +353,7 @@ final class AgentControlTests {
         var queuedAtRelaunch: [String]? = ["not asked"]
         router.restartTerminal = { [unowned self] _, tile, argv, killing, ended in
             try killing()
-            ended()
+            try ended()
             queuedAtRelaunch = board.messages[tile]?.map(\.text)
             restarted.append((tile, argv))
         }

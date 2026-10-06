@@ -162,11 +162,11 @@ public final class ApiRouter {
     /// Kills terminal `tile`'s session (a hosted tile's through its host's easld) and starts a
     /// new one running `argv` in the same tile (agent.restart). `killing` runs just before the
     /// kill and throws to call it off with nothing touched; `ended` runs once the old session is
-    /// confirmed gone, before the new one starts. Throws `Failure` when the tile isn't shown in a
-    /// window, its host can't be reached, or the old session can't be confirmed gone (then
-    /// `ended` never ran).
+    /// confirmed gone, before the new one starts, and throws to start none (the tile was closed
+    /// meanwhile). Throws `Failure` when the tile isn't shown in a window, its host can't be
+    /// reached, the old session can't be confirmed gone (then `ended` never ran), or `ended` threw.
     public var restartTerminal: ((Board, ObjectID, _ argv: [String], _ killing: @escaping @MainActor () throws -> Void,
-                                  _ ended: @escaping @MainActor () -> Void) async throws -> Void)?
+                                  _ ended: @escaping @MainActor () throws -> Void) async throws -> Void)?
     /// Inside tmux, what the active pane of a terminal tile's tmux client runs
     /// (`TerminalName.program`; its shell at that pane's prompt); nil when the tile's foreground
     /// program isn't tmux or tmux doesn't say.
