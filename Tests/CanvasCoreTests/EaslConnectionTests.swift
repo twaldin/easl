@@ -326,7 +326,7 @@ final class EaslConnectionTests {
         let connection = EaslConnection.process("/bin/sh", ["-c", "echo $$ > '\(file)'; exec sleep 60"], backoff: fast, handshakeTimeout: .seconds(60), processes: processes)
         defer { connection.close() }
         var pid: Int32?
-        for _ in 0..<500 where pid == nil {
+        for _ in 0..<3000 where pid == nil {
             pid = (try? String(contentsOfFile: file, encoding: .utf8)).flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
             if pid == nil { try await Task.sleep(for: .milliseconds(10)) }
         }

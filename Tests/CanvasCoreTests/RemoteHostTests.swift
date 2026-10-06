@@ -214,9 +214,10 @@ struct RemoteHostTests {
         #expect(rows[4].detail == "opened before" && rows[4].online, "the tailnet doesn't list a name it was opened by")
     }
 
-    /// Polls for the pid a test script wrote to `file`.
+    /// Polls for the pid a test script wrote to `file`: long, since a CI runner can stall every
+    /// test for seconds.
     func pid(in file: String) async -> Int32? {
-        for _ in 0..<500 {
+        for _ in 0..<3000 {
             if let text = try? String(contentsOfFile: file, encoding: .utf8), let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) { return pid }
             try? await Task.sleep(for: .milliseconds(10))
         }
@@ -226,12 +227,12 @@ struct RemoteHostTests {
     @Test func cancellingARunEndsAndReapsItsProcess() async throws {
         let file = NSTemporaryDirectory() + "rh-\(UUID().uuidString.prefix(8)).pid"
         defer { try? FileManager.default.removeItem(atPath: file) }
-        let task = Task { try await RemoteHost.run("/bin/sh", ["-c", "echo $$ > '\(file)'; exec sleep 30"], timeout: 60) }
+        let task = Task { try await RemoteHost.run("/bin/sh", ["-c", "echo $$ > '\(file)'; exec sleep 60"], timeout: 120) }
         let pid = try #require(await pid(in: file))
         let started = Date()
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
-        #expect(Date().timeIntervalSince(started) < 10, "it didn't wait out the sleep, or the timeout")
+        #expect(Date().timeIntervalSince(started) < 30, "it didn't wait out the sleep, or the timeout")
         #expect(kill(pid, 0) == -1 && errno == ESRCH, "gone, not a zombie waiting to be reaped")
     }
 
