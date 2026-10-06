@@ -215,7 +215,7 @@ func terminalEntry(terminal model.Object, boardID, root string) map[string]any {
 	} else {
 		entry["lifecycle"] = map[string]any{"state": "unknown"}
 	}
-	addAgentControl(entry, agent)
+	addAgentControl(entry, agent, board.TerminalHost(terminal) != "")
 	for k, v := range entry {
 		if v == nil {
 			delete(entry, k)
@@ -227,8 +227,10 @@ func terminalEntry(terminal model.Object, boardID, root string) map[string]any {
 // addAgentControl adds to an agent.list entry what agent control reads: its board is open and,
 // with no window, nothing has keyboard focus; the draft, model and thinking level its
 // integration reported, and the pid it reported while that process lives. easld has no zmx
-// sessions, so no `live` and no foreground process to fall back on.
-func addAgentControl(entry, agent map[string]any) {
+// sessions, so no `live` and no foreground process to fall back on. A hosted terminal's
+// processes are its host's (props.host): it has no pid, and its reported one is never probed
+// on this machine, where another process may have that number.
+func addAgentControl(entry, agent map[string]any, hosted bool) {
 	entry["open"] = true
 	entry["focused"] = false
 	for _, key := range []string{"draft", "model", "thinking"} {
@@ -236,7 +238,7 @@ func addAgentControl(entry, agent map[string]any) {
 			entry[key] = v
 		}
 	}
-	if pid, ok := board.TruncInt(agent["pid"]); ok && processLives(pid) {
+	if pid, ok := board.TruncInt(agent["pid"]); ok && !hosted && processLives(pid) {
 		entry["pid"] = float64(pid)
 	}
 }
@@ -813,26 +815,20 @@ func (r *Router) restart(p map[string]any) (any, error) {
 	if r.restarts[terminal.ID] == op {
 		delete(r.restarts, terminal.ID)
 	}
-	if err == nil {
-		delete(r.pendingPrompts, terminal.ID)
-		b.EndAgentSession(terminal.ID)
+	if err != nil {
+		r.serveInbox(terminal.ID, b)
+		return nil, err
 	}
+	delete(r.pendingPrompts, terminal.ID)
+	b.EndAgentSession(terminal.ID)
 	r.serveInbox(terminal.ID, b)
-	return result, err
+	return result, nil
 }
 
 // restartingFailure is agent.prompt's answer for a terminal agent.restart holds.
 func restartingFailure(tile string) error {
 	return fail(api.CodeConflict, "%s is restarting (agent.restart): nothing reaches it until its agent is relaunched; send again once it reports", tile)
 }
-
-// restartHold holds a restarting terminal's queued messages while its client relaunches it: a
-// connection that never closes and takes nothing.
-type restartHold struct{}
-
-func (restartHold) Send(any) bool         { return false }
-func (restartHold) IsOpen() bool          { return true }
-func (restartHold) Done() <-chan struct{} { return nil }
 
 // resumedSession is the session agent.restart resumes (AgentResume.session): omp's session file
 // when it reported one (its `--resume` takes a path), else the session id; "" for none.

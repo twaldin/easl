@@ -98,6 +98,30 @@ func TestAReportKeepsDraftAndPidAndOneWithoutThemForgetsThem(t *testing.T) {
 	}
 }
 
+// A hosted terminal's processes are its host's: the pid its integration reports names no process
+// here, whatever runs under that number on this machine, on an open board or a closed one.
+func TestAHostedTerminalHasNoPidOfThisMachine(t *testing.T) {
+	f := newFixture(t)
+	builds, _ := f.openBoard("builds")
+	local := f.agentTerminal(builds, map[string]any{})
+	hosted := f.agentTerminal(builds, map[string]any{"host": "deckbox"})
+	pid := float64(os.Getpid())
+	for _, term := range []string{local, hosted} {
+		f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "pid": pid})
+	}
+	for _, when := range []string{"open", "closed"} {
+		if when == "closed" {
+			f.closeBoard(builds)
+		}
+		if entry := f.listed(local); entry["pid"] != pid {
+			t.Errorf("%s: the local terminal's pid %v, want %v", when, entry["pid"], pid)
+		}
+		if entry := f.listed(hosted); entry["pid"] != nil {
+			t.Errorf("%s: the hosted terminal listed with this machine's pid %v", when, entry["pid"])
+		}
+	}
+}
+
 func TestReportSessionKeepsTheModelAndThinkingAReportLeavesOut(t *testing.T) {
 	f := newFixture(t)
 	term := f.agentTerminal("", map[string]any{})
@@ -204,7 +228,9 @@ func TestRestartRefusesWhatARestartWouldLoseInOrder(t *testing.T) {
 			"conflict", term + " is working: restarting would kill its turn. Wait for it (agent.wait), or force: true restarts anyway"},
 		{map[string]any{"state": "idle", "draft": true},
 			"conflict", term + "'s input editor holds a draft the user hasn't sent: restarting would lose it; force: true restarts anyway"},
-		{map[string]any{"state": "idle"}, "unavailable", forwarded},
+		{map[string]any{"state": "idle"},
+			"conflict", "nothing in " + term + " reports whether its input holds a draft the user hasn't sent (omp's easl extension does), so restarting could lose one; force: true restarts anyway"},
+		{map[string]any{"state": "idle", "draft": false}, "unavailable", forwarded},
 	}
 	for _, s := range steps {
 		s.report["tile"], s.report["kind"] = term, "omp"
@@ -322,7 +348,7 @@ func (c *scriptedClient) Done() <-chan struct{} { return nil }
 func TestRestartGoesToTheBoardsClientWithTheTileResolved(t *testing.T) {
 	f := newFixture(t)
 	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
-	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle"})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "draft": false})
 	relaunched := map[string]any{"agent": map[string]any{"tile": term, "kind": "omp"}, "command": []any{"omp", "--plan"}}
 	app := &scriptedClient{router: f.router, replies: []map[string]any{
 		{"ok": true, "result": relaunched},
@@ -366,7 +392,7 @@ func TestRestartGoesToTheBoardsClientWithTheTileResolved(t *testing.T) {
 func TestRestartBouncesWhatWasQueuedOnceTheClientRelaunchedTheAgent(t *testing.T) {
 	f := newFixture(t)
 	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
-	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "protocol": 1.0})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "protocol": 1.0, "draft": false})
 	f.result("agent.prompt", map[string]any{"target": "worker", "text": "Nightly failed.", "from": "machine-watch"})
 	app := &scriptedClient{router: f.router, replies: []map[string]any{
 		{"ok": false, "error": map[string]any{"code": "conflict", "message": term + " has keyboard focus: the user may be typing in it; force: true restarts anyway"}},
@@ -405,5 +431,93 @@ func TestRestartBouncesWhatWasQueuedOnceTheClientRelaunchedTheAgent(t *testing.T
 	}
 	if len(polled) != 2 || len(polled[0]) != 0 || len(polled[1]) != 0 {
 		t.Fatalf("a poll took a message while the client restarted the agent: %v", polled)
+	}
+}
+
+// A message its integration delivered as a new turn is a prompt whose turn hasn't started, as
+// agent.wait counts it, until the agent reports working or the grace runs out: restarting would
+// lose it.
+func TestRestartWaitsForAPromptsTurnToStartAsAgentWaitDoes(t *testing.T) {
+	f := newFixture(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "protocol": 1.0, "draft": false})
+	id := f.result("agent.prompt", map[string]any{"target": "worker", "text": "Nightly failed.", "from": "machine-watch"})["message"]
+	f.call("agent.inbox", map[string]any{"tile": term})
+	f.call("agent.inbox", map[string]any{"tile": term, "ack": []any{id}, "started": true})
+	restart := func() (string, string) {
+		return errorOf(f.call("agent.restart", map[string]any{"target": "worker", "mode": "fresh"}))
+	}
+	if code, message := restart(); code != "conflict" || message != term+" was just prompted and hasn't started that turn: restarting would lose the prompt. Wait for it (agent.wait), or force: true restarts anyway" {
+		t.Errorf("delivered, its turn not started: %s %q", code, message)
+	}
+	f.router.PromptStartGrace = 0
+	if _, message := restart(); message != noApp(f.board.ID()) {
+		t.Errorf("a prompt that started no turn within the grace never will: %q", message)
+	}
+}
+
+// While a client restarts a terminal nothing else reaches it: a prompt sent meanwhile is refused
+// (it would reach a session about to be killed, or the relaunched agent), no poll takes what is
+// queued, and another restart of it is refused rather than racing it. The restart holding the
+// terminal lets it go when it ends, refused or done.
+func TestNothingReachesATerminalWhileAClientRestartsIt(t *testing.T) {
+	f := newFixture(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "protocol": 1.0, "draft": false})
+	f.result("agent.prompt", map[string]any{"target": "worker", "text": "Nightly failed.", "from": "machine-watch"})
+	app := &scriptedClient{router: f.router, replies: []map[string]any{
+		{"ok": false, "error": map[string]any{"code": "conflict", "message": term + " has keyboard focus: the user may be typing in it; force: true restarts anyway"}},
+		{"ok": true, "result": map[string]any{"agent": map[string]any{"tile": term}, "command": []any{"omp"}}},
+	}}
+	type meanwhile struct {
+		prompt, restart [2]string
+		polled          int
+	}
+	var seen []meanwhile
+	app.during = func() {
+		var m meanwhile
+		m.prompt[0], m.prompt[1] = errorOf(f.call("agent.prompt", map[string]any{"target": "worker", "text": "Also this.", "from": "machine-watch"}))
+		m.restart[0], m.restart[1] = errorOf(f.call("agent.restart", map[string]any{"target": "worker", "mode": "fresh", "force": true}))
+		m.polled = len(messagesOf(t, f.on(&conn{}, "agent.inbox", map[string]any{"tile": term})))
+		seen = append(seen, m)
+	}
+	attached := f.router.HandleConn(map[string]any{"id": "a", "method": "client.attach", "params": map[string]any{
+		"version": float64(api.SchemaVersion), "schema": api.SchemaHash, "serves": []any{"agent.restart"}, "boards": []any{f.board.ID()},
+	}}, app).(map[string]any)
+	if attached["ok"] != true {
+		t.Fatalf("client.attach: %v", attached)
+	}
+	fresh := map[string]any{"target": "worker", "mode": "fresh"}
+
+	if code, _ := errorOf(f.call("agent.restart", fresh)); code != "conflict" {
+		t.Fatalf("the client's refusal: %s", code)
+	}
+	if got := texts(f.board.Messages(term)); !reflect.DeepEqual(got, []string{"Nightly failed."}) {
+		t.Fatalf("refused: queued %q", got)
+	}
+	if sent := f.result("agent.prompt", map[string]any{"target": "worker", "text": "Now this.", "from": "machine-watch"}); sent["delivery"] != "message" {
+		t.Fatalf("refused, the terminal takes prompts again: %v", sent)
+	}
+
+	f.result("agent.restart", fresh)
+	want := []string{"undelivered to worker@root: Nightly failed. (from machine-watch)", "undelivered to worker@root: Now this. (from machine-watch)"}
+	if got := f.bounced(); !reflect.DeepEqual(sorted(got...), want) {
+		t.Fatalf("relaunched: bounced %q, want %q", got, want)
+	}
+	restarting := [2]string{"conflict", term + " is restarting (agent.restart): nothing reaches it until its agent is relaunched; send again once it reports"}
+	busy := [2]string{"conflict", term + " is already restarting (another agent.restart): wait for that one to finish"}
+	if len(seen) != 2 {
+		t.Fatalf("the client was asked %d times, want 2", len(seen))
+	}
+	for i, m := range seen {
+		if m.prompt != restarting || m.restart != busy || m.polled != 0 {
+			t.Errorf("restart %d, meanwhile: prompt %q, restart %q, a poll took %d", i, m.prompt, m.restart, m.polled)
+		}
+	}
+	if len(app.asked) != 2 {
+		t.Errorf("the client was asked %d times: a restart refused meanwhile reached it", len(app.asked))
+	}
+	if sent := f.result("agent.prompt", map[string]any{"target": "worker", "text": "Welcome back.", "from": "machine-watch"}); sent["delivery"] != "message" {
+		t.Errorf("relaunched, the terminal takes prompts again: %v", sent)
 	}
 }
