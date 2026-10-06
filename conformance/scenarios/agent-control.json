@@ -1,0 +1,199 @@
+{
+  "description": "Agent control: agent.report keeps draft and pid in props.agent (a report without them forgets them), agent.report_session keeps model and thinking (a report without them keeps the last), agent.list says open, focused, draft, model and thinking, and agent.restart's checks: target, mode, args, then its refusals in order (blocked, working, a draft), and resume without a recorded session. Never a restart that goes through: the app really relaunches the session.",
+  "ignore": {
+    "response.result.agents.*.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+    "response.result.agents.*.live": "whether the tile's zmx session runs (client)",
+    "response.result.agents.*.program": "the terminal's foreground program comes from its live surface (client)",
+    "response.result.agents.*.title": "the terminal's OSC title comes from its live surface (client)",
+    "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+    "response.result.agent.live": "whether the tile's zmx session runs (client)",
+    "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
+    "response.result.agent.title": "the terminal's OSC title comes from its live surface (client)"
+  },
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "terminal",
+        "props": {
+          "cwd": "{{root}}",
+          "command": [
+            "/bin/cat"
+          ],
+          "name": "worker"
+        },
+        "frame": {
+          "x": 50000,
+          "y": 50000,
+          "w": 600,
+          "h": 400
+        }
+      },
+      "save": "t"
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "idle",
+        "draft": true,
+        "pid": 999999
+      },
+      "note": "no such process (macOS pids stay below 100000): props.agent keeps it, agent.list leaves it out"
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "agent.list",
+      "params": {},
+      "keep": {
+        "result.agents": {
+          "board": "{{board}}"
+        }
+      }
+    },
+    {
+      "call": "agent.report_session",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "model": "anthropic/claude-opus-4-5",
+        "thinking": "high"
+      },
+      "note": "a model and thinking level, but no session to resume"
+    },
+    {
+      "call": "agent.report_session",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp"
+      },
+      "note": "without model and thinking: both kept"
+    },
+    {
+      "call": "agent.list",
+      "params": {},
+      "keep": {
+        "result.agents": {
+          "board": "{{board}}"
+        }
+      }
+    },
+    {
+      "call": "agent.restart",
+      "params": {
+        "target": "nobody",
+        "mode": "resume"
+      }
+    },
+    {
+      "call": "agent.restart",
+      "params": {
+        "target": "worker",
+        "mode": "restart"
+      }
+    },
+    {
+      "call": "agent.restart",
+      "params": {
+        "target": "worker",
+        "mode": "resume",
+        "args": [
+          "--plan",
+          1
+        ]
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "blocked",
+        "message": "Allow rm?",
+        "draft": true
+      }
+    },
+    {
+      "call": "agent.restart",
+      "params": {
+        "target": "worker",
+        "mode": "resume"
+      },
+      "note": "blocked, with a draft too: the dialog is named first"
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "working",
+        "draft": true
+      }
+    },
+    {
+      "call": "agent.restart",
+      "params": {
+        "target": "worker",
+        "mode": "resume"
+      },
+      "note": "working, with a draft too: the turn is named first"
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "idle",
+        "draft": true
+      }
+    },
+    {
+      "call": "agent.restart",
+      "params": {
+        "target": "{{t.object.id}}",
+        "mode": "resume"
+      },
+      "note": "idle with a draft"
+    },
+    {
+      "call": "agent.restart",
+      "params": {
+        "target": "worker",
+        "mode": "resume",
+        "force": true
+      },
+      "note": "forced past the draft: no session was ever recorded to resume"
+    },
+    {
+      "call": "agent.report",
+      "params": {
+        "tile": "{{t.object.id}}",
+        "kind": "omp",
+        "state": "idle"
+      },
+      "note": "without draft: forgotten"
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{t.object.id}}"
+      }
+    },
+    {
+      "call": "agent.list",
+      "params": {},
+      "keep": {
+        "result.agents": {
+          "board": "{{board}}"
+        }
+      }
+    }
+  ]
+}

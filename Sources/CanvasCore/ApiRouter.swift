@@ -151,6 +151,19 @@ public final class ApiRouter {
     /// A terminal tile's live title (OSC 0/2), foreground program (`TerminalName.program`) and
     /// last finished command, as its tile knows them now; nil without the app UI.
     public var terminalStatus: ((Board, ObjectID) -> TerminalStatus)?
+    /// This instance's zmx sessions on this Mac now, by tile (their `canvas.tile` label), each
+    /// with its board and foreground process (agent.list `live`, `pid`); nil without zmx. Runs
+    /// `zmx list` off the main actor.
+    public var terminalSessions: (() async -> [ObjectID: TerminalSession]?)?
+    /// Hosted terminals' sessions (`props.host`): for each of `hosts` whose easld this app is
+    /// connected to and answered `session.list`, the tiles whose sessions run there (agent.list
+    /// `live`). A host left out can't be asked now.
+    public var hostedSessions: ((_ hosts: [String]) async -> [String: Set<ObjectID>])?
+    /// Kills terminal `tile`'s session (a hosted tile's through its host's easld) and starts a
+    /// new one running `argv` in the same tile (agent.restart), calling `ended` in between: once
+    /// the old session is gone, before the new one starts. Throws `Failure` when the tile isn't
+    /// shown in a window, or its host can't be reached.
+    public var restartTerminal: ((Board, ObjectID, _ argv: [String], _ ended: @escaping @MainActor () -> Void) async throws -> Void)?
     /// Inside tmux, what the active pane of a terminal tile's tmux client runs
     /// (`TerminalName.program`; its shell at that pane's prompt); nil when the tile's foreground
     /// program isn't tmux or tmux doesn't say.
@@ -201,6 +214,15 @@ public final class ApiRouter {
         let tile: ObjectID
     }
 
+    /// agent.list's closed boards (`StoredTerminals`), by board file name, reread when a file changes.
+    var storedTerminals: [String: StoredTerminals] = [:]
+
+    /// A restarted terminal's prompt bookkeeping went with its old agent (agent.restart).
+    func forgetPrompts(to tile: ObjectID) {
+        pendingPrompts[tile] = nil
+        promptMarks[tile] = nil
+    }
+
     private struct Waiter {
         let token = UUID()
         let id: JSONValue
@@ -246,6 +268,8 @@ public final class ApiRouter {
             if method == "agent.inbox" { return try await inbox(id, params, connection) }
             if method == "agent.read" { return Self.ok(id, try await read(params)) }
             if method == "agent.prompt" { return Self.ok(id, try await prompt(params)) }
+            if method == "agent.list" { return Self.ok(id, await agentList()) }
+            if method == "agent.restart" { return Self.ok(id, try await restart(params)) }
             if method == "view.render" { return Self.ok(id, try await render(params)) }
             if method == "view.snapshot" { return Self.ok(id, try await snapshot(params)) }
             if method == "tray.drain" { return Self.ok(id, try await drain(params)) }
@@ -489,7 +513,7 @@ public final class ApiRouter {
             "lifecycle": terminal.props["lifecycle"] ?? .object(["state": .string(LifecycleState.unknown.rawValue)]),
             "lastCommand": status?.lastCommand.map { $0.command.json(finishedAt: $0.finishedAt) } ?? .null,
         ]
-        return .object(entry.filter { $0.value != .null })
+        return .object(entry.merging(agentControlFields(terminal, status: status)) { _, new in new }.filter { $0.value != .null })
     }
 
     /// `agent.read`: the tail of the session text, or with `since: "prompt"` what the terminal
@@ -1239,24 +1263,14 @@ public final class ApiRouter {
 
         case "agent.report_session":
             let tile = try string(p, "tile")
-            try board(forObject: tile).reportSession(tile: tile, kind: try string(p, "kind"), sessionId: p["sessionId"]?.string, sessionPath: p["sessionPath"]?.string)
+            try board(forObject: tile).reportSession(tile: tile, kind: try string(p, "kind"), sessionId: p["sessionId"]?.string, sessionPath: p["sessionPath"]?.string,
+                                                     model: p["model"]?.string, thinking: p["thinking"]?.string)
             return .object([:])
 
         case "agent.release":
             let tile = try string(p, "tile")
             try board(forObject: tile).releaseAgent(tile: tile)
             return .object([:])
-
-        case "agent.list":
-            // Every terminal: one whose agent never reported (a shell, aider, an unhooked CLI) is
-            // kind and lifecycle `unknown`, so tools still see it and can prompt and read it.
-            var agents: [JSONValue] = []
-            for board in registry.boards.values.sorted(by: { $0.id < $1.id }) {
-                for object in board.objects.values.sorted(by: { $0.id < $1.id }) where object.type == .terminal {
-                    agents.append(agentEntry(object, on: board))
-                }
-            }
-            return .object(["agents": .array(agents)])
 
         case "follow.report":
             let tile = try string(p, "tile")

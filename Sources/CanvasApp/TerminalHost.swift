@@ -39,6 +39,10 @@ final class TerminalHost {
         return host
     }
 
+    /// The host named `target`, if a hosted tile made this app connect to it; nil otherwise
+    /// (nothing here asks a host it never connected to).
+    static func existing(_ target: String) -> TerminalHost? { hosts[target] }
+
     /// Ends every connection (at quit). The tiles' attaches go with them; the sessions don't.
     static func closeAll() {
         for host in hosts.values {
@@ -293,6 +297,52 @@ final class TerminalHost {
     func hasSession(_ tile: ObjectID) async -> Bool? {
         guard let result = try? await call("session.list", .object([:])), let sessions = result["sessions"]?.array else { return nil }
         return sessions.contains { $0["tile"]?.string == tile }
+    }
+
+    /// The tiles whose sessions run on the host, started by this instance (labelled with its
+    /// home): agent.list `live` for hosted terminals. Nil while the host isn't online (a listing
+    /// never opens a connection) or its easld can't be asked.
+    func liveSessions() async -> Set<ObjectID>? {
+        guard state == .online, let result = try? await call("session.list", .object([:])), let sessions = result["sessions"]?.array else { return nil }
+        return Set(sessions.compactMap { $0["labels"]?["canvas.home"]?.string == TerminalTile.homeLabel ? $0["tile"]?.string : nil })
+    }
+
+    /// agent.restart of hosted `tile`: easld ends its session (`session.kill`, only this
+    /// instance's) and, once it no longer lists it (at most 3 s), `ended` runs and easld starts
+    /// the relaunch running `argv` in a new one (`session.spawn`). Fails `unavailable` while the
+    /// host isn't online, leaving the session as it was.
+    func restart(_ tile: TerminalTile, running argv: [String], ended: @escaping @MainActor () -> Void) async throws {
+        let id = tile.objectID
+        guard state == .online, let home, let run else {
+            throw ApiRouter.Failure("unavailable", "\(target) is offline: terminal \(id)'s session there can't be restarted until it is back")
+        }
+        _ = try await call("session.kill", .object(["tile": .string(id), "home": .string(TerminalTile.homeLabel)]))
+        var waited = 0
+        while await hasSession(id) != false {
+            waited += 1
+            guard waited <= 30 else {
+                throw ApiRouter.Failure("unavailable", "\(target) still lists terminal \(id)'s session 3 s after ending it")
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        ended()
+        guard let params = tile.hostedSpawnParams(home: home, run: run, argv: argv) else {
+            throw ApiRouter.Failure("not_found", "terminal \(id) was closed")
+        }
+        let result: JSONValue
+        do {
+            result = try await call("session.spawn", params)
+        } catch {
+            failures[id] = (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
+            tile.hostChanged()
+            throw error
+        }
+        failures[id] = nil
+        tile.hostChanged()
+        guard result["created"]?.bool == true else {
+            throw ApiRouter.Failure("unavailable", "\(target) started terminal \(id)'s session again before the relaunch could")
+        }
+        NSLog("easl: %@ restarted %@ on %@", id, result["session"]?.string ?? "", target)
     }
 
     /// Ends `tile`'s session (owner-guarded by this instance's home label); logged when the host

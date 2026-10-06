@@ -219,6 +219,8 @@ func (r *Router) call(id any, method string, raw any, c Conn) (any, error) {
 		return r.read(p)
 	case "agent.prompt":
 		return r.prompt(p)
+	case "agent.restart":
+		return r.restart(p)
 	case "view.render":
 		return r.render(p)
 	case "view.snapshot":

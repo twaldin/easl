@@ -31,6 +31,9 @@ class FakeApp:
         self.drop_next_request = False
         # (method, seconds): the first such request restarts the app (socket gone that long) unanswered.
         self.restart_on: tuple[str, float] | None = None
+        # method → replies, each `{"result": ...}` or `{"error": {...}}`, taken in order; once a method's
+        # run out (or for any other method) the request's method and params are the result.
+        self.replies: dict[str, list[dict]] = {}
         self._conns: list[socket.socket] = []
         self._listener: socket.socket | None = None
         self.listen()
@@ -101,7 +104,9 @@ class FakeApp:
                         after, self.restart_on = self.restart_on[1], None
                         self.restart(after)
                         return
-                    reply = {"id": request["id"], "ok": True, "result": {"method": request["method"], "params": request["params"]}}
+                    scripted = self.replies.get(request["method"])
+                    answer = scripted.pop(0) if scripted else {"result": {"method": request["method"], "params": request["params"]}}
+                    reply = {"id": request["id"], "ok": "error" not in answer, **answer}
                     conn.sendall((json.dumps(reply) + "\n").encode())
             except (OSError, ValueError):
                 return

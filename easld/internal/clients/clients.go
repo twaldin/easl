@@ -24,7 +24,7 @@ import (
 )
 
 // Delegated are the methods a client can serve (client.attach `serves`).
-var Delegated = []string{"view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "object.reload", "text.measure"}
+var Delegated = []string{"view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "text.measure"}
 
 // Deadlines without a caller's timeoutMs (object.reload and view.render add theirs).
 const (

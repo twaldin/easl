@@ -79,7 +79,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let terminal = self?.content(of: tile, on: board) as? TerminalTile else { return TerminalStatus() }
             terminal.refreshProgram()
             // Gemini CLI pads its title to a fixed width.
-            return TerminalStatus(title: terminal.oscTitle?.trimmingCharacters(in: .whitespaces), program: terminal.program, lastCommand: terminal.lastCommand)
+            return TerminalStatus(title: terminal.oscTitle?.trimmingCharacters(in: .whitespaces), program: terminal.program, lastCommand: terminal.lastCommand,
+                                  pid: terminal.foregroundPid, focused: terminal.isWatched)
+        }
+        router.terminalSessions = {
+            let home = TerminalTile.homeLabel, legacy = TerminalTile.legacyHomeLabels
+            return await offPool { Zmx.sessions(home: home, legacy: legacy) }
+        }
+        router.hostedSessions = { hosts in
+            var live: [String: Set<ObjectID>] = [:]
+            for target in hosts {
+                if let host = TerminalHost.existing(target), let running = await host.liveSessions() { live[target] = running }
+            }
+            return live
+        }
+        router.restartTerminal = { [weak self] board, tile, argv, ended in
+            guard let terminal = self?.content(of: tile, on: board) as? TerminalTile else {
+                throw ApiRouter.Failure("unavailable", "terminal \(tile) isn't shown in a window")
+            }
+            NSLog("easl: restarting terminal %@: %@", tile, argv.joined(separator: " "))
+            try await terminal.restart(running: argv, ended: ended)
         }
         router.tmuxPane = { [weak self] board, tile in
             guard let terminal = self?.content(of: tile, on: board) as? TerminalTile else { return nil }

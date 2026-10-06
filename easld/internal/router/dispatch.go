@@ -159,7 +159,14 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 		if s, ok := optStr(p, "sessionPath"); ok {
 			spath = &s
 		}
-		if err := b.ReportSession(tile, kind, sid, spath); err != nil {
+		var agentModel, thinking *string
+		if s, ok := optStr(p, "model"); ok {
+			agentModel = &s
+		}
+		if s, ok := optStr(p, "thinking"); ok {
+			thinking = &s
+		}
+		if err := b.ReportSession(tile, kind, sid, spath, agentModel, thinking); err != nil {
 			return nil, err
 		}
 		return map[string]any{}, nil
@@ -190,7 +197,7 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 				agents = append(agents, r.agentEntry(b.Objects()[id], b))
 			}
 		}
-		return map[string]any{"agents": agents}, nil
+		return map[string]any{"agents": append(agents, r.closedBoardAgents()...)}, nil
 	case "follow.report":
 		return r.followReport(p)
 	case "view.attention":

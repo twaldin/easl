@@ -11,6 +11,10 @@
 //   easl metrics [--watch] [--reset] [--json]       app.metrics as text (--watch: every second)
 //   easl ask "question" --option id=label[:why] ... [--wait]   a question tile for the user: object.create type question
 //   easl ask list|get|cancel|wait ...    the question verbs (object.find, object.get, object.update, the --wait loop); `easl ask --help`
+//   easl agent spawn --name <n> --command '<argv>' [--cwd <dir>] [--board <id>] [--prompt <text>] [--wait] [--timeout <ms>]
+//                                        a new terminal tile running an agent (object.create), optionally
+//                                        prompted once it is ready (agent.wait, agent.prompt); prints
+//                                        {tile, name, board, command, prompted?, agent?}
 // view.render and view.snapshot write the image to --out (relative to the cwd; format from the
 // extension) or, without it, to a new file under $TMPDIR/easl-renders/, and print the result
 // metadata with its `path`; so does `browser screenshot`. object.create/update print prop values
@@ -27,7 +31,7 @@ import { hostname, tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import catalog from "../schema/easl-api.json";
-import { CanvasClient, CanvasError, DEFAULT_SOCKET, ENV_DEFAULTS } from "../clients/ts/src/index";
+import { CanvasClient, CanvasError, DEFAULT_SOCKET, ENV_DEFAULTS, type Agent } from "../clients/ts/src/index";
 
 type Schema = {
   type?: string | string[];
@@ -52,6 +56,10 @@ const definitions = catalog.definitions as Record<string, Schema>;
 const SKILL = resolve(import.meta.dir, "../skills/easl/SKILL.md");
 /** Printed prop values longer than this (JSON bytes) are elided unless `--full`. */
 const ELIDE_BYTES = 1024;
+/** How long `easl agent spawn` waits for its agent to be ready by default (--timeout). */
+const SPAWN_TIMEOUT_MS = 120_000;
+/** Between agent.wait retries while a spawned agent hasn't reported (each `unavailable`). */
+const SPAWN_RETRY_MS = 1000;
 
 const ASK_FORMS = [
   'easl ask "question" --option id=label[:why] ... [--recommend id] [--context obj_…|url|path[:a[-b]]] ... [--asker name[@host]] [--expires 30m|2h|1d|45s|ISO] [--board brd_…] [--wait]',
@@ -77,6 +85,7 @@ function usage(help = false): never {
     "       easl browser <verb> [<tile>] [--key value] [--json '{...}']   (open [url] | list | close | navigate, snapshot, click, …)",
     "       easl metrics [--watch] [--reset] [--json]",
     ...ASK_FORMS.map((form) => `       ${form}`),
+    "       easl agent spawn --name <n> --command '<argv>' [--cwd <dir>] [--board <id>] [--prompt <text>] [--wait] [--timeout <ms>]",
   ];
   if (help) {
     lines.push(
@@ -91,6 +100,10 @@ function usage(help = false): never {
       "this terminal, `list` lists this board's, `close <tile>` closes one, any other verb sends browser.<verb> to <tile>",
       "(e.g. `easl browser snapshot obj_… --interactive`, `easl browser click obj_… --selector @e2`).",
       ...ASK_HELP,
+      "`easl agent spawn` creates a terminal tile named <n> in <dir> (default: the current directory) running <argv>",
+      "(a JSON array, or words split as a shell splits them), on this board unless --board. --prompt sends it a prompt",
+      "once its agent reports ready (idle); --wait waits for that prompt's turn to end (without --prompt: until it is",
+      "ready). --timeout bounds the wait for ready, default 120000 ms. Prints {tile, name, board, command, prompted, agent}.",
       "",
       `How to use easl well (read before building on the board): ${SKILL}`,
     );
@@ -771,6 +784,134 @@ if (argv[0] === "ask") {
     if (error instanceof CanvasError) console.error(`${error.code}: ${error.message}`);
     else console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
+  }
+  process.exit();
+}
+
+/**
+ * The argv of `easl agent spawn --command`: a JSON array of strings as given (when it starts with
+ * `[`), else the words a POSIX shell would split it into: whitespace separates; '…' is literal;
+ * "…" keeps backslash escapes of " \ $ ` only; a backslash outside quotes escapes the next character.
+ */
+function commandArgv(value: string): string[] {
+  if (value.trimStart().startsWith("[")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value);
+    } catch (error) {
+      throw new CanvasError("invalid_params", `--command: not a JSON array (${(error as Error).message})`);
+    }
+    if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every((item) => typeof item === "string")) {
+      throw new CanvasError("invalid_params", "--command: a JSON array of strings, the program first");
+    }
+    return parsed;
+  }
+  const words: string[] = [];
+  let word = "";
+  let inWord = false; // '' and "" make an empty word
+  let quote: "'" | '"' | undefined;
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (quote === "'") {
+      if (char === "'") quote = undefined;
+      else word += char;
+    } else if (quote === '"') {
+      if (char === '"') quote = undefined;
+      else if (char === "\\" && '"\\$`'.includes(value[i + 1] ?? "x")) word += value[++i];
+      else word += char;
+    } else if (/\s/.test(char)) {
+      if (inWord) words.push(word);
+      word = "";
+      inWord = false;
+    } else {
+      inWord = true;
+      if (char === "'" || char === '"') quote = char;
+      else if (char === "\\" && i + 1 < value.length) word += value[++i];
+      else word += char;
+    }
+  }
+  if (quote) throw new CanvasError("invalid_params", `--command: unterminated ${quote} quote`);
+  if (inWord) words.push(word);
+  if (words.length === 0) throw new CanvasError("invalid_params", "--command names no program");
+  return words;
+}
+
+type SpawnOptions = { name: string; cwd: string; command: string[]; board?: string; prompt?: string; wait: boolean; timeoutMs: number };
+
+/** `easl agent spawn`'s flags; values are taken as typed (`--prompt --help` is a prompt). */
+function spawnOptions(args: string[]): SpawnOptions {
+  const values: Record<string, string> = {};
+  let wait = false;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--wait") {
+      wait = true;
+      continue;
+    }
+    const key = args[i].slice(2);
+    if (!args[i].startsWith("--") || !["name", "cwd", "command", "board", "prompt", "timeout"].includes(key) || args[i + 1] === undefined) usage();
+    values[key] = args[++i];
+  }
+  if (!values.name || values.command === undefined) usage();
+  const timeoutMs = values.timeout === undefined ? SPAWN_TIMEOUT_MS : Number(values.timeout);
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new CanvasError("invalid_params", `--timeout is a positive number of milliseconds, not ${values.timeout}`);
+  return { name: values.name, cwd: resolve(values.cwd ?? "."), command: commandArgv(values.command), board: values.board, prompt: values.prompt, wait, timeoutMs };
+}
+
+/**
+ * Waits for a just-spawned terminal's agent to be ready (idle or done) by `deadline`. Its lifecycle
+ * is unknown until its first report, and agent.wait gives such a terminal 15 s before answering
+ * `unavailable`, so those answers are retried until the deadline.
+ */
+async function untilReady(client: CanvasClient, tile: string, deadline: number, timeoutMs: number): Promise<Agent> {
+  let last = "";
+  for (;;) {
+    const left = deadline - Date.now();
+    if (left <= 0) throw new CanvasError("timeout", `${tile}'s agent was not ready (idle) within ${timeoutMs} ms${last && `; last: ${last}`}`);
+    try {
+      return (await client.api.agent.wait({ target: tile, until: ["idle", "done"], timeoutMs: left })).agent;
+    } catch (error) {
+      if (!(error instanceof CanvasError) || error.code !== "unavailable") throw error;
+      last = error.message;
+    }
+    await Bun.sleep(Math.min(SPAWN_RETRY_MS, Math.max(0, deadline - Date.now())));
+  }
+}
+
+/** `easl agent spawn`: the terminal (object.create), then, as asked, its readiness, the prompt, and that prompt's turn. */
+async function spawnAgent(client: CanvasClient, options: SpawnOptions): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + options.timeoutMs;
+  const { object } = await client.api.object.create({ board: options.board, type: "terminal", props: { name: options.name, cwd: options.cwd, command: options.command } });
+  const tile = object.id;
+  let agent: Agent | undefined;
+  let prompted: boolean | undefined;
+  try {
+    if (options.prompt !== undefined || options.wait) agent = await untilReady(client, tile, deadline, options.timeoutMs);
+    if (options.prompt !== undefined) {
+      agent = (await client.api.agent.prompt({ target: tile, text: options.prompt })).agent;
+      prompted = true;
+      if (options.wait) agent = (await client.api.agent.wait({ target: tile })).agent;
+    }
+  } catch (error) {
+    // The terminal stays: say which, so the caller can use or close it.
+    if (error instanceof CanvasError) throw new CanvasError(error.code, `${error.message} (spawned terminal ${tile}${prompted ? ", prompted" : ""})`, error.data);
+    throw error;
+  }
+  const board = agent?.board ?? options.board ?? client.boardId ?? (await client.api.agent.list({})).agents.find((entry) => entry.tile === tile)?.board;
+  return { tile, name: options.name, board, command: options.command, prompted, agent };
+}
+
+if (argv[0] === "agent" && argv[1] === "spawn") {
+  let client: CanvasClient | undefined;
+  try {
+    const options = spawnOptions(argv.slice(2));
+    client = new CanvasClient();
+    console.log(JSON.stringify(await spawnAgent(client, options), null, 2));
+  } catch (error) {
+    if (error instanceof CanvasError) console.error(`${error.code}: ${error.message}`);
+    else console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  } finally {
+    client?.close();
   }
   process.exit();
 }

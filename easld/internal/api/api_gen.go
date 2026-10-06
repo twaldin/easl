@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "41682b25da41a75b"
+const SchemaHash = "015b0c6b5f07edf5"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -141,11 +141,11 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"ids"},
 	},
 	"agent.report": {
-		Accepted: []string{"tile", "kind", "state", "message", "seq", "source", "call", "final", "serial", "error", "protocol"},
+		Accepted: []string{"tile", "kind", "state", "message", "seq", "source", "call", "final", "serial", "error", "protocol", "draft", "pid"},
 		Required: []string{"tile", "kind", "state"},
 	},
 	"agent.report_session": {
-		Accepted: []string{"tile", "kind", "sessionId", "sessionPath"},
+		Accepted: []string{"tile", "kind", "sessionId", "sessionPath", "model", "thinking"},
 		Required: []string{"tile", "kind"},
 	},
 	"agent.release": {
@@ -171,6 +171,10 @@ var Methods = map[string]ParamSpec{
 	"agent.inbox": {
 		Accepted: []string{"tile", "ack", "started", "waitMs"},
 		Required: []string{"tile"},
+	},
+	"agent.restart": {
+		Accepted: []string{"target", "caller", "mode", "args", "force"},
+		Required: []string{"target", "mode"},
 	},
 	"follow.report": {
 		Accepted: []string{"tile", "path", "range", "changes", "action"},
@@ -284,13 +288,21 @@ type Lifecycle struct {
 // ObjectKey: any object: a name a script finds it by (`object.find`, `object.upsert`), e.g. a ticket id on the group that is its region. Unique on its board: taking one another object holds is `conflict`, naming the holder; null removes it
 type ObjectKey = string
 
-// TerminalPropsAgent: the agent reporting in this tile. When the tile's session is gone (a reboot) it resumes `sessionId` (`omp --resume`, `claude --resume`, `codex resume`). Removed when the agent exits (agent.release)
+// TerminalPropsAgent: the agent reporting in this tile. When the tile's session is gone (a reboot) it resumes `sessionId` (`omp --resume`, `claude --resume`, `codex resume`); agent.restart relaunches it with `model` and `thinking`. Removed when the agent exits (agent.release)
 type TerminalPropsAgent struct {
 	Kind        string  `json:"kind"`
 	SessionID   *string `json:"sessionId,omitempty"`
 	SessionPath *string `json:"sessionPath,omitempty"`
 	// the integration protocol version it reports (agent.report `protocol`)
 	Protocol *int `json:"protocol,omitempty"`
+	// the model it runs, as its integration last reported it (agent.report_session `model`, omp: `provider/id`)
+	Model *string `json:"model,omitempty"`
+	// its thinking level, as its integration last reported it (agent.report_session `thinking`, omp: `off` … `max`)
+	Thinking *string `json:"thinking,omitempty"`
+	// its input editor holds text the user hasn't sent (agent.report `draft`); absent: its integration doesn't say
+	Draft *bool `json:"draft,omitempty"`
+	// the agent's process id, as its integration last reported it (agent.report `pid`)
+	Pid *int `json:"pid,omitempty"`
 }
 
 type TerminalProps struct {
@@ -303,7 +315,7 @@ type TerminalProps struct {
 	Title *string `json:"title,omitempty"`
 	// a name other agents address this terminal by: `name` or `name@board` as agent.prompt/wait/read `target` (docs/contracts.md, Agent addresses). Unique within its board is enough; renaming keeps the old name as an alias until another terminal on the board takes it
 	Name *string `json:"name,omitempty"`
-	// the agent reporting in this tile. When the tile's session is gone (a reboot) it resumes `sessionId` (`omp --resume`, `claude --resume`, `codex resume`). Removed when the agent exits (agent.release)
+	// the agent reporting in this tile. When the tile's session is gone (a reboot) it resumes `sessionId` (`omp --resume`, `claude --resume`, `codex resume`); agent.restart relaunches it with `model` and `thinking`. Removed when the agent exits (agent.release)
 	Agent     *TerminalPropsAgent `json:"agent,omitempty"`
 	Lifecycle *Lifecycle          `json:"lifecycle,omitempty"`
 	// follow mode: false after the user closes the terminal's follow tile (or turns Follow Files off); follow.report is then ignored until it is true again
@@ -833,6 +845,20 @@ type Agent struct {
 	Lifecycle Lifecycle `json:"lifecycle"`
 	// the last command the terminal's shell finished (Ghostty's shell integration reports it); absent until one did
 	LastCommand *TerminalCommand `json:"lastCommand,omitempty"`
+	// its board is open in easl. false: a tile of a closed board, as its saved board file has it (lifecycle `state`, `seen`, `restored` as last saved; no title, program or last command)
+	Open bool `json:"open"`
+	// its zmx session runs (a session labelled `canvas.board=<board> canvas.tile=<tile>` by this easl instance; docs/contracts.md); a hosted terminal's (`props.host`) as its host's easld lists it (`session.list`). Absent when easl can't tell (no zmx; a host it isn't connected to, or that doesn't answer)
+	Live *bool `json:"live,omitempty"`
+	// the agent's process on this machine: the pid its integration reported (agent.report `pid`) while that process lives, else the foreground process of the tile's zmx session; absent when nothing but its shell runs there, the session is gone, or it runs on another machine (a hosted terminal)
+	Pid *int `json:"pid,omitempty"`
+	// the terminal has keyboard focus in the key window while easl is the frontmost app: the user may be typing in it. Always false on a closed board
+	Focused bool `json:"focused"`
+	// its agent's input editor holds unsent text (agent.report `draft`, omp's extension); absent when its integration doesn't say
+	Draft *bool `json:"draft,omitempty"`
+	// the model its agent runs, as its integration last reported it (agent.report_session `model`)
+	Model *string `json:"model,omitempty"`
+	// its agent's thinking level, as its integration last reported it (agent.report_session `thinking`)
+	Thinking *string `json:"thinking,omitempty"`
 }
 
 // AgentMessage: An out-of-band message queued for a terminal whose integration takes messages (agent.report `protocol` ≥ 1)

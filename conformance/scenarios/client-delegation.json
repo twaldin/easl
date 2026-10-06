@@ -28,7 +28,7 @@
         "schema": "{{schemaHash}}",
         "app": "0.2.0",
         "host": "studio",
-        "serves": ["view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "object.reload", "text.measure"],
+        "serves": ["view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "text.measure"],
         "boards": ["{{board}}"],
         "focused": "{{board}}"
       },
@@ -50,6 +50,9 @@
         "agent.read": [
           { "result": { "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "kind": "omp", "lifecycle": { "state": "idle" } }, "text": "$ omp\n> hello", "lines": 2 } },
           { "result": { "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "kind": "omp", "lifecycle": { "state": "idle" } }, "text": "> hello\nhi there", "lines": 2 } }
+        ],
+        "agent.restart": [
+          { "result": { "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "address": "worker@client-delegation", "kind": "omp", "lifecycle": { "state": "unknown" }, "open": true, "focused": false }, "command": ["omp", "--plan"] } }
         ],
         "object.reload": [
           { "result": { "loaded": true, "url": "https://example.com/" } }
@@ -86,6 +89,12 @@
     { "call": "agent.read", "params": { "target": "worker", "lines": 10 } },
     { "call": "agent.read", "params": { "target": "{{t.object.id}}", "since": "prompt" } },
     { "call": "agent.read", "params": { "target": "{{t.object.id}}", "final": true }, "note": "final is easld's: not forwarded" },
+    {
+      "call": "agent.restart",
+      "params": { "target": "worker", "mode": "fresh", "args": ["--plan"] },
+      "note": "easld's checks pass (an omp tile, nothing to lose): forwarded with the target as its id, and the client's relaunch is the caller's"
+    },
+    { "call": "agent.restart", "params": { "target": "{{t.object.id}}", "mode": "resume" }, "note": "no session recorded to resume: easld refuses, nothing is forwarded" },
     { "call": "object.reload", "params": { "id": "{{web.object.id}}", "timeoutMs": 1000 } },
     {
       "call": "text.measure",

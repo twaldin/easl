@@ -505,9 +505,15 @@ public enum AgentResume {
     /// program is that agent (by name, any directory).
     public static func argv(kind: String, sessionId: String, command: [String] = []) -> [String]? {
         guard let grammar = grammar(kind) else { return nil }
-        guard let first = command.first, (first as NSString).lastPathComponent == grammar.program else {
-            return grammar.resume(grammar.program, [], sessionId)
-        }
+        let (program, kept) = options(of: command, grammar)
+        return grammar.resume(program, kept, sessionId)
+    }
+
+    /// The program `command` runs the agent as (its own path when it is that agent, else the
+    /// agent's name) and the options of it the agent keeps (`Grammar.dropped` and `dropping`
+    /// left out with their values, and positional words unless `keepsPositionals`).
+    static func options(of command: [String], _ grammar: Grammar, dropping: Set<String> = []) -> (program: String, kept: [String]) {
+        guard let first = command.first, (first as NSString).lastPathComponent == grammar.program else { return (grammar.program, []) }
         var kept: [String] = []
         var words = command.dropFirst()[...]
         var positionalOnly = false
@@ -532,8 +538,8 @@ public enum AgentResume {
                     words.removeFirst()
                 }
             }
-            if !grammar.dropped.contains(name) { kept += option }
+            if !grammar.dropped.contains(name), !dropping.contains(name) { kept += option }
         }
-        return grammar.resume(first, kept, sessionId)
+        return (first, kept)
     }
 }

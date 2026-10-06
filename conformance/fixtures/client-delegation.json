@@ -336,6 +336,7 @@
           "view.snapshot",
           "agent.prompt",
           "agent.read",
+          "agent.restart",
           "object.reload",
           "text.measure"
         ],
@@ -704,6 +705,68 @@
       }
     },
     {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "args": [
+          "--plan"
+        ],
+        "mode": "fresh",
+        "target": "worker"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "agent": {
+            "address": "worker@client-delegation",
+            "board": "<board>",
+            "focused": false,
+            "kind": "omp",
+            "lifecycle": {
+              "state": "unknown"
+            },
+            "open": true,
+            "root": "<root>",
+            "tile": "<obj:3>"
+          },
+          "command": [
+            "omp",
+            "--plan"
+          ]
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "agent.restart",
+          "params": {
+            "args": [
+              "--plan"
+            ],
+            "mode": "fresh",
+            "target": "<obj:3>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "mode": "resume",
+        "target": "<obj:3>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "<obj:3> has no recorded agent session to resume (its agent never reported one, or it exited); mode fresh starts it anew"
+        },
+        "id": "r18",
+        "ok": false
+      }
+    },
+    {
       "step": "object.reload",
       "method": "object.reload",
       "request": {
@@ -711,7 +774,7 @@
         "timeoutMs": 1000
       },
       "response": {
-        "id": "r17",
+        "id": "r19",
         "ok": true,
         "result": {
           "loaded": true,
@@ -760,7 +823,7 @@
         ]
       },
       "response": {
-        "id": "r18",
+        "id": "r20",
         "ok": true,
         "result": {
           "sizes": [
@@ -834,7 +897,7 @@
         "width": 300
       },
       "response": {
-        "id": "r19",
+        "id": "r21",
         "ok": true,
         "result": {
           "h": 72,
@@ -874,7 +937,7 @@
         "type": "note"
       },
       "response": {
-        "id": "r20",
+        "id": "r22",
         "ok": true,
         "result": {
           "object": {
@@ -965,7 +1028,7 @@
         "type": "arrow"
       },
       "response": {
-        "id": "r21",
+        "id": "r23",
         "ok": true,
         "result": {
           "object": {
@@ -1052,7 +1115,7 @@
         ]
       },
       "response": {
-        "id": "r22",
+        "id": "r24",
         "ok": true,
         "result": {
           "arrowCrossings": [],
