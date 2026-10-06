@@ -46,6 +46,11 @@ window_id() {
   pid="$(running_pid)" || { echo "no running dev instance" >&2; exit 1; }
   "$yabai" -m query --windows | python3 -c "import json,sys; print(next((w['id'] for w in json.load(sys.stdin) if w['pid']==$pid), ''))"
 }
+# Waits up to 5 s for the instance's first window to exist.
+wait_window() {
+  i=0
+  while [ -z "$(window_id)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+}
 export EASL_SOCKET="$home/easl.sock"
 # zmx keys its socket directory off TMPDIR; match the GUI app's.
 zmx_env() { TMPDIR="$(getconf DARWIN_USER_TEMP_DIR)" "$@"; }
@@ -118,13 +123,14 @@ launch() {
   bundle="$("$repo/scripts/dev-bundle.sh" $([ -n "${EASL_DEV_HOME:-}" ] || echo --release-id) "$app" "$home" "$@")"
   n=$#
   while [ "$n" -gt 0 ]; do set -- "$@" --env "$1"; shift; n=$((n - 1)); done
+  set -- --stdout "$home/app.log" --stderr "$home/app.log" --env EASL_HOME="$home" "$@" "$bundle"
   # EASL_DEV_LAUNCHER (a command, split on spaces) launches instead of `open -g -n`, with the same
   # `open` arguments, in the background (its output in $home/launcher.log), and places the window
   # itself: a guard that keeps test windows off a shared Mac's viewed Spaces, such as
   # `gui-launch --space 7 --guard-seconds 7200 -- -n` (docs/testing.md).
   if [ -n "${EASL_DEV_LAUNCHER:-}" ]; then
     # shellcheck disable=SC2086
-    $EASL_DEV_LAUNCHER --stdout "$home/app.log" --stderr "$home/app.log" --env EASL_HOME="$home" "$@" "$bundle" > "$home/launcher.log" 2>&1 &
+    $EASL_DEV_LAUNCHER "$@" > "$home/launcher.log" 2>&1 &
   else
     # yabai can't place a new window on another display's Space (it lands on the Space being
     # viewed), so a one-shot rule parks this launch's first window on an unviewed Space of the
@@ -136,7 +142,7 @@ launch() {
       "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
       "$yabai" -m rule --add --one-shot label="$rule" app="^easl$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
     fi
-    open -g -n --stdout "$home/app.log" --stderr "$home/app.log" --env EASL_HOME="$home" "$@" "$bundle"
+    open -g -n "$@"
   fi
   i=0
   while [ ! -S "$EASL_SOCKET" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
@@ -145,17 +151,13 @@ launch() {
   lsof -t "$EASL_SOCKET" | head -n 1 > "$home/pid"
   if [ -n "${EASL_DEV_LAUNCHER:-}" ] || [ ! -x "$yabai" ]; then
     # The launcher places the window; callers that look it up by pid (perf-loop.py) find it here.
-    if [ -x "$yabai" ]; then
-      i=0
-      while [ -z "$(window_id)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
-    fi
+    [ ! -x "$yabai" ] || wait_window
     echo "easl pid $(cat "$home/pid"), EASL_SOCKET=$EASL_SOCKET"
     return
   fi
   target="$(test_space)"
   if [ "$target" != "$park" ]; then
-    i=0
-    while [ -z "$(window_id)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+    wait_window
     wid="$(window_id)"
     [ -n "$wid" ] && "$yabai" -m window "$wid" --space "$target" && "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
   fi

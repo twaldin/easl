@@ -31,12 +31,15 @@ extension BrowserTile {
     /// its text canvases at a quarter of their resolution: blurry text beside sharp images. The
     /// answer is the page area where the tile shows on screen, at the web view's own size (the
     /// page at 100%), not its on-screen size under the board's and the tile's zoom, so
-    /// outerWidth / innerWidth is 1.
+    /// outerWidth / innerWidth is 1. It's in AppKit's screen space, which WebKit flips itself
+    /// (`screenY` is the primary screen's top minus the frame's top), so the frame keeps the page
+    /// area's top-left corner where it shows: `screenX`/`screenY` are that corner at any zoom.
     @objc(_webView:getWindowFrameWithCompletionHandler:)
     func webView(_ webView: WKWebView, getWindowFrameWithCompletionHandler completion: @escaping (CGRect) -> Void) {
         var frame = CGRect(origin: .zero, size: webView.bounds.size)
         if let window = webView.window {
-            frame.origin = window.convertToScreen(webView.convert(webView.bounds, to: nil)).origin
+            let shown = window.convertToScreen(webView.convert(webView.bounds, to: nil))
+            frame.origin = CGPoint(x: shown.minX, y: shown.maxY - frame.height)
         }
         completion(frame)
     }
