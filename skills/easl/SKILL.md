@@ -358,6 +358,10 @@ A `conflict` saying the agent was working when easl last closed and hasn't repor
 Don't prompt an agent that is `blocked`; it is waiting for its user. `agent.prompt` to one fails with `conflict` quoting what it waits on, and so does one whose foreground program isn't its agent (nvim, another tmux pane): tell the user.
 Never answer another agent's approval with `force: true`: it types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow). Force only when you know the dialog is gone.
 
+## Terminals on another machine (offload)
+
+A terminal created with `props.host` (an ssh target such as `deckbox`) runs its session on that machine, under its easld, and attaches over ssh: `easl object.create --type terminal --json '{"props":{"host":"deckbox","command":["omp"]}}'`. `command` is argv (`["sleep","600"]`; a shell line is `["sh","-c","…"]`) and `cwd` is a directory on that machine. Your `easl` CLI and lifecycle work there as here. If you run there: Docker containers escape the machine's capped slice, so start any container with `--cpuset-cpus` inside the slice's CPUs and `--memory`; files you name (`path:line`, follow) are the host's, which the Mac's code tiles can't open yet.
+
 ## Compositions
 
 Reusable helpers come built into the SDKs, plus your own in `~/.easl/compositions` (yours shadow built-in ones of the same name). In Python:
