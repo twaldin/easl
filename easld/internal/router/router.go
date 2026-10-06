@@ -20,6 +20,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/clients"
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/relay"
 	"github.com/twaldin/easl/easld/internal/server"
 	"github.com/twaldin/easl/easld/internal/session"
 	"github.com/twaldin/easl/easld/internal/swiftjson"
@@ -61,6 +62,8 @@ type Router struct {
 	PromptStartGrace time.Duration
 	// Sessions runs hosted terminals' zmx sessions (session.*); nil: none (`unavailable`).
 	Sessions *session.Manager
+	// Relays serve clients' sockets on this machine (relay.open); nil: none (`unavailable`).
+	Relays *relay.Relays
 }
 
 // New is a router over reg; it observes every board's events (agent.wait), and measures the
@@ -88,7 +91,7 @@ func (r *Router) Handle(req any, c *server.Conn) any {
 
 // HandleConn is Handle for any connection.
 func (r *Router) HandleConn(req any, c Conn) any {
-	if reply, ok := r.sessionCall(req); ok {
+	if reply, ok := r.hostCall(req); ok {
 		return reply
 	}
 	r.reg.Mu.Lock()

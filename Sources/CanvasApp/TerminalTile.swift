@@ -204,11 +204,12 @@ final class TerminalTile: NSView, TileContent {
     }
 
     /// `session.spawn`'s params for this hosted terminal, read from the object as it is now (a
-    /// recorded agent session resumes): `home` is the host's, `instance` this app's there.
-    func hostedSpawnParams(home: String, instance: String) -> JSONValue? {
+    /// recorded agent session resumes): `home` is the host's, `run` this instance's relayed
+    /// sockets' directory there.
+    func hostedSpawnParams(home: String, run: String) -> JSONValue? {
         guard let object = board.objects[objectID] else { return nil }
         return HostedTerminal.spawnParams(tile: objectID, board: board.id, argv: Self.initialArgv(object), cwd: object.props["cwd"]?.string,
-                                          home: home, instance: instance, homeLabel: Self.homeLabel, cmuxPassword: AppPaths.cmuxPassword,
+                                          home: home, run: run, homeLabel: Self.homeLabel, cmuxPassword: AppPaths.cmuxPassword,
                                           ghosttyIntegration: TerminalConfig.shared.shellIntegration != nil)
     }
 
@@ -232,6 +233,13 @@ final class TerminalTile: NSView, TileContent {
         done
         """#
         return ShellWords.quote(["/bin/sh", "-c", loop, "easl-remote"] + attach)
+    }
+
+    /// Reports this hosted terminal's integration spooled on its host while it couldn't reach the
+    /// app (`TerminalHost`), applied as the board applies its local spool (`Board.replay`).
+    func replay(_ entries: [AgentReportSpool.Entry]) {
+        guard !entries.isEmpty else { return }
+        board.replay(entries)
     }
 
     /// Ends a deleted terminal's persistent session (`Board.onTerminalsEnded`: every delete path,

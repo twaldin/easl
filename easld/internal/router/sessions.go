@@ -4,15 +4,18 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/twaldin/easl/easld/internal/api"
+	"github.com/twaldin/easl/easld/internal/relay"
 	"github.com/twaldin/easl/easld/internal/session"
 )
 
-// sessionCall answers session.spawn, .list and .kill (hosted terminals' zmx sessions), outside
-// the registry's lock: they touch no board, and zmx takes up to a second.
-func (r *Router) sessionCall(req any) (any, bool) {
+// hostCall answers session.spawn, .list and .kill (hosted terminals' zmx sessions) and
+// relay.open (their way back to the board), outside the registry's lock: they touch no board,
+// and zmx takes up to a second.
+func (r *Router) hostCall(req any) (any, bool) {
 	m, _ := req.(map[string]any)
 	method, _ := m["method"].(string)
-	if !strings.HasPrefix(method, "session.") {
+	if !strings.HasPrefix(method, "session.") && method != "relay.open" {
 		return nil, false
 	}
 	id := m["id"]
@@ -24,15 +27,48 @@ func (r *Router) sessionCall(req any) (any, bool) {
 		return errorReply(id, asFailure(err)), true
 	}
 	p, _ := params.(map[string]any)
-	result, err := r.session(method, p)
+	var result any
+	var err error
+	if method == "relay.open" {
+		result, err = r.openRelay(p)
+	} else {
+		result, err = r.session(method, p)
+	}
 	if err != nil {
 		var se *session.Error
-		if errors.As(err, &se) {
+		var re *relay.Error
+		switch {
+		case errors.As(err, &se):
 			return errorReply(id, &Failure{se.Code, se.Message}), true
+		case errors.As(err, &re):
+			return errorReply(id, &Failure{re.Code, re.Message}), true
 		}
 		return errorReply(id, asFailure(err)), true
 	}
 	return okReply(id, result), true
+}
+
+func (r *Router) openRelay(p map[string]any) (any, error) {
+	if r.Relays == nil {
+		return nil, fail(api.CodeUnavailable, "this easld serves no relays")
+	}
+	instance, err := str(p, "instance")
+	if err != nil {
+		return nil, err
+	}
+	port, ok := p["port"].(float64)
+	if !ok || port != float64(int(port)) {
+		return nil, invalid("port must be an integer")
+	}
+	token, err := str(p, "token")
+	if err != nil {
+		return nil, err
+	}
+	paths, opened, err := r.Relays.Open(instance, int(port), token)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"easl": paths["easl"], "cmux": paths["cmux"], "opened": opened}, nil
 }
 
 func (r *Router) session(method string, p map[string]any) (any, error) {

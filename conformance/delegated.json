@@ -8,5 +8,6 @@
   "text.measure": "AppKit text layout (SF Pro, SF Mono, Shantell Sans with kerning): exact only from a client, else easld's glyph-table approximation (`approximate: true`), so app-recorded measurements of notes and text shapes differ from easld's by a few points",
   "session.spawn": "easld only, the reverse of the others: a hosted terminal's zmx session started as easld's child on the host (docs/contracts.md \"Hosted terminals\"); the Mac app answers `unsupported`, so there is nothing to record. easld's own tests (internal/session, internal/router) cover it",
   "session.list": "easld only (session.spawn); the Mac app answers `unsupported`",
-  "session.kill": "easld only (session.spawn); the Mac app answers `unsupported`"
+  "session.kill": "easld only (session.spawn); the Mac app answers `unsupported`",
+  "relay.open": "easld only, the way back from a hosted terminal's host to the board that shows it (docs/contracts.md \"Hosted terminals\"); the Mac app answers `unsupported`. easld's own tests (internal/relay) cover it"
 }

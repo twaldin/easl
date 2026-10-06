@@ -625,6 +625,16 @@ class SessionApi:
         return self._call("session.kill", params, [])
 
 @_snake_case_hints
+class RelayApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def open(self, *, instance: str, port: int, token: str) -> dict[str, Any]:
+        """easld only (the Mac app answers `unsupported`): serve a client's sockets to the programs on easld's machine, so a hosted terminal's integration and the `easl` CLI there reach the board that shows it (docs/contracts.md "Hosted terminals"). easld listens on `<home>/run/<instance>/easl.sock` and `cmux.sock` (the user's only) and passes each connection on to `127.0.0.1:<port>`, the client's ssh forward of a loopback port back to itself, starting with the line `<token> easl` or `<token> cmux`; the client closes any connection without its token, since every user of the machine can reach that port. Opening it again for the same instance takes the new port and token and keeps the sockets. While the port doesn't answer a connection closes at once, and the integration spools its report."""
+        params = {"instance": instance, "port": port, "token": token}
+        return self._call("relay.open", params, [])
+
+@_snake_case_hints
 class EventsApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -666,11 +676,12 @@ class GeneratedApi:
         self.follow = FollowApi(call)
         self.view = ViewApi(call)
         self.session = SessionApi(call)
+        self.relay = RelayApi(call)
         self.events = EventsApi(call)
         self.client = ClientApi(call)
         self.text = TextApi(call)
 
-METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","events.subscribe","client.attach","text.measure"]
+METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

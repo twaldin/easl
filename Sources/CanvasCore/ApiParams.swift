@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 1
-    static let schemaHash = "5d1e3c4b7788f265"
+    static let schemaHash = "d17e652062f8e4e8"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "system.ping": ([], []),
@@ -50,6 +50,7 @@ enum ApiParams {
         "session.spawn": (["tile", "command", "cwd", "env", "labels"], ["tile"]),
         "session.list": ([], []),
         "session.kill": (["tile", "home"], ["tile"]),
+        "relay.open": (["instance", "port", "token"], ["instance", "port", "token"]),
         "events.subscribe": (["board", "events"], []),
         "client.attach": (["version", "schema", "app", "host", "serves", "boards", "focused"], ["version", "schema", "serves"]),
         "text.measure": (["items", "board"], ["items"]),

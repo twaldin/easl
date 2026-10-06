@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "5d1e3c4b7788f265"
+const SchemaHash = "d17e652062f8e4e8"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -201,6 +201,10 @@ var Methods = map[string]ParamSpec{
 	"session.kill": {
 		Accepted: []string{"tile", "home"},
 		Required: []string{"tile"},
+	},
+	"relay.open": {
+		Accepted: []string{"instance", "port", "token"},
+		Required: []string{"instance", "port", "token"},
 	},
 	"events.subscribe": {
 		Accepted: []string{"board", "events"},

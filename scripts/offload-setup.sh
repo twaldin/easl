@@ -10,6 +10,7 @@
 #                                omp extension and agent hooks, the skill, the schema, and
 #                                Ghostty's shell integration (prompt marks) when one is found here
 #   ~/.omp/agent/extensions/easl.ts -> ~/.local/share/easl/extensions/omp/easl.ts
+#   ~/.local/share/easl/easld@.service   the system unit easld runs as (below)
 #
 # easld then has to run as a system unit in the host's capped slice (easld/packaging/linux/
 # easld@.service), so the tiles' sessions it starts stay there: the script prints that unit for
@@ -86,6 +87,8 @@ mkdir -p "$tmp/files/clients/ts" "$tmp/files/clients/python"
 for part in schema bin cli skills extensions; do cp -R "$resources/$part" "$tmp/files/"; done
 cp -R "$resources/clients/ts/src" "$tmp/files/clients/ts/src"
 cp -R "$resources/clients/python/easl_sdk" "$tmp/files/clients/python/easl_sdk"
+# The unit, for the host's administrator to install (below).
+cp "$repo/easld/packaging/linux/easld@.service" "$tmp/files/easld@.service"
 find "$tmp/files" \( -name '*.test.ts' -o -name __pycache__ -o -name .DS_Store \) -prune -exec rm -rf {} +
 # Ghostty's shell integration (OSC 133 prompt marks for agent.read's `block` on the host), from
 # the app or a build of this checkout.
@@ -142,8 +145,8 @@ if [ "$state" = active ]; then
   [ "$easld_changed" = no ] || say "easld changed: restart it to use the new one (sessions keep running: KillMode=process): sudo systemctl restart $unit"
 else
   say ""
-  say "easld isn't running as $unit on $host. Its administrator installs the unit (easld/packaging/linux/easld@.service, below) once:"
-  say "  sudo install -m 0644 easld@.service /etc/systemd/system/easld@.service"
+  say "easld isn't running as $unit on $host. Its administrator installs the unit once (it is $home/.local/share/easl/easld@.service there, and below):"
+  say "  sudo install -m 0644 $home/.local/share/easl/easld@.service /etc/systemd/system/easld@.service"
   say "  sudo systemctl daemon-reload && sudo systemctl enable --now $unit"
   say "It needs agents.slice (the capped slice the tiles run in) to exist. The unit:"
   say ""

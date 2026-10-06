@@ -4,16 +4,18 @@ import Foundation
 /// A terminal tile whose session runs on another machine (`props.host`, an ssh target such as
 /// `deckbox`; docs/contracts.md "Hosted terminals"). The host's easld starts the session as its
 /// own child (`session.spawn`), so on Linux it stays in easld's unit and slice; the tile only
-/// attaches to it, over the app's one ssh connection to that host (`TerminalHost`), which also
-/// forwards this app's sockets to a directory of this instance's on the host so the agent's
-/// integration and the `easl` CLI there reach the board.
+/// attaches to it, over the app's one ssh connection to that host (`TerminalHost`). That
+/// connection also forwards a loopback port on the host back to this app (`RelayGate`), which
+/// easld serves as this instance's sockets there (`relay.open`), so the agent's integration and
+/// the `easl` CLI on the host reach the board. (Not ssh's forward of a unix socket: Tailscale
+/// SSH makes that socket root's only.)
 ///
 /// The layout on the host (scripts/offload-setup.sh installs it):
 /// - `~/.local/bin/zmx`, `~/.local/bin/easld`, `~/.local/bin/easl`;
 /// - `~/.local/share/easl/`: what the app bundle's Resources hold for agents (bin, cli, clients,
 ///   extensions, skills, schema) and Ghostty's shell integration (`ghostty/shell-integration`);
 /// - `~/.local/state/easl/`: easld's home and its socket `easl.sock`; `run/<instance>/` holds this
-///   app instance's forwarded `easl.sock` and `cmux.sock` (and the reports integrations spool
+///   app instance's relayed `easl.sock` and `cmux.sock` (and the reports integrations spool
 ///   while the app is away, `agent-reports/`).
 public enum HostedTerminal {
     /// The ssh target `object`'s session runs on; nil for a terminal of this Mac.
@@ -24,9 +26,6 @@ public enum HostedTerminal {
 
     /// easl's files for agents on the host.
     public static func resources(home: String) -> String { home + "/.local/share/easl" }
-
-    /// Where this app instance's sockets are forwarded to on the host.
-    public static func runDirectory(home: String, instance: String) -> String { home + "/.local/state/easl/run/" + instance }
 
     /// This app instance as hosts know it: the Mac's name and a hash of its support directory, so
     /// two Macs, or a dev instance beside the app, never share a forwarded socket.
@@ -52,19 +51,12 @@ public enum HostedTerminal {
     /// easld's socket on the host, relayed by `nc`: one JSON line per request.
     public static let easldRelay = remote(#"exec nc -U "$HOME/.local/state/easl/easl.sock""#)
 
-    /// Run once per connection: makes this instance's run directory, removes the sockets a lost
-    /// connection left there (sshd binds a forward only to a free path), and says where home is
-    /// and whether easld is up: `home=<path>` and `easld=yes|no` lines.
-    public static func probe(instance: String) -> String {
-        remote(#"""
-        set -e
-        state="$HOME/.local/state/easl"; run="$state/run/$1"
-        mkdir -p "$run"; chmod 700 "$state" "$state/run" "$run"
-        rm -f "$run/easl.sock" "$run/cmux.sock"
+    /// Run once per connection: says where home is and whether easld's socket is there
+    /// (`home=<path>` and `easld=yes|no` lines).
+    public static let probe = remote(#"""
         printf 'home=%s\n' "$HOME"
-        if [ -S "$state/easl.sock" ]; then echo easld=yes; else echo easld=no; fi
-        """#, [instance])
-    }
+        if [ -S "$HOME/.local/state/easl/easl.sock" ]; then echo easld=yes; else echo easld=no; fi
+        """#)
 
     /// What `probe` printed: the host's home and whether its easld socket is there.
     public static func parseProbe(_ output: String) -> (home: String, easld: Bool)? {
@@ -94,6 +86,27 @@ public enum HostedTerminal {
         [ -z "$shown" ] || printf '\r\033[K'
         SHELL=/bin/false exec "$z" attach "$1"
         """#, [session])
+    }
+
+    /// A tar on standard output of the reports integrations spooled on the host for `tiles` while
+    /// this instance was away (`<run>/agent-reports/<tile>/…`, as `AgentReportSpool` reads
+    /// them); nothing when there are none.
+    public static func spooled(run: String, tiles: [ObjectID]) -> String {
+        remote(#"""
+        cd "$1" 2>/dev/null || exit 0
+        shift
+        n=$#
+        while [ "$n" -gt 0 ]; do t=$1; shift; n=$((n - 1)); if [ -d "$t" ]; then set -- "$@" "$t"; fi; done
+        [ $# -gt 0 ] || exit 0
+        exec tar -cf - -- "$@"
+        """#, [run + "/agent-reports"] + tiles)
+    }
+
+    /// Deletes replayed reports from the host's spool (`files` relative to it, `<tile>/<name>`),
+    /// and the tiles' folders left empty.
+    public static func removeSpooled(run: String, files: [String]) -> String {
+        remote(#"cd "$1" || exit 0; shift; rm -f -- "$@"; for f; do rmdir -- "${f%/*}" 2>/dev/null; done; true"#,
+               [run + "/agent-reports"] + files)
     }
 
     /// The Mac side, Ghostty's command (`sh -c` with $1 ssh, $2 the connection's control path,
@@ -127,12 +140,12 @@ public enum HostedTerminal {
 
     /// `session.spawn`'s params for terminal `tile` on board `board`: `argv` in the login shell
     /// (nil: the login shell), in `cwd` on the host (nil: the user's home), with the tile's
-    /// variables pointing at this instance's forwarded sockets in `run`, and easl's files at
-    /// `resources` on the host (`LoginSession.tileShellIntegration`: easl's bin first on PATH,
+    /// variables pointing at this instance's relayed sockets in `run` (`relay.open`), and easl's
+    /// files under the host's `home` (`LoginSession.tileShellIntegration`: easl's bin first on PATH,
     /// its Python client, the zsh and bash integration, the `open` shim as `BROWSER`).
-    public static func spawnParams(tile: ObjectID, board: BoardID, argv: [String]?, cwd: String?, home: String, instance: String,
+    public static func spawnParams(tile: ObjectID, board: BoardID, argv: [String]?, cwd: String?, home: String, run: String,
                                    homeLabel: String, cmuxPassword: String?, ghosttyIntegration: Bool) -> JSONValue {
-        let run = runDirectory(home: home, instance: instance), files = resources(home: home)
+        let files = resources(home: home)
         var env = LoginSession.tileShellIntegration(resources: files, inherited: [:])
         env["PATH"] = files + "/bin"
         env.merge([

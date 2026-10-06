@@ -1115,9 +1115,9 @@ public final class ApiRouter {
             if let group = state.enteredGroup { result["enteredGroup"] = .string(group) }
             return .object(result)
 
-        case "session.spawn", "session.list", "session.kill":
-            // A hosted terminal's session runs under the host's easld (docs/contracts.md "Hosted
-            // terminals"); the app's own sessions are its tiles' (`TerminalTile`).
+        case "session.spawn", "session.list", "session.kill", "relay.open":
+            // A hosted terminal's session runs under the host's easld, which relays its way back
+            // here (docs/contracts.md "Hosted terminals"); the app's own sessions are its tiles'.
             throw Failure("unsupported", "\(method) is easld's: the app runs its terminals' sessions itself")
 
         default:

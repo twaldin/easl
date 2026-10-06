@@ -1696,6 +1696,28 @@
         "properties": { "killed": { "type": "boolean", "description": "false: there was no such session" } }
       }
     },
+    "relay.open": {
+      "description": "easld only (the Mac app answers `unsupported`): serve a client's sockets to the programs on easld's machine, so a hosted terminal's integration and the `easl` CLI there reach the board that shows it (docs/contracts.md \"Hosted terminals\"). easld listens on `<home>/run/<instance>/easl.sock` and `cmux.sock` (the user's only) and passes each connection on to `127.0.0.1:<port>`, the client's ssh forward of a loopback port back to itself, starting with the line `<token> easl` or `<token> cmux`; the client closes any connection without its token, since every user of the machine can reach that port. Opening it again for the same instance takes the new port and token and keeps the sockets. While the port doesn't answer a connection closes at once, and the integration spools its report.",
+      "params": {
+        "type": "object",
+        "required": ["instance", "port", "token"],
+        "properties": {
+          "instance": { "type": "string", "description": "the client instance, [A-Za-z0-9._-], at most 64 characters" },
+          "port": { "type": "integer", "description": "the loopback port the client's ssh forwards to it" },
+          "token": { "type": "string", "description": "16–128 letters and digits, sent first on every connection" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["easl", "cmux", "opened"],
+        "properties": {
+          "easl": { "type": "string", "description": "the socket for the easl API (a hosted terminal's `EASL_SOCKET`; integrations spool undelivered reports in `agent-reports/` beside it)" },
+          "cmux": { "type": "string", "description": "the socket for the cmux browser subset (`CMUX_SOCKET_PATH`)" },
+          "opened": { "type": "boolean", "description": "the sockets were made now: false when the relay was open and only took the new port and token" }
+        }
+      }
+    },
     "events.subscribe": {
       "description": "Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}).",
       "params": {

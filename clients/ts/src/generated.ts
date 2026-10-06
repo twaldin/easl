@@ -1550,6 +1550,23 @@ export type SessionKillResult = {
   killed: boolean;
 };
 
+export type RelayOpenParams = {
+  /** the client instance, [A-Za-z0-9._-], at most 64 characters */
+  instance: string;
+  /** the loopback port the client's ssh forwards to it */
+  port: number;
+  /** 16–128 letters and digits, sent first on every connection */
+  token: string;
+};
+export type RelayOpenResult = {
+  /** the socket for the easl API (a hosted terminal's `EASL_SOCKET`; integrations spool undelivered reports in `agent-reports/` beside it) */
+  easl: string;
+  /** the socket for the cmux browser subset (`CMUX_SOCKET_PATH`) */
+  cmux: string;
+  /** the sockets were made now: false when the relay was open and only took the new port and token */
+  opened: boolean;
+};
+
 export type EventsSubscribeParams = {
   board?: Id;
   events?: string[];
@@ -1713,6 +1730,10 @@ export interface CanvasApi {
     /** easld only (the Mac app answers `unsupported`): end terminal tile `tile`'s zmx session on easld's machine and delete zmx's log of it. A session labelled for another home than `home` is left alone (`conflict`). */
     kill(params: SessionKillParams): Promise<SessionKillResult>;
   };
+  relay: {
+    /** easld only (the Mac app answers `unsupported`): serve a client's sockets to the programs on easld's machine, so a hosted terminal's integration and the `easl` CLI there reach the board that shows it (docs/contracts.md "Hosted terminals"). easld listens on `<home>/run/<instance>/easl.sock` and `cmux.sock` (the user's only) and passes each connection on to `127.0.0.1:<port>`, the client's ssh forward of a loopback port back to itself, starting with the line `<token> easl` or `<token> cmux`; the client closes any connection without its token, since every user of the machine can reach that port. Opening it again for the same instance takes the new port and token and keeps the sockets. While the port doesn't answer a connection closes at once, and the integration spools its report. */
+    open(params: RelayOpenParams): Promise<RelayOpenResult>;
+  };
   events: {
     /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}). */
     subscribe(params?: EventsSubscribeParams): Promise<EventsSubscribeResult>;
@@ -1795,6 +1816,9 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       list: (params?: SessionListParams) => call("session.list", params ?? {}, []) as Promise<SessionListResult>,
       kill: (params: SessionKillParams) => call("session.kill", params ?? {}, []) as Promise<SessionKillResult>,
     },
+    relay: {
+      open: (params: RelayOpenParams) => call("relay.open", params ?? {}, []) as Promise<RelayOpenResult>,
+    },
     events: {
       subscribe: (params?: EventsSubscribeParams) => call("events.subscribe", params ?? {}, ["board"]) as Promise<EventsSubscribeResult>,
     },
@@ -1807,7 +1831,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","events.subscribe","client.attach","text.measure"] as const;
+export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];
