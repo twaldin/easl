@@ -101,32 +101,47 @@ struct HostedTerminalTests {
         #expect(try String(contentsOf: attaches, encoding: .utf8) == "1\n")
     }
 
-    /// A zmx on the host that lists `listed` (zmx 0.8.1's `list` lines) once it has been asked
-    /// `waits` times, and records what `attach` gets.
-    func fakeZmx(home: URL, listed: String, waits: Int = 0) throws {
-        try? FileManager.default.removeItem(at: home.appendingPathComponent("lists"))
+    /// A zmx on the host whose `list` prints `lists[n]` (zmx 0.8.1's lines) at its call `n`, the
+    /// last one from then on, and which records what `attach` gets.
+    func fakeZmx(home: URL, lists: [String]) throws {
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: home.path)) ?? [] where name == "lists" || name.hasPrefix("list-") {
+            try? fm.removeItem(at: home.appendingPathComponent(name))
+        }
+        for (n, list) in lists.enumerated() {
+            try list.write(to: home.appendingPathComponent(n == lists.count - 1 ? "list-last" : "list-\(n)"), atomically: true, encoding: .utf8)
+        }
         try executable(home.appendingPathComponent(".local/bin/zmx"), """
         #!/bin/sh
         d="\(home.path)"
         case "$1" in
-        list) n=$(cat "$d/lists" 2>/dev/null || echo 0); echo $((n + 1)) > "$d/lists"; [ "$n" -lt \(waits) ] || printf '\(listed)' ;;
+        list) n=$(cat "$d/lists" 2>/dev/null || echo 0); echo $((n + 1)) > "$d/lists"; f="$d/list-$n"; [ -f "$f" ] || f="$d/list-last"; cat "$f" ;;
         attach) printf 'attach %s SHELL=%s ZMX_DIR=%s\\n' "$2" "$SHELL" "$ZMX_DIR" ;;
         esac
         """)
     }
 
+    func listed(_ labels: String) -> String {
+        "  name=other\tpid=1\tclients=0\tcreated=1\n  name=\(session)\tpid=2\tclients=0\tcreated=1\tcmd=bash -l\(labels.isEmpty ? "" : "\t" + labels)\n"
+    }
+
+    var ownLabels: String { "canvas.board=brd_b\tcanvas.home=home\tcanvas.tile=\(tile)" }
+
     /// The host side attaches only once easld has started the session, in the user's own zmx
     /// directory, and never lets zmx start one (a login shell outside easld's slice) in the moment
-    /// between its check and the attach.
+    /// between its check and the attach. A session zmx lists before its labels land (they follow
+    /// its creation) is looked at again, not refused.
     @Test func theHostSideWaitsForTheSessionAndNeverStartsOne() async throws {
         let home = try scratch()
         defer { try? FileManager.default.removeItem(at: home) }
-        try fakeZmx(home: home, listed: #"  name=other\tpid=1\tclients=0\tcreated=1\n  name=\#(session)\tpid=2\tclients=0\tcreated=1\tcmd=bash -l\tcanvas.board=brd_b\tcanvas.home=home\tcanvas.tile=\#(tile)\n"#, waits: 1)
-        let (status, output) = try await sh(HostedTerminal.attach(session: session, home: "home", board: "brd_b", tile: tile), env: ["HOME": home.path])
-        #expect(status == 0)
-        let text = String(decoding: output, as: UTF8.self)
-        #expect(text.contains("Waiting for \(session) to start"))
-        #expect(text.hasSuffix("attach \(session) SHELL=/bin/false ZMX_DIR=\(home.path)/.local/state/easl/zmx\n"))
+        for lists in [["", listed(ownLabels)], [listed(""), listed(ownLabels)]] {
+            try fakeZmx(home: home, lists: lists)
+            let (status, output) = try await sh(HostedTerminal.attach(session: session, home: "home", board: "brd_b", tile: tile), env: ["HOME": home.path])
+            #expect(status == 0)
+            let text = String(decoding: output, as: UTF8.self)
+            #expect(text.contains("Waiting for \(session) to start"))
+            #expect(text.hasSuffix("attach \(session) SHELL=/bin/false ZMX_DIR=\(home.path)/.local/state/easl/zmx\n"), "\(text)")
+        }
     }
 
     /// A session of the tile's name that isn't this tile's (another instance's home: a board copied
@@ -136,14 +151,74 @@ struct HostedTerminalTests {
         defer { try? FileManager.default.removeItem(at: home) }
         for (labels, owner) in [("canvas.board=brd_b\tcanvas.home=other\tcanvas.tile=\(tile)", "other"),
                                 ("canvas.board=brd_x\tcanvas.home=home\tcanvas.tile=\(tile)", "home"),
-                                ("cmd=bash -l", "no owner")] {
-            try fakeZmx(home: home, listed: #"  name=\#(session)\tpid=2\tclients=1\tcreated=1\t\#(labels)\n"#)
+                                ("", "no owner")] {
+            try fakeZmx(home: home, lists: [listed(labels)])
             let (status, output) = try await sh(HostedTerminal.attach(session: session, home: "home", board: "brd_b", tile: tile), env: ["HOME": home.path])
             let text = String(decoding: output, as: UTF8.self)
             #expect(status == HostedTerminal.refused, "\(labels)")
             #expect(text.contains("belongs to another easl instance or board (\(owner))"), "\(labels): \(text)")
             #expect(!text.contains("attach "), "\(labels): never attached")
         }
+    }
+
+    /// A call to the host's easld (`HostedTerminal.request` running `easldRelay`, here without
+    /// ssh, against a server that, like easld, closes a connection once its client's input ends)
+    /// returns as soon as the reply is in, and leaves no `nc` behind: OpenBSD nc, stood in for
+    /// here, keeps reading after its input ends unless `-N` shuts its side down.
+    @Test func aCallToEasldLeavesNothingRunning() async throws {
+        // Under /tmp: the socket's path must fit a sockaddr_un (104 bytes).
+        let home = URL(fileURLWithPath: "/tmp/easl-nc-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let socket = home.appendingPathComponent(".local/state/easl/easl.sock")
+        try FileManager.default.createDirectory(at: socket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let server = SocketServer(path: socket.path) { request, _ in
+            .object(["id": request["id"] ?? .null, "ok": .bool(true), "result": .object(["pong": .bool(true)])])
+        }
+        try server.start()
+        defer { server.stop() }
+        let bin = home.appendingPathComponent("bin"), pids = home.appendingPathComponent("nc.pids")
+        try executable(bin.appendingPathComponent("nc"), #"""
+        #!/usr/bin/env python3
+        import os, select, socket, sys
+        args = sys.argv[1:]
+        if args == ["-h"]:
+            sys.stderr.write("OpenBSD netcat\n\t-N\t\tShutdown the network socket after EOF on stdin\n")
+            sys.exit(1)
+        with open(os.environ["FAKE_NC_PIDS"], "a") as f:
+            f.write(f"{os.getpid()}\n")
+        s = socket.socket(socket.AF_UNIX)
+        s.connect(args[-1])
+        reading = True
+        while True:
+            ready, _, _ = select.select([s] + ([0] if reading else []), [], [])
+            if 0 in ready:
+                data = os.read(0, 65536)
+                if data:
+                    s.sendall(data)
+                else:
+                    reading = False
+                    if "-N" in args:
+                        s.shutdown(socket.SHUT_WR)
+            if s in ready:
+                data = s.recv(65536)
+                if not data:
+                    break
+                os.write(1, data)
+        """#)
+        let env = ["HOME=\(home.path)", "PATH=\(bin.path):/usr/bin:/bin", "FAKE_NC_PIDS=\(pids.path)"]
+        let start = Date()
+        let reply = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                // `env` stands in for ssh: it runs the command line as sshd would, with `sh -c`.
+                continuation.resume(returning: HostedTerminal.request("/usr/bin/env", ["-i"] + env + ["/bin/sh", "-c", HostedTerminal.easldRelay],
+                                                                      line: Data(#"{"id":"1","method":"system.ping"}"#.utf8 + [0x0A]), timeout: 10))
+            }
+        }
+        #expect(reply.line.map { String(decoding: $0, as: UTF8.self).contains(#""pong":true"#) } == true, "\(reply.errors)")
+        #expect(Date().timeIntervalSince(start) < 5, "the reply ends the call, not the timeout")
+        let pid = try #require(Int32(String(contentsOf: pids, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        #expect(kill(pid, 0) != 0, "nc exited with the call")
     }
 
     /// The probe says where the host's home is and whether its easld is up.

@@ -328,11 +328,12 @@ final class TerminalHost {
     }
 
     /// One request to the host's easld, through the connection when it is up (`nc` on its
-    /// socket, the line kept open until the reply: easld drops a client that stopped sending).
+    /// socket, `HostedTerminal.request`: the line kept open until the reply, since easld drops a
+    /// client that stopped sending, then ended so nc ends on the host too).
     func call(_ method: String, _ params: JSONValue) async throws -> JSONValue {
         let request = try JSONValue.object(["id": .string("1"), "method": .string(method), "params": params]).encodedLine()
-        let route = route
-        let reply = await offPool { Self.request(route: route, line: request) }
+        let arguments = route.ssh(HostedTerminal.easldRelay)
+        let reply = await offPool { HostedTerminal.request("/usr/bin/ssh", arguments, line: request) }
         guard let line = reply.line, let value = try? JSONDecoder().decode(JSONValue.self, from: line) else {
             throw ApiRouter.Failure("unavailable", "\(target)'s easld didn't answer \(method)\(reply.errors.isEmpty ? "" : ": " + reply.errors)")
         }
@@ -384,33 +385,6 @@ final class TerminalHost {
         ssh.waitUntilExit()
         tar.waitUntilExit()
         return ssh.terminationStatus == 0 && tar.terminationStatus == 0
-    }
-
-    /// Sends `line` to the host's easld and reads one reply line, within 20 s.
-    nonisolated private static func request(route: HostRoute, line: Data) -> (line: Data?, errors: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        process.arguments = route.ssh(HostedTerminal.easldRelay)
-        let input = Pipe(), output = Pipe(), errors = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = errors
-        guard (try? process.run()) != nil else { return (nil, "ssh didn't start") }
-        let timeout = DispatchWorkItem { process.terminate() }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: timeout)
-        try? input.fileHandleForWriting.write(contentsOf: line)
-        var reply = Data()
-        let reader = output.fileHandleForReading
-        while !reply.contains(UInt8(ascii: "\n")), let chunk = try? reader.read(upToCount: 64 * 1024), !chunk.isEmpty {
-            reply.append(chunk)
-        }
-        timeout.cancel()
-        try? input.fileHandleForWriting.close()
-        if process.isRunning { process.terminate() }
-        let err = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let first = reply.split(separator: UInt8(ascii: "\n"), maxSplits: 1, omittingEmptySubsequences: true).first.map { Data($0) }
-        return (first, String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }
 

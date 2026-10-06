@@ -53,8 +53,48 @@ public enum HostedTerminal {
         remote(#"ZMX_DIR=\#(zmxDir) exec "$HOME/.local/bin/zmx" "$@""#, arguments)
     }
 
-    /// easld's socket on the host, relayed by `nc`: one JSON line per request.
-    public static let easldRelay = remote(#"exec nc -U "$HOME/.local/state/easl/easl.sock""#)
+    /// easld's socket on the host, relayed by `nc`: one JSON line per request (`request`). With
+    /// `-N` nc shuts its side of the connection down when ssh's input ends, after the reply, and
+    /// exits once easld closes it; without it nc outlives the call, holding a connection to easld
+    /// (OpenBSD nc's `-N`, offered as such in `nc -h`: Apple's `-N` is something else).
+    public static let easldRelay = remote(#"""
+        s="$HOME/.local/state/easl/easl.sock"
+        if nc -h 2>&1 | grep -q '^[[:space:]]*-N[[:space:]].*EOF'; then exec nc -N -U "$s"; fi
+        exec nc -U "$s"
+        """#)
+
+    /// Runs `executable` (ssh running `easldRelay`), sends it `line` and reads one reply line, then
+    /// ends its input and waits for it to exit, so nothing is left running on the host; the whole
+    /// call is bounded by `timeout`. The reply is nil when none came.
+    public static func request(_ executable: String, _ arguments: [String], line: Data, timeout: TimeInterval = 20) -> (line: Data?, errors: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        let input = Pipe(), output = Pipe(), errors = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = errors
+        guard (try? process.run()) != nil else { return (nil, "\(executable) didn't start") }
+        let deadline = DispatchWorkItem { process.terminate() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
+        defer { deadline.cancel() }
+        try? input.fileHandleForWriting.write(contentsOf: line)
+        var reply = Data()
+        let reader = output.fileHandleForReading
+        // `availableData` returns what has arrived; `read(upToCount:)` waits for the whole count or
+        // the end, which made every call wait out its timeout.
+        while !reply.contains(UInt8(ascii: "\n")) {
+            let chunk = reader.availableData
+            if chunk.isEmpty { break }
+            reply.append(chunk)
+        }
+        // The input's end, after the reply: easld drops a request whose client stopped sending.
+        try? input.fileHandleForWriting.close()
+        let err = errors.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let first = reply.split(separator: UInt8(ascii: "\n"), maxSplits: 1, omittingEmptySubsequences: true).first.map { Data($0) }
+        return (first, String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+    }
 
     /// Run once per connection: says where home is and whether easld's socket is there
     /// (`home=<path>` and `easld=yes|no` lines).
@@ -88,9 +128,11 @@ public enum HostedTerminal {
         z="$HOME/.local/bin/zmx"
         if [ ! -x "$z" ]; then printf 'zmx is not installed on %s: run scripts/offload-setup.sh %s on the Mac.\r\n' "$(hostname)" "$(hostname)"; exit 2; fi
         shown=
+        seen=
         while :; do
           fields=$("$z" list 2>/dev/null | awk -F'\t' -v n="name=$1" '{ s = $1; sub(/^.*name=/, "name=", s) } s == n { for (i = 2; i <= NF; i++) print $i }')
-          case "$fields" in pid=*) break ;; esac
+          # zmx lists a new session a moment before its labels land: one without them gets another look.
+          case "$fields" in pid=*canvas.home=*) break ;; pid=*) [ -z "$seen" ] || break; seen=1 ;; esac
           if [ -z "$shown" ]; then shown=1; printf '\r\033[K\033[2mWaiting for %s to start on %s…\033[0m' "$1" "$(hostname)"; fi
           sleep 1
         done
