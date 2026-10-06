@@ -244,11 +244,13 @@ enum DevInput {
         case "shortcut", "key":
             guard let key = Key(fields["key"] ?? "") else { return NSLog("DevInput: unknown key %@", fields["key"] ?? "") }
             // A sheet in a window that isn't key ignores key equivalents (an alert's default button
-            // only gets Return once key), so press the matching button, or accept on Return. A save
-            // panel runs out of process, where no replayed event reaches: Return saves under the
-            // name it suggested.
+            // only gets Return once key), so press the matching button (for Return, the sheet's
+            // default button: AppKit keeps a default button's Return in the window, not the button),
+            // or accept on Return. A save panel runs out of process, where no replayed event
+            // reaches: Return saves under the name it suggested.
             if let sheet = window.attachedSheet {
-                if let pressed = button(in: sheet.contentView, keyEquivalent: key.characters) { return pressed.performClick(nil) }
+                let fallback = key.code == Key.returnCode ? sheet.defaultButtonCell?.controlView as? NSButton : nil
+                if let pressed = button(in: sheet.contentView, keyEquivalent: key.characters) ?? fallback { return pressed.performClick(nil) }
                 if key.code == Key.returnCode { return window.endSheet(sheet, returnCode: sheet is NSSavePanel ? .OK : .alertFirstButtonReturn) }
             }
             // Through the application's own dispatch, as a key press arrives: key equivalents

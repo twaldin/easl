@@ -21,6 +21,7 @@ final class EaslConnectionTests {
             let lock = NSLock()
             var subscribers: [(SocketServer.Connection, JSONValue)] = []
             var methods: [String] = []
+            var boardLists = 0
         }
 
         let server: SocketServer
@@ -45,6 +46,17 @@ final class EaslConnectionTests {
                     return nil
                 case "fail":
                     return .object(["id": id, "ok": .bool(false), "error": .object(["code": .string("not_found"), "message": .string("no such object")])])
+                case "board.list":
+                    // The first one fails, as a host that was busy.
+                    let first = log.lock.withLock { () -> Bool in
+                        log.boardLists += 1
+                        return log.boardLists == 1
+                    }
+                    if first { return .object(["id": id, "ok": .bool(false), "error": .object(["code": .string("internal"), "message": .string("busy")])]) }
+                    let board: JSONValue = .object(["board": .string("brd_a"), "root": .string("/Users/tim/dev/alpha"), "open": .bool(true), "archived": .bool(false)])
+                    return .object(["id": id, "ok": .bool(true), "result": .object(["boards": .array([board])])])
+                case "agent.list":
+                    return .object(["id": id, "ok": .bool(true), "result": .object(["agents": .array([])])])
                 case "hang":
                     return nil
                 default:
@@ -193,6 +205,16 @@ final class EaslConnectionTests {
         }
     }
 
+    /// ssh closes its stdout before it exits with the remote command's status (nc finding no
+    /// socket on the host exits 1); that status, not a kill's, says the host was reached.
+    @Test func aRelayThatClosesItsOutputFirstReportsItsOwnExit() async throws {
+        let connection = EaslConnection.process("/bin/sh", ["-c", "exec >&-; sleep 0.5; exit 1"], backoff: .init(initial: .seconds(30), maximum: .seconds(30)))
+        defer { connection.close() }
+        #expect(await reach(.offline, connection))
+        #expect(connection.relayStatus == 1)
+        #expect(connection.problem == "sh exited with status 1")
+    }
+
     @Test func offlineRequestsFailAtOnce() async throws {
         let connection = EaslConnection.unixSocket(path, backoff: .init(initial: .seconds(5), maximum: .seconds(5)))
         defer { connection.close() }
@@ -272,6 +294,53 @@ final class EaslConnectionTests {
         try await Task.sleep(for: .milliseconds(300))
         #expect(server.calls.filter { $0 == "system.ping" }.count == pings)
         await #expect(throws: EaslConnection.Failure.self) { try await connection.request("echo") }
+    }
+
+    /// Retry on a live link: a failed `board.list` leaves the link `online`, where `reconnect()`
+    /// sends nothing, so the picker asks again.
+    @Test func aFailedBoardListLeavesTheLinkOnlineSoRetryLoadsItAgain() async throws {
+        let server = try FakeServer(path: path)
+        defer { server.stop() }
+        let connection = relay()
+        defer { connection.close() }
+        #expect(await reach(.online, connection))
+        await #expect(throws: EaslConnection.Failure("internal", "busy")) { try await RemoteBoard.load(on: connection) }
+        #expect(RemoteBoard.Retry(connection: connection.state) == .reload)
+        let boards = try await RemoteBoard.load(on: connection)
+        #expect(boards.map(\.name) == ["alpha"])
+        #expect(connection.state == .online)
+    }
+
+    @Test func retryReloadsAnOnlineLinkAndReconnectsADownOne() {
+        #expect(RemoteBoard.Retry(connection: .online) == .reload)
+        #expect(RemoteBoard.Retry(connection: .offline) == .reconnect)
+        #expect(RemoteBoard.Retry(connection: .connecting) == .reconnect)
+        #expect(RemoteBoard.Retry(connection: nil) == .discover, "the host wasn't found: there's no connection")
+    }
+
+    /// What quitting does: the relay is gone when `terminateAll` returns (not left to see its
+    /// stdin close), and nothing starts another.
+    @Test func terminatingEveryRelayEndsThemBeforeReturningAndStartsNoOther() async throws {
+        let file = dir.appendingPathComponent("pid").path
+        let processes = RemoteProcesses()
+        let connection = EaslConnection.process("/bin/sh", ["-c", "echo $$ > '\(file)'; exec sleep 60"], backoff: fast, handshakeTimeout: .seconds(60), processes: processes)
+        defer { connection.close() }
+        var pid: Int32?
+        for _ in 0..<3000 where pid == nil {
+            pid = (try? String(contentsOfFile: file, encoding: .utf8)).flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            if pid == nil { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        let relay = try #require(pid)
+        #expect(processes.count == 1)
+        processes.terminateAll()
+        #expect(kill(relay, 0) == -1 && errno == ESRCH, "reaped before terminateAll returned")
+        // The link notices and reconnects with backoff: the relay it asks for isn't started.
+        let refused = await within { () async -> Bool? in
+            while connection.problem?.contains("quitting") != true { try? await Task.sleep(for: .milliseconds(10)) }
+            return true
+        }
+        #expect(refused == true)
+        #expect(processes.count == 0)
     }
 
     @Test func backoffDoublesUpToItsMaximum() {
