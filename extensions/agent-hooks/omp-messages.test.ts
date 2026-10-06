@@ -1,9 +1,10 @@
 // bun test extensions/agent-hooks — omp's extension (extensions/omp/easl.ts) taking peer messages
-// (docs/contracts.md, Peer messages), driven through its omp seam (a fake `pi` and session)
-// against a fake easl that answers agent.inbox on a Unix socket as the app does: a message offered
-// to a connection is held by it until acked or until it closes. The clock is fake: it moves only
-// while a test waits for something (`until`), so the extension's coalescing, retry and record
-// checks run without real waits.
+// (docs/contracts.md, Peer messages) and reporting what agent.restart relaunches with (Agent
+// control), driven through its omp seam (a fake `pi` and session) against a fake easl that answers
+// agent.inbox on a Unix socket as the app does: a message offered to a connection is held by it
+// until acked or until it closes. The clock is fake: it moves only while a test waits for
+// something (`until`), so the extension's coalescing, retry, record and reconcile checks run
+// without real waits.
 import { afterEach, beforeEach, expect, test, vi } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -64,6 +65,8 @@ function fakeEasl() {
     failing: undefined as ((params: Params) => boolean) | undefined,
     /** Holds agent.report_session's answer back until it resolves. */
     sessionReported: undefined as Promise<void> | undefined,
+    /** Fails the next agent.report_session call it matches after applying it, as a reply lost to a timeout. */
+    failingSession: undefined as ((params: Params) => boolean) | undefined,
     send(queued: AgentMessage): void {
       easl.queue.push(queued);
       const waiter = waiters.findIndex((w) => open.has(w.connection));
@@ -102,6 +105,10 @@ function fakeEasl() {
       // Another session took the tile: what the old one never took bounces.
       if (sessionId !== undefined && params.sessionId !== sessionId) easl.bounced.push(...easl.queue.splice(0));
       sessionId = params.sessionId;
+      if (easl.failingSession?.(params)) {
+        easl.failingSession = undefined;
+        return void socket.write(`${JSON.stringify({ id, ok: false, error: { code: "timeout", message: "agent.report_session timed out" } })}\n`);
+      }
     }
     if (method !== "agent.inbox") return void answer(socket, id, {});
     const acked: string[] = params.ack ?? [];
@@ -165,6 +172,8 @@ function fakeOmp(easl: { socketPath: string }, entries: Params[] = [], sessionId
     notices: [] as string[],
     ctx: {
       hasUI: true,
+      /** What `ctx.model` says now; the extension reads it as it reconciles. */
+      model: undefined as { provider: string; id: string } | undefined,
       isIdle: () => !state.streaming,
       hasPendingMessages: () => state.pending,
       sessionManager: { getEntries: () => entries, getSessionId: () => state.sessionId, getSessionFile: () => `/tmp/${state.sessionId}.jsonl` },
@@ -335,4 +344,25 @@ test("messages arriving while omp reports a session switch were the old session'
   easl.send(fresh);
   await until(() => omp.delivered.length === 1, 5000);
   expect(omp.delivered[0].text).toContain(`[message ${fresh.id} from`);
+});
+
+/** The models the extension sent with agent.report_session, in order. */
+function reportedModels(easl: { calls: { method: string; params: Params }[] }): unknown[] {
+  return easl.calls.filter((call) => call.method === "agent.report_session").map((call) => call.params.model);
+}
+
+test("a model easl may have taken without answering is sent again when the user switches back", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  omp.ctx.model = { provider: "anthropic", id: "opus" };
+  await omp.emit("session_start");
+  await until(() => reportedModels(easl).length === 1);
+  // /model while idle: sent with no turn; easl applies it, but its answer is lost.
+  easl.failingSession = () => true;
+  omp.ctx.model = { provider: "openai", id: "gpt" };
+  await until(() => reportedModels(easl).length === 2);
+  // Back to the model easl acknowledged before: easl may hold the other one now.
+  omp.ctx.model = { provider: "anthropic", id: "opus" };
+  await until(() => reportedModels(easl).length === 3);
+  expect(reportedModels(easl)).toEqual(["anthropic/opus", "openai/gpt", "anthropic/opus"]);
 });

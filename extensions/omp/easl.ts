@@ -125,7 +125,9 @@ export default function canvas(pi: ExtensionAPI): void {
   let reconciling: NodeJS.Timeout | undefined;
   // Undefined (left out of reports): no editor to look at (no UI, or not omp's TUI).
   let draft: boolean | undefined;
-  // What easl acknowledged last, and what the last session report sent and when.
+  // What easl acknowledged last (none while a report is out: one may apply without its answer
+  // arriving, so what easl has is unknown until one is acknowledged), and what the last session
+  // report sent and when.
   let acked: RunsWith | undefined;
   let tried: RunsWith | undefined;
   let triedAt = 0;
@@ -137,6 +139,7 @@ export default function canvas(pi: ExtensionAPI): void {
     const runs = runsWith(ctx);
     tried = runs;
     triedAt = Date.now();
+    acked = undefined;
     const params = { tile: tile!, kind: "omp", sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), ...runs };
     return client.api.agent.report_session(params).then(
       () => {
