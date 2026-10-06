@@ -100,7 +100,7 @@ final class AgentMessageTests {
         let reviewer = terminal("reviewer"), lead = terminal("lead")
         try omp(reviewer, .working, seq: 1)
         let script = try connect(), integration = try connect()
-        integration.send(#"{"id":"poll","method":"agent.inbox","params":{"tile":"\#(reviewer)","waitMs":10000}}"#)
+        integration.send(#"{"id":"poll","method":"agent.inbox","params":{"tile":"\#(reviewer)","waitMs":60000}}"#)
         integration.send(#"{"id":"ping","method":"system.ping","params":{}}"#)
         #expect(try await integration.next()["id"] == .string("ping"), "nothing waits yet")
 

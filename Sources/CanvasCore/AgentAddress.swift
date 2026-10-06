@@ -32,7 +32,7 @@ public enum AgentAddress {
         if let at = target.lastIndex(of: "@") {
             let name = String(target[..<at]), boardPart = String(target[target.index(after: at)...])
             let live = boards.filter { BoardStore.isDirectory($0.root.path) }
-            let named = boards.filter { $0.id == boardPart || (boardName($0.root) == boardPart && live.contains { other in other === $0 }) }
+            let named = boards.filter { board in board.id == boardPart || (boardName(board.root) == boardPart && live.contains { $0 === board }) }
             guard let board = named.first else {
                 let open = live.map { boardName($0.root) }.sorted().joined(separator: ", ")
                 throw ApiRouter.Failure("not_found", "no open board named \(boardPart) (open boards: \(open.isEmpty ? "none" : open))")
