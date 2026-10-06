@@ -22,6 +22,25 @@ extension BrowserTile {
         alert.beginSheetModal(for: window) { response in done(response) }
     }
 
+    // MARK: window frame
+
+    /// The page's "window", which WebKit asks the browser for (Safari answers with its window):
+    /// `window.outerWidth`/`outerHeight`, `screenX`/`screenY`, and where a `window.open` popup is
+    /// centred. Unanswered, outerWidth and outerHeight are 0, and Google Docs, which on Safari before
+    /// 26.4 takes outerWidth / innerWidth for the browser's zoom (snapped to at least 0.25), drew
+    /// its text canvases at a quarter of their resolution: blurry text beside sharp images. The
+    /// answer is the page area where the tile shows on screen, at the web view's own size (the
+    /// page at 100%), not its on-screen size under the board's and the tile's zoom, so
+    /// outerWidth / innerWidth is 1.
+    @objc(_webView:getWindowFrameWithCompletionHandler:)
+    func webView(_ webView: WKWebView, getWindowFrameWithCompletionHandler completion: @escaping (CGRect) -> Void) {
+        var frame = CGRect(origin: .zero, size: webView.bounds.size)
+        if let window = webView.window {
+            frame.origin = window.convertToScreen(webView.convert(webView.bounds, to: nil)).origin
+        }
+        completion(frame)
+    }
+
     // MARK: alert, confirm, prompt
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable () -> Void) {
