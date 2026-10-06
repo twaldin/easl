@@ -295,7 +295,7 @@ final class HtmlTile: NSView, TileContent {
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
                                         appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
         Task { @MainActor in
-            // Cards requested together (a batch of new tiles) render one per main turn.
+            // Cards requested together (a batch of new tiles) render one per wake of the main thread.
             await MainTurns.next()
             let render = await self.render(request)
             deliver(render.state == .rendered ? render.image : nil)

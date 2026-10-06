@@ -297,10 +297,11 @@ final class ShapeLayer: NSView {
     }
 
     /// Arrows bound to `id` follow it. A change the API is making (a write, each operation of
-    /// an `object.batch`) only marks them (`followPending`): they follow once, when anything
-    /// reads or draws them (`followNow`) or on the next main-queue turn, so a batch that moves a
-    /// tile several times, or many tiles one arrow joins, routes each arrow alone once, outside
-    /// the batch's own turn.
+    /// an `object.batch`) only marks them (`followPending`), and each follows once: as soon as
+    /// anything reads it (`followNow`), when the layer draws where it may show (`followInView`),
+    /// else on a wake of the main thread of its own (`MainTurns`). So a batch that moves a tile
+    /// several times, or many tiles one arrow joins, routes each arrow alone once, and the arrows
+    /// out of view don't lengthen the batch's own busy stretch.
     func reroute(boundTo id: ObjectID) {
         guard let arrows = arrowsBound[id] else { return }
         guard ApiActivity.shared.dispatching > 0 else {
@@ -308,7 +309,7 @@ final class ShapeLayer: NSView {
             return
         }
         if followPending.isEmpty {
-            DispatchQueue.main.async { [weak self] in self?.followNow() }
+            MainTurns.onWake { [weak self] in self?.followNow() }
         }
         followPending.formUnion(arrows)
     }
@@ -326,6 +327,19 @@ final class ShapeLayer: NSView {
         let arrows = followPending
         followPending = []
         for arrowID in arrows.sorted() { reroute(arrow: arrowID) }
+    }
+
+    /// Before a draw, the marked arrows that may show in view: where one is drawn now, or the box
+    /// its ends span, meets the visible rect.
+    private func followInView() {
+        guard !followPending.isEmpty else { return }
+        let visible = visibleRect
+        let shown = followPending.filter { id in
+            guard let item = items[id], let spec = item.arrow?.spec else { return false }
+            return [spec.from, spec.to].compactMap { arrowEnd($0, of: id)?.aim }.reduce(item.bounds) { $0.union($1) }.intersects(visible)
+        }
+        followPending.subtract(shown)
+        for arrowID in shown.sorted() { reroute(arrow: arrowID) }
     }
 
     /// Routes one arrow alone, following a change to what it is bound to (a drag, a scroll, an
@@ -530,7 +544,7 @@ final class ShapeLayer: NSView {
     }
 
     override func viewWillDraw() {
-        followNow()
+        followInView()
         settleProvisional()
         super.viewWillDraw()
     }

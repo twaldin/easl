@@ -19,6 +19,7 @@ Each version's section is its GitHub release's notes.
 - **easld serves Mac clients** (schema change: `client.attach`, `text.measure`, `approximate`): a Mac client attaches and serves what needs the app (view.get, view.render, view.snapshot, agent.prompt, agent.read's live modes, object.reload, exact text measurement); easld forwards those calls and answers `unavailable` with no client attached. A client on a newer easl works with an older easld; an older client is refused and told to update. Notes and text shapes are measured from a checked-in glyph table when no client is attached, marked `approximate: true`. easld now passes 23 of the 24 conformance scenarios.
 - Measuring HTML pages (`object.measure`, `size: "fit"`, `layout.check`) reuses a few web views instead of making one per page, and a write's overlap check looks only at the written object, so an agent's measure-and-write burst costs about 40% less CPU.
 - A visible terminal printing now and then no longer starts a new display-link thread for every line: each terminal view keeps its own display link, paused while idle.
+- An agent's big `object.batch` no longer holds the main thread for its arrows out of view or the cards of its new tiles: those run after the batch's own stretch, each on its own, so the board keeps drawing between them (the longest stretch of a 101-write batch on a 339-object board went from about 95 to 55 ms).
 
 ## 0.1.0
 

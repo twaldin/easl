@@ -354,7 +354,7 @@ final class CodeTile: NSView, TileContent {
             }
             let held = await engine.retain(containing: located.file)
             let document = await source.document(path: path, located: located, boardRoot: boardRoot)
-            // Tiles loading together (a batch) install one per main turn.
+            // Tiles loading together (a batch) install one per wake of the main thread.
             await MainTurns.next()
             guard let self, !Task.isCancelled, current == self.generation, self.isLive else {
                 if let held { await engine.release(held) }
@@ -1159,7 +1159,7 @@ extension CodeTile {
         return TileRender(image: image, contentSize: drawn.content, state: .rendered, reason: nil)
     }
 
-    /// Cards requested together (a pinch out over a dozen live tiles) render one per main turn:
+    /// Cards requested together (a pinch out over a dozen live tiles) render one per wake:
     /// drawn back to back in the liveness pass, ~5 ms each held the first frame after the pinch
     /// for ~45 ms. The live view stays up until its card arrives.
     func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
