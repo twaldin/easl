@@ -532,6 +532,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// File › Open Remote…: a board on another machine, over ssh (`OpenRemotePanel`).
+    @objc func openRemote(_ sender: Any?) {
+        OpenRemotePanel.show(over: keyController?.window) { [weak self] host, board in
+            self?.openRemoteBoard(host: host, board: board)
+        }
+    }
+
     static func makeMenu() -> NSMenu {
         let main = NSMenu()
         @discardableResult
@@ -564,6 +571,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("New Browser Tile…", #selector(newBrowserTile(_:)), "B", [.command, .shift]),
             item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
             item("Open Board…", #selector(openBoard(_:)), "O", [.command, .shift]),
+            item("Open Remote…", #selector(openRemote(_:)), ""),
             item("New HTML Tile", #selector(newHtmlTile(_:)), "H", [.command, .shift]),
             item("Review Changes", #selector(reviewChanges(_:)), "R", [.command, .shift]),
             item("Review Branch", #selector(reviewBranch(_:)), ""),
@@ -730,6 +738,7 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(togglePerformanceHUD(_:)):
             item.state = MetricsHUD.shared.isShown ? .on : .off
             return true
+        case #selector(openRemote(_:)): return true
         default: return keyController?.validate(item) ?? false
         }
     }

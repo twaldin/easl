@@ -193,6 +193,16 @@ final class EaslConnectionTests {
         }
     }
 
+    /// ssh closes its stdout before it exits with the remote command's status (nc finding no
+    /// socket on the host exits 1); that status, not a kill's, says the host was reached.
+    @Test func aRelayThatClosesItsOutputFirstReportsItsOwnExit() async throws {
+        let connection = EaslConnection.process("/bin/sh", ["-c", "exec >&-; sleep 0.5; exit 1"], backoff: .init(initial: .seconds(30), maximum: .seconds(30)))
+        defer { connection.close() }
+        #expect(await reach(.offline, connection))
+        #expect(connection.relayStatus == 1)
+        #expect(connection.problem == "sh exited with status 1")
+    }
+
     @Test func offlineRequestsFailAtOnce() async throws {
         let connection = EaslConnection.unixSocket(path, backoff: .init(initial: .seconds(5), maximum: .seconds(5)))
         defer { connection.close() }

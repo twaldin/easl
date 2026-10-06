@@ -38,6 +38,12 @@ enum AppPaths {
     static let getStarted = support.appendingPathComponent("get-started.json")
     /// Roots of the boards open as tabs, in tab order, reopened at the next launch.
     static let openBoards = support.appendingPathComponent("open-boards.json")
+    /// The hosts File › Open Remote… connected to, newest first (`RemoteHost.Recents`): how to
+    /// reach them, never their boards.
+    static let remoteHosts = support.appendingPathComponent("remote-hosts.json")
+    /// Testing only: the easl support directory to use on every remote host instead of its own
+    /// (a development instance there, docs/testing.md).
+    static let devRemoteHome: String? = ProcessInfo.processInfo.environment["EASL_DEV_REMOTE_HOME"].flatMap { $0.isEmpty ? nil : $0 }
     /// Where this client left each board's view (`SavedViewport`), one `<boardId>.json` per board.
     /// Client state, not the board's: a board is shared by every client that opens it.
     static func viewport(of board: BoardID) -> URL {

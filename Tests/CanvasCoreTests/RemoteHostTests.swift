@@ -81,4 +81,61 @@ struct RemoteHostTests {
         #expect(missing.output.isEmpty, "never attached, so zmx never created it")
         #expect(missing.errors == "no session it's missing yet\n")
     }
+
+    @Test func recentHostsAreNewestFirstOncePerTargetAndCapped() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("rh-\(UUID().uuidString.prefix(8))/remote-hosts.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        func host(_ target: String, tmpdir: String = "/tmp") -> RemoteHost {
+            RemoteHost(name: target, sshTarget: target, socketPath: "/s", tmpdir: tmpdir, easlBin: "easl")
+        }
+        #expect(RemoteHost.Recents.load(url).isEmpty)
+        for index in 0..<10 { RemoteHost.Recents.remember(host("h\(index)"), in: url) }
+        RemoteHost.Recents.remember(host("h5", tmpdir: "/var/folders/new/T/"), in: url)
+        let recents = RemoteHost.Recents.load(url)
+        #expect(recents.map(\.sshTarget) == ["h5", "h9", "h8", "h7", "h6", "h4", "h3", "h2"])
+        #expect(recents.first?.tmpdir == "/var/folders/new/T/", "the newest discovery replaces the old")
+    }
+
+    @Test func boardsListOpenOnesFirstWithTheirAgents() {
+        let boards: JSONValue = .object(["boards": .array([
+            .object(["board": .string("brd_z"), "root": .string("/Users/tim/dev/zeta"), "open": .bool(true), "archived": .bool(false), "objects": .number(3)]),
+            .object(["board": .string("brd_gone"), "root": .string("/Users/tim/dev/old"), "open": .bool(false), "archived": .bool(true), "objects": .number(0)]),
+            .object(["board": .string("brd_a"), "root": .string("/Users/tim/dev/alpha"), "open": .bool(false), "archived": .bool(false), "objects": .number(9)]),
+            .object(["board": .string("brd_l"), "root": .string("/Users/tim/dev/lindy"), "open": .bool(true), "archived": .bool(false), "objects": .number(40)]),
+        ])])
+        let agents: JSONValue = .object(["agents": .array([
+            .object(["tile": .string("obj_1"), "board": .string("brd_l"), "kind": .string("omp")]),
+            .object(["tile": .string("obj_2"), "board": .string("brd_l"), "kind": .string("claude")]),
+            .object(["tile": .string("obj_3"), "board": .string("brd_l"), "kind": .string("unknown")]),
+            .object(["tile": .string("obj_4"), "board": .string("brd_z"), "kind": .string("codex")]),
+        ])])
+        let rows = RemoteBoard.list(boards: boards, agents: agents)
+        #expect(rows.map(\.name) == ["lindy", "zeta", "alpha", "old"])
+        #expect(rows.map(\.agents) == [2, 1, 0, 0], "a plain shell isn't an agent")
+        #expect(rows.map(\.open) == [true, true, false, false])
+        #expect(rows.last?.archived == true)
+    }
+
+    @Test func theTailnetsPeersComeFromTailscaleStatus() throws {
+        let status = #"""
+        {"Self": {"HostName": "twaldin-home", "OS": "macOS", "Online": true},
+         "Peer": {
+           "k1": {"HostName": "twaldin-work", "OS": "macOS", "Online": true},
+           "k2": {"HostName": "deckbox", "OS": "linux", "Online": true},
+           "k3": {"HostName": "studio", "OS": "macOS", "Online": false},
+           "k4": {"HostName": "twaldin-phone", "OS": "iOS", "Online": true}}}
+        """#
+        let peers = try Tailnet.peers(status: Data(status.utf8))
+        #expect(peers.map(\.name) == ["deckbox", "studio", "twaldin-phone", "twaldin-work"], "this machine isn't a peer")
+        #expect(peers.filter { $0.isMac && $0.online }.map(\.name) == ["twaldin-work"])
+        #expect(try Tailnet.peers(status: Data(#"{"BackendState": "Stopped", "Peer": null}"#.utf8)).isEmpty)
+    }
+
+    @Test func tailscaleIsTheMacAppsElseOnPathElseHomebrews() {
+        let app = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+        #expect(Tailnet.binary(path: "/usr/bin:/opt/homebrew/bin", isExecutable: { [app, "/opt/homebrew/bin/tailscale"].contains($0) }) == app)
+        #expect(Tailnet.binary(path: "/usr/bin:/custom/bin", isExecutable: { ["/custom/bin/tailscale", "/opt/homebrew/bin/tailscale"].contains($0) }) == "/custom/bin/tailscale")
+        #expect(Tailnet.binary(path: "/usr/bin:/bin", isExecutable: { $0 == "/opt/homebrew/bin/tailscale" }) == "/opt/homebrew/bin/tailscale", "launchd's PATH lacks Homebrew's")
+        #expect(Tailnet.binary(path: "/usr/bin", isExecutable: { _ in false }) == nil)
+    }
 }

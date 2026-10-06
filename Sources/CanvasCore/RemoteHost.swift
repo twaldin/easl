@@ -106,8 +106,33 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         guard let home = values["home"], !home.isEmpty, let tmpdir = values["tmpdir"], !tmpdir.isEmpty else { return nil }
         let mac = values["os"] == "Darwin"
         let directory = support ?? (mac ? home + "/Library/Application Support/Easl" : ((values["state"].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/.local/state") + "/easl"))
-        let easl = mac ? "/Applications/easl.app/Contents/Resources/bin/easl" : (values["easl"] ?? "easl")
+        let easl = mac ? macEaslBin : (values["easl"] ?? "easl")
         return RemoteHost(name: name, sshTarget: sshTarget, socketPath: directory + "/easl.sock", tmpdir: tmpdir, easlBin: easl, zmxBin: values["zmx"] ?? "zmx")
+    }
+
+    /// The easl CLI inside the installed app on a Mac.
+    public static let macEaslBin = "/Applications/easl.app/Contents/Resources/bin/easl"
+
+    /// A Mac with the easl app, which `startCommand` can start.
+    public var isMac: Bool { easlBin == Self.macEaslBin }
+
+    /// The hosts File › Open Remote… connected to, newest first: only how to reach them, never
+    /// what their boards hold (`AppPaths.remoteHosts`).
+    public enum Recents {
+        public static let limit = 8
+
+        public static func load(_ url: URL) -> [RemoteHost] {
+            guard let data = try? Data(contentsOf: url) else { return [] }
+            return (try? JSONDecoder().decode([RemoteHost].self, from: data)) ?? []
+        }
+
+        /// `host` first, replacing an older entry for its ssh target, at most `limit`.
+        public static func remember(_ host: RemoteHost, in url: URL) {
+            let hosts = Array(([host] + load(url).filter { $0.sshTarget != host.sshTarget }).prefix(limit))
+            guard let data = try? JSONEncoder().encode(hosts) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     // MARK: Helpers
@@ -120,7 +145,8 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         return "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    static func lastLine(_ text: String) -> String? {
+    /// A process's last non-empty line of output: what it said last before failing.
+    public static func lastLine(_ text: String) -> String? {
         text.split(whereSeparator: \.isNewline).last.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
     }
 
@@ -156,6 +182,50 @@ public struct RemoteHost: Codable, Hashable, Sendable {
             process.waitUntilExit()
             deadline.cancel()
             return (process.terminationStatus, String(decoding: stdout, as: UTF8.self), String(decoding: stderr.withLock { $0 }, as: UTF8.self))
+        }
+    }
+}
+
+/// One of a host's boards as File › Open Remote… lists it.
+public struct RemoteBoard: Equatable, Sendable {
+    public var id: BoardID
+    /// The root directory's name.
+    public var name: String
+    public var root: String
+    /// Shown in a window on the host.
+    public var open: Bool
+    /// The root directory is gone on the host.
+    public var archived: Bool
+    /// Terminals on it whose agent reported (`agent.list` kind other than `unknown`).
+    public var agents: Int
+
+    public init(id: BoardID, name: String, root: String, open: Bool, archived: Bool, agents: Int) {
+        self.id = id
+        self.name = name
+        self.root = root
+        self.open = open
+        self.archived = archived
+        self.agents = agents
+    }
+
+    /// The boards in `board.list`'s result with their agents from `agent.list`'s: open ones
+    /// first, then by name; archived ones last.
+    public static func list(boards: JSONValue, agents: JSONValue) -> [RemoteBoard] {
+        var counts: [BoardID: Int] = [:]
+        for agent in agents["agents"]?.array ?? [] where agent["kind"]?.string != "unknown" {
+            if let board = agent["board"]?.string { counts[board, default: 0] += 1 }
+        }
+        let rows = (boards["boards"]?.array ?? []).compactMap { info -> RemoteBoard? in
+            guard let id = info["board"]?.string else { return nil }
+            let root = info["root"]?.string ?? ""
+            let name = (root as NSString).lastPathComponent
+            return RemoteBoard(id: id, name: name.isEmpty ? id : name, root: root, open: info["open"]?.bool ?? false,
+                               archived: info["archived"]?.bool ?? false, agents: counts[id] ?? 0)
+        }
+        return rows.sorted { lhs, rhs in
+            if lhs.archived != rhs.archived { return !lhs.archived }
+            if lhs.open != rhs.open { return lhs.open }
+            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
     }
 }
