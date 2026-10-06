@@ -1,0 +1,69 @@
+{
+  "description": "Scripted Mac clients on other easl versions (client.attach): one built from an older schema version is refused `unavailable` and serves nothing; one with the server's version and another schema hash, and one built from a newer version, are accepted and serve the methods both sides know. easld ignores the attach params and `serves` names it doesn't know and never sends a client a method it doesn't list. easld only: the app doesn't speak the client protocol yet.",
+  "steps": [
+    {
+      "call": "client.attach",
+      "conn": "old",
+      "params": {
+        "version": 0,
+        "schema": "5a0c1d7e9b3f2a64",
+        "app": "0.1.0",
+        "host": "studio",
+        "serves": ["view.get", "view.render"],
+        "boards": ["{{board}}"],
+        "focused": "{{board}}"
+      },
+      "replies": {
+        "view.get": [{ "result": { "board": "{{board}}", "viewport": { "rect": { "x": 0, "y": 0, "w": 1200, "h": 800 }, "zoom": 1 }, "selection": [], "visible": true, "appearance": "light" } }]
+      },
+      "note": "a schema version older than the server's: refused, so it never attaches"
+    },
+    { "call": "view.get", "params": { "board": "{{board}}" }, "note": "the refused client serves nothing: no client shows the board" },
+    {
+      "call": "client.attach",
+      "conn": "peer",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "0123456789abcdef",
+        "app": "0.2.1",
+        "host": "laptop",
+        "serves": ["view.get", "view.render", "view.zoom"],
+        "boards": ["{{board}}"],
+        "windows": [{ "board": "{{board}}", "tab": 1 }]
+      },
+      "replies": {
+        "view.get": [{ "result": { "board": "{{board}}", "viewport": { "rect": { "x": 0, "y": 0, "w": 1440, "h": 900 }, "zoom": 1 }, "selection": [], "visible": true, "appearance": "dark" } }],
+        "view.render": [{ "result": { "path": "/tmp/easl-render-peer.png", "width": 200, "height": 200, "scale": 2, "objects": [] } }]
+      },
+      "ignore": { "response.result.schema": "the server's schema hash changes with every schema edit" },
+      "note": "the server's version and another schema hash: accepted; `windows` and view.zoom are unknown here and ignored"
+    },
+    { "call": "view.get", "params": { "board": "{{board}}" } },
+    { "call": "view.snapshot", "params": { "board": "{{board}}" }, "note": "the client doesn't list view.snapshot: it isn't sent one" },
+    {
+      "call": "client.attach",
+      "conn": "next",
+      "params": {
+        "version": 2,
+        "schema": "fedcba9876543210",
+        "app": "0.3.0",
+        "host": "studio",
+        "serves": ["view.get", "view.zoom"],
+        "boards": ["{{board}}"],
+        "focused": "{{board}}",
+        "windows": [{ "board": "{{board}}", "tab": 2 }]
+      },
+      "replies": {
+        "view.get": [{ "result": { "board": "{{board}}", "viewport": { "rect": { "x": 100, "y": 50, "w": 1728, "h": 1117 }, "zoom": 0.5 }, "selection": [], "visible": true, "appearance": "dark" } }]
+      },
+      "ignore": { "response.result.schema": "the server's schema hash changes with every schema edit" },
+      "note": "a schema version newer than the server's: accepted, and the reply names the server's version for the client to speak"
+    },
+    { "call": "view.get", "params": { "board": "{{board}}" }, "note": "the newer client focuses the board, so it serves view.get" },
+    {
+      "call": "view.render",
+      "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 } },
+      "note": "the newer client doesn't list view.render: the client that does serves it"
+    }
+  ]
+}

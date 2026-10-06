@@ -89,7 +89,7 @@ func (r *Router) writeObject(method string, p map[string]any) (any, error) {
 				if size == nil {
 					return result, nil
 				}
-				return r.withOverlaps(result, nil), nil
+				return withApproximate(r.withOverlaps(result, nil), size), nil
 			}
 		}
 	}
@@ -123,7 +123,16 @@ func (r *Router) writeObject(method string, p map[string]any) (any, error) {
 	if upsert {
 		result["created"] = method == "object.create"
 	}
-	return result, nil
+	return withApproximate(result, size), nil
+}
+
+// withApproximate adds `approximate: true` to a write's result when its fit rests on the glyph
+// table.
+func withApproximate(result map[string]any, size *fit) map[string]any {
+	if size != nil && size.approximate {
+		result["approximate"] = true
+	}
+	return result
 }
 
 func (r *Router) create(p map[string]any) (any, error) {
@@ -1108,9 +1117,15 @@ func pathRoot(b *board.Board, typ model.ObjectType, props map[string]any) string
 	return b.Root()
 }
 
+// fit is a measured frame size; approximate when the glyph table measured its text.
+type fit struct {
+	board.Size
+	approximate bool
+}
+
 // fitSize is the measured size an object.create/update with `size: "fit"` gets, or a note or
 // image created without a frame height; nil otherwise.
-func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[string]any) (*board.Size, error) {
+func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[string]any) (*fit, error) {
 	frame := asMap(p["frame"])
 	_, hasH := frame["h"]
 	fitsNote := method == "object.create" && (p["type"] == string(model.Note) || p["type"] == string(model.Image)) && !hasH
@@ -1145,11 +1160,11 @@ func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[st
 		if err != nil {
 			return nil, err
 		}
-		w, h, err := measure.Size(typ, props, width, pathRoot(b, typ, props))
+		w, h, approximate, err := measure.Size(typ, props, width, pathRoot(b, typ, props), r.clients)
 		if err != nil {
 			return nil, err
 		}
-		return &board.Size{W: w, H: h}, nil
+		return &fit{board.Size{W: w, H: h}, approximate}, nil
 	}
 	id, err := str(p, "id")
 	if err != nil {
@@ -1208,16 +1223,16 @@ func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[st
 	if width == nil && typ != model.Code && typ != model.Image {
 		width = baseWidth
 	}
-	w, h, err := measure.Size(typ, props, width, root)
+	w, h, approximate, err := measure.Size(typ, props, width, root, r.clients)
 	if err != nil {
 		return nil, err
 	}
-	return &board.Size{W: w, H: h}, nil
+	return &fit{board.Size{W: w, H: h}, approximate}, nil
 }
 
 // fitted resolves `size: "fit"` into a whole frame: the measured size at the given (or
 // placed) origin; an update without an origin re-fits clear of what it didn't cover.
-func (r *Router) fitted(method string, p map[string]any, size *board.Size) (map[string]any, error) {
+func (r *Router) fitted(method string, p map[string]any, size *fit) (map[string]any, error) {
 	if size == nil {
 		return p, nil
 	}

@@ -71,7 +71,7 @@ func run(args []string, stderr io.Writer) int {
 	// Integrations spool undelivered reports in `agent-reports/` beside the socket.
 	reg := board.NewRegistry(filepath.Join(*home, "boards"), store.DefaultDebounce, filepath.Join(filepath.Dir(path), "agent-reports"))
 	r := router.New(reg)
-	srv, err := server.Listen(path, r.Handle)
+	srv, err := server.Listen(path, r.Handle, r.Answer)
 	if err != nil {
 		return fail(err)
 	}

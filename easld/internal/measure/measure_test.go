@@ -72,9 +72,25 @@ func pngFile(t *testing.T, path string, w, h int) {
 	}
 }
 
+// fixedTexts measures every text item as one size, as a client answering text.measure would.
+type fixedTexts struct {
+	size  TextSize
+	asked []TextItem
+}
+
+func (f *fixedTexts) MeasureText(items []TextItem) []TextSize {
+	f.asked = append(f.asked, items...)
+	out := make([]TextSize, len(items))
+	for i := range out {
+		out[i] = f.size
+	}
+	return out
+}
+
 func size(t *testing.T, typ model.ObjectType, props map[string]any, width *float64, root string) (float64, float64, error) {
 	t.Helper()
-	return Size(typ, props, width, root)
+	w, h, _, err := Size(typ, props, width, root, &fixedTexts{})
+	return w, h, err
 }
 
 const appTS = "export function greet(name: string): string {\n  return `hello ${name}`;\n}\n\nexport function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport const answer = 42;\n"
@@ -118,13 +134,50 @@ func TestCodeTilesMeasureAsTheAppDid(t *testing.T) {
 	if w != 882 || h != 26+178*2 {
 		t.Errorf("zoomed: %v×%v", w, h)
 	}
-	// A caption that would widen the tile needs the app's font metrics.
-	if _, _, err := size(t, model.Code, map[string]any{"path": "src/app.ts", "caption": "the answer"}, nil, root); !IsNeedsApp(err) {
-		t.Errorf("caption: %v", err)
+	// A caption widens the tile, up to the widest it may get, as the client measures it.
+	caption := &fixedTexts{size: TextSize{W: 500, H: CaptionHeight, Approximate: true}}
+	if w, _, approximate, err := Size(model.Code, map[string]any{"path": "src/app.ts", "caption": "the answer"}, nil, root, caption); err != nil || w != 500 || !approximate {
+		t.Errorf("caption: %v %v %v", w, approximate, err)
 	}
-	// One that can't (the rows already take the whole width) doesn't.
-	if w, _, err := size(t, model.Code, map[string]any{"path": "src/app.ts", "caption": "x"}, new(300.0), root); err != nil || w != 300 {
-		t.Errorf("caption at full width: %v %v", w, err)
+	if len(caption.asked) != 1 || caption.asked[0] != (TextItem{Kind: "caption", Text: "the answer"}) {
+		t.Errorf("asked %+v", caption.asked)
+	}
+	if w, _, _, err := Size(model.Code, map[string]any{"path": "src/app.ts", "caption": "the answer"}, new(460.0), root, caption); err != nil || w != 460 {
+		t.Errorf("caption past the width: %v %v", w, err)
+	}
+	// One that can't (the rows already take the whole width) isn't measured.
+	unused := &fixedTexts{}
+	if w, _, approximate, err := Size(model.Code, map[string]any{"path": "src/app.ts", "caption": "x"}, new(300.0), root, unused); err != nil || w != 300 || approximate || len(unused.asked) != 0 {
+		t.Errorf("caption at full width: %v %v %v", w, approximate, err)
+	}
+}
+
+// Shapes are their text's bounds with ObjectMeasure.shape's room around a label; an ellipse is
+// the box scaled by √2.
+func TestShapesWrapTheirMeasuredText(t *testing.T) {
+	texts := &fixedTexts{size: TextSize{W: 100, H: 26}}
+	cases := []struct {
+		props map[string]any
+		width *float64
+		w, h  float64
+		item  TextItem
+	}{
+		{map[string]any{"kind": "text", "text": "hi"}, nil, 100, 26, TextItem{Kind: "text", Text: "hi", TextSize: 1}},
+		{map[string]any{"kind": "text", "text": "hi", "textSize": 20.0}, new(300.0), 300, 26, TextItem{Kind: "text", Text: "hi", Width: new(300.0), TextSize: 8}},
+		{map[string]any{"kind": "rect", "text": "box"}, nil, 132, 50, TextItem{Kind: "label", Text: "box"}},
+		{map[string]any{"kind": "rect", "text": "box"}, new(200.0), 200, 50, TextItem{Kind: "label", Text: "box", Width: new(168.0)}},
+		{map[string]any{"kind": "ellipse", "text": "o"}, nil, 187, 71, TextItem{Kind: "label", Text: "o"}},
+	}
+	for _, c := range cases {
+		texts.asked = nil
+		w, h, _, err := Size(model.Shape, c.props, c.width, "", texts)
+		if err != nil || w != c.w || h != c.h {
+			t.Errorf("%v at %v: %v×%v (%v), want %v×%v", c.props, c.width, w, h, err, c.w, c.h)
+		}
+		if len(texts.asked) != 1 || texts.asked[0].Kind != c.item.Kind || texts.asked[0].Text != c.item.Text || texts.asked[0].TextSize != c.item.TextSize ||
+			(texts.asked[0].Width == nil) != (c.item.Width == nil) || (c.item.Width != nil && *texts.asked[0].Width != *c.item.Width) {
+			t.Errorf("%v asked %+v, want %+v", c.props, texts.asked, c.item)
+		}
 	}
 }
 
@@ -179,18 +232,18 @@ func TestQuarterTurnedJPEGsSwapTheirSides(t *testing.T) {
 func TestTypesWithoutAnIntrinsicSizeSaySo(t *testing.T) {
 	var failure *Failure
 	for _, typ := range []model.ObjectType{model.Browser, model.Terminal, model.Arrow, model.Group} {
-		if _, _, err := Size(typ, map[string]any{}, nil, t.TempDir()); !errors.As(err, &failure) || failure.Code != "unsupported" ||
+		if _, _, _, err := Size(typ, map[string]any{}, nil, t.TempDir(), nil); !errors.As(err, &failure) || failure.Code != "unsupported" ||
 			failure.Message != string(typ)+" objects have no intrinsic size" {
 			t.Errorf("%s: %v", typ, err)
 		}
 	}
-	if _, _, err := Size(model.Shape, map[string]any{"kind": "ink"}, nil, ""); !errors.As(err, &failure) || failure.Message != "ink has no intrinsic size" {
+	if _, _, _, err := Size(model.Shape, map[string]any{"kind": "ink"}, nil, "", nil); !errors.As(err, &failure) || failure.Message != "ink has no intrinsic size" {
 		t.Errorf("ink: %v", err)
 	}
-	if _, _, err := Size(model.Shape, map[string]any{"kind": "blob"}, nil, ""); !errors.As(err, &failure) || failure.Message != "shape props need a kind" {
+	if _, _, _, err := Size(model.Shape, map[string]any{"kind": "blob"}, nil, "", nil); !errors.As(err, &failure) || failure.Message != "shape props need a kind" {
 		t.Errorf("bad kind: %v", err)
 	}
-	if _, _, err := Size(model.Diagram, map[string]any{}, nil, ""); !errors.As(err, &failure) || failure.Code != "unavailable" {
+	if _, _, _, err := Size(model.Diagram, map[string]any{}, nil, "", nil); !errors.As(err, &failure) || failure.Code != "unavailable" {
 		t.Errorf("diagram without graph: %v", err)
 	}
 }
@@ -211,7 +264,7 @@ func TestADiagramMeasuresItsGraphAtFullSize(t *testing.T) {
 		"edges":      []any{map[string]any{"from": "a", "to": "f", "lines": []any{3.0}}},
 		"computedAt": "2026-01-01T00:00:00Z",
 	}
-	w, h, err := Size(model.Diagram, map[string]any{"graph": graph}, nil, "")
+	w, h, err := size(t, model.Diagram, map[string]any{"graph": graph}, nil, "")
 	// Two columns; the callers' column (a node of 50 points and one of 86, 14 apart) is the taller.
 	if err != nil || w != 2*36+2*300+76 || h != 26+28+2*36+50+14+86 {
 		t.Errorf("diagram: %v×%v %v", w, h, err)

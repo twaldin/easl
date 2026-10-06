@@ -6,12 +6,13 @@ import (
 
 	"github.com/twaldin/easl/easld/internal/api"
 	"github.com/twaldin/easl/easld/internal/board"
+	"github.com/twaldin/easl/easld/internal/clients"
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/weblink"
 )
 
-// render is view.render: its params are checked as the app checks them; drawing needs the app.
+// render is view.render: its params are checked as the app checks them; a client draws it.
 func (r *Router) render(p map[string]any) (any, error) {
 	var b *board.Board
 	var ids []string
@@ -83,7 +84,13 @@ func (r *Router) render(p map[string]any) (any, error) {
 	if err := imageDestination(p); err != nil {
 		return nil, err
 	}
-	return nil, fail(api.CodeUnsupported, "rendering needs the app UI")
+	timeout := 8000
+	if n, ok := intParam(p, "timeoutMs"); ok {
+		timeout = n
+	}
+	params := copyParams(p)
+	params["board"] = b.ID()
+	return r.forward("view.render", b.ID(), params, millis(timeout)+clients.RenderGrace, "view.render is drawn by the app, as the user sees the board")
 }
 
 func decodeFrame(m map[string]any) (model.Frame, bool) {
@@ -143,15 +150,18 @@ func imageDestination(p map[string]any) error {
 	return nil
 }
 
-// snapshot is view.snapshot: it needs the board's window.
+// snapshot is view.snapshot: a client's picture of the board's window.
 func (r *Router) snapshot(p map[string]any) (any, error) {
-	if _, err := r.boardOf(p); err != nil {
+	b, err := r.boardOf(p)
+	if err != nil {
 		return nil, err
 	}
 	if err := imageDestination(p); err != nil {
 		return nil, err
 	}
-	return nil, fail(api.CodeUnsupported, "snapshots need the app UI")
+	params := copyParams(p)
+	params["board"] = b.ID()
+	return r.forward("view.snapshot", b.ID(), params, clients.SnapshotDeadline, "view.snapshot is a picture of its window")
 }
 
 // openURL is view.open_url: an http(s) address shown in a browser tile beside the caller's
@@ -182,8 +192,8 @@ func (r *Router) openURL(p map[string]any) (any, error) {
 const reloadTimeoutMs = 15_000
 const diagramTimeoutMs = 60_000
 
-// reload is object.reload: a browser's page and a diagram's language-server graph both need the
-// app.
+// reload is object.reload: a browser's page and a diagram's language-server graph are a client's
+// to reload.
 func (r *Router) reload(p map[string]any) (any, error) {
 	id, err := str(p, "id")
 	if err != nil {
@@ -210,10 +220,11 @@ func (r *Router) reload(p map[string]any) (any, error) {
 	if timeout < 0 {
 		return nil, invalid("timeoutMs must be 0 or more")
 	}
+	need := "object.reload reloads the page in its browser tile"
 	if o.Type == model.Diagram {
-		return nil, fail(api.CodeUnsupported, "computing diagrams needs the app")
+		need = "object.reload computes the diagram through its language servers"
 	}
-	return nil, fail(api.CodeUnsupported, "reloading pages needs the app UI")
+	return r.forward("object.reload", b.ID(), p, millis(timeout)+clients.ReloadGrace, need)
 }
 
 // measure is object.measure: the intrinsic frame size for a type and props.
@@ -242,9 +253,13 @@ func (r *Router) measure(p map[string]any) (any, error) {
 	if w, ok := num(p, "width"); ok {
 		width = &w
 	}
-	w, h, err := measure.Size(typ, props, width, pathRoot(b, typ, props))
+	w, h, approximate, err := measure.Size(typ, props, width, pathRoot(b, typ, props), r.clients)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"w": w, "h": h}, nil
+	result := map[string]any{"w": w, "h": h}
+	if approximate {
+		result["approximate"] = true
+	}
+	return result, nil
 }

@@ -1,6 +1,8 @@
 // Package router maps schema/easl-api.json methods onto boards: a port of ApiRouter.swift as
-// it behaves without the Mac app's closures (no window, terminal surfaces, WebKit or renderer).
-// Every request runs under the registry's lock, as Swift runs everything on the main actor.
+// it behaves without the Mac app's closures (no window, terminal surfaces, WebKit or renderer),
+// whose work goes to an attached Mac client instead (the client protocol, package clients).
+// Every request runs under the registry's lock, as Swift runs everything on the main actor; a
+// call forwarded to a client releases it while it waits.
 package router
 
 import (
@@ -15,6 +17,7 @@ import (
 
 	"github.com/twaldin/easl/easld/internal/api"
 	"github.com/twaldin/easl/easld/internal/board"
+	"github.com/twaldin/easl/easld/internal/clients"
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/server"
@@ -46,6 +49,8 @@ type Conn interface {
 // Router serves the API over a board registry.
 type Router struct {
 	reg *board.Registry
+	// clients are the attached Mac clients, which serve the delegated methods and measure text.
+	clients *clients.Registry
 
 	pendingPrompts map[string]time.Time
 	waiters        []*waiter
@@ -55,11 +60,21 @@ type Router struct {
 	PromptStartGrace time.Duration
 }
 
-// New is a router over reg; it observes every board's events (agent.wait).
+// New is a router over reg; it observes every board's events (agent.wait), and measures the
+// text of reg's boards through its clients.
 func New(reg *board.Registry) *Router {
-	r := &Router{reg: reg, pendingPrompts: map[string]time.Time{}, FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
+	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
 	reg.Hook = r.observe
+	reg.Texts = r.clients
 	return r
+}
+
+// Clients is the attached clients.
+func (r *Router) Clients() *clients.Registry { return r.clients }
+
+// Answer is the server's Answers: a client's answer to a call forwarded to it.
+func (r *Router) Answer(c *server.Conn, line map[string]any) bool {
+	return r.clients.Answer(c, line)
 }
 
 // Handle is the server's handler: the response, or nil when the reply is deferred (agent.wait)
@@ -148,11 +163,19 @@ func nonFinite(v any) (swiftjson.NonFinite, bool) {
 }
 
 func (r *Router) call(id any, method string, raw any, c Conn) (any, error) {
+	if method == "client.attach" {
+		// A newer client may send params this server doesn't know: they are ignored.
+		raw = known(method, raw)
+	}
 	if err := checkParams(method, raw); err != nil {
 		return nil, err
 	}
 	p, _ := raw.(map[string]any)
 	switch method {
+	case "client.attach":
+		return r.attach(p, c)
+	case "text.measure":
+		return r.textMeasure(p)
 	case "events.subscribe":
 		boardID := ""
 		if s, ok := p["board"].(string); ok {
@@ -211,6 +234,21 @@ func errorReply(id any, f *Failure) map[string]any {
 	return map[string]any{"id": id, "ok": false, "error": map[string]any{"code": f.Code, "message": f.Message}}
 }
 
+// known is params without the keys method's schema doesn't list.
+func known(method string, raw any) any {
+	given, ok := raw.(map[string]any)
+	if !ok {
+		return raw
+	}
+	out := map[string]any{}
+	for _, k := range api.Methods[method].Accepted {
+		if v, ok := given[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // asFailure maps an error to its API code (ApiRouter.handle's catch clauses).
 func asFailure(err error) *Failure {
 	var f *Failure
@@ -224,6 +262,10 @@ func asFailure(err error) *Failure {
 	var mf *measure.Failure
 	if errors.As(err, &mf) {
 		return &Failure{mf.Code, mf.Message}
+	}
+	var cf *clients.Failure
+	if errors.As(err, &cf) {
+		return &Failure{cf.Code, cf.Message}
 	}
 	return &Failure{api.CodeInvalidParams, err.Error()}
 }

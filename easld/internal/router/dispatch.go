@@ -10,6 +10,7 @@ import (
 
 	"github.com/twaldin/easl/easld/internal/api"
 	"github.com/twaldin/easl/easld/internal/board"
+	"github.com/twaldin/easl/easld/internal/clients"
 	"github.com/twaldin/easl/easld/internal/mention"
 	"github.com/twaldin/easl/easld/internal/metrics"
 	"github.com/twaldin/easl/easld/internal/model"
@@ -225,10 +226,13 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 	case "view.open_url":
 		return r.openURL(p)
 	case "view.get":
-		if _, err := r.boardOf(p); err != nil {
+		b, err := r.boardOf(p)
+		if err != nil {
 			return nil, err
 		}
-		return nil, fail(api.CodeUnsupported, "the viewport needs the app UI")
+		params := copyParams(p)
+		params["board"] = b.ID()
+		return r.forward("view.get", b.ID(), params, clients.ViewGetDeadline, "view.get reads its window (viewport, selection, focus)")
 	}
 	return nil, invalid("unknown method %s", method)
 }

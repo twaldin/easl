@@ -8,8 +8,8 @@ import (
 
 // check is layout.check: the board (by `ids` or `board`) and the scope are the router's; the
 // problems are the check package's (BoardGeometry.layoutCheck and ApiRouter.check's fit checks).
-// Arrow label sizes, notes, text shapes, HTML pages and captions are measured by AppKit and
-// WebKit in the app: without them labels, notes, text and pages aren't fit-checked.
+// Arrow label sizes, notes, text shapes and captions are measured through the clients (a Mac
+// client's AppKit, else the glyph table); HTML pages need the app's WebKit and aren't fit-checked.
 func (r *Router) check(p map[string]any) (any, error) {
 	var b *board.Board
 	var ids []string
@@ -42,5 +42,10 @@ func (r *Router) check(p map[string]any) (any, error) {
 			rect = &f
 		}
 	}
-	return check.Check(b.Objects(), check.Env{Root: b.Root(), Settled: b.Settled()}, ids, rect), nil
+	labels, approximate := b.LabelSizes()
+	env := check.Env{
+		Root: b.Root(), LabelSizes: labels, LabelApproximate: approximate, Settled: b.Settled(), Texts: r.clients,
+		NoteRoot: func(o model.Object) string { return pathRoot(b, o.Type, o.Props) },
+	}
+	return check.Check(b.Objects(), env, ids, rect), nil
 }

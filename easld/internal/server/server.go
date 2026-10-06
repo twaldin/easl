@@ -50,6 +50,12 @@ const drainTimeout = 2 * time.Second
 // concurrently.
 type Handler func(req any, c *Conn) any
 
+// Answers takes a line that has `ok` and no `method` before it queues as a request: the answer
+// to a request the server sent the connection (the client protocol, client.attach). It reports
+// whether it took the line; it runs on the connection's reader, so an answer never waits behind
+// the connection's own requests (which may be waiting for it).
+type Answers func(c *Conn, line map[string]any) bool
+
 // malformedLine is the reply to a line that isn't JSON.
 var malformedLine = map[string]any{
 	"ok":    false,
@@ -82,6 +88,8 @@ type Conn struct {
 	written chan struct{} // closed when the writer has finished and the socket is closed
 
 	inbox inbox
+	// answers takes answer lines (see Answers); nil: every line is a request.
+	answers Answers
 
 	// unanswered are the requests handed to the handler whose reply hasn't been sent yet, in
 	// arrival order (guarded by mu): a reply from any path (the handler's return, a direct
@@ -384,6 +392,11 @@ func (c *Conn) readLoop() {
 			continue
 		}
 		m, _ := value.(map[string]any)
+		if _, hasMethod := m["method"]; !hasMethod && c.answers != nil {
+			if _, isBool := m["ok"].(bool); isBool && c.answers(c, m) {
+				continue
+			}
+		}
 		method, _ := m["method"].(string)
 		if method != "" {
 			metrics.Shared.Record("api.in."+method, 0, len(line)+1)
@@ -426,6 +439,7 @@ type Server struct {
 	path     string
 	listener *net.UnixListener
 	handler  Handler
+	answers  Answers
 	limits   limits
 	// bound is the socket file Listen created: instances sharing a directory bind the same
 	// path in turn, so Close removes the path only while it is still this file.
@@ -448,11 +462,14 @@ func sunPathMax() int {
 }
 
 // Listen binds path (mode 0600, creating its directory 0700) and serves h on every connection
-// until Close. It replaces only a stale socket (one nothing listens on, left by a crashed
-// server): a path that isn't a socket, or a socket another server answers on, is refused.
-func Listen(path string, h Handler) (*Server, error) { return listen(path, h, defaultLimits) }
+// until Close, with answers (nil: none) taking the answers to requests the server sends. It
+// replaces only a stale socket (one nothing listens on, left by a crashed server): a path that
+// isn't a socket, or a socket another server answers on, is refused.
+func Listen(path string, h Handler, answers Answers) (*Server, error) {
+	return listen(path, h, answers, defaultLimits)
+}
 
-func listen(path string, h Handler, l limits) (*Server, error) {
+func listen(path string, h Handler, answers Answers, l limits) (*Server, error) {
 	if len(path) >= sunPathMax() {
 		return nil, &net.OpError{Op: "listen", Net: "unix", Addr: &net.UnixAddr{Name: path, Net: "unix"}, Err: syscall.ENAMETOOLONG}
 	}
@@ -467,7 +484,7 @@ func listen(path string, h Handler, l limits) (*Server, error) {
 		return nil, err
 	}
 	listener.SetUnlinkOnClose(false)
-	s := &Server{path: path, listener: listener, handler: h, limits: l, conns: map[*Conn]struct{}{}}
+	s := &Server{path: path, listener: listener, handler: h, answers: answers, limits: l, conns: map[*Conn]struct{}{}}
 	if info, err := os.Lstat(path); err == nil {
 		s.bound = info
 	}
@@ -533,6 +550,7 @@ func (s *Server) acceptLoop() {
 			continue
 		}
 		c := newConn(nc, s.limits)
+		c.answers = s.answers
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()

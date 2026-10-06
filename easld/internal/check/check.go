@@ -4,9 +4,11 @@
 // `overflow`, a code tile's rows past its frame (`scrolls`), and cut captions and note tables
 // (`truncated`), for `ids`, for what intersects `rect`, or for the whole board.
 //
-// What only the app can measure comes in through Env: arrow label chip sizes (AppKit text
-// layout), notes and text shapes (TextKit), HTML pages (WebKit), and code captions (system font
-// metrics). Without a hook those objects are not measured, as Swift skips what it can't measure.
+// What only the app can measure comes in through Env: arrow label chip sizes, notes, text shapes
+// and code captions (AppKit text layout, through Texts: a Mac client's or the glyph table's), and
+// HTML pages (WebKit). Without them those objects are not measured, as Swift skips what it can't
+// measure. A finding that rests on a size the glyph table approximated makes the result
+// `approximate`.
 package check
 
 import (
@@ -22,20 +24,21 @@ import (
 type Env struct {
 	// Root is the board's root: code tiles' relative paths resolve there.
 	Root string
-	// LabelSizes are the arrows' caption chip sizes (DrawingStyle.arrowLabel); Settled the
-	// board's last drawn routing (Board.settledRouting).
-	LabelSizes map[string]route.Size
-	Settled    *route.Result
-	// NoteSize is ObjectMeasure.note at a natural width: the note's size and how much wider
-	// than that width its widest table is even with its cells wrapped.
-	NoteSize func(o model.Object, width float64) (w, h, tableShortfall float64, ok bool)
-	// TextSize is ObjectMeasure.size for a text shape wrapped at `width`.
-	TextSize func(o model.Object, width float64) (w, h float64, ok bool)
+	// LabelSizes are the arrows' caption chip sizes (DrawingStyle.arrowLabel), and
+	// LabelApproximate the arrows whose chip the glyph table approximated; Settled the board's
+	// last drawn routing (Board.settledRouting).
+	LabelSizes       map[string]route.Size
+	LabelApproximate map[string]bool
+	Settled          *route.Result
+	// Texts measures the notes, text shapes and code captions checked for fit, in one batch
+	// (ObjectMeasure.note at a natural width, a text shape at its frame's width, captionWidth).
+	// Nil: none are measured.
+	Texts measure.Texts
+	// NoteRoot is where a note's fences and images are read (its link root).
+	NoteRoot func(o model.Object) string
 	// HTMLSize is ObjectMeasure.htmlExtent: the page laid out at `width`. Nil when there is no
 	// page measurer (ObjectMeasure.html == nil): HTML tiles aren't checked for fit.
 	HTMLSize func(o model.Object, width float64) (w, h float64, ok bool)
-	// CaptionWidth is ObjectMeasure.captionWidth: the width a code caption needs.
-	CaptionWidth func(caption string) (float64, bool)
 }
 
 // Check is layout.check's result for `ids` (nil: by `rect`, nil: the whole board). The caller
@@ -97,9 +100,52 @@ func Check(objects map[string]model.Object, env Env, ids []string, rect *model.F
 	}
 	report := geometry.LayoutCheck(scope, routeRows)
 
+	// The text in them, measured in one batch: notes at their natural width, text shapes at
+	// their frame's width, code captions.
+	var items []measure.TextItem
+	itemOf := map[string]int{}
+	for _, o := range measurable {
+		var item measure.TextItem
+		switch o.Type {
+		case model.Code:
+			caption, _ := o.Props["caption"].(string)
+			if caption == "" {
+				continue
+			}
+			item = measure.TextItem{Kind: "caption", Text: caption}
+		case model.Note:
+			markdown, _ := o.Props["markdown"].(string)
+			root := env.Root
+			if env.NoteRoot != nil {
+				root = env.NoteRoot(o)
+			}
+			item = measure.TextItem{Kind: "note", Text: markdown, Width: new(o.Frame.W / measure.ObjectZoom(o)), Root: root}
+		case model.Shape:
+			text, _ := o.Props["text"].(string)
+			item = measure.TextItem{Kind: "text", Text: text, Width: new(o.Frame.W), TextSize: measure.ShapeTextSize(o.Props)}
+		default:
+			continue
+		}
+		itemOf[o.ID] = len(items)
+		items = append(items, item)
+	}
+	var sizes []measure.TextSize
+	if env.Texts != nil && len(items) > 0 {
+		sizes = env.Texts.MeasureText(items)
+	}
+	text := func(id string) (measure.TextSize, bool) {
+		i, ok := itemOf[id]
+		if !ok || sizes == nil {
+			return measure.TextSize{}, false
+		}
+		return sizes[i], true
+	}
+
+	approximate := false
 	overflow, scrolls, truncated := []any{}, []any{}, []any{}
 	for _, o := range measurable {
 		var w, h float64
+		measuredApproximately := false
 		zoom := measure.ObjectZoom(o)
 		natural := o.Frame.W / zoom
 		switch o.Type {
@@ -113,11 +159,10 @@ func Check(objects map[string]model.Object, env Env, ids []string, rect *model.F
 			caption, _ := o.Props["caption"].(string)
 			w, h = measure.CodeRowsSize(excerpt.Lines, excerpt.FileLineCount, caption != "", false, natural)
 			w, h = measure.Zoomed(w, h, zoom)
-			if caption != "" && env.CaptionWidth != nil {
-				if width, ok := env.CaptionWidth(caption); ok {
-					if missing := float64((width - natural) * zoom); missing >= 1 {
-						truncated = append(truncated, map[string]any{"id": o.ID, "what": "caption", "x": math.Ceil(missing)})
-					}
+			if size, ok := text(o.ID); ok {
+				if missing := float64((size.W - natural) * zoom); missing >= 1 {
+					truncated = append(truncated, map[string]any{"id": o.ID, "what": "caption", "x": math.Ceil(missing)})
+					approximate = approximate || size.Approximate
 				}
 			}
 		case model.HTML:
@@ -128,26 +173,24 @@ func Check(objects map[string]model.Object, env Env, ids []string, rect *model.F
 		case model.Note:
 			// Wrapped at the frame's (natural) width; a table too wide for it even with its cells
 			// wrapped is cut, `truncated`.
-			if env.NoteSize == nil {
-				continue
-			}
-			nw, nh, shortfall, ok := env.NoteSize(o, natural)
+			size, ok := text(o.ID)
 			if !ok {
 				continue
 			}
-			w, h = measure.Zoomed(nw, nh, zoom)
-			if shortfall >= 1 {
-				truncated = append(truncated, map[string]any{"id": o.ID, "what": "table", "x": math.Ceil(float64(shortfall * zoom))})
+			w, h = measure.Zoomed(size.W, size.H, zoom)
+			measuredApproximately = size.Approximate
+			if size.TableShortfall >= 1 {
+				truncated = append(truncated, map[string]any{"id": o.ID, "what": "table", "x": math.Ceil(float64(size.TableShortfall * zoom))})
+				approximate = approximate || size.Approximate
 			}
 		default:
 			// Text wraps at the frame's width.
-			if env.TextSize == nil {
+			size, ok := text(o.ID)
+			if !ok {
 				continue
 			}
-			var ok bool
-			if w, h, ok = env.TextSize(o, o.Frame.W); !ok {
-				continue
-			}
+			w, h = o.Frame.W, size.H
+			measuredApproximately = size.Approximate
 		}
 		x := max(0, w-o.Frame.W)
 		y := max(0, h-o.Frame.H)
@@ -160,9 +203,25 @@ func Check(objects map[string]model.Object, env Env, ids []string, rect *model.F
 			scrolls = append(scrolls, map[string]any{"id": o.ID, "y": math.Ceil(y)})
 		} else {
 			overflow = append(overflow, map[string]any{"id": o.ID, "x": math.Ceil(x), "y": math.Ceil(y)})
+			approximate = approximate || measuredApproximately
 		}
 	}
-	return ResultJSON(report, overflow, scrolls, truncated)
+	// A label finding rests on the chips involved: the arrow's own and any label it lies on.
+	for _, l := range report.LabelOverlaps {
+		if env.LabelApproximate[l.Arrow] {
+			approximate = true
+		}
+		for _, id := range l.Overlaps {
+			if env.LabelApproximate[id] {
+				approximate = true
+			}
+		}
+	}
+	result := ResultJSON(report, overflow, scrolls, truncated)
+	if approximate {
+		result["approximate"] = true
+	}
+	return result
 }
 
 func isTextShape(o model.Object) bool {

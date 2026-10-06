@@ -1,0 +1,350 @@
+{
+  "scenario": "client-failures",
+  "description": "Three scripted Mac clients (client.attach) show one board. A call goes to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call `unavailable`, naming it, and nothing is retried on another client; the next call goes to the client the choice order picks then. easld only: the app doesn't speak the client protocol yet.",
+  "recordedOn": "easld (the app doesn't speak the client protocol yet; scripted clients serve it)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "url": "https://example.com/"
+        },
+        "type": "browser"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "studio",
+      "request": {
+        "app": "0.2.0",
+        "boards": [
+          "<board>"
+        ],
+        "focused": "<board>",
+        "host": "studio",
+        "serves": [
+          "view.render",
+          "object.reload"
+        ],
+        "version": 1
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:1>",
+          "version": 1
+        }
+      },
+      "ignored": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "laptop",
+      "request": {
+        "app": "0.2.0",
+        "boards": [
+          "<board>"
+        ],
+        "host": "laptop",
+        "serves": [
+          "view.render",
+          "object.reload"
+        ],
+        "version": 1
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:2>",
+          "version": 1
+        }
+      },
+      "ignored": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "mini",
+      "request": {
+        "app": "0.2.0",
+        "boards": [
+          "<board>"
+        ],
+        "host": "mini",
+        "serves": [
+          "view.render",
+          "object.reload"
+        ],
+        "version": 1
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:3>",
+          "version": 1
+        }
+      },
+      "ignored": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "object.reload",
+      "method": "object.reload",
+      "request": {
+        "id": "<obj:1>",
+        "timeoutMs": 100
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "easl 0.2.0 on studio (client <cli:1>) didn't answer object.reload within 5.1 s"
+        },
+        "id": "r3",
+        "ok": false
+      },
+      "forwarded": [
+        {
+          "conn": "studio",
+          "method": "object.reload",
+          "params": {
+            "id": "<obj:1>",
+            "timeoutMs": 100
+          }
+        }
+      ]
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "laptop",
+      "request": {
+        "app": "0.2.0",
+        "boards": [
+          "<board>"
+        ],
+        "focused": "<board>",
+        "host": "laptop",
+        "serves": [
+          "view.render",
+          "object.reload"
+        ],
+        "version": 1
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "client": "<cli:2>",
+          "version": 1
+        }
+      },
+      "ignored": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "object.reload",
+      "method": "object.reload",
+      "request": {
+        "id": "<obj:1>",
+        "timeoutMs": 100
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "loaded": true,
+          "url": "https://example.com/"
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "laptop",
+          "method": "object.reload",
+          "params": {
+            "id": "<obj:1>",
+            "timeoutMs": 100
+          }
+        }
+      ]
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "h": 100,
+          "w": 100,
+          "x": 0,
+          "y": 0
+        }
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "easl 0.2.0 on laptop (client <cli:2>) disconnected before answering view.render"
+        },
+        "id": "r5",
+        "ok": false
+      },
+      "forwarded": [
+        {
+          "conn": "laptop",
+          "method": "view.render",
+          "params": {
+            "board": "<board>",
+            "target": {
+              "h": 100,
+              "w": 100,
+              "x": 0,
+              "y": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "h": 100,
+          "w": 100,
+          "x": 0,
+          "y": 0
+        }
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "height": 200,
+          "objects": [],
+          "path": "/tmp/easl-render-studio.png",
+          "scale": 2,
+          "width": 200
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "studio",
+          "method": "view.render",
+          "params": {
+            "board": "<board>",
+            "target": {
+              "h": 100,
+              "w": 100,
+              "x": 0,
+              "y": 0
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

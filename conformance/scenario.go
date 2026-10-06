@@ -71,8 +71,22 @@ type Step struct {
 	// The value says why.
 	Shape string `json:"shape,omitempty"`
 	// Drop the step's events (a step whose events depend on timing the scenario can't control).
-	NoEvents bool   `json:"noEvents,omitempty"`
-	Note     string `json:"note,omitempty"`
+	NoEvents bool `json:"noEvents,omitempty"`
+	// Replies make the step's connection a scripted client (the client protocol, client.attach):
+	// the answers it gives to the requests the server sends it, by method, in order, added to the
+	// ones it has left. They are in place before the step's call goes out. Templates expand now.
+	Replies map[string][]Reply `json:"replies,omitempty"`
+	Note    string             `json:"note,omitempty"`
+}
+
+// Reply is one scripted answer of a client connection: its result, or its error ({code,
+// message}); or none at all (Silent: the server's deadline passes), or the connection closing
+// instead (HangUp).
+type Reply struct {
+	Result any            `json:"result,omitempty"`
+	Error  map[string]any `json:"error,omitempty"`
+	Silent bool           `json:"silent,omitempty"`
+	HangUp bool           `json:"hangUp,omitempty"`
 }
 
 type WriteFile struct {
@@ -102,6 +116,8 @@ func (s Step) Label() string {
 		return "write " + s.WriteFile.Path
 	case s.SleepMs > 0:
 		return "sleep"
+	case len(s.Replies) > 0:
+		return "script " + s.Conn
 	}
 	return "?"
 }

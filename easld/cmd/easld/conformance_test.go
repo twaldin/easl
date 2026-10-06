@@ -18,16 +18,16 @@ import (
 // app did when they were recorded. The test fails when one of them stops passing; a scenario
 // that starts passing is reported, so it can join the list.
 var passing = []string{
-	"agents", "arrows", "batch", "board-get-history", "boards", "code-tiles", "events",
-	"follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "metrics",
-	"open-url", "placement", "protocol", "questions", "tray",
+	"agents", "arrows", "batch", "board-get-history", "boards", "client-delegation", "client-failures", "client-versions",
+	"code-tiles", "events", "follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "metrics",
+	"no-client", "objects-crud", "open-url", "placement", "protocol", "questions", "tray",
 }
 
-// Not passing yet, and why:
-//   - measure-notes: notes and text shapes are measured by AppKit text layout (SF Pro, TextKit 2;
-//     Shantell Sans with GPOS kerning for text), which easld doesn't reproduce.
-//   - objects-crud: one step creates a note with `props: "text"` and no height; the app measures
-//     it (empty) before rejecting the props, easld can't measure a note, so its error differs.
+// Not passing, and why:
+//   - measure-notes: recorded against the app, whose AppKit measured its notes and text shapes
+//     exactly (SF Pro, TextKit 2; Shantell Sans with GPOS kerning). With no client attached easld
+//     measures them from the glyph table (measure/glyphs): within a few points, and marked
+//     `approximate: true`. client-delegation replays exact measurement through a scripted client.
 
 // The suite replayed against easld in-process: a fresh home, the real router and socket server.
 func TestConformance(t *testing.T) {
@@ -41,7 +41,8 @@ func TestConformance(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 	reg := board.NewRegistry(filepath.Join(dir, "boards"), store.DefaultDebounce, filepath.Join(dir, "agent-reports"))
-	srv, err := server.Listen(filepath.Join(dir, "easl.sock"), router.New(reg).Handle)
+	r := router.New(reg)
+	srv, err := server.Listen(filepath.Join(dir, "easl.sock"), r.Handle, r.Answer)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,9 @@ package api
 // SchemaVersion is the `version` of the schema this build was generated from.
 const SchemaVersion = 1
 
+// SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
+const SchemaHash = "2889735094c39026"
+
 // Error codes of a failed response's `error.code`, with what each means.
 const (
 	// params failed schema validation.
@@ -15,7 +18,7 @@ const (
 	CodeConflict = "conflict"
 	// method known but not implemented by this build.
 	CodeUnsupported = "unsupported"
-	// target exists but cannot act right now (e.g. a terminal tile without an attached surface), or the app is not running.
+	// target exists but cannot act right now (e.g. a terminal tile without an attached surface), or the app is not running: no attached client (client.attach) serves the call, it didn't answer in time, or it disconnected before answering.
 	CodeUnavailable = "unavailable"
 	// agent.wait deadline passed before the agent reached a requested state.
 	CodeTimeout = "timeout"
@@ -190,6 +193,14 @@ var Methods = map[string]ParamSpec{
 	"events.subscribe": {
 		Accepted: []string{"board", "events"},
 		Required: nil,
+	},
+	"client.attach": {
+		Accepted: []string{"version", "schema", "app", "host", "serves", "boards", "focused"},
+		Required: []string{"version", "schema", "serves"},
+	},
+	"text.measure": {
+		Accepted: []string{"items", "board"},
+		Required: []string{"items"},
 	},
 }
 

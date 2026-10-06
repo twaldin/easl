@@ -24,13 +24,13 @@ type NotPorted struct{ What string }
 func (e *NotPorted) Error() string { return e.What + " is not ported to easld" }
 
 // Size is ObjectMeasure.size: the full object frame that shows type's content with props
-// without scrolling. width (nil: default) wraps code (its maximum width) and scales images; a
-// zoomed tile lays out at width / zoom and measures zoom times that under a 1× title bar.
-// Errors are *Failure, or *NeedsApp for what only the app measures: notes, text shapes and
-// labelled rects/ellipses (TextKit), HTML (WebKit), changes tiles (the diff engine), a code
-// tile's caption when it would widen the tile (system font metrics), image formats ImageIO
-// alone reads.
-func Size(typ model.ObjectType, props map[string]any, width *float64, root string) (w, h float64, err error) {
+// without scrolling. width (nil: default) wraps code (its maximum width), notes and text, and
+// scales images; a zoomed tile lays out at width / zoom and measures zoom times that under a 1×
+// title bar. Text AppKit lays out (notes, text shapes and labelled rects/ellipses, a code tile's
+// caption) is measured by texts; approximate says the glyph table measured it. Errors are
+// *Failure, *NeedsApp for what only the app measures (HTML, image formats ImageIO alone
+// reads), or *NotPorted (changes tiles).
+func Size(typ model.ObjectType, props map[string]any, width *float64, root string, texts Texts) (w, h float64, approximate bool, err error) {
 	zoom := 1.0
 	if ZoomApplies(typ) {
 		zoom = ZoomOf(props)
@@ -43,7 +43,7 @@ func Size(typ model.ObjectType, props map[string]any, width *float64, root strin
 	case model.Code:
 		excerpt, err := CodeExcerpt(props, root)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, false, err
 		}
 		caption, _ := props["caption"].(string)
 		_, follow := props["followOf"].(string)
@@ -52,36 +52,42 @@ func Size(typ model.ObjectType, props map[string]any, width *float64, root strin
 			maxWidth = *natural
 		}
 		w, h = CodeRowsSize(excerpt.Lines, excerpt.FileLineCount, caption != "", follow, maxWidth)
+		// The caption widens the tile up to the same maximum (a longer one truncates).
 		if caption != "" && w < Widest(maxWidth) {
-			return 0, 0, &NeedsApp{What: "a code tile's caption width"}
+			size := texts.MeasureText([]TextItem{{Kind: "caption", Text: caption}})[0]
+			w = min(max(w, size.W), Widest(maxWidth))
+			approximate = size.Approximate
 		}
 	case model.Note:
-		return 0, 0, &NeedsApp{What: "a note's height"}
+		markdown, _ := props["markdown"].(string)
+		size := texts.MeasureText([]TextItem{{Kind: "note", Text: markdown, Width: natural, Root: root}})[0]
+		w, h, approximate = size.W, size.H, size.Approximate
 	case model.Shape:
 		kind, _ := props["kind"].(string)
 		switch kind {
 		case "rect", "ellipse", "text":
-			return 0, 0, &NeedsApp{What: "a shape's text"}
+			w, h, approximate = shapeSize(kind, props, width, texts)
+			return w, h, approximate, nil
 		case "ink":
-			return 0, 0, &Failure{"unsupported", "ink has no intrinsic size"}
+			return 0, 0, false, &Failure{"unsupported", "ink has no intrinsic size"}
 		}
-		return 0, 0, &Failure{"invalid_params", "shape props need a kind"}
+		return 0, 0, false, &Failure{"invalid_params", "shape props need a kind"}
 	case model.HTML:
-		return 0, 0, &NeedsApp{What: "an html page"}
+		return 0, 0, false, &NeedsApp{What: "an html page"}
 	case model.Changes:
-		return 0, 0, &NotPorted{What: "measuring a changes tile (ChangeSet.load + ChangesMetrics)"}
+		return 0, 0, false, &NotPorted{What: "measuring a changes tile (ChangeSet.load + ChangesMetrics)"}
 	case model.Image:
 		path, _ := props["path"].(string)
 		if path == "" {
-			return 0, 0, &Failure{"invalid_params", "an image needs props.path"}
+			return 0, 0, false, &Failure{"invalid_params", "an image needs props.path"}
 		}
 		file := ImageFile(path, root)
 		pw, ph, ok, err := ImageNaturalSize(file)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, false, err
 		}
 		if !ok {
-			return 0, 0, &Failure{"not_found", "no readable image at " + file}
+			return 0, 0, false, &Failure{"not_found", "no readable image at " + file}
 		}
 		maxWidth := ImageDefaultMaxWidth
 		if natural != nil {
@@ -96,7 +102,7 @@ func Size(typ model.ObjectType, props map[string]any, width *float64, root strin
 	case model.Diagram:
 		graph, ok := DecodeDiagramGraph(props["graph"])
 		if !ok {
-			return 0, 0, &Failure{"unavailable", "the diagram isn't computed yet: object.reload it (it waits for the language server), then measure or fit"}
+			return 0, 0, false, &Failure{"unavailable", "the diagram isn't computed yet: object.reload it (it waits for the language server), then measure or fit"}
 		}
 		bw, bh := graph.BodySize()
 		w, h = bw, TitleHeight+bh
@@ -107,10 +113,10 @@ func Size(typ model.ObjectType, props map[string]any, width *float64, root strin
 			w = *natural
 		}
 	default:
-		return 0, 0, &Failure{"unsupported", string(typ) + " objects have no intrinsic size"}
+		return 0, 0, false, &Failure{"unsupported", string(typ) + " objects have no intrinsic size"}
 	}
 	w, h = Zoomed(w, h, zoom)
-	return w, h, nil
+	return w, h, approximate, nil
 }
 
 // CodeExcerpt is ObjectMeasure.codeExcerpt: the lines a code tile shows fitted: its range,

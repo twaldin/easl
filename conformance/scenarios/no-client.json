@@ -1,0 +1,69 @@
+{
+  "description": "No Mac client attached (client.attach): every delegated method fails `unavailable` saying what it needed of the app, and what measures text (text.measure, object.measure, `size: fit`, a layout.check finding that rests on a measured size) answers from easld's glyph table, marked `approximate: true`. A layout.check whose findings rest on no measured size isn't. easld only: the app measures with AppKit and draws itself.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "# Plan\n\nShip it." }, "frame": { "x": 0, "y": 0, "w": 280, "h": 200 } },
+      "save": "n"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "browser", "props": { "url": "https://example.com/" }, "frame": { "x": 400, "y": 0, "w": 600, "h": 400 } },
+      "save": "web"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "diagram", "props": { "kind": "calls", "path": "main.go", "symbol": "main" }, "frame": { "x": 1200, "y": 0, "w": 600, "h": 400 } },
+      "save": "dg"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "worker" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } },
+      "save": "t"
+    },
+    { "call": "view.get", "params": { "board": "{{board}}" } },
+    { "call": "view.render", "params": { "board": "{{board}}", "target": "{{n.object.id}}" } },
+    { "call": "view.snapshot", "params": { "board": "{{board}}" } },
+    { "call": "agent.prompt", "params": { "target": "worker", "text": "hello" } },
+    { "call": "agent.read", "params": { "target": "{{t.object.id}}", "lines": 10 } },
+    { "call": "agent.read", "params": { "target": "{{t.object.id}}", "since": "prompt" } },
+    { "call": "agent.read", "params": { "target": "{{t.object.id}}", "block": "last" } },
+    { "call": "object.reload", "params": { "id": "{{web.object.id}}" } },
+    { "call": "object.reload", "params": { "id": "{{dg.object.id}}" }, "note": "a diagram needs the client's language servers" },
+    {
+      "call": "text.measure",
+      "params": {
+        "board": "{{board}}",
+        "items": [
+          { "kind": "note", "text": "fits\n\nits text", "width": 280 },
+          { "kind": "text", "text": "Label text" },
+          { "kind": "label", "text": "box", "width": 120 },
+          { "kind": "arrowLabel", "text": "input" },
+          { "kind": "caption", "text": "the `answer`" }
+        ]
+      }
+    },
+    { "call": "object.measure", "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "fits" }, "width": 300 } },
+    { "call": "object.measure", "params": { "board": "{{board}}", "type": "shape", "props": { "kind": "text", "text": "Label text" } } },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "# Fit\n\nA note sized to its text." }, "frame": { "x": 0, "y": 600, "w": 300 }, "size": "fit" }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "under" }, "frame": { "x": 0, "y": 1000, "w": 1600, "h": 800 } }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "arrow", "props": { "from": { "point": [400, 1400] }, "to": { "point": [1200, 1400] }, "label": "a caption on the note" }, "frame": { "x": 0, "y": 0, "w": 0, "h": 0 } },
+      "save": "a"
+    },
+    { "call": "layout.check", "params": { "ids": ["{{a.object.id}}"] }, "note": "the caption lies on the note it runs over: the finding rests on the chip's size from the glyph table" },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "browser", "props": { "url": "https://example.org/" }, "frame": { "x": 500, "y": 100, "w": 600, "h": 400 } },
+      "save": "web2"
+    },
+    { "call": "layout.check", "params": { "ids": ["{{web2.object.id}}"] }, "note": "two browser tiles overlap: no finding rests on a measured size, so nothing is approximate" }
+  ]
+}
