@@ -21,6 +21,30 @@ public enum LoginSession {
                 && !tilePassthroughPrefixes.contains { key.hasPrefix($0) }
         }.sorted()
     }
+
+    /// What a terminal tile's session runs (docs/contracts.md "Terminal tile environment"): its
+    /// initial `command` (one command line: a quoted argv, a spawn's or an agent's resume or
+    /// relaunch) in a login shell, then an interactive login shell in that one's place; the
+    /// interactive login shell alone without a command.
+    ///
+    /// `path`, when the user's interactive login shell answered (`LoginShell.interactivePath`,
+    /// `commandPath`), is the command's PATH: `-l -c` reads `.zprofile` but not `.zshrc` (bash: a
+    /// `.bashrc` returns early when not interactive), where PATH is often set, so launched by
+    /// launchd (Finder, the Dock, `open`, the updater's relaunch) a bare `omp` was `command not
+    /// found` though it ran at the tile's prompt. Only the command gets it: the shell after it reads
+    /// the user's files itself. Without one the command has the login shell's own PATH.
+    public static func tileStart(shell: String, command: String?, path: String?) -> [String] {
+        guard let command else { return [shell, "-l"] }
+        let run = path.map { "PATH=" + ShellWords.quote([$0]) + " " + command } ?? command
+        return [shell, "-l", "-c", "\(run); exec \(ShellWords.quote([shell])) -l"]
+    }
+
+    /// An interactive login shell's PATH (`resolved`) for a tile's command: easl's `bin` first,
+    /// where the shell integration puts it after the user's startup files.
+    public static func commandPath(_ resolved: String, bin: String?) -> String {
+        guard let bin else { return resolved }
+        return ([bin] + resolved.split(separator: ":", omittingEmptySubsequences: false).map(String.init).filter { $0 != bin }).joined(separator: ":")
+    }
 }
 
 extension LoginSession {

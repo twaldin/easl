@@ -169,7 +169,7 @@ func TestRestoreStartsTheMissingSessionsAndNothingElse(t *testing.T) {
 			t.Errorf("%s: no session: %v", c.name, err)
 			continue
 		}
-		if !reflect.DeepEqual(got.Args, c.want) {
+		if !reflect.DeepEqual(unpathed(t, got.Args), c.want) {
 			t.Errorf("%s: command %q, want %q", c.name, got.Args, c.want)
 		}
 		if want := "canvas.board=" + f.board.ID() + " canvas.home=" + home + " canvas.tile=" + tiles[c.name]; got.Labels != want {

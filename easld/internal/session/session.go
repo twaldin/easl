@@ -70,6 +70,9 @@ type Manager struct {
 	Env []string
 	// Timeout bounds each zmx call.
 	Timeout time.Duration
+	// PathTimeout bounds the interactive login shell a command's PATH is asked of
+	// (interactivePath); 0 is 5 s.
+	PathTimeout time.Duration
 
 	// mu serializes spawn and kill, so two spawns of one tile can't both create its session.
 	mu sync.Mutex
@@ -226,8 +229,9 @@ func (m *Manager) Spawn(req SpawnRequest) (session string, created bool, err err
 	if labels != "" {
 		args = append(args, "--labels", labels)
 	}
-	args = append(append(args, name), m.loginCommand(req.Command)...)
-	if out, err := m.run(cwd, environ(m.Env, req.Env, req.Unset), args...); err != nil {
+	env := environ(m.Env, req.Env, req.Unset)
+	args = append(append(args, name), m.loginCommand(req.Command, env, req.Env["PATH"])...)
+	if out, err := m.run(cwd, env, args...); err != nil {
 		return "", false, failure("unavailable", "zmx couldn't start %s: %s", name, describe(err, out))
 	}
 	// The daemon lists the session once its socket is up.
@@ -244,12 +248,65 @@ func (m *Manager) Spawn(req SpawnRequest) (session string, created bool, err err
 }
 
 // loginCommand is what the session runs: `command` in the login shell, then the login shell,
-// as a terminal tile on the Mac does (TerminalTile.command).
-func (m *Manager) loginCommand(command []string) []string {
+// as a terminal tile on the Mac does (LoginSession.tileStart). The command gets the PATH an
+// interactive login shell sets up in the session's environment `env` (interactivePath), with
+// `first` (easl's bin) before it: `-l -c` reads neither ~/.zshrc nor a ~/.bashrc past its
+// interactive guard, where PATH is often set (bun's and nvm's installers write there). When that
+// shell doesn't answer, the command has the login shell's own PATH.
+func (m *Manager) loginCommand(command []string, env []string, first string) []string {
 	if len(command) == 0 {
 		return []string{m.Shell, "-l"}
 	}
-	return []string{m.Shell, "-l", "-c", Quote(command) + "; exec " + Quote([]string{m.Shell}) + " -l"}
+	run := Quote(command)
+	if path := m.interactivePath(env); path != "" {
+		run = "PATH=" + Quote([]string{commandPath(path, first)}) + " " + run
+	}
+	return []string{m.Shell, "-l", "-c", run + "; exec " + Quote([]string{m.Shell}) + " -l"}
+}
+
+// interactivePath is the PATH `$SHELL -lic` prints in `env`: what a command typed at the
+// session's prompt is looked up on. "" when the shell failed or outlived PathTimeout. The shell
+// runs in its own process group, ended at the deadline or when what the rc files started holds
+// the output open after the shell exited.
+func (m *Manager) interactivePath(env []string) string {
+	timeout := m.PathTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	const marker = "__EASL_PATH__"
+	cmd := exec.CommandContext(ctx, m.Shell, "-lic", `printf '\n`+marker+`%s' "$PATH"`)
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 500 * time.Millisecond
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); errors.Is(err, exec.ErrWaitDelay) {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	_, value, found := strings.Cut(out.String(), "\n"+marker)
+	if !found {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+// commandPath is `path` with `first`'s entries before it, each once: easl's bin first, where
+// the shell integration puts it after the user's startup files.
+func commandPath(path, first string) string {
+	if first == "" {
+		return path
+	}
+	leading := strings.Split(first, ":")
+	entries := slices.Clone(leading)
+	for _, entry := range strings.Split(path, ":") {
+		if !slices.Contains(leading, entry) {
+			entries = append(entries, entry)
+		}
+	}
+	return strings.Join(entries, ":")
 }
 
 // List is every `canvas-…` session zmx has.

@@ -53,6 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Metrics.shared.monitorMainThread()
         // easl's own leftovers: dead sessions' zmx logs, read Ghostty configs, old renders.
         Housekeeping.pruneAtLaunch()
+        // The PATH terminals' initial commands run with, asked of the user's interactive shell
+        // now so the board's terminals (resumed agents after a reboot) find it cached.
+        TerminalTile.primeCommandPath()
         if let url = AppPaths.asset(DrawingStyle.fontAsset) { DrawingStyle.registerFonts(url) }
         registry.onEvent = { [weak self] board, event in
             self?.controllers[board.id]?.apply(event)

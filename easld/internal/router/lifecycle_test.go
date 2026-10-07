@@ -26,7 +26,7 @@ func owning(t *testing.T) (f *fixture, state string) {
 		t.Fatal(err)
 	}
 	// easld started in an easl tile: that tile's cmux variables are in its environment.
-	f.router.Sessions = &session.Manager{Zmx: zmx, Dir: state, Shell: "/bin/sh", Home: dir, Env: []string{"PATH=/usr/bin:/bin", "CMUX_SOCKET_PATH=/old/cmux.sock", "CMUX_SOCKET_PASSWORD=secret"}}
+	f.router.Sessions = &session.Manager{Zmx: zmx, Dir: state, Shell: "/bin/sh", Home: dir, Env: []string{"HOME=" + dir, "PATH=/usr/bin:/bin", "CMUX_SOCKET_PATH=/old/cmux.sock", "CMUX_SOCKET_PASSWORD=secret"}}
 	f.router.Owns = &session.Owner{Socket: "/home/u/.local/state/easl/easl.sock", Home: "/home/u/.local/state/easl", Resources: session.Resources("/home/u")}
 	f.router.reg.AgentReports = filepath.Join(dir, "agent-reports")
 	return f, state
@@ -93,7 +93,7 @@ func TestAnOwnedTerminalsSessionStartsWithItsVariablesAndLabels(t *testing.T) {
 			t.Errorf("the session inherited easld's %s", key)
 		}
 	}
-	if want := []string{"/bin/sh", "-l", "-c", `'omp' '--model' 'it'"'"'s'; exec '/bin/sh' -l`}; !reflect.DeepEqual(got.Args, want) {
+	if want := []string{"/bin/sh", "-l", "-c", `'omp' '--model' 'it'"'"'s'; exec '/bin/sh' -l`}; !reflect.DeepEqual(unpathed(t, got.Args), want) {
 		t.Errorf("command %q, want %q", got.Args, want)
 	}
 	plain, _ := zmxtest.Read(state, session.Prefix+shell)
@@ -107,6 +107,21 @@ func sortedPair(a, b string) []string {
 		return []string{b, a}
 	}
 	return []string{a, b}
+}
+
+// unpathed is a session's command without the PATH its command was given: the interactive login
+// shell's (session's TestCommandGetsTheInteractiveShellsPath), which depends on the machine's
+// startup files. That PATH, when there, starts with easl's bin.
+func unpathed(t *testing.T, args []string) []string {
+	t.Helper()
+	if len(args) != 4 || !strings.HasPrefix(args[3], "PATH=") {
+		return args
+	}
+	path, command, _ := strings.Cut(args[3], "' ")
+	if !strings.HasPrefix(path, "PATH='/home/u/.local/share/easl/bin:") {
+		t.Errorf("command %q: easl's bin isn't first on its PATH", args)
+	}
+	return append(args[:3:3], command)
 }
 
 // A batch that fails puts back what it did, so the terminal it created never had a session; one

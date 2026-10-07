@@ -324,7 +324,15 @@ func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
 	terminal(c, board)
 	for tile, want := range map[string]string{agent: `'omp' '--model' 'opus' '--resume=s1'; exec`, released: `'claude'; exec`} {
 		got, err := zmxtest.Read(sessions, "canvas-"+tile)
-		if err != nil || len(got.Args) != 4 || !strings.HasPrefix(got.Args[3], want) {
+		// The command's PATH, when the interactive login shell gave one, goes first (session.Manager.loginCommand).
+		command := ""
+		if len(got.Args) == 4 {
+			command = got.Args[3]
+			if strings.HasPrefix(command, "PATH=") {
+				_, command, _ = strings.Cut(command, "' ")
+			}
+		}
+		if err != nil || len(got.Args) != 4 || !strings.HasPrefix(command, want) {
 			t.Errorf("%s after a reboot: %q (%v), want %s…; easld said %q", tile, got.Args, err, want, stderr.String())
 		}
 	}
