@@ -373,11 +373,14 @@ public enum AppUpdate {
     /// `staging.incoming(beside:)` (the verified copy) to `app`; if the second rename fails, the
     /// backup goes straight back. A rename never copies, so a failure leaves each bundle whole;
     /// `mv` would move into a folder already at the destination, so each destination must be
-    /// free first. After a success the backup goes to `staging.previous` (a failure there is
-    /// harmless: the next launch deletes it). It writes the outcome to `staging.result`
-    /// (`Outcome`) and runs `relaunch`, a shell command that opens `"$app"`: the new version, or
-    /// the old one. `relaunch` is `relaunchCommand` in the app; tests pass their own.
-    public static func helperScript(pid: Int32, app: URL, staging: Staging, relaunch: String) -> String {
+    /// free first. `app` is dated now before it takes the backup's name (a rename keeps the
+    /// date, and a launch deletes leftovers an hour old), and a failed touch replaces nothing.
+    /// After a success the backup goes to `staging.previous` (a failure there is harmless: the
+    /// next launch deletes it). It writes the outcome to `staging.result` (`Outcome`) and runs
+    /// `relaunch`, a shell command that opens `"$app"`: the new version, or the old one.
+    /// `relaunch` is `relaunchCommand` in the app; tests pass their own, and `afterBackup`, a
+    /// command run right after the first rename.
+    public static func helperScript(pid: Int32, app: URL, staging: Staging, relaunch: String, afterBackup: String = "") -> String {
         let q = RemoteHost.quote
         return """
         pid=\(pid)
@@ -387,21 +390,24 @@ public enum AppUpdate {
         previous=\(q(staging.previous.path))
         result=\(q(staging.result.path))
         vacant() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
+        unchanged() { printf 'unchanged: %s\\n' "$1" > "$result"; }
+        replace() {
+          vacant "$backup" || { unchanged "$backup is in the way"; return; }
+          err=$(/usr/bin/touch "$app" 2>&1) || { unchanged "$err"; return; }
+          err=$(/bin/mv "$app" "$backup" 2>&1) || { unchanged "$err"; return; }
+          \(afterBackup)
+          if vacant "$app" && err=$(/bin/mv "$new" "$app" 2>&1); then
+            echo installed > "$result"
+            /bin/mv "$backup" "$previous" || echo "easl: $backup stays until the next launch"
+          elif vacant "$app" && /bin/mv "$backup" "$app"; then
+            printf 'restored: %s\\n' "${err:-something else took $app}" > "$result"
+          else
+            printf 'stranded: %s\\n' "$backup" > "$result"
+            app=$backup
+          fi
+        }
         while kill -0 "$pid" 2>/dev/null; do /bin/sleep 0.2; done
-        if ! vacant "$backup"; then
-          printf 'unchanged: %s is in the way\\n' "$backup" > "$result"
-        elif ! err=$(/bin/mv "$app" "$backup" 2>&1); then
-          printf 'unchanged: %s\\n' "$err" > "$result"
-        # Dated now (a rename keeps the app's date): a launch deletes only leftovers an hour old.
-        elif /usr/bin/touch "$backup"; vacant "$app" && err=$(/bin/mv "$new" "$app" 2>&1); then
-          echo installed > "$result"
-          /bin/mv "$backup" "$previous" || echo "easl: $backup stays until the next launch"
-        elif vacant "$app" && /bin/mv "$backup" "$app"; then
-          printf 'restored: %s\\n' "${err:-something else took $app}" > "$result"
-        else
-          printf 'stranded: %s\\n' "$backup" > "$result"
-          app=$backup
-        fi
+        replace
         \(relaunch)
 
         """

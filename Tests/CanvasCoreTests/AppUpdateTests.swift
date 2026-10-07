@@ -323,7 +323,7 @@ enum TestBundle {
 extension TestBundle {
     /// Runs the helper for a process that has already exited, relaunching by writing `"$app"`
     /// to `relaunched`; its outcome.
-    static func runHelper(app: URL, staging: AppUpdate.Staging, relaunched: URL) async throws -> AppUpdate.Outcome? {
+    static func runHelper(app: URL, staging: AppUpdate.Staging, relaunched: URL, afterBackup: String = "") async throws -> AppUpdate.Outcome? {
         try FileManager.default.createDirectory(at: staging.directory, withIntermediateDirectories: true)
         let status = await offPool { () -> Int32 in
             let exited = Process()
@@ -331,7 +331,7 @@ extension TestBundle {
             guard (try? exited.run()) != nil else { return -1 }
             exited.waitUntilExit()
             let script = AppUpdate.helperScript(pid: exited.processIdentifier, app: app, staging: staging,
-                                                relaunch: "printf %s \"$app\" > \(RemoteHost.quote(relaunched.path))")
+                                                relaunch: "printf %s \"$app\" > \(RemoteHost.quote(relaunched.path))", afterBackup: afterBackup)
             let helper = Process()
             helper.executableURL = URL(fileURLWithPath: "/bin/sh")
             helper.arguments = ["-c", script]
@@ -393,6 +393,24 @@ struct UpdateHelperTests {
         #expect(try TestBundle.snapshot(app) == original)
         #expect(!FileManager.default.fileExists(atPath: staging.backup(beside: app).path))
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+    }
+
+    @Test func theBackupIsFreshTheMomentItTakesItsName() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)], ofItemAtPath: app.path)
+        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
+        // Right after the first rename, what a launch's cleanup would list: the backup's date.
+        let seen = root.appendingPathComponent("seen")
+        let outcome = try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched,
+                                                     afterBackup: "/usr/bin/stat -f %m \"$backup\" > \(RemoteHost.quote(seen.path))")
+        #expect(outcome == .installed)
+        let stamp = try String(contentsOf: seen, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let dated = try #require(TimeInterval(stamp).map { Date(timeIntervalSince1970: $0) })
+        let backup = staging.backup(beside: app).lastPathComponent
+        #expect(AppUpdate.isLeftover(backup))
+        #expect(AppUpdate.staleLeftovers([Housekeeping.File(name: backup, modified: dated)], running: "easl.app", now: Date()).isEmpty,
+                "a launch's cleanup must not take the rollback bundle")
     }
 
     @Test func aBackupInTheWayReplacesNothing() async throws {
@@ -473,6 +491,8 @@ struct UpdateInstallTests {
         let new = root.appendingPathComponent("new/easl.app", isDirectory: true)
         try TestBundle.make(new, version: "0.2.3")
         try await TestBundle.sign(new)
+        // The release's own date, long past: only prepareInstall's refresh makes the copy fresh.
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)], ofItemAtPath: new.path)
         let (staging, release) = try await stage(new, keepParent: true)
 
         let incoming = try await AppUpdate.prepareInstall(staging, release: release, replacing: installed, team: nil, gatekeeper: false)
