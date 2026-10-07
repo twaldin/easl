@@ -88,14 +88,16 @@ final class BoardMirrorTests {
 
         init(_ mirror: BoardMirror, on board: Board) {
             self.mirror = mirror
-            board.onEvent = { [unowned self] event in
+            board.onEvent = { [weak self] event in
+                guard let self else { return }
                 switch event {
                 case .objectCreated(let object): add(object)
                 case .objectUpdated(let object): drawings[object.id]?.changed()
                 default: break
                 }
             }
-            mirror.onRedraw = { [unowned self] in
+            mirror.onRedraw = { [weak self] in
+                guard let self else { return }
                 redraws += 1
                 for drawing in drawings.values { drawing.redraw() }
             }
@@ -105,7 +107,9 @@ final class BoardMirrorTests {
         private func add(_ object: CanvasObject) {
             guard drawings[object.id] == nil else { return }
             let id = object.id
-            let drawing = RemoteDrawing(object: id, mirror: mirror, settle: 0.2, scale: { 1 }, drawn: { [unowned self] outcome in
+            // Weak: a test can end with a render out, and `close` answers it after the test is gone.
+            let drawing = RemoteDrawing(object: id, mirror: mirror, settle: 0.2, scale: { 1 }, drawn: { [weak self] outcome in
+                guard let self else { return }
                 if case .success = outcome { answers[id, default: []].append(true) } else { answers[id, default: []].append(false) }
             })
             drawings[id] = drawing
@@ -329,8 +333,12 @@ final class BoardMirrorTests {
         let added = note("added while away", at: 800)
         server = Self.serve(router, at: socket)
         try server.start()
-        // The board link is back and read; nothing is drawn through a render link that is not.
+        // The board link is back and read; nothing is drawn through a render link that is not. The new
+        // tile's request fails at once: the render link comes back only after that answer, or the
+        // request could still be queued for it (the one case that renders a tile twice: a request
+        // sent before the link's handshake ends is not told apart from one sent before the drop).
         try await eventually { board.objects[added.id] != nil }
+        try await eventually { tiles.answers[added.id] == [false] }
         #expect(mirror.state == .online && tiles.redraws == 0)
         renderServer = serveRenders()
         try renderServer.start()
