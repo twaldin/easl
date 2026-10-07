@@ -155,12 +155,15 @@ easl › Check for Updates… against a local `latest.json` (docs/design.md "Upd
 
 ```sh
 t=$(mktemp -d "$TMPDIR/easl-update.XXXXXX"); mkdir -p "$t/srv"
-EASL_VERSION=0.2.99 EASL_BUNDLE_APP="$t/new/easl.app" scripts/bundle.sh   # the "newer" release
+EASL_DEV_HOME="$t/home" EASL_UPDATE_URL=http://127.0.0.1:8765/latest.json EASL_DEV_EXTERNAL_OPEN=log scripts/dev.sh start
+# The "newer" release, with the instance's own bundle id (the relaunch keeps its defaults and TCC identity).
+EASL_VERSION=0.2.99 EASL_BUNDLE_APP="$t/new/easl.app" scripts/bundle.sh
+plutil -replace CFBundleIdentifier -string "$(plutil -extract CFBundleIdentifier raw "$t/home/easl.app/Contents/Info.plist")" "$t/new/easl.app/Contents/Info.plist"
+codesign --force --sign - "$t/new/easl.app"
 ditto -c -k --keepParent "$t/new/easl.app" "$t/srv/easl-0.2.99.zip"
 printf '{"version":"0.2.99","url":"http://127.0.0.1:8765/easl-0.2.99.zip","sha256":"%s","size":%s,"notes":"https://github.com/twaldin/easl/releases"}\n' \
   "$(shasum -a 256 "$t/srv/easl-0.2.99.zip" | cut -d' ' -f1)" "$(stat -f %z "$t/srv/easl-0.2.99.zip")" > "$t/srv/latest.json"
 python3 -m http.server 8765 --bind 127.0.0.1 --directory "$t/srv" &
-EASL_DEV_HOME="$t/home" EASL_UPDATE_URL=http://127.0.0.1:8765/latest.json EASL_DEV_EXTERNAL_OPEN=log scripts/dev.sh start
 EASL_DEV_HOME="$t/home" scripts/dev.sh input mainmenu "easl/Check for Updates…"   # the sheet: Update to 0.2.99?
 EASL_DEV_HOME="$t/home" scripts/dev.sh input key return                           # Update
 ```
