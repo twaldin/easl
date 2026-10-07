@@ -1,0 +1,1165 @@
+{
+  "scenario": "agent-control-owned",
+  "description": "Agent control on an easld that owns its terminals (--own-terminals; recorded against easld with a zmx that runs no session, as owned-terminals is: the app's restart relaunches through its own tiles): agent.list says whether each owned terminal's session runs (live), and agent.restart goes through with no client attached. easld ends the session, the messages queued for the killed agent bounce, and the relaunch starts resumed with the recorded model and thinking level (or fresh, with args); the tile runs the relaunch's command from then on, its agent loses the killed process's draft and pid, and its lifecycle is unknown until the new agent reports; the killed agent's late release leaves that record, and only a release after the relaunched agent reported clears it. The refusals are a client's restart's; a hosted terminal's restart is its Mac's.",
+  "recordedOn": "easld --own-terminals on main a844bfa + fix/spawn-path 64e3150 + lifecycle/pr3-restart, with zmxtest's zmx (the app restarts through its own tiles and answers session.* unsupported)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>",
+          "name": "worker"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50700,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "host": "deckbox",
+          "name": "away"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "host": "deckbox",
+              "name": "away"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "host": "deckbox",
+              "name": "away"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "pid": 4242424,
+        "protocol": 1,
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp",
+                "pid": 4242424,
+                "protocol": 1
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "agent.report_session",
+      "method": "agent.report_session",
+      "request": {
+        "kind": "omp",
+        "model": "anthropic/claude-opus-4-5",
+        "sessionId": "s-1",
+        "thinking": "high",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "pid": 4242424,
+                "protocol": 1,
+                "sessionId": "s-1",
+                "thinking": "high"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:3>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "agent.list",
+      "method": "agent.list",
+      "request": {},
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "agents": [
+            {
+              "address": "worker@agent-control-owned",
+              "board": "<board>",
+              "draft": false,
+              "focused": false,
+              "kind": "omp",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "live": true,
+              "model": "anthropic/claude-opus-4-5",
+              "name": "worker",
+              "open": true,
+              "protocol": 1,
+              "root": "<root>",
+              "sessionId": "s-1",
+              "thinking": "high",
+              "tile": "<obj:1>"
+            },
+            {
+              "address": "away@agent-control-owned",
+              "board": "<board>",
+              "focused": false,
+              "kind": "unknown",
+              "lifecycle": {
+                "state": "unknown"
+              },
+              "name": "away",
+              "open": true,
+              "root": "<root>",
+              "tile": "<obj:2>"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "protocol": 1,
+        "state": "working",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "sessionId": "s-1",
+                "thinking": "high"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "mode": "resume",
+        "target": "worker"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "<obj:1> is working: restarting would kill its turn. Wait for it (agent.wait), or force: true restarts anyway"
+        },
+        "id": "r8",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "from": "machine-watch",
+        "target": "worker",
+        "text": "Nightly failed."
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "agent": {
+            "address": "worker@agent-control-owned",
+            "board": "<board>",
+            "draft": false,
+            "focused": false,
+            "kind": "omp",
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "model": "anthropic/claude-opus-4-5",
+            "name": "worker",
+            "open": true,
+            "protocol": 1,
+            "root": "<root>",
+            "sessionId": "s-1",
+            "thinking": "high",
+            "tile": "<obj:1>"
+          },
+          "delivery": "message",
+          "message": "<msg:1>",
+          "submittedAt": "<time:iso>",
+          "waitable": true
+        }
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "force": true,
+        "mode": "resume",
+        "target": "worker"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "agent": {
+            "address": "worker@agent-control-owned",
+            "board": "<board>",
+            "focused": false,
+            "kind": "omp",
+            "lifecycle": {
+              "state": "unknown"
+            },
+            "model": "anthropic/claude-opus-4-5",
+            "name": "worker",
+            "open": true,
+            "protocol": 1,
+            "root": "<root>",
+            "sessionId": "s-1",
+            "thinking": "high",
+            "tile": "<obj:1>"
+          },
+          "command": [
+            "omp",
+            "--model=anthropic/claude-opus-4-5",
+            "--thinking=high",
+            "--resume=s-1"
+          ]
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "sessionId": "s-1",
+                "thinking": "high"
+              },
+              "command": [
+                "omp",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:5>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": null,
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "board.history",
+      "method": "board.history",
+      "request": {
+        "board": "<board>",
+        "kinds": [
+          "message"
+        ]
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "cursor": "<cursor>",
+          "entries": [
+            {
+              "actor": "system",
+              "at": "<time:iso>",
+              "id": "<obj:1>",
+              "kind": "message",
+              "rev": "<board:1>",
+              "seq": "<seq:1>",
+              "summary": "undelivered to worker@agent-control-owned: Nightly failed. (from machine-watch)",
+              "type": "terminal"
+            }
+          ],
+          "restarted": false,
+          "truncated": false
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "sessionId": "s-1",
+                "thinking": "high"
+              },
+              "command": [
+                "omp",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:5>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "session.list",
+      "method": "session.list",
+      "request": {},
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "sessions": [
+            {
+              "clients": 0,
+              "labels": {
+                "canvas.board": "<board>",
+                "canvas.home": "<easld home>",
+                "canvas.tile": "<obj:1>"
+              },
+              "pid": 4242424,
+              "session": "canvas-<obj:1>",
+              "tile": "<obj:1>"
+            }
+          ]
+        }
+      },
+      "masked": {
+        "response.result.sessions.*.labels.*": "canvas.home is easld's home directory as a label value, which differs between runs"
+      }
+    },
+    {
+      "step": "agent.release",
+      "method": "agent.release",
+      "request": {
+        "kind": "omp",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "sessionId": "s-1",
+                "thinking": "high"
+              },
+              "command": [
+                "omp",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:5>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "mode": "fresh",
+        "target": "worker"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "nothing in <obj:1> reports whether its input holds a draft the user hasn't sent (omp's easl extension does), so restarting could lose one; force: true restarts anyway"
+        },
+        "id": "r16",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "args": [
+          "--plan",
+          "p.md"
+        ],
+        "force": true,
+        "mode": "fresh",
+        "target": "worker"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "agent": {
+            "address": "worker@agent-control-owned",
+            "board": "<board>",
+            "focused": false,
+            "kind": "omp",
+            "lifecycle": {
+              "state": "unknown"
+            },
+            "model": "anthropic/claude-opus-4-5",
+            "name": "worker",
+            "open": true,
+            "protocol": 1,
+            "root": "<root>",
+            "thinking": "high",
+            "tile": "<obj:1>"
+          },
+          "command": [
+            "omp",
+            "--model=anthropic/claude-opus-4-5",
+            "--thinking=high",
+            "--plan",
+            "p.md"
+          ]
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "thinking": "high"
+              },
+              "command": [
+                "omp",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high",
+                "--plan",
+                "p.md"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:6>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": null,
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "thinking": "high"
+              },
+              "command": [
+                "omp",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high",
+                "--plan",
+                "p.md"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:6>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "force": true,
+        "mode": "fresh",
+        "target": "away"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "no app shows board <board>: agent.restart kills and relaunches the terminal's session through its live surface"
+        },
+        "id": "r19",
+        "ok": false
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "protocol": 1,
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "thinking": "high"
+              },
+              "command": [
+                "omp",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high",
+                "--plan",
+                "p.md"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:7>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "agent.release",
+      "method": "agent.release",
+      "request": {
+        "kind": "omp",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "omp",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high",
+                "--plan",
+                "p.md"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:8>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": null,
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r22",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "omp",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high",
+                "--plan",
+                "p.md"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:8>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "agent.list",
+      "method": "agent.list",
+      "request": {},
+      "response": {
+        "id": "r23",
+        "ok": true,
+        "result": {
+          "agents": [
+            {
+              "address": "worker@agent-control-owned",
+              "board": "<board>",
+              "focused": false,
+              "kind": "unknown",
+              "lifecycle": {
+                "state": "unknown"
+              },
+              "live": true,
+              "name": "worker",
+              "open": true,
+              "root": "<root>",
+              "tile": "<obj:1>"
+            },
+            {
+              "address": "away@agent-control-owned",
+              "board": "<board>",
+              "focused": false,
+              "kind": "unknown",
+              "lifecycle": {
+                "state": "unknown"
+              },
+              "name": "away",
+              "open": true,
+              "root": "<root>",
+              "tile": "<obj:2>"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

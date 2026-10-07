@@ -2,7 +2,6 @@ package router
 
 import (
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -188,20 +187,7 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 		}
 		return map[string]any{}, nil
 	case "agent.list":
-		agents := []any{}
-		for _, b := range r.reg.SortedBoards() {
-			ids := make([]string, 0)
-			for id, o := range b.Objects() {
-				if o.Type == model.Terminal {
-					ids = append(ids, id)
-				}
-			}
-			sort.Strings(ids)
-			for _, id := range ids {
-				agents = append(agents, r.agentEntry(b.Objects()[id], b))
-			}
-		}
-		return map[string]any{"agents": append(agents, r.closedBoardAgents()...)}, nil
+		return r.agentList(), nil
 	case "follow.report":
 		return r.followReport(p)
 	case "view.attention":

@@ -161,6 +161,7 @@ func (b *Board) ReportLifecycle(r Report) error {
 	if _, err := b.Update(r.Tile, nil, nil, nil, map[string]any{"lifecycle": lifecycle, "agent": agent}, r.Tile, ""); err != nil {
 		return err
 	}
+	delete(b.relaunchedAgents, r.Tile)
 	if took, _ := TruncInt(before["protocol"]); took >= 1 && (before["kind"] != r.Kind || version == nil) {
 		b.endAgentSession(r.Tile)
 	}
@@ -292,6 +293,7 @@ func (b *Board) ReportSession(tile, kind string, sessionID, sessionPath, agentMo
 	if _, err = b.Update(tile, nil, nil, nil, map[string]any{"agent": agent}, tile, ""); err != nil {
 		return err
 	}
+	delete(b.relaunchedAgents, tile)
 	if recorded && sessionID != nil && *sessionID != previous {
 		b.endAgentSession(tile)
 	}
@@ -299,16 +301,45 @@ func (b *Board) ReportSession(tile, kind string, sessionID, sessionPath, agentMo
 }
 
 // ReleaseAgent: the agent exited; the tile is a plain shell again, and the messages its
-// integration never took bounce (endAgentSession).
+// integration never took bounce (endAgentSession). Ignored while a relaunched agent hasn't
+// reported yet (relaunchedAgents): that release is the killed agent's, which can exit after
+// agent.restart recorded the relaunch, and the tile keeps what it resumes (its session, model
+// and thinking) also when the relaunch never starts.
 func (b *Board) ReleaseAgent(tile string) error {
 	if _, err := b.Object(tile); err != nil {
 		return err
+	}
+	if b.relaunchedAgents[tile] {
+		return nil
 	}
 	delete(b.pendingApprovals, tile)
 	if _, err := b.Update(tile, nil, nil, nil, map[string]any{"lifecycle": nil, "agent": nil}, tile, ""); err != nil {
 		return err
 	}
 	b.endAgentSession(tile)
+	b.emit(EventAgentLifecycle, map[string]any{"tile": tile, "lifecycle": nil})
+	return nil
+}
+
+// RestartedAgent: the agent in `tile` was killed and is being relaunched (agent.restart,
+// Board.restartedAgent): the tile runs `command` now (what a reboot reruns), its agent is
+// `agent` (what it was, without what only the killed process knew: its draft and pid), and its
+// lifecycle is unknown until the new agent reports; waits on approvals the killed agent had end.
+// Recorded once the old session is gone and its agent session ended (EndAgentSession), before
+// the relaunch starts, so what the relaunched agent reports stays.
+func (b *Board) RestartedAgent(tile string, command []string, agent any) error {
+	if _, err := b.Object(tile); err != nil {
+		return err
+	}
+	delete(b.pendingApprovals, tile)
+	b.relaunchedAgents[tile] = true
+	words := make([]any, len(command))
+	for i, w := range command {
+		words[i] = w
+	}
+	if _, err := b.Update(tile, nil, nil, nil, map[string]any{"command": words, "lifecycle": nil, "agent": agent}, tile, ""); err != nil {
+		return err
+	}
 	b.emit(EventAgentLifecycle, map[string]any{"tile": tile, "lifecycle": nil})
 	return nil
 }

@@ -107,6 +107,10 @@ type Board struct {
 	seenSinceWorking map[string]bool
 	lifecycleSeq     map[string]int
 	pendingApprovals map[string][]approval
+	// relaunchedAgents are the terminals agent.restart relaunched (RestartedAgent) that no agent
+	// has reported in since (Board.relaunchedAgents); in memory. A release meanwhile is the killed
+	// agent's, sent as it exits after its session is gone, and leaves the relaunch's record.
+	relaunchedAgents map[string]bool
 	revHighWater     map[string]int
 	pinnedRevision   *int
 
@@ -162,7 +166,7 @@ func New(id, root string) *Board {
 		finalAnswers: map[string]string{}, turnErrors: map[string]string{}, changedAt: map[string]int{},
 		keyHolders: map[string]map[string]bool{}, seenSinceWorking: map[string]bool{}, lifecycleSeq: map[string]int{},
 		aliases: map[string]string{}, messages: map[string][]Message{},
-		pendingApprovals: map[string][]approval{}, revHighWater: map[string]int{}, history: newHistory(),
+		pendingApprovals: map[string][]approval{}, relaunchedAgents: map[string]bool{}, revHighWater: map[string]int{}, history: newHistory(),
 		Activity: NewActivityLog(DefaultActivityCapacity, nil), replayActor: UserActor, cascades: map[string]cascade{}, cascadeRev: -1,
 		workingDirectories: map[string]string{}, promptTarget: store.PromptTargetState{FocusOrder: []string{}},
 	}

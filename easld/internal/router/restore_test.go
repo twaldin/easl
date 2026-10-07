@@ -465,7 +465,7 @@ func TestAnOrphanThatWontEndIsLoggedOnce(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(state, session.Prefix+"obj_stuck"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stuck := session.Session{Name: session.Prefix + "obj_stuck", Tile: "obj_stuck", PID: 4242, Labels: labels}
+	stuck := session.Session{Name: session.Prefix + "obj_stuck", Tile: "obj_stuck", PID: 4242424, Labels: labels}
 	for range 3 {
 		f.router.reap(f.board, stuck, true)
 	}

@@ -1,7 +1,7 @@
 {
   "scenario": "owned-terminals",
   "description": "easld --own-terminals (recorded against easld with a zmx that runs no session: the app runs its terminals itself, and answers session.* `unsupported`): a terminal without props.host gets its session canvas-<tile> by the time its create is answered, labelled with the board, the tile and easld's home; a hosted terminal's session is its Mac's to start (session.spawn), and to end; a batch that fails starts nothing; deleting the terminal ends its session and leaves another home's alone.",
-  "recordedOn": "easld --own-terminals on main 58b28c2 + lifecycle/pr1, with zmxtest's zmx (the app runs its terminals itself and answers session.* unsupported)",
+  "recordedOn": "easld --own-terminals on main a844bfa + lifecycle/pr3-restart, with zmxtest's zmx (the app runs its terminals itself and answers session.* unsupported)",
   "steps": [
     {
       "step": "board.open",
@@ -210,7 +210,7 @@
                 "canvas.home": "<easld home>",
                 "canvas.tile": "<obj:1>"
               },
-              "pid": 4242,
+              "pid": 4242424,
               "session": "canvas-<obj:1>",
               "tile": "<obj:1>"
             }
@@ -319,7 +319,7 @@
                 "canvas.home": "<easld home>",
                 "canvas.tile": "<obj:1>"
               },
-              "pid": 4242,
+              "pid": 4242424,
               "session": "canvas-<obj:1>",
               "tile": "<obj:1>"
             }
@@ -390,7 +390,7 @@
                 "canvas.home": "<easld home>",
                 "canvas.tile": "<obj:1>"
               },
-              "pid": 4242,
+              "pid": 4242424,
               "session": "canvas-<obj:1>",
               "tile": "<obj:1>"
             },
@@ -401,7 +401,7 @@
                 "canvas.home": "mac-1",
                 "canvas.tile": "<obj:2>"
               },
-              "pid": 4242,
+              "pid": 4242424,
               "session": "canvas-<obj:2>",
               "tile": "<obj:2>"
             }
@@ -449,7 +449,7 @@
                 "canvas.home": "mac-1",
                 "canvas.tile": "<obj:2>"
               },
-              "pid": 4242,
+              "pid": 4242424,
               "session": "canvas-<obj:2>",
               "tile": "<obj:2>"
             }

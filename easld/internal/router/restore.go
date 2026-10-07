@@ -119,8 +119,9 @@ func uniqueBoards(list []store.Reopened) []store.Reopened {
 // terminals is recorded to reopen at its next start (Restore), with the root it was opened from,
 // and its owned terminals' sessions are reconciled: each without a session of its own gets one,
 // resuming its recorded agent (ownedSpawn); one that runs is left alone, and so is one that
-// doesn't answer (its daemon may only be busy). A session of the tile's name that is another
-// home's or board's is not taken over: the board's history says so.
+// doesn't answer (its daemon may only be busy) and one agent.restart holds (restarts: its
+// restart, queued behind, ends its session and starts the relaunch). A session of the tile's
+// name that is another home's or board's is not taken over: the board's history says so.
 func (r *Router) opened(b *board.Board, root string) {
 	if r.Owns == nil {
 		return
@@ -150,9 +151,21 @@ func (r *Router) opened(b *board.Board, root string) {
 			if s, ok := running[session.Prefix+t.o.ID]; ok && (s.Unreachable || s.Carries(t.labels)) {
 				continue
 			}
+			if r.restarting(t.o.ID) {
+				continue
+			}
 			r.startSession(b, t.o, t.spawn)
 		}
 	})
+}
+
+// restarting is whether agent.restart holds terminal `tile` now (restarts); called off the
+// registry's lock.
+func (r *Router) restarting(tile string) bool {
+	r.reg.Mu.Lock()
+	defer r.reg.Mu.Unlock()
+	_, held := r.restarts[tile]
+	return held
 }
 
 // remember adds b, opened from root, to the boards easld reopens at start, unless it is there;
