@@ -291,7 +291,12 @@ final class CanvasView: NSScrollView {
     }
 
     private func updateGrid() {
-        grid.update(origin: grid.convert(NSPoint.zero, from: document), scale: magnification)
+        // Origin and scale both from the document's actual geometry, never `magnification`: when
+        // a pinch past 100% (or under 10%) settles, AppKit moves the clip view's bounds before
+        // `magnification` follows (its last frame read 1.00053 for a true 1.0). Document (0, 0)
+        // lies ~100,000 units from the view, so that gap left the dots up to 18 points off the
+        // board until the next pan.
+        grid.update(origin: grid.convert(NSPoint.zero, from: document), scale: grid.convert(NSSize(width: 1, height: 1), from: document).width)
     }
 
     override func viewDidMoveToWindow() {
