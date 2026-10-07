@@ -9,7 +9,18 @@ import { bindMethods, type CanvasApi, RESEND_METHODS } from "./generated";
 export * from "./compositions";
 export * from "./generated";
 
-export const DEFAULT_SOCKET = join(homedir(), "Library/Application Support/Easl/easl.sock");
+/**
+ * Where the easl server listens when `EASL_SOCKET` is unset. On macOS, the app's support directory.
+ * Elsewhere, easld's home as `defaultHome` resolves it (easld/cmd/easld/main.go): `$EASL_HOME`, else
+ * `$XDG_STATE_HOME/easl`, else `~/.local/state/easl`. The Python SDK (`easl_sdk.default_socket`) agrees.
+ */
+export function defaultSocket(platform: string = process.platform, env: Record<string, string | undefined> = process.env, home: string = homedir()): string {
+  if (platform === "darwin") return join(home, "Library/Application Support/Easl/easl.sock");
+  if (env.EASL_HOME) return join(env.EASL_HOME, "easl.sock");
+  return join(env.XDG_STATE_HOME || join(home, ".local/state"), "easl/easl.sock");
+}
+
+export const DEFAULT_SOCKET = defaultSocket();
 /** The app takes 5-10 s to restart; a request that never left waits this long for it. */
 export const RECONNECT_TIMEOUT_MS = 15_000;
 

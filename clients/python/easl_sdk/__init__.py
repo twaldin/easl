@@ -37,18 +37,33 @@ import json
 import os
 import select
 import socket
+import sys
 import threading
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from ._generated import ENV_DEFAULTS, METHODS, RESEND_METHODS, SCHEMA_VERSION, GeneratedApi
 from .compositions import Compositions
 
-DEFAULT_SOCKET = os.path.expanduser("~/Library/Application Support/Easl/easl.sock")
+
+def default_socket(platform: str = sys.platform, env: Mapping[str, str] = os.environ, home: str | None = None) -> str:
+    """Where the easl server listens when EASL_SOCKET is unset. On macOS, the app's support
+    directory. Elsewhere, easld's home as `defaultHome` resolves it (easld/cmd/easld/main.go):
+    $EASL_HOME, else $XDG_STATE_HOME/easl, else ~/.local/state/easl. The TS client agrees."""
+    home = home if home is not None else os.path.expanduser("~")
+    if platform == "darwin":
+        return os.path.join(home, "Library/Application Support/Easl/easl.sock")
+    if env.get("EASL_HOME"):
+        return os.path.join(env["EASL_HOME"], "easl.sock")
+    return os.path.join(env.get("XDG_STATE_HOME") or os.path.join(home, ".local/state"), "easl/easl.sock")
+
+
+DEFAULT_SOCKET = default_socket()
 # The app takes 5-10 s to restart; a request that never left waits this long for it.
 RECONNECT_TIMEOUT = 15.0
 
-__all__ = ["Easl", "CanvasError", "Compositions", "canvas", "connect", "METHODS", "SCHEMA_VERSION", "DEFAULT_SOCKET"]
+__all__ = ["Easl", "CanvasError", "Compositions", "canvas", "connect", "METHODS", "SCHEMA_VERSION", "DEFAULT_SOCKET", "default_socket"]
 
 
 class CanvasError(Exception):

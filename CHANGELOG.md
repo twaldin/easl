@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- **A plain shell on a Linux host finds easld's socket.** The TS client, the `easl` CLI and the Python SDK defaulted to the Mac app's `~/Library/Application Support/Easl/easl.sock` everywhere, so on a host that runs easld (a deckbox) `easl` needed `EASL_SOCKET` set by hand outside a terminal tile. Off macOS the default is now easld's own socket: `$EASL_HOME/easl.sock`, else `$XDG_STATE_HOME/easl/easl.sock`, else `~/.local/state/easl/easl.sock`, still only when it exists and still after an explicit value and `EASL_SOCKET`. macOS is unchanged.
+
 ## 0.2.2
 
 - **Signed, notarized, and on Homebrew.** easl is signed with a Developer ID and notarized by Apple, so a downloaded zip opens like any app, with no `xattr` step. `brew install --cask twaldin/tap/easl` installs it, and `brew upgrade --cask easl` updates it (it quits easl first; terminal tiles keep running). Because easl's signature changed, permissions you granted it before (Accessibility, Screen Recording, Full Disk Access) need granting once more: in System Settings › Privacy & Security, remove easl from each of those lists and add it back. From this release on they carry over to updates.
