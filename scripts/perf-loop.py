@@ -98,6 +98,7 @@ class Instance:
         self.window = None
         self.has_metrics = None
         self.notch = None
+        self.space_moved = None
 
     def dev(self, *args, check=True):
         return sh(os.path.join(REPO, "scripts/dev.sh"), *args, env=self.env, check=check)
@@ -116,22 +117,39 @@ class Instance:
         sh(*args)
         print(f"  start {self.label}: {self.dev('start', self.root).strip()}", flush=True)
         self.pid = int(open(os.path.join(self.home, "pid")).read().strip())
-        windows = json.loads(sh(YABAI, "-m", "query", "--windows"))
-        self.window = next(w["id"] for w in windows if w["pid"] == self.pid)
         self.quiet(timeout=120)
+        for _ in range(50):
+            windows = json.loads(sh(YABAI, "-m", "query", "--windows"))
+            self.window = next((w["id"] for w in windows if w["pid"] == self.pid), None)
+            if self.window:
+                break
+            time.sleep(0.2)
+        if not self.window:
+            raise RuntimeError(f"{self.label}: yabai never listed a window of pid {self.pid}")
         self.has_metrics = self.cli("app.metrics") is not None
         self.check_space()
         self.zoom_to_cards()
 
-    def check_space(self):
-        """Headless: the window must still sit on the parking Space nobody views (a Space the
-        user views would be disturbed, and a window there renders and composites differently).
-        Raises when it moved: the run is not valid on another Space."""
+    def check_space(self, at="start"):
+        """Headless: the window must sit on the parking Space nobody views (a Space the user views
+        would be disturbed, and a window there renders and composites differently). Right after
+        the start, a window the launcher didn't place (a guard that lost the new window's id) is
+        moved there by its id, and the row says so (`space_moved`); later, a window found
+        elsewhere ends the run: its scenarios would not be comparable."""
         if not self.headless:
             return
+        target = self.env["EASL_DEV_SPACE"]
         window = json.loads(sh(YABAI, "-m", "query", "--windows", "--window", str(self.window)))
-        if str(window.get("space")) != self.env["EASL_DEV_SPACE"]:
-            raise RuntimeError(f"{self.label}'s window {self.window} is on Space {window.get('space')}, not {self.env['EASL_DEV_SPACE']}")
+        if str(window.get("space")) == target:
+            return
+        if at != "start":
+            raise RuntimeError(f"{self.label}'s window {self.window} is on Space {window.get('space')}, not {target}")
+        print(f"  {self.label}: window {self.window} on Space {window.get('space')}, moving it to {target}", flush=True)
+        sh(YABAI, "-m", "window", str(self.window), "--space", target)
+        self.space_moved = window.get("space")
+        window = json.loads(sh(YABAI, "-m", "query", "--windows", "--window", str(self.window)))
+        if str(window.get("space")) != target:
+            raise RuntimeError(f"{self.label}'s window {self.window} stays on Space {window.get('space')}, not {target}")
 
     def stop(self):
         self.dev("stop", check=False)
@@ -368,11 +386,11 @@ def run_scenario(inst, name):
     shown = not name.startswith("hidden")
     inst.visible(shown)
     inst.quiet(timeout=60)
-    inst.check_space()
+    inst.check_space(at=name)
     if name == "agent-titles":
         row = agent_titles(inst)
         inst.quiet(timeout=180)
-        return {"app": inst.label, "scenario": name, "visible": shown, **row}
+        return {"app": inst.label, "scenario": name, "visible": shown, "space_moved": inst.space_moved, **row}
     inst.metrics(reset=True)
     inst.span_begin()
     c0 = cpu_seconds(inst.pid)
