@@ -429,7 +429,9 @@ extension Board {
 /// (Codex's `-c` trust override, Claude's `--model` or `--dangerously-skip-permissions`, omp's
 /// `-e`). What would pick or start another conversation is left out: the command's own session
 /// selectors (`--resume`, `--continue`, Codex's `resume <id>`) and its prompt (positional words,
-/// `--prompt`), which the session already holds.
+/// `--prompt`), which the session already holds. easld resumes the terminals it owns the same way
+/// (`session.ResumeArgv`, a port of `argv`): Tests/Fixtures/agent-resume.json holds the cases
+/// both are checked against.
 public enum AgentResume {
     /// How one agent's command line reads. Options not listed take no value; `--name=value`
     /// always carries its own.

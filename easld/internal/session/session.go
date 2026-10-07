@@ -338,6 +338,10 @@ func (m *Manager) find(name string) (*Session, error) {
 	return nil, nil
 }
 
+// Carries is whether s carries every owner label `want` names, with the same value: whether it
+// is the session of the instance, board and tile `want` says.
+func (s Session) Carries(want map[string]string) bool { return owned(&s, want) == nil }
+
 // owned is nil when `s` carries every owner label `want` names, with the same value.
 func owned(s *Session, want map[string]string) error {
 	for _, key := range OwnerLabels {
