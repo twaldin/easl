@@ -124,17 +124,18 @@ def cost(r0, r1, events=None):
     return out
 
 
-def birth_frame(display_index):
-    """`EASL_DEV_FRAME` for a 1492×926 window on yabai display `display_index` (10 pt in from its
-    left, 50 pt down from its top), in AppKit's screen coordinates (origin at the primary display's
-    bottom left; yabai's frames are top-down): AppKit opens a window on the Space of the display
-    holding its frame, so a window born on a headless virtual screen never shows on the user's
-    display before the launcher's guard moves it (docs/testing.md)."""
+def birth_frame(display_id):
+    """`EASL_DEV_FRAME` for a 1492×926 window on the display with yabai id `display_id` (10 pt in
+    from its left, 50 pt down from its top), in AppKit's screen coordinates (origin at the primary
+    display's bottom left; yabai's frames are top-down): AppKit opens a window on the Space of the
+    display holding its frame, so a window born on a headless virtual screen never shows on the
+    user's display before the launcher's guard moves it (docs/testing.md). The id (the Core
+    Graphics display id) names the same screen whatever else is plugged in; an index shifts."""
     displays = json.loads(sh(YABAI, "-m", "query", "--displays"))
     primary = next((d["frame"] for d in displays if d["frame"]["x"] == 0 and d["frame"]["y"] == 0), None)
-    frame = next((d["frame"] for d in displays if d["index"] == display_index), None)
+    frame = next((d["frame"] for d in displays if d["id"] == display_id), None)
     if primary is None or frame is None:
-        raise SystemExit(f"--birth-display {display_index}: yabai lists displays {[d['index'] for d in displays]}; "
+        raise SystemExit(f"--birth-display {display_id}: yabai lists display ids {[d['id'] for d in displays]}; "
                          "no launch on a display that isn't there")
     sx, sw, sh_ = frame["x"], frame["w"], frame["h"]
     sy = primary["h"] - (frame["y"] + frame["h"])
@@ -597,8 +598,9 @@ def main():
     ap.add_argument("--headless", action="store_true",
                     help="no virtual screen: the window stays on the parking Space (EASL_DEV_PARK_SPACE, default 9), which nobody views")
     ap.add_argument("--birth-display", type=int, default=None,
-                    help="yabai display index a new window opens on (EASL_DEV_FRAME), e.g. a headless virtual screen, so it never shows "
-                         "on the user's display before EASL_DEV_LAUNCHER's guard moves it to the parking Space")
+                    help="yabai display id (`yabai -m query --displays`, stable across plug-ins where an index isn't) a new window "
+                         "opens on (EASL_DEV_FRAME), e.g. a headless virtual screen, so it never shows on the user's display before "
+                         "EASL_DEV_LAUNCHER's guard moves it to the parking Space")
     ap.add_argument("--summarize", action="store_true", help="only print the table for --out's rows")
     args = ap.parse_args()
     apps = [a.split("=", 1) for a in args.app]
