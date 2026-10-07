@@ -24,6 +24,7 @@ Registration f91bb2e4 + A1–A3, notes 1–3, attempt-counting ruling. Run on th
 4. **Trial 4's agent-titles A/B ran between the attempts** (19:42:44–~19:55:00Z, Space 6, 6 launches) — not under this registration; swarm's disturbance (19:46:45–19:53:32Z, up to 1 core for 38.5 s) falls inside it only. Its own verdict: not separated, no claim.
 5. **Attempt 2 window and load:** 19:55:19Z–20:15:0xZ, 6 launches (19:55:33, 19:58:40, 20:01:41, 20:04:43, 20:07:51, 20:10:58Z watcher ends), `killed: []` on all; shepherd's machine rows over the window (142 rows): CPU idle median 77.0 % (min 49.8 %), WindowServer median 49.9 % (Tim's board visible, ambient for both arms); the registered harness carries no per-row load sample (that field is #58's). No other process ran on home for a hold owner besides mine after 19:53:32Z (shepherd).
 6. Tim's board (16–17 live agent tiles, visible on Space 4) is ambient to both interleaved arms.
+7. The shepherd's hold summary (20:40Z) lists panes caught loading the machine in minute samples: swarm ×4 (the disclosed 19:46–19:53Z runs, inside trial 4's A/B) and pane obj_01M4BWM1AV0JXSW1H4 ×1 (unidentified; one minute sample, time not given). The shepherd's own rows over 19:55–20:15Z never showed CPU idle below 49.8 %.
 
 ## Receipts (sha256, first 16)
 
