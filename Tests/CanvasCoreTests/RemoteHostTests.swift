@@ -236,7 +236,7 @@ struct RemoteHostTests {
     @Test func aHostIsOneWordThatSshWontTakeForAnOption() {
         #expect(RemoteHost.problem(withHost: "twaldin-work") == nil)
         #expect(RemoteHost.problem(withHost: "tim@100.64.0.9") == nil)
-        for bad in ["", "twaldin work", "work\n", "-oProxyCommand=sh", "-V"] {
+        for bad in ["", "twaldin work", "work\n", "-oProxyCommand=sh", "-V", "tim@", "@work"] {
             #expect(RemoteHost.problem(withHost: bad) != nil, "\(bad.debugDescription)")
         }
     }

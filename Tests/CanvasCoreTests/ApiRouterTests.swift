@@ -614,6 +614,7 @@ final class ApiRouterTests {
             #"{"host":"work"}"#, #"{"board":"brd_7f94"}"#, #"{"host":"","board":"brd_7f94"}"#, #"{"host":"two words","board":"brd_7f94"}"#,
             #"{"host":"-oProxyCommand=sh","board":"brd_7f94"}"#, #"{"host":7,"board":"brd_7f94"}"#, #"{"host":"work","board":"lindy"}"#,
             #"{"host":"work","board":"brd_"}"#, #"{"host":"work","board":"brd_a b"}"#, #"{"host":"work","board":"brd_7f94","root":"/x"}"#,
+            #"{"host":"tim@","board":"brd_7f94"}"#, #"{"host":"@work","board":"brd_7f94"}"#,
         ]
         for (index, params) in refused.enumerated() {
             client.send(#"{"id":"r\#(index)","method":"board.open_remote","params":\#(params)}"#)

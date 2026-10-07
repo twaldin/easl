@@ -515,7 +515,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// A new board window as a tab of the frontmost one (its own window when there's none),
-    /// selected when `select`; otherwise the tab in front stays in front, as `open(root:select:)` leaves it.
+    /// selected when `select`. Otherwise the tab in front stays in front, as `open(root:select:)`
+    /// leaves it, and a window of its own is ordered in behind the others, never made key.
     private func show(_ controller: CanvasWindowController, select: Bool) {
         guard let window = controller.window else { return }
         let noActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
@@ -523,7 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let front = host.tabGroup?.selectedWindow ?? host
             if host.isMiniaturized, let group = host.tabGroup { group.addWindow(window) } else { host.addTabbedWindow(window, ordered: .above) }
             if select { bringForward(window) } else { window.tabGroup?.selectedWindow = front }
-        } else if noActivate {
+        } else if noActivate || !select {
             window.orderBack(nil)
         } else {
             controller.showWindow(nil)
@@ -538,9 +539,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The board window new boards join as tabs: the key one, else any on screen, else a
     /// minimized one (a board opened while the window is in the Dock joins it there rather than
-    /// opening a window of its own on the user's current Space).
+    /// opening a window of its own on the user's current Space). Remote boards' windows count.
     private func tabHost(excluding window: NSWindow) -> NSWindow? {
-        let windows = controllers.values.compactMap(\.window).filter { $0 !== window && ($0.isVisible || $0.isMiniaturized) }
+        let windows = (Array(controllers.values) + remoteControllers.values).compactMap(\.window).filter { $0 !== window && ($0.isVisible || $0.isMiniaturized) }
         return windows.first(where: \.isKeyWindow) ?? windows.first(where: \.isVisible) ?? windows.first
     }
 

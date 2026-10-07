@@ -217,14 +217,17 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     }
 
     /// Why `text` can't be a host File › Open Remote… connects to, or nil: a host is one word (a
-    /// tailnet name, an ssh config alias, `user@host`), and one starting with `-` would be an
-    /// option to ssh.
+    /// tailnet name, an ssh config alias, `user@host`, both parts there), and one starting with
+    /// `-` would be an option to ssh.
     public static func problem(withHost text: String) -> String? {
         if text.isEmpty { return "host is empty: pass a tailnet name, an ssh config alias or user@host" }
         if text.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) }) {
             return "host \(text.debugDescription) isn't one host: a tailnet name, an ssh config alias or user@host has no spaces"
         }
         if text.hasPrefix("-") { return "host \(text) starts with -, which ssh would take for an option" }
+        if let at = text.lastIndex(of: "@"), at == text.startIndex || text.index(after: at) == text.endIndex {
+            return "host \(text) needs both parts of user@host"
+        }
         return nil
     }
 
