@@ -37,6 +37,9 @@ public final class PaintedText {
         layout.usesFontLeading = true
         layout.addTextContainer(container)
         storage.addLayoutManager(layout)
+        // Laid out before anything asks: asked first, the range of "i" in a line-initial "fi"
+        // came back as its own glyph, which layout then made part of the ligature.
+        layout.ensureLayout(for: container)
         self.links = links.map { Link(match: $0, areas: rects(for: $0.range, selected: false)) }
     }
 
@@ -54,10 +57,10 @@ public final class PaintedText {
         layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: storage.length))
     }
 
-    /// The rects `range` covers. `selected`: as a text view highlights a selection, a span per
-    /// visual run (a run of right-to-left text in a left-to-right line is one of its own), and a
-    /// line the range runs on past reaches the right edge. Otherwise a link's areas: on each line
-    /// it spans, from the caret where it starts there to the one where it ends.
+    /// The rects `range` covers. `selected`: as a text view highlights a selection, line by line,
+    /// a span per visual run (a run of right-to-left text in a left-to-right line is one of its
+    /// own), and a line the range runs on past reaches the right edge. Otherwise a link's areas:
+    /// on each line it spans, from the caret where it starts there to the one where it ends.
     public func rects(for range: NSRange, selected: Bool = true) -> [CGRect] {
         guard range.length > 0, NSMaxRange(range) <= storage.length else { return [] }
         return selected ? highlight(range) : areas(range)
@@ -66,17 +69,23 @@ public final class PaintedText {
     private func highlight(_ range: NSRange) -> [CGRect] {
         var whole = NSRange()
         let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: &whole)
+        // A line at a time: over several lines TextKit joins the whole lines into one rect, which
+        // a trim on the first or last line would cut across them all.
         var rects: [CGRect] = []
-        layout.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: glyphs, in: container) { found, _ in rects.append(found) }
+        layout.enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, line, _ in
+            let slice = NSIntersectionRange(line, glyphs)
+            guard slice.length > 0 else { return }
+            self.layout.enumerateEnclosingRects(forGlyphRange: slice, withinSelectedGlyphRange: glyphs, in: self.container) { found, _ in rects.append(found) }
+        }
         // A ligature the range starts or ends inside is one glyph, all of it in those rects: give
-        // back the part of it outside the range.
+        // back the part of it outside the range, on its line only.
         if whole.location < range.location { rects = trim(rects, from: whole.location, to: range.location) }
         if NSMaxRange(whole) > NSMaxRange(range) { rects = trim(rects, from: NSMaxRange(range), to: NSMaxRange(whole)) }
         return rects.map { $0.offsetBy(dx: rect.minX, dy: rect.minY) }
     }
 
-    /// `rects` less the span between the carets at `start` and `end` (part of one ligature, on
-    /// one line), cut from the edge of the rect it lies at, whichever side that is.
+    /// `rects` (one line each) less the span between the carets at `start` and `end` (part of one
+    /// ligature, on one line), cut from the edge of that line's rect it lies at, whichever side.
     private func trim(_ rects: [CGRect], from start: Int, to end: Int) -> [CGRect] {
         let line = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: start), effectiveRange: nil)
         let carets = carets(onLineAt: start)

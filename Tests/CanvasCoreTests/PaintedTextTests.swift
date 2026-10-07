@@ -35,6 +35,25 @@ struct PaintedTextTests {
         #expect(abs(highlight.maxX - carets[2]) < 0.01)
     }
 
+    /// "file" starts with the "fi" ligature, and with three or four lines of it, lines start with
+    /// one. A selection from inside the first one to the end leaves out only that "f"; every later
+    /// line stays highlighted all across, its first "f" too (one rect for all the whole lines,
+    /// trimmed for the first line's ligature, lost them).
+    @Test func aSelectionFromInsideALineInitialLigatureKeepsTheLaterLines() throws {
+        let font = try #require(NSFont(name: "Hoefler Text", size: 30))
+        let text = painted("file file file file file file file", font: font, width: 130)
+        let length = (text.string as NSString).length
+        let spans = text.rects(for: NSRange(location: 1, length: length - 1))
+        let first = try #require(text.rects(for: NSRange(location: 0, length: 1)).first)
+        let last = try #require(text.rects(for: NSRange(location: length - 1, length: 1)).first)
+        #expect(last.minY >= first.maxY + first.height, "at least three lines")
+        for index in 0..<length {
+            let letter = try #require(text.rects(for: NSRange(location: index, length: 1)).first)
+            let shown = spans.contains { $0.insetBy(dx: -0.01, dy: -0.01).contains(CGPoint(x: letter.midX, y: letter.midY)) }
+            #expect(shown == (index > 0), "character \(index)")
+        }
+    }
+
     @Test func aCaretNeverSplitsAnEmojiAndStopsAtTheTextsEnds() throws {
         let text = painted("a😀b")
         let before = try caret(1, in: text), after = try caret(3, in: text)
@@ -87,8 +106,7 @@ struct PaintedTextTests {
 
     /// A link that wraps takes clicks on each line it runs over, only where its text is; selecting
     /// the same characters highlights all of those areas, from the same start to the same end, and
-    /// runs to the edge on all but its last line, as a text view does (which joins the whole lines
-    /// between into one span).
+    /// runs to the edge on all but its last line, as a text view does.
     @Test func aWrappedLinkIsClickableOnEachLineItRunsOver() throws {
         let text = painted("see https://example.com/a/very/long/path/that/wraps/over/lines here", width: 150)
         let link = try #require(text.links.first)
