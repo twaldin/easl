@@ -331,9 +331,9 @@ public final class Board {
         let size: (w: Double, h: Double)
         if type == .question {
             size = QuestionSpec.size(props)
-        } else if type == .code, frame == nil, let aim = CodeAim(props: props) {
+        } else if type == .code, frame == nil {
             // A code tile without a frame is as wide as its file's lines need.
-            size = newCodeSize(path: aim.path, fromGit: aim.ref != nil || aim.pinnedCommit != nil)
+            size = newCodeSize(props)
         } else {
             size = Self.defaultSize(type)
         }
@@ -670,20 +670,22 @@ public final class Board {
     /// Largest file `newCodeSize` reads to widen a tile; a larger one gets the default width.
     static let autoWidthMaxBytes = 1 << 20
 
-    /// The size a new code tile over `path` (board-relative or absolute) gets without a frame:
-    /// `defaultSize(.code)`, widened so the file's longest line doesn't wrap, up to
-    /// `CodeMetrics.defaultFitWidth` (`CodeMetrics.autoWidth`). Reads the working-tree file on
-    /// the calling thread, up to `autoWidthMaxBytes` (source files are small). A tile shown from
-    /// git (`fromGit`: a `ref` or `pinnedCommit`), a missing, binary or larger file, or a
-    /// directory keeps the default size.
-    public func newCodeSize(path: String, fromGit: Bool = false) -> (w: Double, h: Double) {
+    /// The size a new code tile with `props` gets without a frame: `defaultSize(.code)`, widened
+    /// so the longest line of the file it shows doesn't wrap at its content zoom, up to
+    /// `CodeMetrics.defaultFitWidth` of content (`CodeMetrics.autoWidth`). Lines and columns are
+    /// the renderer's (`SideText`, `WrapText`). Reads the working-tree file on the calling
+    /// thread, up to `autoWidthMaxBytes` (source files are small). A follow tile (`followOf`), a
+    /// tile shown from git (`ref`, `pinnedCommit`), and a missing, binary or larger file or a
+    /// directory keep the default size.
+    public func newCodeSize(_ props: JSONValue) -> (w: Double, h: Double) {
         let size = Self.defaultSize(.code)
-        let url = absoluteURL(path).resolvingSymlinksInPath()
-        guard !fromGit, let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+        guard let aim = CodeAim(props: props), aim.ref == nil, aim.pinnedCommit == nil, props["followOf"]?.string == nil else { return size }
+        let url = absoluteURL(aim.path).resolvingSymlinksInPath()
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               attributes[.type] as? FileAttributeType == .typeRegular, (attributes[.size] as? Int ?? .max) <= Self.autoWidthMaxBytes,
               let data = try? Data(contentsOf: url), !data.prefix(8192).contains(0) else { return size }
-        let longest = CodeMetrics.longestLine(in: String(decoding: data, as: UTF8.self))
-        return (Double(CodeMetrics.autoWidth(longestLine: longest.columns, lineCount: longest.lines, defaultWidth: CGFloat(size.w))), size.h)
+        let text = WrapText(SideText(String(decoding: data, as: UTF8.self)))
+        return (Double(CodeMetrics.autoWidth(longestLine: text.longest, lineCount: text.text.lineCount, zoom: ObjectZoom.of(props), defaultWidth: CGFloat(size.w))), size.h)
     }
 
     /// Room kept between a placed object and its neighbours.

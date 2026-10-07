@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // Code tile geometry in points (CodeMetrics.swift). Text is the system monospaced font at 12
@@ -38,40 +39,73 @@ const (
 var DefaultFitWidth = math.Ceil(GutterWidth(1) + AutoColumns*CharAdvance + TrailingPadding)
 
 // AutoWidth is CodeMetrics.autoWidth: the frame width of a new code tile without a frame over
-// a file of lineCount lines whose longest is longestLine columns: defaultWidth, widened so that
-// line doesn't wrap, up to DefaultFitWidth.
-func AutoWidth(longestLine, lineCount int, defaultWidth float64) float64 {
-	needed := math.Ceil(GutterWidth(lineCount) + float64(longestLine)*CharAdvance + TrailingPadding)
-	return max(defaultWidth, min(needed, DefaultFitWidth))
+// a file of lineCount lines whose longest is longestLine columns, its content drawn at zoom:
+// defaultWidth, widened so that line doesn't wrap, up to DefaultFitWidth of content.
+func AutoWidth(longestLine, lineCount int, zoom, defaultWidth float64) float64 {
+	needed := min(math.Ceil(GutterWidth(lineCount)+float64(longestLine)*CharAdvance+TrailingPadding), DefaultFitWidth)
+	return max(defaultWidth, math.Ceil(needed*zoom))
 }
 
-// LongestLine is CodeMetrics.longestLine: the columns of text's longest line (tabs expanded,
-// carriage returns not counted) and its number of lines, a final newline ending the last line.
-func LongestLine(text string) (columns, lines int) {
-	longest, column, open := 0, 0, false
-	for _, r := range text {
-		switch {
-		case r == '\n':
-			longest = max(longest, column)
-			column = 0
-			lines++
-			open = false
+// LongestColumns is WrapText.longest: the columns of the widest of lines.
+func LongestColumns(lines []string) int {
+	longest := 0
+	for _, line := range lines {
+		longest = max(longest, Columns(line))
+	}
+	return longest
+}
+
+// DecodeUTF8 is Swift's String(decoding:as: UTF8.self): data as text, each maximal subpart of
+// an ill-formed sequence replaced by one U+FFFD (Unicode's recommended practice), where
+// ranging over the bytes would give one per byte.
+func DecodeUTF8(data []byte) string {
+	if utf8.Valid(data) {
+		return string(data)
+	}
+	var b strings.Builder
+	b.Grow(len(data))
+	for i := 0; i < len(data); {
+		if r, size := utf8.DecodeRune(data[i:]); r != utf8.RuneError || size > 1 {
+			b.Write(data[i : i+size])
+			i += size
 			continue
-		case r == '\r':
-			continue
-		case r == '\t':
-			column += TabWidth - column%TabWidth
-		case r > 0xFFFF:
-			column += 2 // a surrogate pair: 2 on its high half, 0 on its low
-		default:
-			column += UnitColumns(uint16(r))
 		}
-		open = true
+		b.WriteRune(utf8.RuneError)
+		i += maximalSubpart(data[i:])
 	}
-	if open {
-		lines++
+	return b.String()
+}
+
+// maximalSubpart is how many bytes from p[0] form the longest prefix of a well-formed UTF-8
+// sequence (at least 1); p doesn't start a whole one.
+func maximalSubpart(p []byte) int {
+	need, lo, hi := 0, byte(0x80), byte(0xBF)
+	switch c := p[0]; {
+	case c >= 0xC2 && c <= 0xDF:
+		need = 1
+	case c == 0xE0:
+		need, lo = 2, 0xA0
+	case c >= 0xE1 && c <= 0xEC, c == 0xEE, c == 0xEF:
+		need = 2
+	case c == 0xED:
+		need, hi = 2, 0x9F
+	case c == 0xF0:
+		need, lo = 3, 0x90
+	case c >= 0xF1 && c <= 0xF3:
+		need = 3
+	case c == 0xF4:
+		need, hi = 3, 0x8F
+	default:
+		return 1
 	}
-	return max(longest, column), lines
+	n := 1
+	for ; n <= need && n < len(p); n++ {
+		if c := p[n]; c < lo || c > hi {
+			break
+		}
+		lo, hi = 0x80, 0xBF
+	}
+	return n
 }
 
 // LineNumberDigits is CodeMetrics.lineNumberDigits.

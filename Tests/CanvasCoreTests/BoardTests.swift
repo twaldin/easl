@@ -410,27 +410,38 @@ struct BoardTests {
         #expect(board.codeFileVanished(kept.id, path: "b.ts", existing: []) == .kept && board.objects[kept.id] != nil)
     }
 
-    /// A new code tile without a frame is as wide as its file's longest line needs (200 columns
-    /// at most), never narrower than the default, so lines don't wrap where they needn't.
+    /// A new code tile without a frame is as wide as its file's longest line needs at its zoom
+    /// (200 columns at most), never narrower than the default, so lines don't wrap where they
+    /// needn't. The same files, and widths, as easld's TestANewCodeTileWithoutAFrameWidensToItsFilesLongestLine.
     @Test func aNewCodeTileWithoutAFrameWidensToItsFilesLongestLine() throws {
         let board = makeBoard()
-        let wide = String(repeating: "x", count: 150), huge = String(repeating: "y", count: 300)
-        try "short\r\n\t\(wide)\r\nshort\r\n".write(to: root.appendingPathComponent("wide.ts"), atomically: true, encoding: .utf8)
-        try "\(huge)\n".write(to: root.appendingPathComponent("huge.js"), atomically: true, encoding: .utf8)
-        try "let a = 1\n".write(to: root.appendingPathComponent("short.ts"), atomically: true, encoding: .utf8)
-        // The tab takes 4 columns and the carriage returns none: 154 columns over 3 lines.
-        #expect(CodeMetrics.longestLine(in: try String(contentsOf: root.appendingPathComponent("wide.ts"), encoding: .utf8)) == (154, 3))
-        let needed = Double((CodeMetrics.gutterWidth(lineCount: 3) + 154 * CodeMetrics.charAdvance + CodeMetrics.trailingPadding).rounded(.up))
+        func write(_ name: String, _ bytes: [UInt8]) throws { try Data(bytes).write(to: root.appendingPathComponent(name)) }
+        let a = [UInt8](repeating: UInt8(ascii: "a"), count: 100)
+        try write("wide.ts", Array("short\r\n\t\(String(repeating: "x", count: 150))\r\nshort\r\n".utf8))  // CRLF dropped, the tab 4: 154 columns
+        try write("cr.ts", a + Array("\ry\n".utf8))  // a lone CR stays a column, as the rows draw it: 102
+        try write("bad.ts", a + [0xE2, 0x82, 0x0A])  // one U+FFFD for the cut-off sequence: 101
+        try write("huge.js", Array("\(String(repeating: "y", count: 300))\n".utf8))
+        try write("short.ts", Array("let a = 1\n".utf8))
+        func width(_ columns: Int, lines: Int) -> Double {
+            Double((CodeMetrics.gutterWidth(lineCount: lines) + CGFloat(columns) * CodeMetrics.charAdvance + CodeMetrics.trailingPadding).rounded(.up))
+        }
+        func created(_ props: [String: JSONValue], frame: Frame? = nil) -> Double { board.create(type: .code, props: .object(props), frame: frame).frame.w }
         let fallback = Board.defaultSize(.code).w
-        #expect(board.create(type: .code, props: .object(["path": "wide.ts"])).frame.w == needed, "the 154-column line fits unwrapped")
-        #expect(board.create(type: .code, props: .object(["path": "huge.js"])).frame.w == Double(CodeMetrics.defaultFitWidth), "past 200 columns it stops; the rest wraps")
-        #expect(board.create(type: .code, props: .object(["path": "short.ts"])).frame.w == fallback, "never narrower than the default")
-        #expect(board.create(type: .code, props: .object(["path": "gone.ts"])).frame.w == fallback, "a missing file keeps the default")
-        #expect(board.create(type: .code, props: .object(["path": "wide.ts", "pinnedCommit": "HEAD"])).frame.w == fallback, "a tile from git isn't measured from the working tree")
-        #expect(board.create(type: .code, props: .object(["path": "wide.ts"]), frame: Frame(x: 0, y: 0, w: 500, h: 300)).frame.w == 500, "a given frame stays")
-        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]))
+        #expect(created(["path": "wide.ts"]) == width(154, lines: 3), "the 154-column line fits unwrapped")
+        #expect(created(["path": "cr.ts"]) == width(102, lines: 1) && created(["path": "bad.ts"]) == width(101, lines: 1))
+        #expect(created(["path": "wide.ts", "zoom": .number(1.5)]) == (width(154, lines: 3) * 1.5).rounded(.up), "content drawn bigger needs a wider frame")
+        #expect(created(["path": "huge.js"]) == Double(CodeMetrics.defaultFitWidth), "past 200 columns it stops; the rest wraps")
+        #expect(created(["path": "short.ts"]) == fallback, "never narrower than the default")
+        #expect(created(["path": "gone.ts"]) == fallback, "a missing file keeps the default")
+        #expect(created(["path": "wide.ts", "pinnedCommit": "HEAD"]) == fallback && created(["path": "wide.ts", "ref": "main"]) == fallback,
+                "a tile from git isn't measured from the working tree")
+        #expect(created(["path": "wide.ts", "followOf": "obj_t"]) == fallback, "a follow tile keeps its size")
+        #expect(created(["path": "wide.ts"], frame: Frame(x: 0, y: 0, w: 500, h: 300)) == 500, "a given frame stays")
+        // A ⌘-click opens it as wide, also where only a narrower slot is in view: only its height is cut down.
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        board.viewport = { Frame(x: 0, y: 0, w: 1500, h: 700) }
         let opened = board.openCode(path: root.appendingPathComponent("wide.ts").path, lines: LineRange(start: 2, end: 2), beside: terminal.id)
-        #expect(board.objects[opened.id]?.frame.w == needed, "a ⌘-click opens it as wide")
+        #expect(board.objects[opened.id]?.frame.w == width(154, lines: 3))
     }
 
     @Test func deletingATerminalDeletesItsFollowTileInTheSameUndoStep() throws {

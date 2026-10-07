@@ -95,34 +95,12 @@ public enum CodeMetrics {
     }
 
     /// Frame width of a new code tile without a frame (opened by a click or created without one)
-    /// over a file of `lineCount` lines whose longest is `longestLine` columns: `defaultWidth`,
-    /// widened so that line doesn't wrap, up to `defaultFitWidth`. Never narrower than the default.
-    public static func autoWidth(longestLine: Int, lineCount: Int, defaultWidth: CGFloat) -> CGFloat {
-        let needed = (gutterWidth(lineCount: lineCount) + CGFloat(longestLine) * charAdvance + trailingPadding).rounded(.up)
-        return max(defaultWidth, min(needed, defaultFitWidth))
-    }
-
-    /// The columns of `text`'s longest line (tabs expanded, carriage returns not counted) and
-    /// its number of lines, a final newline ending the last line rather than starting another.
-    public static func longestLine(in text: String) -> (columns: Int, lines: Int) {
-        var longest = 0, column = 0, lines = 0, open = false
-        for unit in text.utf16 {
-            switch unit {
-            case 0x0A:
-                longest = max(longest, column)
-                column = 0
-                lines += 1
-                open = false
-            case 0x0D: continue
-            case 0x09:
-                column += tabWidth - column % tabWidth
-                open = true
-            default:
-                column += columns(of: unit)
-                open = true
-            }
-        }
-        return (max(longest, column), lines + (open ? 1 : 0))
+    /// over a file of `lineCount` lines whose longest is `longestLine` columns, its content drawn
+    /// at `zoom`: `defaultWidth`, widened so that line doesn't wrap, up to `defaultFitWidth` of
+    /// content (200 columns at any zoom). Never narrower than the default.
+    public static func autoWidth(longestLine: Int, lineCount: Int, zoom: Double, defaultWidth: CGFloat) -> CGFloat {
+        let needed = min((gutterWidth(lineCount: lineCount) + CGFloat(longestLine) * charAdvance + trailingPadding).rounded(.up), defaultFitWidth)
+        return max(defaultWidth, (needed * CGFloat(zoom)).rounded(.up))
     }
 
     /// Columns one UTF-16 unit other than a tab takes. East Asian wide and fullwidth characters

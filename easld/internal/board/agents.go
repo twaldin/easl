@@ -646,13 +646,17 @@ func (b *Board) AbsolutePath(path string) string {
 // autoWidthMaxBytes is the largest file NewCodeSize reads to widen a tile (Board.autoWidthMaxBytes).
 const autoWidthMaxBytes = 1 << 20
 
-// NewCodeSize is Board.newCodeSize: the size a new code tile over path gets without a frame,
-// the default size widened so the file's longest line doesn't wrap, up to
-// measure.DefaultFitWidth. A tile shown from git (fromGit: a ref or pinnedCommit), a missing,
-// binary or larger file, or a directory keeps the default size.
-func (b *Board) NewCodeSize(path string, fromGit bool) (float64, float64) {
+// NewCodeSize is Board.newCodeSize: the size a new code tile with props gets without a frame,
+// the default size widened so the longest line of the file it shows doesn't wrap at its
+// content zoom, up to measure.DefaultFitWidth of content, with SideText's lines and columns. A
+// follow tile (followOf), a tile shown from git (ref, pinnedCommit), and a missing, binary or
+// larger file or a directory keep the default size.
+func (b *Board) NewCodeSize(props map[string]any) (float64, float64) {
 	w, h := DefaultSize(model.Code)
-	if fromGit {
+	path, ok := props["path"].(string)
+	ref, _ := props["ref"].(string)
+	pinned, _ := props["pinnedCommit"].(string)
+	if _, follow := props["followOf"].(string); !ok || ref != "" || pinned != "" || follow {
 		return w, h
 	}
 	file := b.AbsolutePath(path)
@@ -664,8 +668,8 @@ func (b *Board) NewCodeSize(path string, fromGit bool) (float64, float64) {
 	if err != nil || bytes.IndexByte(data[:min(len(data), 8192)], 0) >= 0 {
 		return w, h
 	}
-	columns, lines := measure.LongestLine(string(data))
-	return measure.AutoWidth(columns, lines, w), h
+	lines := measure.SideLines(measure.DecodeUTF8(data))
+	return measure.AutoWidth(measure.LongestColumns(lines), len(lines), measure.ZoomOf(props), w), h
 }
 
 var followBinaryExtensions = map[string]bool{}

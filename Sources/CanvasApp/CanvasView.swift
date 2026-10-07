@@ -1050,7 +1050,7 @@ final class CanvasView: NSScrollView {
     /// Browser Tile, ⌘T, Edit Here's terminal `near` its code tile): the free spot nearest the
     /// viewport center or that tile, in view when there's room (`Board.place`), then `showNew`.
     func openForUser(_ type: ObjectType, props: JSONValue, near anchor: ObjectID? = nil) {
-        let size = Board.defaultSize(type)
+        let size = type == .code ? board.newCodeSize(props) : Board.defaultSize(type)
         showNew(board.create(type: type, props: props, frame: board.place(width: size.w, height: size.h, near: anchor)))
     }
 

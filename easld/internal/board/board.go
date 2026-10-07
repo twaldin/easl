@@ -465,10 +465,8 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 		w, h = question.Size(props)
 	}
 	// A code tile without a frame is as wide as its file's lines need.
-	if path, _ := props["path"].(string); typ == model.Code && frame == nil && path != "" {
-		ref, _ := props["ref"].(string)
-		pinned, _ := props["pinnedCommit"].(string)
-		w, h = b.NewCodeSize(path, ref != "" || pinned != "")
+	if typ == model.Code && frame == nil {
+		w, h = b.NewCodeSize(props)
 	}
 	if typ == model.Terminal {
 		props = b.stampingWorktree(props)
