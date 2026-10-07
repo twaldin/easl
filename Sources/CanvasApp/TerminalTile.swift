@@ -57,14 +57,13 @@ final class TerminalTile: NSView, TileContent {
             terminal.configuration = TerminalSurfaceOptions(backend: .exec, workingDirectory: NSHomeDirectory(), envVars: [:], command: Self.remoteCommand(attach))
         } else {
             let environment = Self.environment(tile: object.id, board: board)
-            let keep = Set(environment.keys)
             terminal.configuration = TerminalSurfaceOptions(
                 backend: .exec,
                 // A hosted session's `cwd` is the host's; ssh runs here.
                 workingDirectory: host == nil ? object.props["cwd"]?.string ?? board.root.path : board.root.path,
                 envVars: environment,
-                command: host.map { Self.hostedCommand(session: sessionName, tile: object.id, board: board.id, route: $0.route, keep: keep) }
-                    ?? Self.command(session: sessionName, object: object, board: board, keep: keep)
+                command: host.map { Self.hostedCommand(session: sessionName, tile: object.id, board: board.id, route: $0.route, keep: Set(environment.keys)) }
+                    ?? Self.command(session: sessionName, object: object, board: board, environment: environment)
             )
         }
         terminal.controller = TerminalConfig.shared.controller
@@ -126,15 +125,17 @@ final class TerminalTile: NSView, TileContent {
     /// Shell-quoted command string (Ghostty takes a string, not argv). zmx ignores the trailing
     /// command when the session already exists, so it only runs for a new session. A session
     /// that doesn't answer is waited for first (`SessionReach`), then its owner checked.
-    /// `keep`: the tile's own variables. `env -u` runs after Ghostty applied them, so an inherited
+    /// `environment`: the tile's own variables. `env -u` runs after Ghostty applied them, so an inherited
     /// variable of the same name (a dev instance launched with EASL_SOCKET set) must not unset them.
     /// Everything else the app inherited is unset (`LoginSession.strippedForTile`): the shell starts
-    /// like a fresh login session and the user's startup files set their own variables.
-    static func command(session: String, object: CanvasObject, board: Board, keep: Set<String>, start initial: String? = nil) -> String {
-        let shell = AppPaths.userShell
-        let start = (initial ?? initialCommand(object)).map { [shell, "-l", "-c", "\($0); exec \(ShellWords.quote([shell])) -l"] } ?? [shell, "-l"]
+    /// like a fresh login session and the user's startup files set their own variables. The
+    /// initial command gets the PATH of the tile's interactive shell (`commandPath`).
+    static func command(session: String, object: CanvasObject, board: Board, environment: [String: String], start initial: String? = nil) -> String {
+        let command = initial ?? initialCommand(object)
+        let path = command == nil ? nil : commandPath(environment, in: object.props["cwd"]?.string ?? board.root.path)
+        let start = LoginSession.tileStart(shell: AppPaths.userShell, command: command, path: path)
         guard let zmx = AppPaths.zmx else { return ShellWords.quote(start) }
-        let strip = LoginSession.strippedForTile(ProcessInfo.processInfo.environment, keep: keep).flatMap { ["-u", $0] }
+        let strip = LoginSession.strippedForTile(ProcessInfo.processInfo.environment, keep: Set(environment.keys)).flatMap { ["-u", $0] }
         // `canvas.home` names the owning instance: board copies in another home (replicas, dev
         // instances) carry the same board and tile ids, so ids alone can't tell whose session it is.
         let labels = "canvas.board=\(board.id) canvas.tile=\(object.id) canvas.home=\(homeLabel)"
@@ -142,6 +143,17 @@ final class TerminalTile: NSView, TileContent {
         let refusal = #"printf '\nThis terminal session (%s) belongs to another easl instance (%s).\nNot attaching: this copy of the board can neither type into it nor end it.\n' "$2" "$owner"; exec sleep 2147483647"#
         let prologue = SessionReach.prologue() + ownerGuard(refusal: refusal)
         return ShellWords.quote(["/bin/sh", "-c", prologue + "shift 3\nexec \"$@\"", "canvas-attach", zmx, session, homeLabel] + attach)
+    }
+
+    /// The PATH a tile's initial command runs with (`LoginSession.tileStart`): what the user's
+    /// interactive login shell sets up in the tile's `cwd` from its own PATH (`environment`'s, else
+    /// the app's) and the user's ZDOTDIR (`LoginShell.interactivePath`), easl's bin first; nil
+    /// when that shell didn't answer. Blocks while the shell is asked: once per directory until a
+    /// startup file changes.
+    static func commandPath(_ environment: [String: String], in cwd: String) -> String? {
+        let path = environment["PATH"] ?? ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        return LoginShell.shared.interactivePath(from: path, in: cwd, zdotdir: environment["EASL_ZSH_ZDOTDIR"])
+            .map { LoginSession.commandPath($0, bin: AppPaths.resources.map { $0.path + "/bin" }) }
     }
 
     /// A prologue for `sh -c` with $1 = zmx, $2 = session name, $3 = this instance's home label:
@@ -340,7 +352,7 @@ final class TerminalTile: NSView, TileContent {
         restartedAt = Date()
         guard let object = board.objects[objectID] else { throw ApiRouter.Failure("not_found", "terminal \(objectID) was closed while it restarted") }
         var options = terminal.configuration
-        options.command = Self.command(session: sessionName, object: object, board: board, keep: Set(options.envVars.keys), start: ShellWords.quote(argv))
+        options.command = Self.command(session: sessionName, object: object, board: board, environment: options.envVars, start: ShellWords.quote(argv))
         // The coordinator rebuilds only on a configuration that differs.
         if options.command == terminal.configuration.command { reattach() } else { terminal.configuration = options }
         refreshProgram()

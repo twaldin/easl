@@ -3,9 +3,11 @@ package session
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/twaldin/easl/easld/internal/session/zmxtest"
 )
@@ -25,7 +27,7 @@ func fixture(t *testing.T) (*Manager, string) {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	m := &Manager{Zmx: zmx, Dir: state, Shell: "/bin/bash", Home: home, Env: []string{"PATH=/usr/bin:/bin", "EASL_SOCKET=/inherited"}}
+	m := &Manager{Zmx: zmx, Dir: state, Shell: "/bin/bash", Home: home, Env: []string{"HOME=" + home, "PATH=/usr/bin:/bin", "EASL_SOCKET=/inherited"}}
 	return m, state
 }
 
@@ -75,17 +77,71 @@ func TestSpawnStartsTheSessionOnce(t *testing.T) {
 	if got["path"][0] != "/share/easl/bin:/usr/bin:/bin" {
 		t.Errorf("PATH %v: easl's bin goes before easld's own", got["path"])
 	}
-	wantArgs := []string{"/bin/bash", "-l", "-c", `'omp' '--model' 'it'"'"'s'; exec '/bin/bash' -l`}
-	if strings.Join(got["arg"], "\x00") != strings.Join(wantArgs, "\x00") {
-		t.Errorf("command %q, want %q", got["arg"], wantArgs)
+	// The command's PATH is what the interactive login shell set up (TestCommandGetsTheInteractiveShellsPath).
+	command := `'omp' '--model' 'it'"'"'s'; exec '/bin/bash' -l`
+	if args := got["arg"]; len(args) != 4 || strings.Join(args[:3], " ") != "/bin/bash -l -c" ||
+		!strings.HasPrefix(args[3], "PATH='/share/easl/bin:") || !strings.HasSuffix(args[3], "' "+command) {
+		t.Errorf("command %q, want /bin/bash -l -c \"PATH='/share/easl/bin:…' %s\"", got["arg"], command)
 	}
+	first := got["arg"][3]
 
 	_, created, err = m.Spawn(SpawnRequest{Tile: "obj_a", Command: []string{"other"}, Labels: labels})
 	if err != nil || created {
 		t.Fatalf("second spawn: created %v err %v", created, err)
 	}
-	if got := record(t, state, "canvas-obj_a"); got["arg"][3] != wantArgs[3] {
+	if got := record(t, state, "canvas-obj_a"); got["arg"][3] != first {
 		t.Errorf("second spawn replaced the session: %q", got["arg"])
+	}
+}
+
+// A restart's kill landing as a spawn of the same tile looks for the session (session.kill,
+// dispatched outside the board lock) doesn't leave the new session without its command's PATH:
+// the spawn that finds no session asks for it, whatever it saw before.
+func TestASessionEndedAsItIsSpawnedStillGetsThePath(t *testing.T) {
+	m, state := fixture(t)
+	labels := map[string]string{"canvas.board": "brd_1", "canvas.tile": "obj_r", HomeLabel: "mac-1"}
+	if _, created, err := m.Spawn(SpawnRequest{Tile: "obj_r", Labels: labels}); err != nil || !created {
+		t.Fatalf("first spawn: %v %v", created, err)
+	}
+	lookups := 0
+	m.beforeLock = func() {
+		if lookups++; lookups == 1 {
+			if ended, err := m.End("obj_r", labels); err != nil || !ended {
+				t.Fatalf("end: %v %v", ended, err)
+			}
+		}
+	}
+	_, created, err := m.Spawn(SpawnRequest{Tile: "obj_r", Command: []string{"omp"}, Labels: labels, Env: map[string]string{"PATH": "/share/easl/bin"}})
+	if err != nil || !created {
+		t.Fatalf("spawn after the kill: %v %v", created, err)
+	}
+	if args := record(t, state, "canvas-obj_r")["arg"]; len(args) != 4 || !strings.HasPrefix(args[3], "PATH='/share/easl/bin:") {
+		t.Errorf("command %q, want the probed PATH before 'omp'", args)
+	}
+	if lookups != 2 {
+		t.Errorf("%d lookups, want 2: one before the probe, one after", lookups)
+	}
+}
+
+// Another spawn starting the session while this one asks for the PATH wins: this one finds it
+// on its second lookup and leaves it as it is.
+func TestASessionStartedWhileThePathIsAskedIsLeftAlone(t *testing.T) {
+	m, state := fixture(t)
+	labels := map[string]string{"canvas.board": "brd_1", "canvas.tile": "obj_s", HomeLabel: "mac-1"}
+	other := &Manager{Zmx: m.Zmx, Dir: m.Dir, Shell: m.Shell, Home: m.Home, Env: m.Env}
+	lookups := 0
+	m.beforeLock = func() {
+		if lookups++; lookups == 2 {
+			if _, created, err := other.Spawn(SpawnRequest{Tile: "obj_s", Command: []string{"first"}, Labels: labels}); err != nil || !created {
+				t.Fatalf("other spawn: %v %v", created, err)
+			}
+		}
+	}
+	if _, created, err := m.Spawn(SpawnRequest{Tile: "obj_s", Command: []string{"second"}, Labels: labels}); err != nil || created {
+		t.Fatalf("spawn: created %v err %v, want the other's session left alone", created, err)
+	}
+	if args := record(t, state, "canvas-obj_s")["arg"]; len(args) != 4 || !strings.Contains(args[3], "'first'") {
+		t.Errorf("command %q, want the other spawn's", args)
 	}
 }
 
@@ -367,6 +423,117 @@ func TestSpawnChecksItsParams(t *testing.T) {
 	}
 	if _, _, err := (&Manager{}).Spawn(SpawnRequest{Tile: "obj_f"}); code(err) != "unavailable" || !strings.Contains(err.Error(), "offload-setup.sh") {
 		t.Errorf("no zmx: %v", err)
+	}
+}
+
+// rcHome is a home whose bash puts a directory holding a stub `omp` (it prints its arguments and
+// PATH) on PATH only when interactive, as bun's installer does in ~/.bashrc, after `interactive`.
+func rcHome(t *testing.T, interactive string) (home, tools string) {
+	t.Helper()
+	home, tools = t.TempDir(), t.TempDir()
+	for name, body := range map[string]string{
+		filepath.Join(tools, "omp"):          "#!/bin/sh\necho \"stub omp $*\"\necho \"PATH=$PATH\"\n",
+		filepath.Join(home, ".bash_profile"): ". \"$HOME/.bashrc\"\n",
+		filepath.Join(home, ".bashrc"):       "case $- in *i*) ;; *) return;; esac\n" + interactive + "\nexport PATH=\"" + tools + ":$PATH\"\n",
+	} {
+		if err := os.WriteFile(name, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return home, tools
+}
+
+// runs runs a session's command `args` without a terminal (the login shell after the command
+// reads stdin's end and exits): what it printed.
+func runs(t *testing.T, args, env []string) string {
+	t.Helper()
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Env = env
+	out, _ := cmd.CombinedOutput()
+	return string(out)
+}
+
+// An owned or hosted terminal's command resolves on the PATH its interactive shell has, with
+// easl's bin first, though easld's own PATH (systemd's) lacks what ~/.bashrc adds.
+func TestCommandGetsTheInteractiveShellsPath(t *testing.T) {
+	home, tools := rcHome(t, "")
+	m := &Manager{Shell: "/bin/bash"}
+	env := []string{"HOME=" + home, "PATH=/easl/bin:/usr/bin:/bin"}
+	command := []string{"omp", "--model", "x"}
+	before := runs(t, []string{"/bin/bash", "-l", "-c", Quote(command) + "; exec '/bin/bash' -l"}, env)
+	if !strings.Contains(before, "command not found") || strings.Contains(before, "stub omp") {
+		t.Fatalf("without the interactive PATH the stub should be missing: %q", before)
+	}
+	args := m.loginCommand(command, m.interactivePath(env, home), "/easl/bin")
+	out := runs(t, args, env)
+	if !strings.Contains(out, "stub omp --model x\n") || !strings.Contains(out, "PATH=/easl/bin:"+tools+":") {
+		t.Errorf("%q printed %q, want the stub on its PATH after easl's bin", args, out)
+	}
+	if got := m.loginCommand(nil, "/a", "/easl/bin"); strings.Join(got, " ") != "/bin/bash -l" {
+		t.Errorf("a plain shell reads the user's files itself: %q", got)
+	}
+}
+
+// The shell is asked in the session's directory (startup files may add `$PWD/…`), and what
+// it prints after the PATH (an EXIT trap here) isn't part of it.
+func TestThePathIsAskedInTheSessionsDirectoryAndFramed(t *testing.T) {
+	home, tools := rcHome(t, `trap 'printf junk' EXIT; export PATH="$PWD/venv:$PATH"`)
+	m := &Manager{Shell: "/bin/bash"}
+	env := []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
+	// bash's $PWD is the physical directory (macOS's temp directories are under a symlink).
+	project, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := m.interactivePath(env, project)
+	if !strings.HasPrefix(path, tools+":"+project+"/venv:") || strings.Contains(path, "junk") {
+		t.Errorf("PATH %q, want %s, then %s/venv, and nothing the logout printed", path, tools, project)
+	}
+}
+
+// An rc file that hangs (even after closing its output) or fails doesn't hold the spawn: the
+// shell's group is ended at the deadline, and the command runs with the login shell's own PATH,
+// as before.
+func TestAHangingOrFailingRcStillSpawns(t *testing.T) {
+	for _, rc := range []string{"sleep 60", "exec >/dev/null; sleep 60", "exit 3"} {
+		home, tools := rcHome(t, rc)
+		m := &Manager{Shell: "/bin/bash", PathTimeout: time.Second}
+		env := []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
+		start := time.Now()
+		path := m.interactivePath(env, home)
+		if elapsed := time.Since(start); path != "" || elapsed > 10*time.Second {
+			t.Errorf("%s: PATH %q after %v, want none within the deadline", rc, path, elapsed)
+		}
+		args := m.loginCommand([]string{"/bin/sh", "-c", `echo spawned; echo "PATH=$PATH"`}, path, "")
+		if want := `'/bin/sh' '-c' 'echo spawned; echo "PATH=$PATH"'; exec '/bin/bash' -l`; len(args) != 4 || args[3] != want {
+			t.Errorf("%s: command %q, want %q", rc, args, want)
+		}
+		if out := runs(t, args, env); !strings.Contains(out, "spawned\n") || strings.Contains(out, tools) {
+			t.Errorf("%s: printed %q", rc, out)
+		}
+	}
+}
+
+func TestCommandPathPutsEaslsBinFirstOnce(t *testing.T) {
+	if got := commandPath("/a:/easl/bin:/b", "/easl/bin"); got != "/easl/bin:/a:/b" {
+		t.Errorf("got %q", got)
+	}
+	if got := commandPath("/a:/b", ""); got != "/a:/b" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// fish reads `\\` and `\'` inside single quotes: a PATH entry ending in a backslash would end
+// the word there.
+func TestThePathWordIsQuotedForFish(t *testing.T) {
+	if got := shellWord(`/a\:/b'c`, "/usr/local/bin/fish"); got != `'/a\\:/b\'c'` {
+		t.Errorf("fish: %s", got)
+	}
+	if got := shellWord(`/a\:/b'c`, "/bin/zsh"); got != `'/a\:/b'"'"'c'` {
+		t.Errorf("zsh: %s", got)
+	}
+	if args := (&Manager{Shell: "/usr/bin/fish"}).loginCommand([]string{"omp"}, `/x\`, ""); args[3] != `PATH='/x\\' 'omp'; exec '/usr/bin/fish' -l` {
+		t.Errorf("fish command %q", args)
 	}
 }
 

@@ -70,9 +70,15 @@ type Manager struct {
 	Env []string
 	// Timeout bounds each zmx call.
 	Timeout time.Duration
+	// PathTimeout bounds the interactive login shell a command's PATH is asked of
+	// (interactivePath); 0 is 5 s.
+	PathTimeout time.Duration
 
 	// mu serializes spawn and kill, so two spawns of one tile can't both create its session.
 	mu sync.Mutex
+	// beforeLock, when set (tests), runs each time Spawn is about to take mu for its lookup:
+	// where a concurrent kill can land.
+	beforeLock func()
 }
 
 // New is a manager for the zmx at `zmx` ("" when there is none) with easld's environment, its
@@ -206,28 +212,46 @@ func (m *Manager) Spawn(req SpawnRequest) (session string, created bool, err err
 		return "", false, failure("invalid_params", "cwd %s is not a directory on %s", cwd, host)
 	}
 	name := Prefix + req.Tile
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	existing, err := m.find(name)
-	if err != nil {
-		return "", false, err
-	}
-	if existing != nil {
-		if !existing.Unreachable {
-			if err := owned(existing, req.Labels); err != nil {
-				return "", false, err
-			}
+	env := environ(m.Env, req.Env, req.Unset)
+	// The command's PATH is asked outside the lock (it can take PathTimeout, and kills wait on
+	// the lock), once the locked lookup found no session to create it over; the lookup then
+	// runs again, since another spawn may have started it meanwhile. A session is never created
+	// unasked: one ended (session.kill) between a lookup and the create is asked for here.
+	path, probed := "", len(req.Command) == 0
+	for {
+		if m.beforeLock != nil {
+			m.beforeLock()
 		}
-		return name, false, nil
+		m.mu.Lock()
+		existing, err := m.find(name)
+		if err != nil {
+			m.mu.Unlock()
+			return "", false, err
+		}
+		if existing != nil {
+			m.mu.Unlock()
+			if !existing.Unreachable {
+				if err := owned(existing, req.Labels); err != nil {
+					return "", false, err
+				}
+			}
+			return name, false, nil
+		}
+		if probed {
+			break
+		}
+		m.mu.Unlock()
+		path, probed = m.interactivePath(env, cwd), true
 	}
+	defer m.mu.Unlock()
 	// `zmx attach` with no terminal on stdin creates the session (its daemon detaches from
 	// easld, staying in its cgroup) and returns at once.
 	args := []string{"attach"}
 	if labels != "" {
 		args = append(args, "--labels", labels)
 	}
-	args = append(append(args, name), m.loginCommand(req.Command)...)
-	if out, err := m.run(cwd, environ(m.Env, req.Env, req.Unset), args...); err != nil {
+	args = append(append(args, name), m.loginCommand(req.Command, path, req.Env["PATH"])...)
+	if out, err := m.run(cwd, env, args...); err != nil {
 		return "", false, failure("unavailable", "zmx couldn't start %s: %s", name, describe(err, out))
 	}
 	// The daemon lists the session once its socket is up.
@@ -244,12 +268,80 @@ func (m *Manager) Spawn(req SpawnRequest) (session string, created bool, err err
 }
 
 // loginCommand is what the session runs: `command` in the login shell, then the login shell,
-// as a terminal tile on the Mac does (TerminalTile.command).
-func (m *Manager) loginCommand(command []string) []string {
+// as a terminal tile on the Mac does (LoginSession.tileStart). The command gets `path`, what an
+// interactive login shell sets up in the session (interactivePath), with `first` (easl's bin)
+// before it: `-l -c` reads neither ~/.zshrc nor a ~/.bashrc past its interactive guard, where
+// PATH is often set (bun's and nvm's installers write there). Without one ("": that shell
+// didn't answer) the command has the login shell's own PATH.
+func (m *Manager) loginCommand(command []string, path, first string) []string {
 	if len(command) == 0 {
 		return []string{m.Shell, "-l"}
 	}
-	return []string{m.Shell, "-l", "-c", Quote(command) + "; exec " + Quote([]string{m.Shell}) + " -l"}
+	run := Quote(command)
+	if path != "" {
+		run = "PATH=" + shellWord(commandPath(path, first), m.Shell) + " " + run
+	}
+	return []string{m.Shell, "-l", "-c", run + "; exec " + Quote([]string{m.Shell}) + " -l"}
+}
+
+// shellWord is `value` as one single-quoted word of `shell` (LoginSession.word): fish reads `\\`
+// and `\'` as escapes inside single quotes, POSIX shells read nothing.
+func shellWord(value, shell string) string {
+	if filepath.Base(shell) != "fish" {
+		return Quote([]string{value})
+	}
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(value) + "'"
+}
+
+// interactivePath is the PATH `$SHELL -lic` prints in `env`, started in `cwd`: what a command
+// typed at the session's prompt is looked up on. Only what it prints between a marker and an end
+// marker counts, so a ~/.bash_logout or an EXIT trap that prints stays out. "" when the shell
+// failed or hadn't exited by PathTimeout. The shell runs in its own process group, ended at the
+// deadline or when what the rc files started holds the output open after the shell exited.
+func (m *Manager) interactivePath(env []string, cwd string) string {
+	timeout := m.PathTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	const marker, end = "__EASL_PATH__", "__EASL_END__"
+	cmd := exec.CommandContext(ctx, m.Shell, "-lic", `printf '\n`+marker+`%s`+end+`' "$PATH"`)
+	cmd.Env = env
+	cmd.Dir = cwd
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 500 * time.Millisecond
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); errors.Is(err, exec.ErrWaitDelay) {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	if ctx.Err() != nil {
+		return ""
+	}
+	_, rest, found := strings.Cut(out.String(), "\n"+marker)
+	value, _, ended := strings.Cut(rest, end)
+	if !found || !ended {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+// commandPath is `path` with `first`'s entries before it, each once: easl's bin first, where
+// the shell integration puts it after the user's startup files.
+func commandPath(path, first string) string {
+	if first == "" {
+		return path
+	}
+	leading := strings.Split(first, ":")
+	entries := slices.Clone(leading)
+	for _, entry := range strings.Split(path, ":") {
+		if !slices.Contains(leading, entry) {
+			entries = append(entries, entry)
+		}
+	}
+	return strings.Join(entries, ":")
 }
 
 // List is every `canvas-…` session zmx has.
