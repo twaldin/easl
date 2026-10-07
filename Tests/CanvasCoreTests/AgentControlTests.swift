@@ -345,6 +345,29 @@ final class AgentControlTests {
         #expect(reply["result"]?["agent"]?["lifecycle"]?["state"] == "working")
     }
 
+    @Test func theKilledAgentsLateReleaseLeavesWhatTheRelaunchResumes() async throws {
+        let tile = terminal(name: "worker", command: ["omp"])
+        _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s1", "sessionPath": "/sessions/s1.jsonl",
+                                                     "model": "anthropic/claude-opus-4-5", "thinking": "high"])
+        try await report(tile, "idle", seq: 1, ["draft": .bool(false), "protocol": .number(1)])
+        let resumed = try await call("agent.restart", ["target": "worker", "mode": "resume"])
+        #expect(resumed["ok"] == .bool(true), "\(resumed)")
+        // The killed omp releases the tile as it exits, after its session is gone, and the
+        // relaunch never starts (its shell can't find omp): the tile keeps what it resumes.
+        #expect(try await call("agent.release", ["tile": .string(tile), "kind": "omp", "source": "canvas-omp"])["ok"] == .bool(true))
+        let kept = try #require(board.objects[tile]?.props["agent"])
+        #expect(kept["sessionId"] == "s1" && kept["sessionPath"] == "/sessions/s1.jsonl", "\(kept)")
+        #expect(kept["model"] == "anthropic/claude-opus-4-5" && kept["thinking"] == "high", "\(kept)")
+        // So it can be restarted into the same session again.
+        let again = try await call("agent.restart", ["target": "worker", "mode": "resume", "force": .bool(true)])
+        #expect(again["result"]?["command"] == ["omp", "--model=anthropic/claude-opus-4-5", "--thinking=high", "--resume=/sessions/s1.jsonl"], "\(again)")
+
+        // Once the relaunched agent reports, its own release clears the tile.
+        try await report(tile, "idle", seq: 2, ["draft": .bool(false), "protocol": .number(1)])
+        #expect(try await call("agent.release", ["tile": .string(tile), "kind": "omp", "source": "canvas-omp"])["ok"] == .bool(true))
+        #expect(board.objects[tile]?.props["agent"] == nil)
+    }
+
     @Test func aTileClosedWhileItsSessionIsKilledFailsTheRestart() async throws {
         let tile = terminal(name: "worker", command: ["omp"])
         try await report(tile, "idle", seq: 1, ["draft": .bool(false)])
