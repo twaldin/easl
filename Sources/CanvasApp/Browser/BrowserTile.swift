@@ -292,8 +292,8 @@ final class BrowserTile: NSView, TileContent {
         configuration.applicationNameForUserAgent = BrowserProfile.applicationName
         // The page's context menu offers Inspect Element (Web Inspector), as in Safari with
         // its Develop menu on.
-        configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
-        configuration.preferences.setValue(true, forKey: "hiddenPageDOMTimerThrottlingAutoIncreases")
+        Self.enablePrivatePreference("developerExtrasEnabled", on: configuration.preferences)
+        Self.enablePrivatePreference("hiddenPageDOMTimerThrottlingAutoIncreases", on: configuration.preferences)
         // A video's or game's fullscreen button: WebKit's own fullscreen window, Esc leaves it.
         configuration.preferences.isElementFullscreenEnabled = true
         WebMentions.install(on: configuration)
@@ -365,6 +365,15 @@ final class BrowserTile: NSView, TileContent {
         if previousLoad != nil { problemsChanged() }
         updatePageWatch()
         return view
+    }
+
+    /// Turns on a preference WebKit keeps private (docs/design.md, "Private WebKit"), only when
+    /// its setter (`_set<Key>:`, the one key-value coding finds) is there: setting a key WebKit
+    /// has dropped raises an Objective-C exception, which would end the app at every browser tile.
+    private static func enablePrivatePreference(_ key: String, on preferences: WKPreferences) {
+        let setter = NSSelectorFromString("_set\(key.prefix(1).uppercased())\(key.dropFirst()):")
+        guard preferences.responds(to: setter) else { return }
+        preferences.setValue(true, forKey: key)
     }
 
     /// A page's popup lands in this new tile: its web view is built from `configuration` and
