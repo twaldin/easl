@@ -112,6 +112,17 @@ class FakeApp:
                 return
 
 
+class DefaultSocketTest(unittest.TestCase):
+    def test_default_socket_is_the_apps_on_macos_and_easlds_elsewhere(self) -> None:
+        socket_for = easl_sdk.default_socket
+        self.assertEqual(socket_for("darwin", {}, "/Users/tim"), "/Users/tim/Library/Application Support/Easl/easl.sock")
+        self.assertEqual(socket_for("darwin", {"XDG_STATE_HOME": "/srv/state"}, "/Users/tim"), "/Users/tim/Library/Application Support/Easl/easl.sock")
+        self.assertEqual(socket_for("linux", {}, "/home/tim"), "/home/tim/.local/state/easl/easl.sock")
+        self.assertEqual(socket_for("linux", {"XDG_STATE_HOME": "/srv/state"}, "/home/tim"), "/srv/state/easl/easl.sock")
+        self.assertEqual(socket_for("linux", {"EASL_HOME": "/srv/easl", "XDG_STATE_HOME": "/srv/state"}, "/home/tim"), "/srv/easl/easl.sock")
+        self.assertEqual(socket_for("linux", {"EASL_HOME": "", "XDG_STATE_HOME": ""}, "/home/tim"), "/home/tim/.local/state/easl/easl.sock")
+
+
 class ConnectionTest(unittest.TestCase):
     def setUp(self) -> None:
         # /tmp keeps the socket path under the 104-byte limit.

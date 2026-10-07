@@ -25,6 +25,8 @@ jobs:
         run: bun scripts/gen-clients.ts --check
       - name: Python client tests
         run: cd clients/python && python3 -m unittest
+      - name: TS client tests
+        run: bun test clients/ts
       - name: Agent hook tests
         run: bun test extensions/agent-hooks
       - name: Script tests
