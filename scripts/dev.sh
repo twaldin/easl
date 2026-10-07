@@ -122,6 +122,10 @@ launch() {
   # on a headless virtual screen, so it never shows on a viewed Space before a launcher's guard
   # moves it (DevInput.frame; docs/testing.md).
   [ -z "${EASL_DEV_FRAME:-}" ] || set -- "$@" EASL_DEV_FRAME="$EASL_DEV_FRAME"
+  # EASL_UPDATE_URL: the latest.json easl › Check for Updates… reads instead of easl.sh's, e.g. a
+  # local server's to test the updater (Updater.swift; docs/testing.md). A development instance
+  # never checks by itself.
+  [ -z "${EASL_UPDATE_URL:-}" ] || set -- "$@" EASL_UPDATE_URL="$EASL_UPDATE_URL"
   # The checkout's own home keeps the release bundle id, so a developer's everyday instance keeps
   # its browser logins and window frames; other homes get their own (dev-bundle.sh).
   bundle="$("$repo/scripts/dev-bundle.sh" $([ -n "${EASL_DEV_HOME:-}" ] || echo --release-id) "$app" "$home" "$@")"

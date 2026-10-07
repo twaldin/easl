@@ -47,6 +47,8 @@ Requires macOS 14 or later on Apple silicon. easl is signed with a Developer ID 
    ```
 6. Optional, for code navigation: install the language servers you want (sourcekit-lsp, pyright, typescript-language-server, gopls, rust-analyzer). Without one, Go to Definition, Find References and Outline answer by text search. [docs/install.md](docs/install.md#language-servers) has the install commands and how easl finds a server.
 
+**Updates.** easl checks [easl.sh](https://easl.sh/latest.json) a minute after launch and then daily. When a newer version is out, an **Update** button appears at the top right of the window (easl › Check for Updates… checks now). Update downloads the release, checks its SHA-256 as the installer does and its signature and notarization, then quits easl, replaces the app where it is and reopens it; terminal tiles keep running. A Homebrew install updates the same way, and `brew outdated` lists easl until `brew upgrade --cask easl` catches Homebrew's record up.
+
 ## first steps
 
 1. Open easl. It opens a board on your home folder, with **Get Started** beside a practice note. Help › Get Started brings it back.

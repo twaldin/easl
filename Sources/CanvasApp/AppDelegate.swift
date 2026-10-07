@@ -218,6 +218,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let migration {
             for (id, controller) in controllers { migration.notice(for: id).map(controller.canvas.showNotice) }
         }
+        // After the windows open, so a failed update's reason has a window for its sheet: the
+        // last update's leftovers, then a check a minute from now and daily (`Updater`).
+        Updater.shared.start()
         // Testing on a shared machine: EASL_NO_ACTIVATE=1 keeps the app from taking focus.
         if ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] != "1" {
             NSApp.activate(ignoringOtherApps: true)
@@ -583,6 +586,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func snapshotPage(_ sender: Any?) { keyController?.snapshotPage(sender) }
     @objc func printPage(_ sender: Any?) { keyController?.printPage(sender) }
     @objc func findInPage(_ sender: Any?) { keyController?.findInPage(sender) }
+    /// easl › Check for Updates…: says what it found (`Updater`).
+    @objc func checkForUpdates(_ sender: Any?) { Updater.shared.check(manual: true) }
     @objc func clearBrowsingData(_ sender: Any?) {
         guard let controller = keyController, let window = controller.window else { return }
         let profiles = Set(registry.boards.values.flatMap { $0.objects.values }.filter { $0.type == .browser }.compactMap { BrowserProfile.name(in: $0.props) })
@@ -635,6 +640,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return item
         }
         submenu("easl", [
+            // easl.sh/latest.json now (`Updater`); it also checks a minute after launch and daily.
+            item("Check for Updates…", #selector(checkForUpdates(_:)), ""),
+            .separator(),
             // Every browser tile's cookies, storage and caches (`BrowserProfile`), after a sheet.
             item("Clear Browsing Data…", #selector(clearBrowsingData(_:)), ""),
             // Safari web extensions in browser tiles (`BrowserExtensions`), filled as it opens.
@@ -817,7 +825,7 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(togglePerformanceHUD(_:)):
             item.state = MetricsHUD.shared.isShown ? .on : .off
             return true
-        case #selector(openRemote(_:)): return true
+        case #selector(openRemote(_:)), #selector(checkForUpdates(_:)): return true
         default: return keyController?.validate(item) ?? false
         }
     }

@@ -149,6 +149,28 @@ File › Open Remote… against a second development instance on this Mac, throu
 
 With `EASL_DEV_REMOTE_HOME` set the host is a development instance whose launcher isn't known, so the sheet doesn't offer Start easl (it runs `open -g /Applications/easl.app`, the installed app and its real home, only for a host without the override). Quit the viewer with the sheet open and `pgrep -fl 'nc -U'` finds no relay left: quitting ends every ssh before the app exits.
 
+### Testing the updater
+
+easl › Check for Updates… against a local `latest.json` (docs/design.md "Updates"), on a home of its own so the swap replaces that home's bundle, never the checkout's or the installed app. A development instance never checks by itself, and with both bundles ad hoc it skips `spctl` (which refuses every ad hoc app), so no notarizing is needed:
+
+```sh
+t=$(mktemp -d "$TMPDIR/easl-update.XXXXXX"); mkdir -p "$t/srv"
+EASL_VERSION=0.2.99 EASL_BUNDLE_APP="$t/new/easl.app" scripts/bundle.sh   # the "newer" release
+ditto -c -k --keepParent "$t/new/easl.app" "$t/srv/easl-0.2.99.zip"
+printf '{"version":"0.2.99","url":"http://127.0.0.1:8765/easl-0.2.99.zip","sha256":"%s","size":%s,"notes":"https://github.com/twaldin/easl/releases"}\n' \
+  "$(shasum -a 256 "$t/srv/easl-0.2.99.zip" | cut -d' ' -f1)" "$(stat -f %z "$t/srv/easl-0.2.99.zip")" > "$t/srv/latest.json"
+python3 -m http.server 8765 --bind 127.0.0.1 --directory "$t/srv" &
+EASL_DEV_HOME="$t/home" EASL_UPDATE_URL=http://127.0.0.1:8765/latest.json EASL_DEV_EXTERNAL_OPEN=log scripts/dev.sh start
+EASL_DEV_HOME="$t/home" scripts/dev.sh input mainmenu "easl/Check for Updates…"   # the sheet: Update to 0.2.99?
+EASL_DEV_HOME="$t/home" scripts/dev.sh input key return                           # Update
+```
+
+- `dev.sh` passes `EASL_UPDATE_URL` through (into the bundle's `LSEnvironment`), and the helper relaunches with that environment, so the new version comes back on `$t/home` with `EASL_NO_ACTIVATE` and `EASL_DEV_FRAME`. The relaunch is `open -n`, not the `EASL_DEV_LAUNCHER`, so set `EASL_DEV_FRAME` on a shared Mac.
+- After the update: `plutil -extract CFBundleShortVersionString raw "$t/home/easl.app/Contents/Info.plist"` says 0.2.99, `app.log` says `updated to 0.2.99`, `$t/home/updates/` is gone, and `dev.sh cli system.ping` answers from the new pid.
+- Failures leave the app running as it was, with a sheet saying why: a wrong `sha256` or `size`, a zip without `easl.app`, `version` other than the zip's. `version` equal to the running one says "easl … is up to date"; the server stopped says "Couldn't check for updates".
+- `input key escape` is Later: the titlebar keeps its Update button (`dev.sh shot`). Release Notes only logs with `EASL_DEV_EXTERNAL_OPEN=log`.
+- Afterwards: `EASL_DEV_HOME="$t/home" scripts/dev.sh stop`, stop the server, `rm -rf "$t"`.
+
 ### Terminals and agents
 
 - Terminal text: `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) zmx history canvas-<tileId> | tail -n 40` (zmx keys its socket directory off `TMPDIR`; the GUI app's differs from a terminal's).

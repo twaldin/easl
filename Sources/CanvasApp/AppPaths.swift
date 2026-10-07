@@ -51,6 +51,9 @@ enum AppPaths {
     }
     /// The app's own settings (`ChromeTextScale`).
     static let uiSettings = support.appendingPathComponent("ui-settings.json")
+    /// easl › Check for Updates…'s downloads (`Updater`): one folder per version with the zip,
+    /// the unpacked app, the app it replaced and the helper's result, deleted at the next launch.
+    static let updates = support.appendingPathComponent("updates", isDirectory: true)
 
     /// A bundled asset from the repo's `resources/` directory (copied into the app bundle by
     /// scripts/bundle.sh), e.g. `asset("kit/mermaid.min.js")`.
