@@ -62,13 +62,14 @@ func (r *Router) Restore() []error {
 // errNowhere: no directory opens a listed board any more.
 var errNowhere = errors.New("no directory opens it any more")
 
-// rootOf is a directory that opens board `id` now (store.Identify, as Registry.Open does):
-// `opener`, the one it is listed with, else one its board file names, its own root (a
-// repository's main checkout) or a live worktree of its repository. Worktrees come and go (one
-// merged and removed, its path reused by another repository) while the board stays, and a
-// directory that opens another board never stands for this one. With another directory than
-// `opener` it also says why; "" when none opens it (errNowhere), or when its board file can't
-// be read to tell (it stays listed).
+// rootOf is a directory that opens board `id` now (store.Identify, as Registry.Open does), tried
+// in this order: `opener`, the one it is listed with; its own root as its board file has it (a
+// repository's main checkout); a live worktree of its repository (listing them reads every one
+// the repository names, which can wait on a mount: only when nothing before opens the board).
+// Worktrees come and go (one merged and removed, its path reused by another repository) while
+// the board stays, and a directory that opens another board never stands for this one. With
+// another directory than `opener` it also says why; "" when none opens it (errNowhere), or
+// when its board file can't be read to tell (it stays listed).
 func (r *Router) rootOf(id, opener string) (string, error) {
 	opens := func(dir string) bool {
 		if dir == "" || !store.IsDirectory(dir) {
@@ -84,21 +85,24 @@ func (r *Router) rootOf(id, opener string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("board %s: %s no longer opens it, and its board file can't say what does: %w", id, opener, err)
 	}
-	if snap != nil {
-		candidates := []string{snap.Root}
-		if snap.Repo != nil {
-			for _, w := range store.Worktrees(snap.Repo.CommonDir) {
-				candidates = append(candidates, w.Toplevel)
-			}
-		}
-		for _, dir := range candidates {
-			if opens(dir) {
-				return dir, fmt.Errorf("board %s reopened from %s: %s no longer opens it", id, dir, opener)
+	moved := func(dir string) (string, error) {
+		return dir, fmt.Errorf("board %s reopened from %s: %s no longer opens it", id, dir, opener)
+	}
+	if snap != nil && opens(snap.Root) {
+		return moved(snap.Root)
+	}
+	if snap != nil && snap.Repo != nil {
+		for _, w := range worktreesOf(snap.Repo.CommonDir) {
+			if opens(w.Toplevel) {
+				return moved(w.Toplevel)
 			}
 		}
 	}
 	return "", fmt.Errorf("board %s is no longer reopened: %w (%s is gone or opens another board)", id, errNowhere, opener)
 }
+
+// worktreesOf lists a repository's worktrees for rootOf (store.Worktrees; tests count calls).
+var worktreesOf = store.Worktrees
 
 // uniqueBoards is list with each board once, where it first is.
 func uniqueBoards(list []store.Reopened) []store.Reopened {

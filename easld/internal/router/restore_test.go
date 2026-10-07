@@ -203,12 +203,12 @@ func TestRestoreStartsTheMissingSessionsAndNothingElse(t *testing.T) {
 
 // A board easld owns is listed to reopen once, when it opens, by its id and the directory it was
 // opened from. At easld's next start it reopens from that directory while it opens the board,
-// else from one its board file names: its repository's main checkout once the worktree it was
-// opened from is removed, also when another repository took that worktree's path (whose board
-// is never this one's). A bare repository's worktree (`proj/.bare`, `proj/work`) reopens its
-// board, where the board's own root (`proj`, no worktree's) would open another. A board nothing
-// opens any more is dropped from the list, and a board file easld can't read is kept on it.
-// Without --own-terminals nothing is listed.
+// else from its own root as its board file has it (a repository's main checkout once the
+// worktree it was opened from is removed, also when another repository took that worktree's
+// path, whose board is never this one's), else from a live worktree of its repository, which
+// is listed only then (a bare repository, `proj/.bare`, whose own root `proj` opens another
+// board). A board nothing opens any more is dropped from the list, and a board file easld can't
+// read is kept on it. Without --own-terminals nothing is listed.
 func TestTheBoardsToReopenAreThoseOpenedWhileOwning(t *testing.T) {
 	f, _ := restorable(t)
 	dir := t.TempDir()
@@ -232,8 +232,9 @@ func TestTheBoardsToReopenAreThoseOpenedWhileOwning(t *testing.T) {
 	}
 	repo(filepath.Join(dir, "src"))
 	git(t, dir, "clone", "-q", "--bare", filepath.Join(dir, "src"), filepath.Join(proj, ".bare"))
-	work := filepath.Join(proj, "work")
+	work, work2 := filepath.Join(proj, "work"), filepath.Join(proj, "work2")
 	git(t, filepath.Join(proj, ".bare"), "worktree", "add", "-q", work)
+	git(t, filepath.Join(proj, ".bare"), "worktree", "add", "-q", "-b", "two", work2)
 	// Two repositories opened from a feature worktree, later from the main checkout too.
 	merged, mergedFeature, reused, reusedFeature := filepath.Join(dir, "merged"), filepath.Join(dir, "merged-feature"), filepath.Join(dir, "reused"), filepath.Join(dir, "reused-feature")
 	repo(merged)
@@ -267,6 +268,7 @@ func TestTheBoardsToReopenAreThoseOpenedWhileOwning(t *testing.T) {
 	}
 	git(t, merged, "worktree", "remove", mergedFeature)
 	git(t, reused, "worktree", "remove", reusedFeature)
+	git(t, filepath.Join(proj, ".bare"), "worktree", "remove", work)
 	repo(reusedFeature)
 	newer := fmt.Sprintf(`{"format":99,"id":%q,"root":%q,"revision":1,"objects":[]}`, store.PathID(store.Standardized(unreadable)), store.Standardized(unreadable))
 	if err := os.WriteFile(f.router.reg.Store.Path(store.PathID(store.Standardized(unreadable))), []byte(newer), 0o644); err != nil {
@@ -275,14 +277,36 @@ func TestTheBoardsToReopenAreThoseOpenedWhileOwning(t *testing.T) {
 	if err := store.WriteReopened(f.router.Reopens, append(listed, at(unreadable, store.PathID(store.Standardized(unreadable))))); err != nil {
 		t.Fatal(err)
 	}
+	listedWorktrees := map[string]int{}
+	t.Cleanup(func() { worktreesOf = store.Worktrees })
+	worktreesOf = func(commonDir string) []store.Worktree {
+		listedWorktrees[commonDir]++
+		return store.Worktrees(commonDir)
+	}
 	again, errs := restart(t, f)
+	if len(listedWorktrees) != 1 {
+		t.Errorf("worktrees listed for %v: only the bare repository's own root doesn't open its board", listedWorktrees)
+	}
+	for commonDir, n := range listedWorktrees {
+		if filepath.Base(commonDir) != ".bare" || n != 1 {
+			t.Errorf("worktrees of %s listed %d times", commonDir, n)
+		}
+	}
 	said := make([]string, len(errs))
 	for i, err := range errs {
 		said[i] = err.Error()
 	}
-	if len(said) != 4 || !strings.Contains(said[0], goneID+" is no longer reopened: no directory opens it any more") ||
-		!strings.Contains(said[1], mergedID+" reopened from "+store.Standardized(merged)) ||
-		!strings.Contains(said[2], reusedID+" reopened from "+store.Standardized(reused)) || !strings.Contains(said[3], "newer") {
+	// A worktree as its repository lists it: git records its path with symlinks resolved.
+	var listedWork2 string
+	for _, w := range store.Worktrees(store.Containing(work2).CommonDir) {
+		if filepath.Base(w.Toplevel) == "work2" {
+			listedWork2 = w.Toplevel
+		}
+	}
+	if len(said) != 5 || !strings.Contains(said[0], goneID+" is no longer reopened: no directory opens it any more") ||
+		!strings.Contains(said[1], bareID+" reopened from "+listedWork2+":") ||
+		!strings.Contains(said[2], mergedID+" reopened from "+store.Standardized(merged)) ||
+		!strings.Contains(said[3], reusedID+" reopened from "+store.Standardized(reused)) || !strings.Contains(said[4], "newer") {
 		t.Errorf("errors %q", said)
 	}
 	var open []string
@@ -293,7 +317,7 @@ func TestTheBoardsToReopenAreThoseOpenedWhileOwning(t *testing.T) {
 		t.Errorf("open after the restart: %v, want %s's, the bare repository's and the two repositories'", open, f.board.Root())
 	}
 	listed, _ = store.ReadReopened(f.router.Reopens)
-	want = []store.Reopened{want[0], want[2], at(merged, mergedID), at(reused, reusedID), at(unreadable, store.PathID(store.Standardized(unreadable)))}
+	want = []store.Reopened{want[0], {Root: listedWork2, Board: bareID}, at(merged, mergedID), at(reused, reusedID), at(unreadable, store.PathID(store.Standardized(unreadable)))}
 	if !reflect.DeepEqual(listed, want) {
 		t.Errorf("listed %v after the restore, want %v", listed, want)
 	}
