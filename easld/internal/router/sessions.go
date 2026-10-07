@@ -1,11 +1,9 @@
 package router
 
 import (
-	"errors"
 	"strings"
 
 	"github.com/twaldin/easl/easld/internal/api"
-	"github.com/twaldin/easl/easld/internal/relay"
 	"github.com/twaldin/easl/easld/internal/session"
 )
 
@@ -35,14 +33,6 @@ func (r *Router) hostCall(req any) (any, bool) {
 		result, err = r.session(method, p)
 	}
 	if err != nil {
-		var se *session.Error
-		var re *relay.Error
-		switch {
-		case errors.As(err, &se):
-			return errorReply(id, &Failure{se.Code, se.Message}), true
-		case errors.As(err, &re):
-			return errorReply(id, &Failure{re.Code, re.Message}), true
-		}
 		return errorReply(id, asFailure(err)), true
 	}
 	return okReply(id, result), true

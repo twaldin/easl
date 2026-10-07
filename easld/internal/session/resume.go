@@ -85,25 +85,102 @@ func ResumeArgv(kind, session string, command []string) []string {
 	if !ok {
 		return nil
 	}
-	program, kept := g.options(command)
+	program, kept := g.options(command, nil)
+	return g.resumed(program, kept, session)
+}
+
+// resumed is the command running `program` with the kept arguments, resuming session `session`.
+func (g grammar) resumed(program string, kept []string, session string) []string {
 	argv := []string{program}
 	if g.subcommand != "" {
 		argv = append(argv, g.subcommand)
 	}
 	argv = append(argv, kept...)
-	switch {
-	case g.selector == "":
+	if g.selector == "" {
 		return append(argv, session)
-	case strings.HasSuffix(g.selector, "="):
-		return append(argv, g.selector+session)
-	default:
-		return append(argv, g.selector, session)
 	}
+	return append(argv, flag(g.selector, session)...)
+}
+
+// flag is option `name` given `value`: one word when the name ends in `=`.
+func flag(name, value string) []string {
+	if strings.HasSuffix(name, "=") {
+		return []string{name + value}
+	}
+	return []string{name, value}
+}
+
+// setting is how an agent's command line names a model or a thinking level: the options that
+// already do (left out when the recorded one replaces them), and the one given.
+type setting struct {
+	names set
+	flag  string
+}
+
+// modelSettings are AgentResume.modelOption's, thinkingSettings its thinkingOption's, by agent
+// kind. omp 18.6.1 `--help`: `--model=<value>` ("fuzzy match: opus, gpt-5.2, or
+// openai/gpt-5.2"), `--thinking=<value>` (off, minimal, low, medium, high, xhigh, max, auto).
+var (
+	modelSettings = map[string]setting{
+		"omp":      {words("--model"), "--model="},
+		"claude":   {words("--model"), "--model"},
+		"codex":    {words("-m", "--model"), "-m"},
+		"gemini":   {words("-m", "--model"), "-m"},
+		"opencode": {words("-m", "--model"), "-m"},
+	}
+	thinkingSettings = map[string]setting{"omp": {words("--thinking"), "--thinking="}}
+)
+
+// Relaunch is what agent.restart runs (AgentResume.Relaunch): Argv in the new session, and the
+// tile's command from then on (Argv without the session selector), which a reboot reruns,
+// resuming the session the new agent records (InitialArgv).
+type Relaunch struct {
+	Argv, Command []string
+}
+
+// RelaunchOf is the relaunch of a terminal whose agent is `kind` and whose tile runs `command`
+// (AgentResume.relaunch): with `session`, its agent resuming that session; without, a fresh
+// start. The command's options are kept when it runs that agent (its session selectors and
+// prompt left out), the recorded `model` and `thinking` level replace any it gave, and `args`
+// follow. A terminal with no known agent reruns its `command`, fresh only. False when there is
+// nothing to relaunch. "" is none, for kind, session, model and thinking alike.
+func RelaunchOf(kind string, command []string, session, model, thinking string, args []string) (Relaunch, bool) {
+	g, ok := grammars[kind]
+	if !ok {
+		if session != "" || len(command) == 0 {
+			return Relaunch{}, false
+		}
+		argv := append(append([]string{}, command...), args...)
+		return Relaunch{Argv: argv, Command: argv}, true
+	}
+	replaced := set{}
+	var given []string
+	give := func(value string, s setting, known bool) {
+		if value == "" || !known {
+			return
+		}
+		for name := range s.names {
+			replaced[name] = true
+		}
+		given = append(given, flag(s.flag, value)...)
+	}
+	m, known := modelSettings[kind]
+	give(model, m, known)
+	t, known := thinkingSettings[kind]
+	give(thinking, t, known)
+	program, kept := g.options(command, replaced)
+	words := append(append(kept, given...), args...)
+	fresh := append([]string{program}, words...)
+	if session == "" {
+		return Relaunch{Argv: fresh, Command: fresh}, true
+	}
+	return Relaunch{Argv: g.resumed(program, words, session), Command: fresh}, true
 }
 
 // options is the program `command` runs the agent as (its own path when it is that agent, else
-// the agent's name) and the options of it the agent keeps (AgentResume.options).
-func (g grammar) options(command []string) (string, []string) {
+// the agent's name) and the options of it the agent keeps (AgentResume.options): Grammar.dropped
+// and `dropping` left out with their values, and positional words unless keepsPositionals.
+func (g grammar) options(command []string, dropping set) (string, []string) {
 	if len(command) == 0 || filepath.Base(command[0]) != g.program {
 		return g.program, nil
 	}
@@ -143,7 +220,7 @@ func (g grammar) options(command []string) (string, []string) {
 				rest = rest[1:]
 			}
 		}
-		if !g.dropped[name] {
+		if !g.dropped[name] && !dropping[name] {
 			kept = append(kept, option...)
 		}
 	}

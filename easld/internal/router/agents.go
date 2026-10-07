@@ -16,6 +16,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/clients"
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/session"
 	"github.com/twaldin/easl/easld/internal/store"
 )
 
@@ -226,10 +227,10 @@ func terminalEntry(terminal model.Object, boardID, root string) map[string]any {
 
 // addAgentControl adds to an agent.list entry what agent control reads: its board is open and,
 // with no window, nothing has keyboard focus; the draft, model and thinking level its
-// integration reported, and the pid it reported while that process lives. easld has no zmx
-// sessions, so no `live` and no foreground process to fall back on. A hosted terminal's
-// processes are its host's (props.host): it has no pid, and its reported one is never probed
-// on this machine, where another process may have that number.
+// integration reported, and the pid it reported while that process lives (withSession adds
+// what an owned terminal's session says). A hosted terminal's processes are its host's
+// (props.host): it has no pid, and its reported one is never probed on this machine, where
+// another process may have that number.
 func addAgentControl(entry, agent map[string]any, hosted bool) {
 	entry["open"] = true
 	entry["focused"] = false
@@ -252,12 +253,72 @@ func processLives(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
+// agentList is agent.list: every terminal of the open boards, by board id then tile id, then of
+// the closed ones (closedBoardAgents). On an easld that owns its terminals, each not hosted
+// says whether its session runs (live) and stands in its foreground process for a pid no
+// integration reported (withSession), from easld's zmx, listed with the registry's lock let go
+// (zmx takes up to a second), as the app reads its own.
+func (r *Router) agentList() map[string]any {
+	sessions := r.ownSessions()
+	agents := []any{}
+	for _, b := range r.reg.SortedBoards() {
+		for _, terminal := range sortedTerminals(b) {
+			agents = append(agents, r.withSession(r.agentEntry(terminal, b), b.ID(), terminal, sessions))
+		}
+	}
+	return map[string]any{"agents": append(agents, r.closedBoardAgents(sessions)...)}
+}
+
+// ownSessions are the sessions zmx lists by their tile: nil when easld doesn't own its
+// terminals or zmx can't list them. The caller holds the registry's lock, which this lets go
+// meanwhile.
+func (r *Router) ownSessions() map[string]session.Session {
+	if r.Owns == nil || r.Sessions == nil {
+		return nil
+	}
+	r.reg.Mu.Unlock()
+	defer r.reg.Mu.Lock()
+	list, err := r.Sessions.List()
+	if err != nil {
+		return nil
+	}
+	sessions := map[string]session.Session{}
+	for _, s := range list {
+		sessions[s.Tile] = s
+	}
+	return sessions
+}
+
+// withSession is the agent.list entry of `terminal` on board `boardID` with what its session
+// says, when sessions are known (non-nil; ApiRouter.withSession): `live`, a session carrying its
+// labels (Owner.Labels: not another home's or board's of its name); without one no process of
+// it runs (a pid reported before is stale, or another process's by now); with one, its
+// foreground process (session.ForegroundPID) stands in for a pid no integration reported. A
+// hosted terminal's session is its host's.
+func (r *Router) withSession(entry map[string]any, boardID string, terminal model.Object, sessions map[string]session.Session) map[string]any {
+	if sessions == nil || board.TerminalHost(terminal) != "" {
+		return entry
+	}
+	s, listed := sessions[terminal.ID]
+	live := listed && s.Carries(r.Owns.Labels(boardID, terminal.ID))
+	entry["live"] = live
+	if !live {
+		delete(entry, "pid")
+	} else if _, reported := entry["pid"]; !reported {
+		if pid := session.ForegroundPID(s.PID); pid > 0 {
+			entry["pid"] = float64(pid)
+		}
+	}
+	return entry
+}
+
 // closedBoardAgents is agent.list's terminals on the boards easld has stored but not open, by
 // board id then tile id, as their saved board files have them: a lifecycle saved `working` or
 // `blocked` is `restored` (as opening the board marks it), and each carries the address that
 // reaches it once its board opens: `<name>@<its root's directory name>`, else its tile id. A
-// terminal an open board lists already isn't listed again.
-func (r *Router) closedBoardAgents() []any {
+// terminal an open board lists already isn't listed again. `sessions` are as withSession takes
+// them.
+func (r *Router) closedBoardAgents(sessions map[string]session.Session) []any {
 	var agents []any
 	for _, snap := range r.reg.Store.Snapshots() {
 		if _, open := r.reg.Board(snap.ID); open {
@@ -280,7 +341,7 @@ func (r *Router) closedBoardAgents() []any {
 				entry["name"] = name
 				entry["address"] = name + "@" + filepath.Base(snap.Root)
 			}
-			agents = append(agents, entry)
+			agents = append(agents, r.withSession(entry, snap.ID, terminal, sessions))
 		}
 	}
 	return agents
@@ -749,8 +810,9 @@ func checkComposer(p map[string]any) error {
 var restartKinds = []string{"omp", "claude", "codex", "gemini", "opencode"}
 
 // restart is agent.restart: its refusals are the board's (ApiRouter.restart's but focus, which
-// needs a window), and one restart of a terminal at a time; then a client kills the tile's zmx
-// session and relaunches it through its terminal tile, checking again just before the kill.
+// needs a window), and one restart of a terminal at a time; then a terminal easld owns is
+// restarted by easld itself (restartOwned), and any other's by a client, which kills the tile's
+// zmx session and relaunches it through its terminal tile, checking again just before the kill.
 // While the client does, the terminal is held (restarts, owned by this restart): agent.prompt to
 // it is refused and no inbox poll takes what is queued for it. Once the client has relaunched
 // it, the killed agent's session is over and what was queued bounces (Board.EndAgentSession; the
@@ -789,7 +851,7 @@ func (r *Router) restart(p map[string]any) (any, error) {
 	}
 	// Even forced: the client would type the prompt into the relaunched agent (ApiRouter.typingFailure).
 	if r.typing[terminal.ID] > 0 {
-		return nil, fail(api.CodeConflict, "%s is being prompted right now (agent.prompt is typing into it): restarting would cut that prompt off; try again in a moment", terminal.ID)
+		return nil, typingFailure(terminal.ID)
 	}
 	agent := asMap(terminal.Props["agent"])
 	if !boolParam(p, "force") {
@@ -805,6 +867,10 @@ func (r *Router) restart(p map[string]any) (any, error) {
 		}
 	} else if !known && len(strings_(terminal.Props["command"])) == 0 {
 		return nil, fail(api.CodeUnavailable, "%s runs no known agent and has no command to relaunch", terminal.ID)
+	}
+	// A terminal easld owns runs in easld's own session: easld restarts it, no client needed.
+	if r.Owns != nil && board.TerminalHost(terminal) == "" {
+		return r.restartOwned(b, terminal, mode, strings_(p["args"]), boolParam(p, "force"))
 	}
 	params := copyParams(p)
 	params["target"] = terminal.ID
@@ -832,6 +898,11 @@ func (r *Router) restart(p map[string]any) (any, error) {
 // restartingFailure is agent.prompt's answer for a terminal agent.restart holds.
 func restartingFailure(tile string) error {
 	return fail(api.CodeConflict, "%s is restarting (agent.restart): nothing reaches it until its agent is relaunched; send again once it reports", tile)
+}
+
+// typingFailure is agent.restart's answer for a terminal a client is typing an agent.prompt into.
+func typingFailure(tile string) error {
+	return fail(api.CodeConflict, "%s is being prompted right now (agent.prompt is typing into it): restarting would cut that prompt off; try again in a moment", tile)
 }
 
 // resumedSession is the session agent.restart resumes (AgentResume.session): omp's session file

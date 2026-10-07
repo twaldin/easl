@@ -319,6 +319,14 @@ func asFailure(err error) *Failure {
 	if errors.As(err, &cf) {
 		return &Failure{cf.Code, cf.Message}
 	}
+	var se *session.Error
+	if errors.As(err, &se) {
+		return &Failure{se.Code, se.Message}
+	}
+	var re *relay.Error
+	if errors.As(err, &re) {
+		return &Failure{re.Code, re.Message}
+	}
 	return &Failure{api.CodeInvalidParams, err.Error()}
 }
 

@@ -1,0 +1,22 @@
+{
+  "description": "Agent control on an easld that owns its terminals (--own-terminals; recorded against easld with a zmx that runs no session, as owned-terminals is: the app's restart relaunches through its own tiles): agent.list says whether each owned terminal's session runs (live), and agent.restart goes through with no client attached. easld ends the session, the messages queued for the killed agent bounce, and the relaunch starts resumed with the recorded model and thinking level (or fresh, with args); the tile runs the relaunch's command from then on, its agent loses the killed process's draft and pid, and its lifecycle is unknown until the new agent reports. The refusals are a client's restart's; a hosted terminal's restart is its Mac's.",
+  "steps": [
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "worker" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } }, "save": "t" },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "terminal", "props": { "host": "deckbox", "command": ["/bin/cat"], "name": "away" }, "frame": { "x": 50700, "y": 50000, "w": 600, "h": 400 } }, "save": "h" },
+    { "call": "agent.report", "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "protocol": 1, "draft": false, "pid": 4242424 }, "note": "no such process (above any pid Linux or macOS gives): agent.list leaves it out" },
+    { "call": "agent.report_session", "params": { "tile": "{{t.object.id}}", "kind": "omp", "sessionId": "s-1", "model": "anthropic/claude-opus-4-5", "thinking": "high" } },
+    { "call": "agent.list", "params": {}, "keep": { "result.agents": { "board": "{{board}}" } }, "note": "the owned terminal's session runs; the hosted one's is its Mac's to say" },
+    { "call": "agent.report", "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "working", "protocol": 1, "draft": false } },
+    { "call": "agent.restart", "params": { "target": "worker", "mode": "resume" }, "note": "refused as a client's restart is" },
+    { "call": "agent.prompt", "params": { "target": "worker", "text": "Nightly failed.", "from": "machine-watch" }, "save": "p" },
+    { "call": "agent.restart", "params": { "target": "worker", "mode": "resume", "force": true }, "note": "no client: easld kills and relaunches the session itself" },
+    { "call": "board.history", "params": { "board": "{{board}}", "kinds": ["message"] }, "note": "what was queued for the killed agent bounced" },
+    { "call": "object.get", "params": { "id": "{{t.object.id}}" }, "note": "the relaunch's command, the agent without draft and pid, no lifecycle" },
+    { "call": "session.list", "mask": { "response.result.sessions.*.labels.*": { "match": "^_[A-Za-z0-9._-]*$", "as": "<easld home>", "why": "canvas.home is easld's home directory as a label value, which differs between runs" } } },
+    { "call": "agent.restart", "params": { "target": "worker", "mode": "fresh" }, "note": "nothing reports a draft for the relaunched agent yet" },
+    { "call": "agent.restart", "params": { "target": "worker", "mode": "fresh", "force": true, "args": ["--plan", "p.md"] } },
+    { "call": "object.get", "params": { "id": "{{t.object.id}}" }, "note": "fresh: no session kept to resume" },
+    { "call": "agent.restart", "params": { "target": "away", "mode": "fresh", "force": true }, "note": "a hosted terminal's restart is its Mac's" },
+    { "call": "agent.list", "params": {}, "keep": { "result.agents": { "board": "{{board}}" } } }
+  ]
+}

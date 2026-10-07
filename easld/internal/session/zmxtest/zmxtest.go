@@ -11,8 +11,9 @@ import (
 // Script is the fake zmx. `attach` records the labels, the directory, the environment and the
 // command of a session it creates; `list`, `kill` and `version` answer from them as zmx 0.8.1
 // does. A session file holding `dead` is one whose daemon died: `list` finds its socket refused
-// and deletes it, as zmx does. Every session's pid is 4242 unless its file says `pid=<n>` (a
-// session started again under its name).
+// and deletes it, as zmx does. Every session's pid is 4242424 unless its file says `pid=<n>` (a
+// session started again under its name): above Linux's highest pid (4194304) and macOS's, so no
+// process of the machine running the test stands for it (agent.list's foreground process).
 const Script = `#!/bin/sh
 state="$ZMX_DIR"
 case "$1" in
@@ -29,7 +30,7 @@ list)
     [ -f "$f" ] || continue; found=1; name=$(basename "$f")
     if grep -qx dead "$f"; then rm "$f"; printf '  name=%s\terr=ConnectionRefused\tstatus=cleaning up\n' "$name"; continue; fi
     labels=$(sed -n 's/^labels=//p' "$f" | tr ' ' '\t'); pid=$(sed -n 's/^pid=//p' "$f")
-    printf '  name=%s\tpid=%s\tclients=0\tcreated=1\tcwd=file://h/tmp\tcmd=sh' "$name" "${pid:-4242}"
+    printf '  name=%s\tpid=%s\tclients=0\tcreated=1\tcwd=file://h/tmp\tcmd=sh' "$name" "${pid:-4242424}"
     [ -n "$labels" ] && printf '\t%s' "$labels"
     printf '\n'
   done

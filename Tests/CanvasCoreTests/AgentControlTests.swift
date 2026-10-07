@@ -465,11 +465,21 @@ final class AgentControlTests {
         #expect(restarted.isEmpty)
     }
 
-    @Test func eachAgentNamesItsModelItsOwnWay() {
-        #expect(AgentResume.relaunch(kind: "codex", command: ["codex", "-c", "x=1", "-m", "gpt-5"], session: "t-1", model: "gpt-6", thinking: "high", args: [])?.argv
-                == ["codex", "resume", "-c", "x=1", "-m", "gpt-6", "t-1"], "codex has no thinking option to give")
-        #expect(AgentResume.relaunch(kind: "claude", command: [], session: nil, model: "opus", thinking: nil, args: [])?.argv == ["claude", "--model", "opus"])
-        #expect(AgentResume.relaunch(kind: "omp", command: ["omp", "--thinking", "low"], session: nil, model: nil, thinking: "max", args: [])?.command == ["omp", "--thinking=max"])
-        #expect(AgentResume.relaunch(kind: nil, command: [], session: nil, model: nil, thinking: nil, args: ["x"]) == nil)
+    /// Every case of Tests/Fixtures/agent-relaunch.json, which easld's `session.RelaunchOf` is
+    /// checked against too: each agent names its model (and omp its thinking) its own way.
+    @Test func eachAgentRelaunchesAsTheSharedFixtureSays() throws {
+        struct Launch: Decodable { var argv: [String]; var command: [String] }
+        struct Case: Decodable {
+            var note: String?; var kind: String?; var command: [String]; var session: String?; var model: String?; var thinking: String?
+            var args: [String]; var relaunch: Launch?
+        }
+        struct Fixture: Decodable { var cases: [Case] }
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../Fixtures/agent-relaunch.json")
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
+        #expect(!fixture.cases.isEmpty)
+        for c in fixture.cases {
+            let got = AgentResume.relaunch(kind: c.kind, command: c.command, session: c.session, model: c.model, thinking: c.thinking, args: c.args)
+            #expect(got?.argv == c.relaunch?.argv && got?.command == c.relaunch?.command, "\(c.kind ?? "none") \(c.command): \(c.note ?? "")")
+        }
     }
 }

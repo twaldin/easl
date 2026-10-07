@@ -1,0 +1,29 @@
+{
+  "description": "What agent.restart relaunches: AgentResume.relaunch in Swift (Sources/CanvasCore/AgentControl.swift, the app's tiles) and session.RelaunchOf in Go (easld/internal/session/resume.go, the terminals easld owns). Each case is the terminal's recorded agent (kind, the session resumed or null for a fresh start, model, thinking; null for none), its own command and the restart's args; `relaunch` is what runs (`argv`) and the tile's command from then on (`command`), or null when there is nothing to relaunch. Both test suites check every case, so the two can't drift.",
+  "cases": [
+    { "note": "codex has no thinking option to give", "kind": "codex", "command": ["codex", "-c", "x=1", "-m", "gpt-5"], "session": "t-1", "model": "gpt-6", "thinking": "high", "args": [],
+      "relaunch": { "argv": ["codex", "resume", "-c", "x=1", "-m", "gpt-6", "t-1"], "command": ["codex", "-c", "x=1", "-m", "gpt-6"] } },
+    { "kind": "claude", "command": [], "session": null, "model": "opus", "thinking": null, "args": [],
+      "relaunch": { "argv": ["claude", "--model", "opus"], "command": ["claude", "--model", "opus"] } },
+    { "note": "the recorded thinking replaces the command's", "kind": "omp", "command": ["omp", "--thinking", "low"], "session": null, "model": null, "thinking": "max", "args": [],
+      "relaunch": { "argv": ["omp", "--thinking=max"], "command": ["omp", "--thinking=max"] } },
+    { "note": "nothing recorded and no command", "kind": null, "command": [], "session": null, "model": null, "thinking": null, "args": ["x"], "relaunch": null },
+    { "note": "the command's own model goes, its prompt too; the args follow", "kind": "omp", "command": ["omp", "--model", "opus", "-e", "/src/easl.ts", "fix it"], "session": "s-2",
+      "model": "anthropic/claude-opus-4-5", "thinking": "high", "args": ["--plan", "p.md"],
+      "relaunch": { "argv": ["omp", "-e", "/src/easl.ts", "--model=anthropic/claude-opus-4-5", "--thinking=high", "--plan", "p.md", "--resume=s-2"],
+                    "command": ["omp", "-e", "/src/easl.ts", "--model=anthropic/claude-opus-4-5", "--thinking=high", "--plan", "p.md"] } },
+    { "note": "a --model=value is replaced as well", "kind": "claude", "command": ["claude", "--model=sonnet", "--verbose"], "session": "u-1", "model": "opus", "thinking": null, "args": [],
+      "relaunch": { "argv": ["claude", "--verbose", "--model", "opus", "--resume", "u-1"], "command": ["claude", "--verbose", "--model", "opus"] } },
+    { "note": "gemini has no thinking option either", "kind": "gemini", "command": ["gemini", "--model", "pro"], "session": "g-1", "model": "flash", "thinking": "high", "args": [],
+      "relaunch": { "argv": ["gemini", "-m", "flash", "--resume", "g-1"], "command": ["gemini", "-m", "flash"] } },
+    { "note": "opencode keeps its project", "kind": "opencode", "command": ["opencode", "../app"], "session": "ses_1", "model": "zai/glm-4.7", "thinking": null, "args": [],
+      "relaunch": { "argv": ["opencode", "../app", "-m", "zai/glm-4.7", "--session", "ses_1"], "command": ["opencode", "../app", "-m", "zai/glm-4.7"] } },
+    { "note": "a command that runs something else: the agent by its name", "kind": "omp", "command": ["/bin/cat"], "session": "s-1", "model": null, "thinking": "low", "args": [],
+      "relaunch": { "argv": ["omp", "--thinking=low", "--resume=s-1"], "command": ["omp", "--thinking=low"] } },
+    { "note": "no known agent: its command again, with the args", "kind": "aider", "command": ["aider", "--yes"], "session": null, "model": "gpt-5", "thinking": null, "args": ["--x"],
+      "relaunch": { "argv": ["aider", "--yes", "--x"], "command": ["aider", "--yes", "--x"] } },
+    { "note": "no known agent has no session to resume", "kind": "aider", "command": ["aider"], "session": "x", "model": null, "thinking": null, "args": [], "relaunch": null },
+    { "kind": null, "command": ["/bin/cat"], "session": null, "model": null, "thinking": null, "args": [],
+      "relaunch": { "argv": ["/bin/cat"], "command": ["/bin/cat"] } }
+  ]
+}

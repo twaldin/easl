@@ -313,6 +313,28 @@ func (b *Board) ReleaseAgent(tile string) error {
 	return nil
 }
 
+// RestartedAgent: the agent in `tile` was killed and is being relaunched (agent.restart,
+// Board.restartedAgent): the tile runs `command` now (what a reboot reruns), its agent is
+// `agent` (what it was, without what only the killed process knew: its draft and pid), and its
+// lifecycle is unknown until the new agent reports; waits on approvals the killed agent had end.
+// Recorded once the old session is gone and its agent session ended (EndAgentSession), before
+// the relaunch starts, so what the relaunched agent reports stays.
+func (b *Board) RestartedAgent(tile string, command []string, agent any) error {
+	if _, err := b.Object(tile); err != nil {
+		return err
+	}
+	delete(b.pendingApprovals, tile)
+	words := make([]any, len(command))
+	for i, w := range command {
+		words[i] = w
+	}
+	if _, err := b.Update(tile, nil, nil, nil, map[string]any{"command": words, "lifecycle": nil, "agent": agent}, tile, ""); err != nil {
+		return err
+	}
+	b.emit(EventAgentLifecycle, map[string]any{"tile": tile, "lifecycle": nil})
+	return nil
+}
+
 // NotifyingAgentSubmitted: Return was pressed in a terminal whose agent reports by
 // notification; its state is unknown until its next notification.
 func (b *Board) NotifyingAgentSubmitted(tile string) bool {

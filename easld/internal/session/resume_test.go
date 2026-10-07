@@ -33,6 +33,34 @@ func TestResumeArgvMatchesTheSharedFixture(t *testing.T) {
 	}
 }
 
+// Every case of the relaunch fixture Swift's AgentControlTests checks too
+// (Tests/Fixtures/agent-relaunch.json).
+func TestRelaunchMatchesTheSharedFixture(t *testing.T) {
+	data, err := os.ReadFile("../../../Tests/Fixtures/agent-relaunch.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Cases []struct {
+			Note, Kind, Session, Model, Thinking string
+			Command, Args                        []string
+			Relaunch                             *Relaunch
+		}
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Cases) == 0 {
+		t.Fatal("no cases")
+	}
+	for _, c := range fixture.Cases {
+		got, ok := RelaunchOf(c.Kind, c.Command, c.Session, c.Model, c.Thinking, c.Args)
+		if ok != (c.Relaunch != nil) || (ok && !reflect.DeepEqual(got, *c.Relaunch)) {
+			t.Errorf("%s %q (%s): got %q (%v), want %+v", c.Kind, c.Command, c.Note, got, ok, c.Relaunch)
+		}
+	}
+}
+
 // A new session resumes the recorded agent session with the tile's options; a released agent
 // (no props.agent), one easl can't resume, or one without a session runs the tile's command.
 func TestInitialArgvResumesTheRecordedAgentElseRunsTheCommand(t *testing.T) {
