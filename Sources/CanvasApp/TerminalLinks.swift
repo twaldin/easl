@@ -124,6 +124,20 @@ final class CanvasTerminalView: TerminalView {
         updateHover(at: convert(event.locationInWindow, from: nil), command: event.modifierFlags.contains(.command))
     }
 
+    /// How long the key waited in the event queue for the main thread (`event.timestamp` is the
+    /// press, on the uptime clock) and how long handing it to Ghostty took: `easl metrics` "keys".
+    /// A main-thread stall holds every key typed during it and releases them together, late and
+    /// in order; a long wait here is the board's doing, upstream of the terminal, zmx and the
+    /// program. A wait over `Metrics.hitchStretch` is logged with the stretch that caused it.
+    override func keyDown(with event: NSEvent) {
+        let waited = (ProcessInfo.processInfo.systemUptime - event.timestamp) * 1000
+        let start = Metrics.now()
+        super.keyDown(with: event)
+        Metrics.shared.record("key.wait", ms: waited)
+        Metrics.shared.record("key.handle", ms: (Metrics.now() - start) * 1000)
+        if waited >= Metrics.hitchStretch { NSLog("easl: a key waited %.0f ms for the main thread", waited) }
+    }
+
     override func flagsChanged(with event: NSEvent) {
         super.flagsChanged(with: event)
         guard let window else { return }
