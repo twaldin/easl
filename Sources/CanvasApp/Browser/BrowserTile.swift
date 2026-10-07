@@ -735,7 +735,7 @@ final class BrowserTile: NSView, TileContent {
         return browserTile?(opened.id)?.adoptPopup(configuration, opener: objectID, returnsToOpener: actor == .user)
     }
 
-    /// Puts keyboard focus in the address field (a new, empty tile the user made; ⌘L).
+    /// Puts keyboard focus in the address field (a new tile the user made; ⌘L).
     func focusAddress() {
         chrome.focusAddress()
     }
