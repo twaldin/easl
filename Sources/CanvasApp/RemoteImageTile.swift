@@ -15,10 +15,13 @@ final class RemoteImageTile: NSView, TileContent {
     private let badgeRow: NSStackView
     /// The host's last drawing of the body.
     private var image: NSImage?
-    private var rendering = false
-    /// Asked again while a render ran: one more once it's done.
-    private var again = false
-    private var scheduled: DispatchWorkItem?
+    /// The requests for the host's drawing (`RemoteDrawing`: one at a time, a burst of changes
+    /// draws once).
+    private lazy var drawing = RemoteDrawing(
+        object: object.id, mirror: remote.mirror,
+        scale: { [weak self] in Double(self?.window?.backingScaleFactor ?? 2) },
+        busy: { [weak self] busy in self?.refresh.isEnabled = !busy },
+        drawn: { [weak self] outcome in self?.show(outcome) })
 
     init(object: CanvasObject, remote: RemoteSource) {
         self.object = object
@@ -60,7 +63,7 @@ final class RemoteImageTile: NSView, TileContent {
         setAccessibilityElement(true)
         setAccessibilityRole(.image)
         showBadge(nil)
-        draw()
+        drawing.draw()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -74,46 +77,25 @@ final class RemoteImageTile: NSView, TileContent {
         setAccessibilityLabel("\(object.type.rawValue) tile, read-only, drawn on \(remote.host.name)" + (problem.map { ": \($0)" } ?? ""))
     }
 
-    @objc private func refreshPressed() { draw() }
+    @objc private func refreshPressed() { drawing.draw() }
 
     /// The link to the host dropped and is back (`BoardMirror.onRedraw`): asks for a fresh drawing.
     /// The host's read after the drop announces only objects that changed, so a tile whose drawing
     /// failed or went stale meanwhile gets no other cue.
-    func redraw() { draw() }
+    func redraw() { drawing.redraw() }
 
-    /// Asks the host for the tile's drawing now (one at a time; a request meanwhile runs after).
-    private func draw() {
-        scheduled?.cancel()
-        scheduled = nil
-        guard !rendering else {
-            again = true
-            return
-        }
-        rendering = true
-        refresh.isEnabled = false
-        let id = object.id
-        let scale = Double(window?.backingScaleFactor ?? 2)
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.rendering = false
-                self.refresh.isEnabled = true
-                if self.again {
-                    self.again = false
-                    self.draw()
-                }
+    /// What the host answered: its drawing of the body, or why not.
+    private func show(_ outcome: RemoteDrawing.Outcome) {
+        switch outcome {
+        case .success(let render):
+            guard let image = Self.body(of: render) else {
+                return showBadge("\(remote.host.name) sent an image this Mac can't read")
             }
-            do {
-                let render = try await self.remote.mirror.render(id, scale: scale)
-                guard let image = Self.body(of: render) else {
-                    return self.showBadge("\(self.remote.host.name) sent an image this Mac can't read")
-                }
-                self.image = image
-                self.picture.image = image
-                self.showBadge(nil)
-            } catch {
-                self.showBadge("Not drawn: \(BoardMirror.reason(error))")
-            }
+            self.image = image
+            picture.image = image
+            showBadge(nil)
+        case .failure(let error):
+            showBadge("Not drawn: \(BoardMirror.reason(error))")
         }
     }
 
@@ -133,11 +115,7 @@ final class RemoteImageTile: NSView, TileContent {
         let changed = object.props != self.object.props || object.frame.w != self.object.frame.w || object.frame.h != self.object.frame.h
         self.object = object
         guard changed else { return }
-        // A burst of host changes (a page loading, an agent writing) draws once.
-        scheduled?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.draw() }
-        scheduled = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+        drawing.changed()
     }
 
     func setLive(_ live: Bool) {}

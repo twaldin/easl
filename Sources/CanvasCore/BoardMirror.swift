@@ -82,10 +82,12 @@ public final class BoardMirror: BoardHost {
     /// The host's events that arrived while the board was being read or a create was in flight,
     /// applied in order once neither is (`release`), so nothing they say is undone or doubled.
     private var held: [EaslConnection.Event] = []
-    /// A link dropped after the board loaded and `onRedraw` hasn't been told since.
+    /// The tiles' drawings may be stale or failed: a link dropped after the board loaded, or the
+    /// render link was offline when it did, and `onRedraw` hasn't been told since.
     private var redrawDue = false
-    /// `renders`' state as last heard (the board's own link is `state`).
-    private var rendersState: EaslConnection.State = .connecting
+    /// `renders`' state as last heard (the board's own link is `state`). It starts as the first
+    /// connect's, `connecting`, whether or not that was heard yet.
+    private(set) var rendersState: EaslConnection.State = .connecting
     /// The link went down after the board loaded: read it again once back online.
     private var stale = false
     /// How many times the link went down after the board loaded (a read that spans one reads again).
@@ -116,6 +118,9 @@ public final class BoardMirror: BoardHost {
         self.board = board
         install(objects, on: board)
         reading = nil
+        // The tiles are made now: they ask over a render link that is offline and fail at once, and
+        // that is a drawing to ask for again. (A drop heard before the board was read is no debt.)
+        redrawDue = rendersState == .offline
         release()
         return board
     }
@@ -154,10 +159,14 @@ public final class BoardMirror: BoardHost {
         if state == .online, stale { Task { await reread() } }
     }
 
-    private func rendersChanged(_ state: EaslConnection.State) {
+    /// The render link's next state. Only `offline` is a drop (a link that went down, or an attempt
+    /// that failed: drawings asked for meanwhile failed, or came from before); `connecting` is the
+    /// first connect, or the next attempt after a drop, and heard late it is no reason to draw
+    /// again. Internal for the tests, which hear it where the stream would.
+    func rendersChanged(_ state: EaslConnection.State) {
+        guard state != rendersState else { return }
         rendersState = state
-        guard board != nil else { return }
-        if state != .online { redrawDue = true }
+        if state == .offline { redrawDue = true }
         drawAgainIfDue()
     }
 
