@@ -133,6 +133,10 @@ public final class Board {
     var agentSessions: [ObjectID: Int] = [:]
     /// Terminals whose message-taking integration died without its release (`agentExited`); in memory.
     var exitedAgents: Set<ObjectID> = []
+    /// Terminals whose agent agent.restart relaunched (`restartedAgent`) and that no agent has
+    /// reported in since; in memory. A release meanwhile is the killed agent's, sent as it exits
+    /// after its session is gone, and leaves the record the relaunch runs with (`releaseAgent`).
+    var relaunchedAgents: Set<ObjectID> = []
     /// Messages bounced in the open step, handed on when it closes (`flushBounces`).
     var bouncing: [MessageBounce] = []
     /// Messages whose receiver's agent session ended before its integration took them: the
@@ -1172,6 +1176,7 @@ public final class Board {
         let agent = (before ?? .object([:])).merging(.object(reported.merging(Self.reportedAgentState(draft: draft, pid: pid)) { _, new in new }))
         try update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
         exitedAgents.remove(tile)
+        relaunchedAgents.remove(tile)
         if (before?["protocol"]?.int ?? 0) >= 1, before?["kind"]?.string != kind || (version ?? 0) < 1 { endAgentSession(tile) }
         composerAgentReported(tile, state: state)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .object(lifecycle)))
@@ -1238,6 +1243,7 @@ public final class Board {
         if let model, !model.isEmpty { agent["model"] = .string(model) }
         if let thinking, !thinking.isEmpty { agent["thinking"] = .string(thinking) }
         try update(tile, props: .object(["agent": .object(agent)]), caller: tile)
+        relaunchedAgents.remove(tile)
         if let previous, let sessionId, sessionId != previous { endAgentSession(tile) }
     }
 
@@ -1256,9 +1262,13 @@ public final class Board {
     /// The agent exited (`agent.release`): the tile is a plain shell again. Its lifecycle and the
     /// recorded session go, so a reboot restores a shell instead of resuming a session the user quit,
     /// the composer's prompts it never drained return their mentions to the tray, and the
-    /// messages its integration never took bounce (`endAgentSession`).
+    /// messages its integration never took bounce (`endAgentSession`). Ignored while a relaunched
+    /// agent hasn't reported yet (`relaunchedAgents`): that release is the killed agent's, which
+    /// can exit after agent.restart recorded the relaunch, and the tile keeps what it resumes (its
+    /// session, model and thinking) also when the relaunch never starts.
     public func releaseAgent(tile: ObjectID) throws {
         _ = try object(tile)
+        guard !relaunchedAgents.contains(tile) else { return }
         pendingApprovals[tile] = nil
         exitedAgents.remove(tile)
         try update(tile, props: .object(["lifecycle": .null, "agent": .null]), caller: tile)
@@ -1279,6 +1289,7 @@ public final class Board {
         _ = try object(tile)
         pendingApprovals[tile] = nil
         exitedAgents.remove(tile)
+        relaunchedAgents.insert(tile)
         try update(tile, props: .object(["command": .array(command.map(JSONValue.string)), "lifecycle": .null, "agent": agent]), caller: tile)
         dropComposerPrompts(of: tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
