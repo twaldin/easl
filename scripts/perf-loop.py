@@ -116,7 +116,18 @@ class Instance:
         self.window = next(w["id"] for w in windows if w["pid"] == self.pid)
         self.quiet(timeout=120)
         self.has_metrics = self.cli("app.metrics") is not None
+        self.check_space()
         self.zoom_to_cards()
+
+    def check_space(self):
+        """Headless: the window must still sit on the parking Space nobody views (a Space the
+        user views would be disturbed, and a window there renders and composites differently).
+        Raises when it moved: the run is not valid on another Space."""
+        if not self.headless:
+            return
+        window = json.loads(sh(YABAI, "-m", "query", "--windows", "--window", str(self.window)))
+        if str(window.get("space")) != self.env["EASL_DEV_SPACE"]:
+            raise RuntimeError(f"{self.label}'s window {self.window} is on Space {window.get('space')}, not {self.env['EASL_DEV_SPACE']}")
 
     def stop(self):
         self.dev("stop", check=False)
@@ -334,6 +345,7 @@ def run_scenario(inst, name):
     shown = not name.startswith("hidden")
     inst.visible(shown)
     inst.quiet(timeout=60)
+    inst.check_space()
     if name == "agent-titles":
         row = agent_titles(inst)
         inst.quiet(timeout=180)
