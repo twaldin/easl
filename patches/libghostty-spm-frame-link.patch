@@ -1,8 +1,17 @@
 diff --git a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
-index 44652fb..2d4ae2d 100644
 --- a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
 +++ b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
-@@ -66,6 +66,11 @@
+@@ -42,6 +42,9 @@
+             core.setDisplayVisible(visible)
+         }
+ 
++        /// A frame was drawn (`TerminalSurfaceCoordinator.tick`): a host counts redraws here.
++        open func surfaceDidDraw() {}
++
+         /// Adjusts this surface's resize coalescing window without rebuilding
+         /// it. Overrides `TerminalSurfaceOptions.resizeThrottleMilliseconds`,
+         /// which is the declarative home for the same policy and the one every
+@@ -66,6 +69,11 @@
  
          func commonInit() {
              wantsLayer = true
@@ -14,7 +23,15 @@ index 44652fb..2d4ae2d 100644
  
              let metal = CAMetalLayer()
              metal.device = MTLCreateSystemDefaultDevice()
-@@ -163,4 +168,40 @@
+@@ -106,6 +114,7 @@
+             }
+             core.onPostRender = { [weak self] in
+                 self?.enforceMetalLayerScale()
++                self?.surfaceDidDraw()
+             }
+         }
+ 
+@@ -163,4 +172,40 @@
              NotificationCenter.default.removeObserver(self)
          }
      }
@@ -56,10 +73,9 @@ index 44652fb..2d4ae2d 100644
 +    }
  #endif
 diff --git a/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift b/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
-index db17f0d..4e0d797 100644
 --- a/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
 +++ b/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
-@@ -9,6 +9,16 @@ import Foundation
+@@ -9,6 +9,16 @@
  import GhosttyKit
  import MSDisplayLink
  
@@ -76,7 +92,7 @@ index db17f0d..4e0d797 100644
  /// Shared terminal state and logic used by both UIKit and AppKit views.
  ///
  /// Platform views own a `TerminalSurfaceCoordinator` instance and set platform-specific
-@@ -103,6 +113,12 @@ final class TerminalSurfaceCoordinator {
+@@ -103,6 +113,12 @@
      /// streams read as flicker on a scrolling screen. ProMotion displays may
      /// go to 120.
      private var displayLink: DisplayLink?
@@ -89,7 +105,7 @@ index db17f0d..4e0d797 100644
      private var idleFrameCount = 0
      private static let displayLinkFrameRateRange = DisplayLinkFrameRateRange(
          minimum: 60,
-@@ -527,6 +543,7 @@ final class TerminalSurfaceCoordinator {
+@@ -527,6 +543,7 @@
          // inline without crossing isolation.
          MainActor.assumeIsolated {
              tearDownSurface(removingBridgeFrom: controller)
@@ -97,7 +113,7 @@ index db17f0d..4e0d797 100644
          }
      }
  
-@@ -581,6 +598,15 @@ final class TerminalSurfaceCoordinator {
+@@ -581,6 +598,15 @@
              return
          }
          idleFrameCount = 0
@@ -113,7 +129,7 @@ index db17f0d..4e0d797 100644
          guard displayLink == nil else { return }
          let link = DisplayLink(preferredFrameRateRange: Self.displayLinkFrameRateRange)
          link.delegatingObject(self)
-@@ -589,6 +615,11 @@ final class TerminalSurfaceCoordinator {
+@@ -589,6 +615,11 @@
      }
  
      private func releaseDisplayLink() {

@@ -42,6 +42,9 @@
             core.setDisplayVisible(visible)
         }
 
+        /// A frame was drawn (`TerminalSurfaceCoordinator.tick`): a host counts redraws here.
+        open func surfaceDidDraw() {}
+
         /// Adjusts this surface's resize coalescing window without rebuilding
         /// it. Overrides `TerminalSurfaceOptions.resizeThrottleMilliseconds`,
         /// which is the declarative home for the same policy and the one every
@@ -111,6 +114,7 @@
             }
             core.onPostRender = { [weak self] in
                 self?.enforceMetalLayerScale()
+                self?.surfaceDidDraw()
             }
         }
 

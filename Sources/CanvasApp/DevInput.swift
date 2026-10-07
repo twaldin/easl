@@ -121,6 +121,11 @@ enum DevInput {
             timer.resume()
             return
         }
+        if fields["kind"] == "idle" {
+            // Feeds the user-idle policy terminals redraw by (`UserIdleWatch`), or lets it follow
+            // the Mac again: the Mac's idle time is the user's, so a check can't wait it out.
+            return UserIdleWatch.shared.pin(fields["state"] ?? "auto")
+        }
         if fields["kind"] == "perf" {
             // A performance probe span over an idle stretch (DevPerf): what redraws and runs while
             // nobody touches the app, also with the window minimized or covered (no frames then).
