@@ -18,16 +18,16 @@ enum DevInput {
 
     static let enabled = ProcessInfo.processInfo.environment["EASL_DEV_INPUT"] == "1"
 
-    /// Where a board window opens (`EASL_DEV_FRAME="x y w h"`, AppKit screen coordinates): a
-    /// new window opens on the current Space of the display holding its frame, so a frame on
-    /// a headless virtual screen keeps a test window off the Space the user is viewing until
-    /// the launcher's guard moves it (docs/testing.md). Only with `EASL_DEV_INPUT=1`, and only
-    /// instead of a frame AppKit saved for the board.
+    /// Where a board window opens (`EASL_DEV_FRAME="x y w h"`, AppKit screen coordinates;
+    /// `DevFrame.parse`): a new window opens on the current Space of the display holding its
+    /// frame, so a frame on a headless virtual screen keeps a test window off the Space the
+    /// user is viewing until the launcher's guard moves it (docs/testing.md). Only with
+    /// `EASL_DEV_INPUT=1`, and instead of any frame AppKit saved for the board. A frame that is
+    /// set but unreadable opens no window at all (`install` ends the app): the window would
+    /// land on the user's Space.
     static let frame: NSRect? = {
         guard enabled, let text = ProcessInfo.processInfo.environment["EASL_DEV_FRAME"] else { return nil }
-        let parts = text.split(separator: " ").compactMap { Double($0) }
-        guard parts.count == 4, parts[2] > 0, parts[3] > 0 else { return nil }
-        return NSRect(x: parts[0], y: parts[1], width: parts[2], height: parts[3])
+        return DevFrame.parse(text)
     }()
 
     /// What an open panel that ended with OK chose: a replayed `panel`'s file, else its own.
@@ -37,6 +37,10 @@ enum DevInput {
 
     static func install() {
         guard enabled else { return }
+        if let text = ProcessInfo.processInfo.environment["EASL_DEV_FRAME"], frame == nil {
+            FileHandle.standardError.write(Data("easl: EASL_DEV_FRAME is not \"x y w h\" (four finite numbers, a positive width and height): \(text.debugDescription); opening no window\n".utf8))
+            exit(64)
+        }
         DistributedNotificationCenter.default().addObserver(forName: notification, object: nil, queue: .main) { note in
             var fields: [String: String] = [:]
             for (key, value) in note.userInfo ?? [:] {
