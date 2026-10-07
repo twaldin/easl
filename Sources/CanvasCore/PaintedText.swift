@@ -5,9 +5,10 @@ import AppKit
 /// rest of such a page is, so the view shows the same pixels as a render of it. It is also laid
 /// out by TextKit 1 the way string drawing lays it out (a layout manager, no line fragment
 /// padding, the font's leading), which maps a point to the nearest caret and a range to the rects
-/// it covers, in the view's own coordinates (the same at any zoom). Both go by insertion points,
-/// as a text view does, so a caret can sit inside a ligature ("fi"), and what is highlighted is
-/// exactly what is copied.
+/// it covers, in the view's own coordinates (the same at any zoom). Carets go by insertion points,
+/// as a text view's do, so one can sit inside a ligature ("fi"); a selection is highlighted as
+/// TextKit lays out its glyphs, in whichever direction each run goes, so what is highlighted is
+/// exactly what is copied, in right-to-left and mixed text too.
 @MainActor
 public final class PaintedText {
     /// A web link in the text and where it is drawn: a rect per line it runs over, each as wide
@@ -53,10 +54,43 @@ public final class PaintedText {
         layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: storage.length))
     }
 
-    /// The rects `range` covers, one per line it spans, from caret to caret. `selected`: as a
-    /// text view highlights a selection, a line the range runs on past reaches the right edge.
+    /// The rects `range` covers. `selected`: as a text view highlights a selection, a span per
+    /// visual run (a run of right-to-left text in a left-to-right line is one of its own), and a
+    /// line the range runs on past reaches the right edge. Otherwise a link's areas: on each line
+    /// it spans, from the caret where it starts there to the one where it ends.
     public func rects(for range: NSRange, selected: Bool = true) -> [CGRect] {
         guard range.length > 0, NSMaxRange(range) <= storage.length else { return [] }
+        return selected ? highlight(range) : areas(range)
+    }
+
+    private func highlight(_ range: NSRange) -> [CGRect] {
+        var whole = NSRange()
+        let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: &whole)
+        var rects: [CGRect] = []
+        layout.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: glyphs, in: container) { found, _ in rects.append(found) }
+        // A ligature the range starts or ends inside is one glyph, all of it in those rects: give
+        // back the part of it outside the range.
+        if whole.location < range.location { rects = trim(rects, from: whole.location, to: range.location) }
+        if NSMaxRange(whole) > NSMaxRange(range) { rects = trim(rects, from: NSMaxRange(range), to: NSMaxRange(whole)) }
+        return rects.map { $0.offsetBy(dx: rect.minX, dy: rect.minY) }
+    }
+
+    /// `rects` less the span between the carets at `start` and `end` (part of one ligature, on
+    /// one line), cut from the edge of the rect it lies at, whichever side that is.
+    private func trim(_ rects: [CGRect], from start: Int, to end: Int) -> [CGRect] {
+        let line = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: start), effectiveRange: nil)
+        let carets = carets(onLineAt: start)
+        func x(_ offset: Int) -> CGFloat { line.minX + (carets.last { $0.offset <= offset }?.x ?? 0) }
+        let low = min(x(start), x(end)), high = max(x(start), x(end))
+        return rects.map { rect in
+            guard rect.minY < line.maxY, rect.maxY > line.minY else { return rect }
+            if abs(rect.minX - low) < 0.5, high < rect.maxX { return CGRect(x: high, y: rect.minY, width: rect.maxX - high, height: rect.height) }
+            if abs(rect.maxX - high) < 0.5, low > rect.minX { return CGRect(x: rect.minX, y: rect.minY, width: low - rect.minX, height: rect.height) }
+            return rect
+        }
+    }
+
+    private func areas(_ range: NSRange) -> [CGRect] {
         var rects: [CGRect] = []
         layout.enumerateLineFragments(forGlyphRange: layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)) { fragment, _, _, glyphs, _ in
             let line = self.layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
@@ -64,9 +98,8 @@ public final class PaintedText {
             guard end > start else { return }
             let carets = self.carets(onLineAt: line.location)
             func x(_ offset: Int) -> CGFloat { carets.last { $0.offset <= offset }?.x ?? 0 }
-            let left = range.location < line.location ? 0 : x(start)
-            let right = selected && NSMaxRange(range) > NSMaxRange(line) ? fragment.width : x(end)
-            rects.append(CGRect(x: self.rect.minX + fragment.minX + left, y: self.rect.minY + fragment.minY, width: max(0, right - left), height: fragment.height))
+            let left = min(x(start), x(end)), right = max(x(start), x(end))
+            rects.append(CGRect(x: self.rect.minX + fragment.minX + left, y: self.rect.minY + fragment.minY, width: right - left, height: fragment.height))
         }
         return rects
     }
