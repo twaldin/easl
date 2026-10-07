@@ -7,6 +7,7 @@ Each version's section is its GitHub release's notes.
 - Google Docs text is sharp in browser tiles. A browser tile now tells its page the size and place of its "window" (`window.outerWidth`, `outerHeight`, `screenX`, `screenY`), as Safari does. Before, outerWidth was 0, and Docs, taking outerWidth / innerWidth for the browser's zoom, drew its text at a quarter of the screen's resolution.
 - A new browser tile you make without an address (New Browser Here, File › New Browser Tile… left empty) opens Google instead of a blank page. Agents' tiles still start blank.
 - **Code tiles stop wrapping lines they have room for.** A new code tile (a ⌘-click on a `path:line`, Go to Definition, a link, an agent's tile without a frame) is as wide as its file's longest line needs, up to 200 columns, and `size: "fit"` widens to 200 columns (1546 pt) instead of about 120 before it wraps. Only longer lines, minified or generated, still wrap. Follow tiles keep their size.
+- Bringing a board's tab forward (`board.open --select`, Go to Next Needs-You, Open Remote) while easl's window is on another Space no longer puts that tab on the Space you're working in: macOS switches to easl's Space and the tab comes forward there.
 
 ## 0.2.1
 

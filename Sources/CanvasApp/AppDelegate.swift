@@ -15,6 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Remote boards' windows (docs/design.md "Client mode"), by host and board (`remoteKey`):
     /// another host's board may have the id of one of ours (two checkouts of one repository).
     private var remoteControllers: [String: CanvasWindowController] = [:]
+    /// Tab switches waiting for their tab group's Space to be the active one (`selectTab`), by
+    /// tab group.
+    private var heldTabs: [ObjectIdentifier: HeldTab] = [:]
     private var terminationSignal: DispatchSourceSignal?
     private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
@@ -200,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Before boards open, so their pages load with the extensions' content scripts.
         BrowserExtensions.start()
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(showHeldTabs), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         let initial = open(root: Self.initialRoot())
         // The other boards that were open as tabs come back behind the initial one (one tab per
         // board: two saved worktrees of one repository are one board).
@@ -296,15 +300,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Brings `window`'s tab, or the window, forward. Selecting a tab of a minimized group also
     /// detaches it onto the current Space: bring the group back first (the user asked to see
     /// this board). An instance that never activates leaves the tab waiting in the minimized
-    /// group.
+    /// group. A tab whose group is on another Space comes forward once that Space is active
+    /// (`selectTab`); activating brings the group's shown tab forward meanwhile, and macOS
+    /// switches to its Space.
     private func bringForward(_ window: NSWindow) {
         let noActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
         if let minimized = window.tabGroup?.windows.first(where: \.isMiniaturized) {
             if noActivate { return }
             minimized.deminiaturize(nil)
         }
-        window.tabGroup?.selectedWindow = window
-        if !noActivate { window.makeKeyAndOrderFront(nil) }
+        let shown = selectTab(window) ? window : window.tabGroup?.selectedWindow ?? window
+        if !noActivate { shown.makeKeyAndOrderFront(nil) }
+    }
+
+    /// A board window's tab brought forward from outside the app delegate (a web extension's
+    /// `windows.focus`), as `bringForward` does.
+    func focusBoardWindow(_ window: NSWindow) {
+        bringForward(window)
+    }
+
+    /// Shows `window`'s tab in its tab group, unless the group is on a Space nobody is viewing:
+    /// AppKit shows a newly selected tab on the active Space, out of its group's place and in
+    /// front of whatever the user is working on there (2026-10-07: a background
+    /// `board.open --select` put a tab on the user's Space; yabai tiled it between their
+    /// windows). Such a switch waits until the group's Space is active (`showHeldTabs`), and
+    /// a later one for the same group replaces it. True when the tab is shown now.
+    @discardableResult
+    private func selectTab(_ window: NSWindow) -> Bool {
+        guard let group = window.tabGroup else { return true }
+        let key = ObjectIdentifier(group)
+        // `isOnActiveSpace` of a window that isn't on screen says where it would be ordered in,
+        // not where its group is: only a shown tab tells.
+        if let shown = group.selectedWindow, shown !== window, shown.isVisible, !shown.isOnActiveSpace {
+            heldTabs[key] = HeldTab(group: group, window: window, shown: shown)
+            return false
+        }
+        heldTabs[key] = nil
+        group.selectedWindow = window
+        return true
+    }
+
+    /// The active Space changed: shows each held tab whose group is now on it. A request goes
+    /// unshown when the group's tab changed since (the user, or a web extension, picked another
+    /// one: the newer choice stands), or the group was put away (minimized, the app hidden),
+    /// where selecting a tab would bring it out on the current Space.
+    @objc private func showHeldTabs() {
+        for (key, held) in heldTabs {
+            guard let group = held.group, let window = held.window, window.tabGroup === group,
+                  let shown = group.selectedWindow, shown === held.shown, shown.isVisible,
+                  !group.windows.contains(where: \.isMiniaturized) else {
+                heldTabs[key] = nil
+                continue
+            }
+            guard shown.isOnActiveSpace else { continue }
+            heldTabs[key] = nil
+            let wasKey = shown.isKeyWindow
+            group.selectedWindow = window
+            if wasKey { window.makeKeyAndOrderFront(nil) }
+        }
     }
 
     /// The open boards (shown, minimized or a tab) in tab/window order: a tab group's boards
@@ -356,8 +409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func openRemoteBoard(host: RemoteHost, board: BoardID) {
         let key = Self.remoteKey(host, board)
         if let open = remoteControllers[key], let window = open.window {
-            window.tabGroup?.selectedWindow = window
-            if ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] != "1" { window.makeKeyAndOrderFront(nil) }
+            bringForward(window)
             return
         }
         let mirror = BoardMirror(hostName: host.name, board: board, connection: host.connection(), renders: host.connection())
@@ -391,8 +443,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let noActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
         if let host = tabHost(excluding: window) {
             if host.isMiniaturized, let group = host.tabGroup { group.addWindow(window) } else { host.addTabbedWindow(window, ordered: .above) }
-            window.tabGroup?.selectedWindow = window
-            if !noActivate { window.makeKeyAndOrderFront(nil) }
+            bringForward(window)
         } else if noActivate {
             window.orderBack(nil)
         } else {
@@ -796,4 +847,12 @@ private final class TrayMenu: NSObject, NSMenuDelegate {
         none.isEnabled = false
         menu.addItem(none)
     }
+}
+
+/// A tab switch waiting for its group's Space (`AppDelegate.selectTab`): `window` to show in
+/// place of `shown`. Weak: a closed window or a group that broke up drops it.
+private struct HeldTab {
+    weak var group: NSWindowTabGroup?
+    weak var window: NSWindow?
+    weak var shown: NSWindow?
 }
