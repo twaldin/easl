@@ -267,13 +267,23 @@ func (m *Manager) List() ([]Session, error) {
 // Kill ends the tile's session and deletes zmx's log of it; false when there was none. When
 // `home` is given, a session not labelled with it is `conflict` (one that doesn't answer can't
 // say whose it is: `unavailable`).
-func (m *Manager) Kill(tile, home string) (bool, error) { return m.kill(tile, home, false) }
+func (m *Manager) Kill(tile, home string) (bool, error) {
+	var want map[string]string
+	if home != "" {
+		want = map[string]string{HomeLabel: home}
+	}
+	return m.kill(tile, want, false)
+}
 
-// End is Kill for a terminal gone for good (an owned terminal's delete): when its session is no
+// End is Kill for a terminal gone for good (an owned terminal's delete), of the session that
+// carries every owner label `labels` names (OwnerLabels: in one home, a board copied to another
+// root keeps its tile ids, so the home alone doesn't say whose it is). When its session is no
 // longer there (it exited, or zmx found its daemon dead), zmx's log of it goes too.
-func (m *Manager) End(tile, home string) (bool, error) { return m.kill(tile, home, true) }
+func (m *Manager) End(tile string, labels map[string]string) (bool, error) {
+	return m.kill(tile, labels, true)
+}
 
-func (m *Manager) kill(tile, home string, gone bool) (bool, error) {
+func (m *Manager) kill(tile string, want map[string]string, gone bool) (bool, error) {
 	if err := m.ready(); err != nil {
 		return false, err
 	}
@@ -293,11 +303,11 @@ func (m *Manager) kill(tile, home string, gone bool) (bool, error) {
 		}
 		return false, nil
 	}
-	if home != "" {
+	if len(want) > 0 {
 		if existing.Unreachable {
 			return false, failure("unavailable", "session %s doesn't answer, so whose it is can't be told; not ending it", name)
 		}
-		if err := owned(existing, map[string]string{HomeLabel: home}); err != nil {
+		if err := owned(existing, want); err != nil {
 			return false, err
 		}
 	}

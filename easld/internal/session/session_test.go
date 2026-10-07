@@ -248,7 +248,8 @@ func TestKillEndsTheSessionAndItsLog(t *testing.T) {
 }
 
 // End (an owned terminal's delete) also deletes the log of a session already gone, which Kill
-// leaves; another home's live session, and its log, it leaves alone.
+// leaves; a live session another home's or another board's (every owner label is checked), and
+// its log, it leaves alone, and its own it ends.
 func TestEndTakesTheLogOfASessionAlreadyGone(t *testing.T) {
 	m, state := fixture(t)
 	gone := filepath.Join(state, "logs", "canvas-obj_g.log")
@@ -258,29 +259,46 @@ func TestEndTakesTheLogOfASessionAlreadyGone(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	mine := func(tile string) map[string]string {
+		return map[string]string{HomeLabel: "mac-1", "canvas.board": "brd_1", "canvas.tile": tile}
+	}
 	if killed, err := m.Kill("obj_g", "mac-1"); err != nil || killed {
 		t.Fatalf("kill: %v %v", killed, err)
 	}
 	if _, err := os.Stat(gone); err != nil {
 		t.Fatalf("Kill took the log of a session that isn't there: %v", err)
 	}
-	if ended, err := m.End("obj_g", "mac-1"); err != nil || ended {
+	if ended, err := m.End("obj_g", mine("obj_g")); err != nil || ended {
 		t.Fatalf("end: %v %v", ended, err)
 	}
 	if _, err := os.Stat(gone); !os.IsNotExist(err) {
 		t.Errorf("the gone session's log is still there: %v", err)
 	}
-	if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_h", Labels: map[string]string{HomeLabel: "mac-2"}}); err != nil {
+	for owner, labels := range map[string]map[string]string{
+		"another home's":  {HomeLabel: "mac-2", "canvas.board": "brd_1", "canvas.tile": "obj_h"},
+		"another board's": {HomeLabel: "mac-1", "canvas.board": "brd_2", "canvas.tile": "obj_h"},
+	} {
+		if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_h", Labels: labels}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.End("obj_h", mine("obj_h")); code(err) != "conflict" {
+			t.Errorf("end of %s session: %v", owner, err)
+		}
+		if _, err := os.Stat(foreign); err != nil {
+			t.Errorf("%s log was touched: %v", owner, err)
+		}
+		if _, err := os.Stat(filepath.Join(state, "canvas-obj_h")); err != nil {
+			t.Errorf("%s session was ended: %v", owner, err)
+		}
+		if err := os.Remove(filepath.Join(state, "canvas-obj_h")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_h", Labels: mine("obj_h")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.End("obj_h", "mac-1"); code(err) != "conflict" {
-		t.Errorf("end of another home's session: %v", err)
-	}
-	if _, err := os.Stat(foreign); err != nil {
-		t.Errorf("another home's log was touched: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(state, "canvas-obj_h")); err != nil {
-		t.Errorf("another home's session was ended: %v", err)
+	if ended, err := m.End("obj_h", mine("obj_h")); err != nil || !ended {
+		t.Errorf("end of its own session: %v %v", ended, err)
 	}
 }
 

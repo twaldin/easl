@@ -22,14 +22,15 @@ type lifecycle struct {
 	queued, done uint64
 }
 
-// sessionJob starts (spawn set) or ends terminal `tile`'s session on `board`: one labelled with
-// home `home` only, and its spooled reports in `spool` with it.
+// sessionJob starts (spawn set) or ends terminal `tile`'s session on `board`: one carrying the
+// owner labels `labels` only (easld's home, the board, the tile), and its spooled reports in
+// `spool` with it.
 type sessionJob struct {
-	board *board.Board
-	tile  model.Object
-	spawn *session.SpawnRequest
-	home  string
-	spool string
+	board  *board.Board
+	tile   model.Object
+	spawn  *session.SpawnRequest
+	labels map[string]string
+	spool  string
 }
 
 // terminals is the registry's Board.OnTerminals, under its lock: the sessions of the owned
@@ -51,7 +52,7 @@ func (r *Router) terminals(b *board.Board, created, ended []model.Object) {
 		if board.TerminalHost(o) != "" {
 			continue
 		}
-		job := sessionJob{board: b, tile: o, home: session.Label(r.Owns.Home)}
+		job := sessionJob{board: b, tile: o, labels: r.Owns.Labels(b.ID(), o.ID)}
 		// A board file's ids are whatever it says: one that would leave the spool isn't followed.
 		if r.reg.AgentReports != "" && filepath.IsLocal(o.ID) {
 			job.spool = filepath.Join(r.reg.AgentReports, o.ID)
@@ -120,8 +121,8 @@ func (r *Router) runSessions() {
 // runSession starts or ends one terminal's session, the way the Mac's tile does
 // (TerminalTile.killSession for the end: the session, zmx's log of it, also when the session is
 // already gone, and, as the app does for every terminal ended, its spooled reports, which nothing
-// would replay). A session labelled with another home is left alone, and so is its log. What
-// fails is logged in the board's history.
+// would replay). A session labelled with another home or board is left alone, and so is its log.
+// What fails is logged in the board's history.
 func (r *Router) runSession(job sessionJob) {
 	if job.spawn != nil {
 		if _, _, err := r.Sessions.Spawn(*job.spawn); err != nil {
@@ -129,7 +130,7 @@ func (r *Router) runSession(job sessionJob) {
 		}
 		return
 	}
-	if _, err := r.Sessions.End(job.tile.ID, job.home); err != nil {
+	if _, err := r.Sessions.End(job.tile.ID, job.labels); err != nil {
 		r.sessionFailed(job, "easld couldn't end its session: "+err.Error())
 	}
 	if job.spool != "" {

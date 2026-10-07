@@ -183,8 +183,9 @@ func TestADeleteEndsTheSessionItsLogAndItsSpool(t *testing.T) {
 }
 
 // A session of the tile's name labelled with another home (a Mac's offload, a board copied into
-// another home) is neither taken over nor ended: the board's history says why.
-func TestAnotherHomesSessionIsLeftAlone(t *testing.T) {
+// another home) or, in easld's home, with another board (a board file copied to another root
+// keeps its tile ids) is neither taken over nor ended: the board's history says why.
+func TestAnotherOwnersSessionIsLeftAlone(t *testing.T) {
 	f, state := owning(t)
 	tile := idOf(f.result("object.create", terminal(map[string]any{})))
 	name := session.Prefix + tile
@@ -195,6 +196,15 @@ func TestAnotherHomesSessionIsLeftAlone(t *testing.T) {
 	f.result("object.delete", map[string]any{"id": tile})
 	if data, _ := os.ReadFile(filepath.Join(state, name)); string(data) != foreign {
 		t.Fatalf("another home's session was ended or changed: %q", data)
+	}
+	copied := idOf(f.result("object.create", terminal(map[string]any{})))
+	elsewhere := "labels=canvas.board=brd_elsewhere canvas.home=_home_u_.local_state_easl canvas.tile=" + copied + "\n"
+	if err := os.WriteFile(filepath.Join(state, session.Prefix+copied), []byte(elsewhere), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.result("object.delete", map[string]any{"id": copied})
+	if data, _ := os.ReadFile(filepath.Join(state, session.Prefix+copied)); string(data) != elsewhere {
+		t.Fatalf("another board's session was ended or changed: %q", data)
 	}
 
 	// The same for a spawn: a terminal whose name another home's session has.
@@ -219,8 +229,9 @@ func TestAnotherHomesSessionIsLeftAlone(t *testing.T) {
 			said = append(said, e["summary"].(string))
 		}
 	}
-	if len(said) != 2 || !strings.Contains(said[0], "easld couldn't end its session: session "+name+" belongs to another easl instance") ||
-		!strings.Contains(said[1], `terminal "copy": easld couldn't start its session: session canvas-obj_other belongs to another easl instance`) {
+	if len(said) != 3 || !strings.Contains(said[0], "easld couldn't end its session: session "+name+" belongs to another easl instance") ||
+		!strings.Contains(said[1], "easld couldn't end its session: session "+session.Prefix+copied+" belongs to another easl instance or board (its canvas.board is brd_elsewhere") ||
+		!strings.Contains(said[2], `terminal "copy": easld couldn't start its session: session canvas-obj_other belongs to another easl instance`) {
 		t.Errorf("history %q", said)
 	}
 }
