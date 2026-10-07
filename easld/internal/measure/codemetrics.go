@@ -27,10 +27,52 @@ const (
 	TextGap         = 7.0
 	TrailingPadding = 12.0
 	MinWidth        = 280.0
-	DefaultFitWidth = 960.0
+	AutoColumns     = 200
 	WrapIndent      = 2
 	RangeContext    = 3
 )
+
+// DefaultFitWidth is the widest frame size "fit" and object.measure give a code tile when the
+// caller names no width, and the widest a new tile without a frame gets (AutoWidth):
+// AutoColumns columns beside a 4-digit gutter (CodeMetrics.defaultFitWidth).
+var DefaultFitWidth = math.Ceil(GutterWidth(1) + AutoColumns*CharAdvance + TrailingPadding)
+
+// AutoWidth is CodeMetrics.autoWidth: the frame width of a new code tile without a frame over
+// a file of lineCount lines whose longest is longestLine columns: defaultWidth, widened so that
+// line doesn't wrap, up to DefaultFitWidth.
+func AutoWidth(longestLine, lineCount int, defaultWidth float64) float64 {
+	needed := math.Ceil(GutterWidth(lineCount) + float64(longestLine)*CharAdvance + TrailingPadding)
+	return max(defaultWidth, min(needed, DefaultFitWidth))
+}
+
+// LongestLine is CodeMetrics.longestLine: the columns of text's longest line (tabs expanded,
+// carriage returns not counted) and its number of lines, a final newline ending the last line.
+func LongestLine(text string) (columns, lines int) {
+	longest, column, open := 0, 0, false
+	for _, r := range text {
+		switch {
+		case r == '\n':
+			longest = max(longest, column)
+			column = 0
+			lines++
+			open = false
+			continue
+		case r == '\r':
+			continue
+		case r == '\t':
+			column += TabWidth - column%TabWidth
+		case r > 0xFFFF:
+			column += 2 // a surrogate pair: 2 on its high half, 0 on its low
+		default:
+			column += UnitColumns(uint16(r))
+		}
+		open = true
+	}
+	if open {
+		lines++
+	}
+	return max(longest, column), lines
+}
 
 // LineNumberDigits is CodeMetrics.lineNumberDigits.
 func LineNumberDigits(lineCount int) int {

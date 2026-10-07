@@ -328,7 +328,12 @@ public final class Board {
 
     @discardableResult
     public func create(type: ObjectType, props: JSONValue, frame: Frame? = nil, parent: ObjectID? = nil, caller: ObjectID? = nil) -> CanvasObject {
-        let size = type == .question ? QuestionSpec.size(props) : Self.defaultSize(type)
+        let size = switch type {
+        case .question: QuestionSpec.size(props)
+        // A code tile without a frame is as wide as its file's lines need.
+        case .code where frame == nil: props["path"]?.string.map { newCodeSize(path: $0, fromGit: CodeAim(props: props).map { $0.ref != nil || $0.pinnedCommit != nil } ?? false) } ?? Self.defaultSize(type)
+        default: Self.defaultSize(type)
+        }
         let z = (objects.values.map(\.z).max() ?? 0) + 1
         // A remote board's terminal is stamped by its host, which knows its checkouts.
         var object = CanvasObject(id: IDs.make("obj"), type: type, frame: frame ?? Frame(x: 0, y: 0, w: size.w, h: size.h), z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(),
@@ -657,6 +662,25 @@ public final class Board {
         case .shape: (160, 100)
         case .arrow, .group: (0, 0)
         }
+    }
+
+    /// Largest file `newCodeSize` reads to widen a tile; a larger one gets the default width.
+    static let autoWidthMaxBytes = 1 << 20
+
+    /// The size a new code tile over `path` (board-relative or absolute) gets without a frame:
+    /// `defaultSize(.code)`, widened so the file's longest line doesn't wrap, up to
+    /// `CodeMetrics.defaultFitWidth` (`CodeMetrics.autoWidth`). Reads the working-tree file on
+    /// the calling thread, up to `autoWidthMaxBytes` (source files are small). A tile shown from
+    /// git (`fromGit`: a `ref` or `pinnedCommit`), a missing, binary or larger file, or a
+    /// directory keeps the default size.
+    public func newCodeSize(path: String, fromGit: Bool = false) -> (w: Double, h: Double) {
+        let size = Self.defaultSize(.code)
+        let url = absoluteURL(path).resolvingSymlinksInPath()
+        guard !fromGit, let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              attributes[.type] as? FileAttributeType == .typeRegular, (attributes[.size] as? Int ?? .max) <= Self.autoWidthMaxBytes,
+              let data = try? Data(contentsOf: url), !data.prefix(8192).contains(0) else { return size }
+        let longest = CodeMetrics.longestLine(in: String(decoding: data, as: UTF8.self))
+        return (Double(CodeMetrics.autoWidth(longestLine: longest.columns, lineCount: longest.lines, defaultWidth: CGFloat(size.w))), size.h)
     }
 
     /// Room kept between a placed object and its neighbours.

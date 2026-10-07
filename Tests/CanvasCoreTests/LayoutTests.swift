@@ -86,7 +86,7 @@ final class LayoutApiTests {
     }
 
     @Test func codeFitsUnderAMaxWidthByWrappingLongLines() async throws {
-        // Lines 45-54 hold the 120-column line 50: 120 columns fit under the default 960.
+        // Lines 45-54 hold the 120-column line 50: 120 columns fit under the default 200.
         let natural = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(45, 54)])))
         #expect(natural == CodeMetrics.size(lines: 10, longestLine: 120, caption: false), "under the max, exactly as wide as the longest line")
         let roomy = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(45, 54), "width": 2000])))
@@ -509,7 +509,7 @@ final class LayoutApiTests {
         let rows = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19)])))
         let short = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: "why")])))
         #expect(short.width == rows.width, "a caption that fits doesn't widen the tile")
-        let long = String(repeating: "The JSON is a spec, not the `runtime` config. ", count: 6)
+        let long = String(repeating: "The JSON is a spec, not the `runtime` config. ", count: 8)
         let wide = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: long), "width": 3000])))
         #expect(wide.width == ObjectMeasure.captionWidth(long) && wide.width > rows.width + 400)
         let capped = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: long)])))

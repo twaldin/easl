@@ -102,16 +102,16 @@ If the app restarts, the next call reconnects on its own (waiting up to 15 s). `
 
 Sizes, positions, and checks, so you never measure tiles by hand or move 40 objects one call at a time:
 
-- `canvas.object.measure(type="code", props={…}, width=960)` → `{w, h}` (`width` optional): the whole frame (title bar included) that shows the content without scrolling.
+- `canvas.object.measure(type="code", props={…}, width=1546)` → `{w, h}` (`width` optional): the whole frame (title bar included) that shows the content without scrolling.
   Code: exactly `range` (the tile shows no extra context and no neighbouring lines; with no range, the `symbol`'s declaration), plus 20 pt when `caption` is set, and at least as wide as the whole caption;
-  `width` is the maximum width (default 960 pt, about 120 columns):
+  `width` is the maximum width (default 1546 pt, 200 columns):
   a range whose longest line fits stays exactly that narrow, longer lines soft-wrap and the height counts their extra rows, and a caption wider than that truncates.
   Notes: the rendered markdown, live fences resolved, at `width` (default 280). Text shapes: at `width`, or one unwrapped line per paragraph.
   HTML: the page laid out `width` wide (default 640) once it has rendered (Mermaid, `<canvas-code>` excerpts), as tall as its document, at most 4000 pt (a longer page scrolls in the tile).
   Changes: the file list and every file and hunk row (deleted and viewed files folded), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 pt.
   Images: the picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip. Browser tiles are `unsupported`.
 - `size: "fit"` on `object.create`/`object.update` measures instead of taking `w`/`h`: `frame` then needs only `x, y` (plus `w` to wrap a note, text, or an HTML page, or to cap a code tile's or image's width);
-  an update re-measures at the object's current position and width (code and images: at `frame.w` or the 960 pt default, never their current width, so a re-fit can widen them).
+  an update re-measures at the object's current position and width (code and images: at `frame.w` or their default, 1546 pt for code and 960 pt for images, never their current width, so a re-fit can widen them).
   An update without `frame.x`/`y` doesn't grow over what it didn't already cover: it grows up or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its own longer side, else grows in place.
   A fitted result (create, update, or batch op) has `overlaps`, the ids it now covers, when there are any: move it or them.
   So does an `object.update` whose `frame` (given outright, e.g. a browser tile widened to a desktop viewport) makes it cover an object it didn't before.

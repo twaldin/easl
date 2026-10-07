@@ -46,10 +46,13 @@ public enum CodeMetrics {
     public static let trailingPadding: CGFloat = 12
     /// Narrowest frame the header controls fit in.
     public static let minWidth: CGFloat = 280
+    /// Text columns a code tile is widened to hold when nobody names its width.
+    public static let autoColumns = 200
     /// Widest frame `size: "fit"` and `object.measure` give a code tile when the caller names no
-    /// width: about 120 columns of text, which holds lines within the usual formatter limits
-    /// (80–120) unwrapped while one long line can't stretch a tile across a whole board.
-    public static let defaultFitWidth: CGFloat = 960
+    /// width, and the widest a new tile without a frame gets (`autoWidth`): `autoColumns` columns
+    /// beside a 4-digit gutter, so lines past the usual formatter limits (80–120) stay unwrapped
+    /// too, while one minified or generated line can't stretch a tile across a whole board.
+    public static let defaultFitWidth = (gutterWidth(lineCount: 1) + CGFloat(autoColumns) * charAdvance + trailingPadding).rounded(.up)
     /// Continuation rows start this many columns right of their line's indentation.
     public static let wrapIndent = 2
 
@@ -89,6 +92,37 @@ public enum CodeMetrics {
         let width = gutterWidth + CGFloat(max(0, longestLine)) * charAdvance + trailingPadding
         let height = headerHeight + 2 * verticalPadding + CGFloat(max(1, rows)) * rowHeight
         return CGSize(width: max(minWidth, width.rounded(.up)), height: height.rounded(.up))
+    }
+
+    /// Frame width of a new code tile without a frame (opened by a click or created without one)
+    /// over a file of `lineCount` lines whose longest is `longestLine` columns: `defaultWidth`,
+    /// widened so that line doesn't wrap, up to `defaultFitWidth`. Never narrower than the default.
+    public static func autoWidth(longestLine: Int, lineCount: Int, defaultWidth: CGFloat) -> CGFloat {
+        let needed = (gutterWidth(lineCount: lineCount) + CGFloat(longestLine) * charAdvance + trailingPadding).rounded(.up)
+        return max(defaultWidth, min(needed, defaultFitWidth))
+    }
+
+    /// The columns of `text`'s longest line (tabs expanded, carriage returns not counted) and
+    /// its number of lines, a final newline ending the last line rather than starting another.
+    public static func longestLine(in text: String) -> (columns: Int, lines: Int) {
+        var longest = 0, column = 0, lines = 0, open = false
+        for unit in text.utf16 {
+            switch unit {
+            case 0x0A:
+                longest = max(longest, column)
+                column = 0
+                lines += 1
+                open = false
+            case 0x0D: continue
+            case 0x09:
+                column += tabWidth - column % tabWidth
+                open = true
+            default:
+                column += columns(of: unit)
+                open = true
+            }
+        }
+        return (max(longest, column), lines + (open ? 1 : 0))
     }
 
     /// Columns one UTF-16 unit other than a tab takes. East Asian wide and fullwidth characters

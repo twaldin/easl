@@ -407,7 +407,7 @@ extension Board {
                 return CodeOpened(id: object.id, created: false, reaim: reaim)
             }
         }
-        let size = Board.defaultSize(.code)
+        let size = newCodeSize(path: stored)
         let created = create(type: .code, props: .object(["path": .string(stored), "range": range].filter { $0.value != .null }),
                              frame: place(width: size.w, height: size.h, near: tile, shrinkingTo: Self.followMinimumSize))
         if !newTile { codePreviews[tile] = (created.id, created.rev) }

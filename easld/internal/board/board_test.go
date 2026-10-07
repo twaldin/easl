@@ -2,12 +2,14 @@ package board
 
 import (
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/store"
 )
@@ -368,5 +370,43 @@ func TestFollowHistoryToleratesEntriesThatArentObjects(t *testing.T) {
 	got := follow.Props["history"].([]any)
 	if len(got) != FollowHistoryLimit || got[0].(map[string]any)["path"] != "b.go" || got[1] != "junk" {
 		t.Fatalf("history %v", got)
+	}
+}
+
+// A new code tile without a frame is as wide as its file's longest line needs (200 columns at
+// most), never narrower than the default (Board.newCodeSize).
+func TestANewCodeTileWithoutAFrameWidensToItsFilesLongestLine(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, text string) {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("wide.ts", "short\r\n\t"+strings.Repeat("x", 150)+"\r\nshort\r\n")
+	write("huge.js", strings.Repeat("y", 300)+"\n")
+	write("short.ts", "let a = 1\n")
+	if columns, lines := measure.LongestLine("short\r\n\t" + strings.Repeat("x", 150) + "\r\nshort\r\n"); columns != 154 || lines != 3 {
+		t.Errorf("longest line %d over %d lines", columns, lines)
+	}
+	b := New("brd", root)
+	fallback, _ := DefaultSize(model.Code)
+	needed := math.Ceil(measure.GutterWidth(3) + 154*measure.CharAdvance + measure.TrailingPadding)
+	for _, c := range []struct {
+		props map[string]any
+		frame *model.Frame
+		w     float64
+	}{
+		{map[string]any{"path": "wide.ts"}, nil, needed},
+		{map[string]any{"path": filepath.Join(root, "wide.ts")}, nil, needed},
+		{map[string]any{"path": "huge.js"}, nil, measure.DefaultFitWidth},
+		{map[string]any{"path": "short.ts"}, nil, fallback},
+		{map[string]any{"path": "gone.ts"}, nil, fallback},
+		{map[string]any{"path": "wide.ts", "pinnedCommit": "HEAD"}, nil, fallback},
+		{map[string]any{"path": "wide.ts", "ref": "main"}, nil, fallback},
+		{map[string]any{"path": "wide.ts"}, frame(0, 0, 500, 300), 500},
+	} {
+		if got := b.Create(model.Code, c.props, c.frame, "", ""); got.Frame.W != c.w {
+			t.Errorf("%v: width %v, want %v", c.props, got.Frame.W, c.w)
+		}
 	}
 }

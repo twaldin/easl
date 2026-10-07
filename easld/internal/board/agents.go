@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/store"
 )
@@ -640,6 +641,31 @@ func (b *Board) AbsolutePath(path string) string {
 		return path
 	}
 	return filepath.Join(b.root, path)
+}
+
+// autoWidthMaxBytes is the largest file NewCodeSize reads to widen a tile (Board.autoWidthMaxBytes).
+const autoWidthMaxBytes = 1 << 20
+
+// NewCodeSize is Board.newCodeSize: the size a new code tile over path gets without a frame,
+// the default size widened so the file's longest line doesn't wrap, up to
+// measure.DefaultFitWidth. A tile shown from git (fromGit: a ref or pinnedCommit), a missing,
+// binary or larger file, or a directory keeps the default size.
+func (b *Board) NewCodeSize(path string, fromGit bool) (float64, float64) {
+	w, h := DefaultSize(model.Code)
+	if fromGit {
+		return w, h
+	}
+	file := b.AbsolutePath(path)
+	info, err := os.Stat(file)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > autoWidthMaxBytes {
+		return w, h
+	}
+	data, err := os.ReadFile(file)
+	if err != nil || bytes.IndexByte(data[:min(len(data), 8192)], 0) >= 0 {
+		return w, h
+	}
+	columns, lines := measure.LongestLine(string(data))
+	return measure.AutoWidth(columns, lines, w), h
 }
 
 var followBinaryExtensions = map[string]bool{}

@@ -159,7 +159,7 @@ extension Board {
         if let symbol = aim.symbol { props["symbol"] = .string(symbol) }
         if let pinnedCommit = aim.pinnedCommit { props["pinnedCommit"] = .string(pinnedCommit) }
         if let ref = aim.ref { props["ref"] = .string(ref) }
-        let size = Board.defaultSize(.code)
+        let size = newCodeSize(path: aim.path, fromGit: aim.ref != nil || aim.pinnedCommit != nil)
         let frame = source.map { place(width: size.w, height: size.h, near: $0, shrinkingTo: Board.followMinimumSize) }
             ?? place(width: size.w, height: size.h, near: nil)
         let created = create(type: .code, props: .object(props), frame: frame)

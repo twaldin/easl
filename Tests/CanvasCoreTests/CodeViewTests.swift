@@ -289,10 +289,10 @@ struct CodeContentTests {
 
         let (content, measured) = try await body(10, 19)
         #expect(content.width == measured.width && content.height + CodeMetrics.titleHeight == measured.height, "a fit tile's body has no overflow")
-        // Line 200's 400 columns wrap at the default 960 pt (121 columns) onto 4 rows; the fit
-        // tile and its render agree on them.
+        // Line 200's 400 columns wrap at the default 1546 pt (200 columns, continuation rows 198)
+        // onto 3 rows; the fit tile and its render agree on them.
         let (wrapped, wrappedFit) = try await body(195, 204)
-        #expect(wrappedFit.width == CodeMetrics.defaultFitWidth && wrapped.height == header + 2 * CodeMetrics.verticalPadding + 13 * CodeMetrics.rowHeight)
+        #expect(wrappedFit.width == CodeMetrics.defaultFitWidth && wrapped.height == header + 2 * CodeMetrics.verticalPadding + 12 * CodeMetrics.rowHeight)
         #expect(wrapped.height + CodeMetrics.titleHeight == wrappedFit.height)
 
         let whole = document.content(range: nil, rows: document.rows(peeked: [], width: 960), width: 960, headerHeight: header)
