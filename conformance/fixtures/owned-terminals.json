@@ -1,0 +1,504 @@
+{
+  "scenario": "owned-terminals",
+  "description": "easld --own-terminals (recorded against easld with a zmx that runs no session: the app runs its terminals itself, and answers session.* `unsupported`): a terminal without props.host gets its session canvas-<tile> by the time its create is answered, labelled with the board, the tile and easld's home; a hosted terminal's session is its Mac's to start (session.spawn), and to end; a batch that fails starts nothing; deleting the terminal ends its session and leaves another home's alone.",
+  "recordedOn": "easld --own-terminals on main 58b28c2 + lifecycle/pr1, with zmxtest's zmx (the app runs its terminals itself and answers session.* unsupported)",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>",
+          "name": "owned"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "owned"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "owned"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50700,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "host": "deckbox",
+          "name": "hosted"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "host": "deckbox",
+              "name": "hosted"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "host": "deckbox",
+              "name": "hosted"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "session.list",
+      "method": "session.list",
+      "request": {},
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "sessions": [
+            {
+              "clients": 0,
+              "labels": {
+                "canvas.board": "<board>",
+                "canvas.home": "<easld home>",
+                "canvas.tile": "<obj:1>"
+              },
+              "pid": 4242,
+              "session": "canvas-<obj:1>",
+              "tile": "<obj:1>"
+            }
+          ]
+        }
+      },
+      "masked": {
+        "response.result.sessions.*.labels.*": "canvas.home is easld's home directory as a label value, which differs between runs"
+      }
+    },
+    {
+      "step": "object.batch",
+      "method": "object.batch",
+      "request": {
+        "board": "<board>",
+        "ops": [
+          {
+            "method": "object.create",
+            "params": {
+              "frame": {
+                "h": 400,
+                "w": 600,
+                "x": 51400,
+                "y": 50000
+              },
+              "props": {
+                "command": [
+                  "/bin/cat"
+                ],
+                "cwd": "<root>",
+                "name": "doomed"
+              },
+              "type": "terminal"
+            }
+          },
+          {
+            "method": "object.update",
+            "params": {
+              "id": "obj_missing",
+              "props": {
+                "name": "x"
+              }
+            }
+          }
+        ]
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "op 1 (object.update): object obj_missing on board <board>"
+        },
+        "id": "r5",
+        "ok": false
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 51400,
+              "y": 50000
+            },
+            "id": "<obj:3>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "doomed"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:3>"
+          },
+          "event": "object.deleted"
+        }
+      ]
+    },
+    {
+      "step": "session.list",
+      "method": "session.list",
+      "request": {},
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "sessions": [
+            {
+              "clients": 0,
+              "labels": {
+                "canvas.board": "<board>",
+                "canvas.home": "<easld home>",
+                "canvas.tile": "<obj:1>"
+              },
+              "pid": 4242,
+              "session": "canvas-<obj:1>",
+              "tile": "<obj:1>"
+            }
+          ]
+        }
+      },
+      "masked": {
+        "response.result.sessions.*.labels.*": "canvas.home is easld's home directory as a label value, which differs between runs"
+      }
+    },
+    {
+      "step": "session.spawn",
+      "method": "session.spawn",
+      "request": {
+        "command": [
+          "/bin/cat"
+        ],
+        "labels": {
+          "canvas.board": "<board>",
+          "canvas.home": "mac-1",
+          "canvas.tile": "<obj:2>"
+        },
+        "tile": "<obj:2>"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "created": true,
+          "session": "canvas-<obj:2>"
+        }
+      }
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:2>"
+          },
+          "event": "object.deleted"
+        }
+      ]
+    },
+    {
+      "step": "session.list",
+      "method": "session.list",
+      "request": {},
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "sessions": [
+            {
+              "clients": 0,
+              "labels": {
+                "canvas.board": "<board>",
+                "canvas.home": "<easld home>",
+                "canvas.tile": "<obj:1>"
+              },
+              "pid": 4242,
+              "session": "canvas-<obj:1>",
+              "tile": "<obj:1>"
+            },
+            {
+              "clients": 0,
+              "labels": {
+                "canvas.board": "<board>",
+                "canvas.home": "mac-1",
+                "canvas.tile": "<obj:2>"
+              },
+              "pid": 4242,
+              "session": "canvas-<obj:2>",
+              "tile": "<obj:2>"
+            }
+          ]
+        }
+      },
+      "masked": {
+        "response.result.sessions.*.labels.*": "canvas.home is easld's home directory as a label value, which differs between runs"
+      }
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:1>"
+          },
+          "event": "object.deleted"
+        }
+      ]
+    },
+    {
+      "step": "session.list",
+      "method": "session.list",
+      "request": {},
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "sessions": [
+            {
+              "clients": 0,
+              "labels": {
+                "canvas.board": "<board>",
+                "canvas.home": "mac-1",
+                "canvas.tile": "<obj:2>"
+              },
+              "pid": 4242,
+              "session": "canvas-<obj:2>",
+              "tile": "<obj:2>"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "session.kill",
+      "method": "session.kill",
+      "request": {
+        "home": "_another_home",
+        "tile": "<obj:2>"
+      },
+      "response": {
+        "error": {
+          "code": "conflict",
+          "message": "session canvas-<obj:2> belongs to another easl instance or board (its canvas.home is mac-1, not _another_home)"
+        },
+        "id": "r12",
+        "ok": false
+      }
+    },
+    {
+      "step": "session.kill",
+      "method": "session.kill",
+      "request": {
+        "home": "mac-1",
+        "tile": "<obj:2>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "killed": true
+        }
+      }
+    },
+    {
+      "step": "session.list",
+      "method": "session.list",
+      "request": {},
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "sessions": []
+        }
+      }
+    }
+  ]
+}

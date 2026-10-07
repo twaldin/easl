@@ -11,6 +11,8 @@ import (
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/router"
 	"github.com/twaldin/easl/easld/internal/server"
+	"github.com/twaldin/easl/easld/internal/session"
+	"github.com/twaldin/easl/easld/internal/session/zmxtest"
 	"github.com/twaldin/easl/easld/internal/store"
 )
 
@@ -20,7 +22,7 @@ import (
 var passing = []string{
 	"agent-control", "agents", "arrows", "batch", "board-get-history", "boards", "client-delegation", "client-failures", "client-mode", "client-versions",
 	"code-tiles", "events", "follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "messages",
-	"metrics", "no-client", "objects-crud", "open-url", "placement", "protocol", "questions", "tray",
+	"metrics", "no-client", "objects-crud", "open-url", "owned-terminals", "placement", "protocol", "questions", "tray",
 }
 
 // Not passing, and why:
@@ -29,7 +31,8 @@ var passing = []string{
 //     measures them from the glyph table (measure/glyphs): within a few points, and marked
 //     `approximate: true`. client-delegation replays exact measurement through a scripted client.
 
-// The suite replayed against easld in-process: a fresh home, the real router and socket server.
+// The suite replayed against easld in-process: a fresh home, the real router and socket server,
+// owning its boards' terminals (--own-terminals) with a zmx that runs no session (zmxtest).
 func TestConformance(t *testing.T) {
 	if testing.Short() {
 		t.Skip("replays the whole conformance suite")
@@ -40,9 +43,16 @@ func TestConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
+	socket := filepath.Join(dir, "easl.sock")
 	reg := board.NewRegistry(filepath.Join(dir, "boards"), store.DefaultDebounce, filepath.Join(dir, "agent-reports"))
 	r := router.New(reg)
-	srv, err := server.Listen(filepath.Join(dir, "easl.sock"), r.Handle, r.Answer)
+	zmx, err := zmxtest.Install(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Sessions = session.New(zmx, filepath.Join(dir, "sessions"))
+	r.Owns = &session.Owner{Socket: socket, Home: dir, Resources: session.Resources(r.Sessions.Home)}
+	srv, err := server.Listen(socket, r.Handle, r.Answer)
 	if err != nil {
 		t.Fatal(err)
 	}

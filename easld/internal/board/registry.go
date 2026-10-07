@@ -41,6 +41,8 @@ type Registry struct {
 	Hook func(*Board, model.Event)
 	// Bounced handles messages that bounced on any open board (Board.OnMessagesBounced).
 	Bounced func(*Board, Bounce)
+	// Terminals handles the terminals created and ended on any open board (Board.OnTerminals).
+	Terminals func(b *Board, created, ended []model.Object)
 	// AgentReports is where integrations spool reports they couldn't deliver; "" replays nothing.
 	AgentReports string
 	// Texts measures text the app lays out (arrow captions, for routing) on every board opened
@@ -110,6 +112,11 @@ func (r *Registry) Open(root string) (*Board, error) {
 	b.OnMessagesBounced = func(bounce Bounce) {
 		if r.Bounced != nil {
 			r.Bounced(b, bounce)
+		}
+	}
+	b.OnTerminals = func(created, ended []model.Object) {
+		if r.Terminals != nil {
+			r.Terminals(b, created, ended)
 		}
 	}
 	r.boards[id] = b

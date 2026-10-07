@@ -72,10 +72,17 @@ type Router struct {
 	FirstReportGrace time.Duration
 	// PromptStartGrace: how long agent.wait gives a prompt to start the agent's turn.
 	PromptStartGrace time.Duration
-	// Sessions runs hosted terminals' zmx sessions (session.*); nil: none (`unavailable`).
+	// Sessions runs hosted terminals' zmx sessions (session.*) and owned ones; nil: none
+	// (`unavailable`).
 	Sessions *session.Manager
 	// Relays serve clients' sockets on this machine (relay.open); nil: none (`unavailable`).
 	Relays *relay.Relays
+	// Owns, set by `--own-terminals`, makes easld start and end the sessions of the terminals on
+	// its boards that have no `props.host` (lifecycle.go), with its variables and labels. Nil: a
+	// Mac's app runs them, and easld starts none.
+	Owns *session.Owner
+	// lifecycle runs owned terminals' sessions off the lock.
+	lifecycle lifecycle
 }
 
 // New is a router over reg; it observes every board's events (agent.wait), and measures the
@@ -85,6 +92,7 @@ func New(reg *board.Registry) *Router {
 		FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
 	reg.Hook = r.observe
 	reg.Bounced = r.bounce
+	reg.Terminals = r.terminals
 	reg.Texts = r.clients
 	return r
 }
@@ -103,14 +111,27 @@ func (r *Router) Handle(req any, c *server.Conn) any {
 	return r.HandleConn(req, c)
 }
 
-// HandleConn is Handle for any connection.
+// HandleConn is Handle for any connection. The sessions of owned terminals a request created or
+// deleted are up or gone (or their failure logged) before it is answered: they run once the
+// registry's lock is let go.
 func (r *Router) HandleConn(req any, c Conn) any {
 	if reply, ok := r.hostCall(req); ok {
 		return reply
 	}
+	reply, before, after := r.locked(req, c)
+	if after != before {
+		r.waitSessions(after)
+	}
+	return reply
+}
+
+// locked handles req under the registry's lock, with the session jobs queued before and after.
+func (r *Router) locked(req any, c Conn) (reply any, before, after uint64) {
 	r.reg.Mu.Lock()
 	defer r.reg.Mu.Unlock()
-	return r.handle(req, c)
+	before = r.queuedSessions()
+	reply = r.handle(req, c)
+	return reply, before, r.queuedSessions()
 }
 
 func (r *Router) handle(req any, c Conn) any {

@@ -6,43 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-)
 
-// fakeZmx is a zmx that keeps its sessions as files in `$ZMX_DIR`: `attach` records the labels,
-// the directory, the environment and the command of a session it creates; `list`, `kill` and
-// `version` answer from them as zmx 0.8.1 does. A session file holding `dead` is one whose
-// daemon died: `list` finds its socket refused and deletes it, as zmx does.
-const fakeZmx = `#!/bin/sh
-state="$ZMX_DIR"
-case "$1" in
-attach)
-  shift; labels=""
-  if [ "$1" = "--labels" ]; then labels="$2"; shift 2; fi
-  name="$1"; shift
-  [ -e "$state/$name" ] && exit 0
-  { printf 'labels=%s\n' "$labels"; printf 'cwd=%s\n' "$(pwd)"; printf 'socket=%s\n' "$EASL_SOCKET"; printf 'tile=%s\n' "$EASL_TILE_ID"; printf 'path=%s\n' "$PATH"; for a in "$@"; do printf 'arg=%s\n' "$a"; done; } > "$state/$name"
-  ;;
-list)
-  found=""
-  for f in "$state"/*; do
-    [ -f "$f" ] || continue; found=1; name=$(basename "$f")
-    if grep -qx dead "$f"; then rm "$f"; printf '  name=%s\terr=ConnectionRefused\tstatus=cleaning up\n' "$name"; continue; fi
-    labels=$(sed -n 's/^labels=//p' "$f" | tr ' ' '\t')
-    printf '  name=%s\tpid=4242\tclients=0\tcreated=1\tcwd=file://h/tmp\tcmd=sh' "$name"
-    [ -n "$labels" ] && printf '\t%s' "$labels"
-    printf '\n'
-  done
-  [ -n "$found" ] || echo "no sessions found in $state"
-  ;;
-kill)
-  [ -e "$state/$2" ] || { echo "error: failed to kill session=$2: SessionNotFound"; exit 1; }
-  rm "$state/$2"; echo "killed session $2"
-  ;;
-version)
-  printf 'zmx\t\t0.8.1\nsocket_dir\t%s\nlog_dir\t\t%s/logs\n' "$state" "$state"
-  ;;
-esac
-`
+	"github.com/twaldin/easl/easld/internal/session/zmxtest"
+)
 
 func fixture(t *testing.T) (*Manager, string) {
 	t.Helper()
@@ -51,8 +17,8 @@ func fixture(t *testing.T) (*Manager, string) {
 	if err := os.MkdirAll(filepath.Join(state, "logs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	zmx := filepath.Join(dir, "zmx")
-	if err := os.WriteFile(zmx, []byte(fakeZmx), 0o755); err != nil {
+	zmx, err := zmxtest.Install(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
 	home := filepath.Join(dir, "home")
