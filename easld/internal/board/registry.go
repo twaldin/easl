@@ -83,11 +83,7 @@ func (r *Registry) SortedBoards() []*Board {
 // directory's own board. A board file easld can't read (store.Unreadable) isn't opened.
 func (r *Registry) Open(root string) (*Board, error) {
 	root = store.Standardized(root)
-	worktree := store.Containing(root)
-	id := store.PathID(root)
-	if worktree != nil {
-		id = store.RepoID(worktree.CommonDir)
-	}
+	id, worktree := store.Identify(root)
 	if existing, ok := r.boards[id]; ok {
 		if worktree != nil {
 			existing.OpenedFrom(*worktree)

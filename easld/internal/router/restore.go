@@ -1,6 +1,7 @@
 package router
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -13,14 +14,14 @@ import (
 )
 
 // Restore reopens the boards easld owned when it stopped (Reopens), in the order they first
-// opened, each from the root it was opened from, replaying what their agents spooled meanwhile
-// (Registry.Open), and has each reconciled (opened): after a reboot their terminals' sessions
-// start again, resuming their agents; after an easld restart, with its sessions still running,
-// nothing starts. Those sessions wait for StartSessions, once easld serves: an agent reports
-// its session to easld as it starts, and one easld isn't there to take would be lost. A root
-// that is no longer a directory is dropped from the list, and so is a board its root no longer
-// opens (the root opens the board it does now); a board file easld can't read is kept on it,
-// and so are its sessions. Call it before easld serves; it returns what went wrong.
+// opened, replaying what their agents spooled meanwhile (Registry.Open), and has each reconciled
+// (opened): after a reboot their terminals' sessions start again, resuming their agents; after
+// an easld restart, with its sessions still running, nothing starts. Those sessions wait for
+// StartSessions, once easld serves: an agent reports its session to easld as it starts, and one
+// easld isn't there to take would be lost. A board is its id: it reopens from a directory that
+// opens it now (rootOf), and is dropped from the list only when none does; a board file easld
+// can't read is kept on it, and so are its sessions. Call it before easld serves; it returns
+// what went wrong, and where a board reopened from another directory than the one listed.
 func (r *Router) Restore() []error {
 	if r.Owns == nil || r.Reopens == "" {
 		return nil
@@ -35,20 +36,20 @@ func (r *Router) Restore() []error {
 	var errs []error
 	var kept []store.Reopened
 	for _, e := range listed {
-		if !store.IsDirectory(e.Root) {
-			errs = append(errs, fmt.Errorf("board root %s is gone; board %s is no longer reopened", e.Root, e.Board))
-			continue
-		}
-		b, err := r.reg.Open(e.Root)
+		root, err := r.rootOf(e.Board, e.Root)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("can't reopen board %s at %s: %w", e.Board, e.Root, err))
-			kept = append(kept, e)
+			errs = append(errs, err)
+		}
+		if root == "" {
+			if !errors.Is(err, errNowhere) {
+				kept = append(kept, e)
+			}
 			continue
 		}
-		if b.ID() != e.Board {
-			errs = append(errs, fmt.Errorf("%s opens board %s now, not %s; %s is no longer reopened", e.Root, b.ID(), e.Board, e.Board))
+		if _, err := r.reg.Open(root); err != nil {
+			errs = append(errs, fmt.Errorf("can't reopen board %s at %s: %w", e.Board, root, err))
 		}
-		kept = append(kept, store.Reopened{Root: e.Root, Board: b.ID()})
+		kept = append(kept, store.Reopened{Root: root, Board: e.Board})
 	}
 	if kept = uniqueBoards(kept); !slices.Equal(kept, listed) {
 		if err := store.WriteReopened(r.Reopens, kept); err != nil {
@@ -56,6 +57,47 @@ func (r *Router) Restore() []error {
 		}
 	}
 	return errs
+}
+
+// errNowhere: no directory opens a listed board any more.
+var errNowhere = errors.New("no directory opens it any more")
+
+// rootOf is a directory that opens board `id` now (store.Identify, as Registry.Open does):
+// `opener`, the one it is listed with, else one its board file names, its own root (a
+// repository's main checkout) or a live worktree of its repository. Worktrees come and go (one
+// merged and removed, its path reused by another repository) while the board stays, and a
+// directory that opens another board never stands for this one. With another directory than
+// `opener` it also says why; "" when none opens it (errNowhere), or when its board file can't
+// be read to tell (it stays listed).
+func (r *Router) rootOf(id, opener string) (string, error) {
+	opens := func(dir string) bool {
+		if dir == "" || !store.IsDirectory(dir) {
+			return false
+		}
+		got, _ := store.Identify(dir)
+		return got == id
+	}
+	if opens(opener) {
+		return opener, nil
+	}
+	snap, err := r.reg.Store.Read(id)
+	if err != nil {
+		return "", fmt.Errorf("board %s: %s no longer opens it, and its board file can't say what does: %w", id, opener, err)
+	}
+	if snap != nil {
+		candidates := []string{snap.Root}
+		if snap.Repo != nil {
+			for _, w := range store.Worktrees(snap.Repo.CommonDir) {
+				candidates = append(candidates, w.Toplevel)
+			}
+		}
+		for _, dir := range candidates {
+			if opens(dir) {
+				return dir, fmt.Errorf("board %s reopened from %s: %s no longer opens it", id, dir, opener)
+			}
+		}
+	}
+	return "", fmt.Errorf("board %s is no longer reopened: %w (%s is gone or opens another board)", id, errNowhere, opener)
 }
 
 // uniqueBoards is list with each board once, where it first is.

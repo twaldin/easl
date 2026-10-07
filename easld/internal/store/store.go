@@ -356,6 +356,15 @@ func RepoID(commonDir string) string { return HashedID(commonDir) }
 // PathID is the board id of a directory outside git: its path.
 func PathID(root string) string { return HashedID(Standardized(root)) }
 
+// Identify is the board a directory opens: its repository's (RepoID), with the worktree it is
+// in, when it is in git; else its own (PathID), with no worktree.
+func Identify(root string) (id string, worktree *Worktree) {
+	if worktree = Containing(root); worktree != nil {
+		return RepoID(worktree.CommonDir), worktree
+	}
+	return PathID(root), nil
+}
+
 // WorktreeInfo is a worktree as board.list and board.open report it.
 type WorktreeInfo struct {
 	Path   string

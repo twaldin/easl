@@ -201,78 +201,106 @@ func TestRestoreStartsTheMissingSessionsAndNothingElse(t *testing.T) {
 	}
 }
 
-// A board easld owns is listed to reopen once, when it opens, by its id and the root it was
-// opened from, which reopens it: a bare repository's worktree (`proj/.bare`, `proj/work`) leads
-// back to the repository's board where the board's own root (`proj`, no worktree's) would open
-// another. At easld's next start a root gone is dropped from the list (its board isn't
-// reopened), a root that opens another board now is listed with that one, and a board file
-// easld can't read is kept on it. Without --own-terminals nothing is listed.
+// A board easld owns is listed to reopen once, when it opens, by its id and the directory it was
+// opened from. At easld's next start it reopens from that directory while it opens the board,
+// else from one its board file names: its repository's main checkout once the worktree it was
+// opened from is removed, also when another repository took that worktree's path (whose board
+// is never this one's). A bare repository's worktree (`proj/.bare`, `proj/work`) reopens its
+// board, where the board's own root (`proj`, no worktree's) would open another. A board nothing
+// opens any more is dropped from the list, and a board file easld can't read is kept on it.
+// Without --own-terminals nothing is listed.
 func TestTheBoardsToReopenAreThoseOpenedWhileOwning(t *testing.T) {
 	f, _ := restorable(t)
 	dir := t.TempDir()
-	other, gone, unreadable, src, proj := filepath.Join(dir, "other"), filepath.Join(dir, "gone"), filepath.Join(dir, "unreadable"), filepath.Join(dir, "src"), filepath.Join(dir, "proj")
-	for _, root := range []string{other, gone, unreadable, src, proj} {
+	repo := func(path string) {
+		t.Helper()
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "a.txt"), []byte("a\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, path, "init", "-q", "-b", "main")
+		git(t, path, "add", ".")
+		git(t, path, "commit", "-q", "-m", "init")
+	}
+	gone, unreadable, proj := filepath.Join(dir, "gone"), filepath.Join(dir, "unreadable"), filepath.Join(dir, "proj")
+	for _, root := range []string{gone, unreadable, proj} {
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("a\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	git(t, src, "init", "-q", "-b", "main")
-	git(t, src, "add", ".")
-	git(t, src, "commit", "-q", "-m", "init")
-	git(t, dir, "clone", "-q", "--bare", src, filepath.Join(proj, ".bare"))
+	repo(filepath.Join(dir, "src"))
+	git(t, dir, "clone", "-q", "--bare", filepath.Join(dir, "src"), filepath.Join(proj, ".bare"))
 	work := filepath.Join(proj, "work")
 	git(t, filepath.Join(proj, ".bare"), "worktree", "add", "-q", work)
+	// Two repositories opened from a feature worktree, later from the main checkout too.
+	merged, mergedFeature, reused, reusedFeature := filepath.Join(dir, "merged"), filepath.Join(dir, "merged-feature"), filepath.Join(dir, "reused"), filepath.Join(dir, "reused-feature")
+	repo(merged)
+	repo(reused)
+	git(t, merged, "worktree", "add", "-q", "-b", "feature", mergedFeature)
+	git(t, reused, "worktree", "add", "-q", "-b", "feature", reusedFeature)
 
 	id := func(root string) string {
-		return f.result("board.open", map[string]any{"root": root})["board"].(string)
+		board := f.result("board.open", map[string]any{"root": root})["board"].(string)
+		// Something on it, so its board file is saved.
+		f.result("object.create", map[string]any{"board": board, "type": "note", "props": map[string]any{"markdown": "kept"}, "frame": map[string]any{"x": 0.0, "y": 0.0, "w": 200.0, "h": 100.0}})
+		return board
 	}
-	otherID, goneID, bareID := id(other), id(gone), id(work)
-	id(other)
+	goneID, bareID, mergedID, reusedID := id(gone), id(work), id(mergedFeature), id(reusedFeature)
+	id(merged)
+	id(reused)
 	if bare, _ := f.router.reg.Board(bareID); bare == nil || bare.Root() != store.Standardized(proj) || store.PathID(bare.Root()) == bareID {
 		t.Fatalf("the bare repository's board: %v", bare)
 	}
 	listed, err := store.ReadReopened(f.router.Reopens)
-	at := func(root, board string) store.Reopened { return store.Reopened{Root: root, Board: board} }
-	want := []store.Reopened{at(f.board.Root(), f.board.ID()), at(store.Standardized(other), otherID), at(store.Standardized(gone), goneID), at(store.Standardized(work), bareID)}
+	at := func(root, board string) store.Reopened {
+		return store.Reopened{Root: store.Standardized(root), Board: board}
+	}
+	want := []store.Reopened{at(f.board.Root(), f.board.ID()), at(gone, goneID), at(work, bareID), at(mergedFeature, mergedID), at(reusedFeature, reusedID)}
 	if err != nil || !reflect.DeepEqual(listed, want) {
 		t.Fatalf("listed %v (%v), want %v", listed, err, want)
 	}
+
 	if err := os.RemoveAll(gone); err != nil {
 		t.Fatal(err)
 	}
+	git(t, merged, "worktree", "remove", mergedFeature)
+	git(t, reused, "worktree", "remove", reusedFeature)
+	repo(reusedFeature)
 	newer := fmt.Sprintf(`{"format":99,"id":%q,"root":%q,"revision":1,"objects":[]}`, store.PathID(store.Standardized(unreadable)), store.Standardized(unreadable))
 	if err := os.WriteFile(f.router.reg.Store.Path(store.PathID(store.Standardized(unreadable))), []byte(newer), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	listed[1].Board = "brd_before"
-	listed = append(listed, store.Reopened{Root: store.Standardized(unreadable), Board: store.PathID(store.Standardized(unreadable))})
-	if err := store.WriteReopened(f.router.Reopens, listed); err != nil {
+	if err := store.WriteReopened(f.router.Reopens, append(listed, at(unreadable, store.PathID(store.Standardized(unreadable))))); err != nil {
 		t.Fatal(err)
 	}
 	again, errs := restart(t, f)
-	if len(errs) != 3 || !strings.Contains(errs[0].Error(), "opens board "+otherID+" now, not brd_before") ||
-		!strings.Contains(errs[1].Error(), "is gone") || !strings.Contains(errs[2].Error(), "newer") {
-		t.Errorf("errors %v", errs)
+	said := make([]string, len(errs))
+	for i, err := range errs {
+		said[i] = err.Error()
+	}
+	if len(said) != 4 || !strings.Contains(said[0], goneID+" is no longer reopened: no directory opens it any more") ||
+		!strings.Contains(said[1], mergedID+" reopened from "+store.Standardized(merged)) ||
+		!strings.Contains(said[2], reusedID+" reopened from "+store.Standardized(reused)) || !strings.Contains(said[3], "newer") {
+		t.Errorf("errors %q", said)
 	}
 	var open []string
 	for _, b := range again.router.reg.SortedBoards() {
 		open = append(open, b.ID())
 	}
-	if !reflect.DeepEqual(open, sortedStrings(f.board.ID(), otherID, bareID)) {
-		t.Errorf("open after the restart: %v, want %s's, %s's and the bare repository's", open, f.board.Root(), other)
+	if !reflect.DeepEqual(open, sortedStrings(f.board.ID(), bareID, mergedID, reusedID)) {
+		t.Errorf("open after the restart: %v, want %s's, the bare repository's and the two repositories'", open, f.board.Root())
 	}
 	listed, _ = store.ReadReopened(f.router.Reopens)
-	want = []store.Reopened{want[0], want[1], want[3], at(store.Standardized(unreadable), store.PathID(store.Standardized(unreadable)))}
+	want = []store.Reopened{want[0], want[2], at(merged, mergedID), at(reused, reusedID), at(unreadable, store.PathID(store.Standardized(unreadable)))}
 	if !reflect.DeepEqual(listed, want) {
 		t.Errorf("listed %v after the restore, want %v", listed, want)
 	}
 
 	plain := newFixture(t)
 	plain.router.Reopens = filepath.Join(t.TempDir(), "open-boards.json")
-	plain.result("board.open", map[string]any{"root": other})
+	plain.result("board.open", map[string]any{"root": merged})
 	if _, err := os.Stat(plain.router.Reopens); !os.IsNotExist(err) {
 		t.Errorf("an easld not owning its terminals listed a board: %v", err)
 	}

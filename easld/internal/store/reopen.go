@@ -7,10 +7,10 @@ import (
 	"os"
 )
 
-// Reopened is a board easld reopens at start (`<home>/open-boards.json`): its id, and the root
-// it was opened from, which leads back to it. A repository board's own root may not: a bare
-// repository's is its common directory's parent, which no worktree contains, so opening it
-// would open another board.
+// Reopened is a board easld reopens at start (`<home>/open-boards.json`): Board, its id, is the
+// board; Root is a directory it was opened from, tried first. A repository board's own root may
+// not open it (a bare repository's is its common directory's parent, which no worktree
+// contains), and the worktree it was opened from may be gone by then.
 type Reopened struct {
 	Root  string `json:"root"`
 	Board string `json:"board"`
