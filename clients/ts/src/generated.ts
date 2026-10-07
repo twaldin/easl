@@ -879,7 +879,7 @@ export type BoardListResult = {
 export type BoardOpenParams = {
   /** absolute directory path (`~` allowed): a directory in a git repository opens its repository's board; any other directory its own */
   root: string;
-  /** bring the board's tab to the front: this switches the user's tab, so only when they asked to see that board */
+  /** bring the board's tab to the front: this switches the user's tab, so only when they asked to see that board. While the board window is on a Space other than the one on screen, the tab comes forward when the user goes to that Space (AppKit would otherwise show it on the Space they are working in) */
   select?: boolean;
 };
 export type BoardOpenResult = {
