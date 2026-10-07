@@ -416,12 +416,16 @@ public enum AppUpdate {
     /// How the helper opens easl again: registers the bundle at `"$app"` with LaunchServices
     /// (it caches Info.plist) and opens a new instance of it with `environment` (the old
     /// bundle's `LSEnvironment` and `EASL_HOME`, so an instance on its own home comes back on
-    /// it). Never `open -g`: a Gatekeeper prompt for a background launch waits on a Space nobody
-    /// sees and blocks every exec of the path (issue #60).
+    /// it). A user's easl comes back in front: `open -n`, never `-g`, since a Gatekeeper prompt
+    /// for a background launch waits on a Space nobody sees and blocks every exec of the path
+    /// (issue #60). Only an instance that may not activate (`EASL_NO_ACTIVATE=1`, a development
+    /// instance on a shared Mac) opens with `-g`: LaunchServices activates a launched app itself,
+    /// whatever its environment, and an ad hoc development bundle is never quarantined.
     public static func relaunchCommand(environment: [String: String]) -> String {
         let lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+        let background = environment["EASL_NO_ACTIVATE"] == "1" ? " -g" : ""
         let env = environment.sorted { $0.key < $1.key }.map { " --env " + RemoteHost.quote("\($0.key)=\($0.value)") }.joined()
-        return "\(lsregister) -f \"$app\" >/dev/null 2>&1\n/usr/bin/open -n\(env) \"$app\""
+        return "\(lsregister) -f \"$app\" >/dev/null 2>&1\n/usr/bin/open -n\(background)\(env) \"$app\""
     }
 }
 

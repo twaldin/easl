@@ -428,11 +428,17 @@ struct UpdateHelperTests {
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
     }
 
-    @Test func theRelaunchOpensANewInstanceWithTheOldEnvironmentNeverInTheBackground() {
-        let command = AppUpdate.relaunchCommand(environment: ["EASL_HOME": "/Users/me/dev home", "EASL_NO_ACTIVATE": "1"])
-        #expect(command.hasSuffix("/usr/bin/open -n --env 'EASL_HOME=/Users/me/dev home' --env EASL_NO_ACTIVATE=1 \"$app\""))
+    @Test func aUsersRelaunchOpensANewInstanceInFrontWithTheOldEnvironment() {
+        let command = AppUpdate.relaunchCommand(environment: ["EASL_HOME": "/Users/me/my home", "EASL_UPDATE_URL": "https://easl.sh/latest.json"])
+        #expect(command.hasSuffix("/usr/bin/open -n --env 'EASL_HOME=/Users/me/my home' --env EASL_UPDATE_URL=https://easl.sh/latest.json \"$app\""))
         #expect(!command.contains(" -g"))
         #expect(AppUpdate.relaunchCommand(environment: [:]).hasSuffix("/usr/bin/open -n \"$app\""))
+        #expect(!AppUpdate.relaunchCommand(environment: ["EASL_NO_ACTIVATE": "0"]).contains(" -g"))
+    }
+
+    @Test func anInstanceThatMayNotActivateComesBackInTheBackground() {
+        let command = AppUpdate.relaunchCommand(environment: ["EASL_HOME": "/Users/me/dev home", "EASL_NO_ACTIVATE": "1"])
+        #expect(command.hasSuffix("/usr/bin/open -n -g --env 'EASL_HOME=/Users/me/dev home' --env EASL_NO_ACTIVATE=1 \"$app\""))
     }
 
     @Test func theResultFileSaysWhatHappened() {
