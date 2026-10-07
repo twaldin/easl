@@ -8,7 +8,7 @@ import CanvasCore
 /// collapses to the outcome: the answer and who gave it when, or that it was cancelled or
 /// expired (dimmed); Return in it then archives it. Its text scales with the chrome text size,
 /// like the title bar's. The question's text selects with a drag and copies (⌘C, Copy), and its
-/// web links open beside the tile on a click (`QuestionText`, `TextPress`). VoiceOver reads the
+/// web links open beside the tile on a click (`PaintedText`, `TextPress`). VoiceOver reads the
 /// whole question (`accessibleText`) and presses its painted controls (`QuestionControlElement`).
 @MainActor
 final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
@@ -526,8 +526,9 @@ struct QuestionPainter {
     private(set) var controls: [Control] = []
     private(set) var noteRect: NSRect?
     private(set) var height: CGFloat = 0
-    /// The question's text, which selects and holds web links.
-    private(set) var question: QuestionText?
+    /// The question's text, which selects and holds web links, and its index in `items`.
+    private(set) var question: PaintedText?
+    private var questionItem: Int?
 
     var clickable: [NSRect] { controls.filter(\.enabled).flatMap(\.clickable) }
 
@@ -564,13 +565,14 @@ struct QuestionPainter {
     }
 
     /// Adds the question's text at `y`, its web links (`WebLink.matches`) in link color and each a
-    /// control (`QuestionText`); returns the y below it.
+    /// control (`PaintedText`); returns the y below it.
     private mutating func placeQuestion(_ base: NSFont, _ color: NSColor, x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
         let links = WebLink.matches(in: spec.question)
         let string = NSMutableAttributedString(attributedString: text(spec.question, base, color))
         for link in links { string.addAttribute(.foregroundColor, value: NSColor.linkColor, range: link.range) }
-        let question = QuestionText(string, links: links, in: NSRect(x: x, y: y, width: width, height: Self.measure(string, width: width).height))
+        let question = PaintedText(string, links: links, in: NSRect(x: x, y: y, width: width, height: Self.measure(string, width: width).height))
         self.question = question
+        questionItem = items.count
         items.append((question.rect, { question.draw() }))
         for link in question.links {
             controls.append(Control(rect: link.areas.reduce(NSRect.null) { $0.union($1) }, hit: .link(link.match),
@@ -822,7 +824,7 @@ struct QuestionPainter {
 
     /// Draws the page; a cancelled or expired question dimmed. `noteDrawn`: the note field is
     /// drawn here (renders), not by its own view. `selection`: the question's text selected
-    /// (live only), highlighted behind it.
+    /// (live only), highlighted as a text view highlights it.
     func draw(in bounds: NSRect, noteDrawn: Bool, selection: NSRange? = nil) {
         let dimmed = spec.status == .cancelled || spec.status == .expired
         let context = NSGraphicsContext.current?.cgContext
@@ -831,13 +833,13 @@ struct QuestionPainter {
             context?.setAlpha(0.5)
             context?.beginTransparencyLayer(auxiliaryInfo: nil)
         }
-        if let selection, let question {
-            NSColor.selectedTextBackgroundColor.setFill()
-            for rect in question.rects(for: selection) { rect.fill(using: .sourceOver) }
-        }
-        for item in items where item.rect.intersects(bounds) {
+        for (index, item) in items.enumerated() where item.rect.intersects(bounds) {
             if !noteDrawn, item.rect == noteRect { continue }
-            item.draw()
+            if index == questionItem, let question {
+                question.draw(selected: selection)
+            } else {
+                item.draw()
+            }
         }
         if noteDrawn, let noteRect, noteText.isEmpty {
             NSColor.separatorColor.setStroke()
@@ -848,78 +850,6 @@ struct QuestionPainter {
             context?.endTransparencyLayer()
             context?.restoreGState()
         }
-    }
-}
-
-/// A question's text as the painter draws it, with what selecting it and clicking its links
-/// need. It is drawn by string drawing, as all the page's text is (so with nothing selected the
-/// tile shows the same pixels as a render of it, and as it did before it selected), and laid out
-/// once more by TextKit 1 the way string drawing lays it out (a layout manager, no line fragment
-/// padding, the font's leading), which maps a point to a caret offset and a range to the rects it
-/// covers, in the page's own coordinates: the same at any board or content zoom.
-@MainActor
-final class QuestionText {
-    /// A web link in the text and where it is: a rect per line it runs over.
-    struct Link {
-        let match: WebLink.Match
-        let areas: [NSRect]
-    }
-
-    let rect: NSRect
-    let string: String
-    private(set) var links: [Link] = []
-    private let text: NSAttributedString
-    private let layout = NSLayoutManager()
-    private let container: NSTextContainer
-    private let storage: NSTextStorage
-
-    /// `text` wrapped to `rect`'s width from its origin, with `links` (`WebLink.matches` of it).
-    init(_ text: NSAttributedString, links: [WebLink.Match], in rect: NSRect) {
-        self.text = text
-        self.rect = rect
-        string = text.string
-        storage = NSTextStorage(attributedString: text)
-        container = NSTextContainer(size: NSSize(width: max(1, rect.width), height: .greatestFiniteMagnitude))
-        container.lineFragmentPadding = 0
-        layout.usesFontLeading = true
-        layout.addTextContainer(container)
-        storage.addLayoutManager(layout)
-        self.links = links.map { Link(match: $0, areas: rects(for: $0.range, selected: false)) }
-    }
-
-    func draw() {
-        text.draw(with: rect, options: [.usesLineFragmentOrigin, .usesFontLeading])
-    }
-
-    /// The rects `range` covers on the page, one per line it spans. `selected`: as a text view
-    /// highlights a selection, a line it runs on past reaching to the text's right edge.
-    func rects(for range: NSRange, selected: Bool = true) -> [NSRect] {
-        guard NSMaxRange(range) <= storage.length, range.length > 0 else { return [] }
-        let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-        var rects: [NSRect] = []
-        layout.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: selected ? glyphs : NSRange(location: NSNotFound, length: 0),
-                                       in: container) { found, _ in
-            rects.append(found.offsetBy(dx: self.rect.minX, dy: self.rect.minY))
-        }
-        return rects
-    }
-
-    /// The caret offset (UTF-16) nearest `point` on the page: before or after the glyph under
-    /// it, whichever side is nearer; above the text its start, below it its end.
-    func offset(at point: NSPoint) -> Int {
-        let glyphs = layout.numberOfGlyphs
-        guard glyphs > 0 else { return 0 }
-        if point.y < rect.minY { return 0 }
-        if point.y >= rect.maxY { return storage.length }
-        var fraction: CGFloat = 0
-        let glyph = layout.glyphIndex(for: NSPoint(x: point.x - rect.minX, y: point.y - rect.minY), in: container, fractionOfDistanceThroughGlyph: &fraction)
-        let caret = fraction > 0.5 ? glyph + 1 : glyph
-        return caret >= glyphs ? storage.length : layout.characterIndexForGlyph(at: caret)
-    }
-
-    /// The link drawn under `point`.
-    func link(at point: NSPoint) -> WebLink.Match? {
-        links.first { $0.areas.contains { $0.contains(point) } }?.match
     }
 }
 
