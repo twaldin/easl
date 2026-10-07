@@ -77,8 +77,10 @@ enum ForegroundProgram {
         enum Via: Equatable {
             /// The group's own leader (the shell itself when it runs the program without a shell).
             case leader
-            /// The newest child of a `-c` shell, among the group's members at the time.
-            case child(members: [pid_t])
+            /// The newest child of a `-c` shell in its group: it holds while that child lives
+            /// (a `-c` shell runs its commands one after another; a later sibling started
+            /// beside a living one, `a & b`, is found when the first ends).
+            case child
             /// The oldest member of a group whose leader exited, among the members at the time.
             case oldest(members: [pid_t])
         }
@@ -98,15 +100,16 @@ enum ForegroundProgram {
         var leader: pid_t { job.leader }
 
         /// Whether `job(shell:)` would find the same process again: the shell is the same
-        /// process in the same foreground group, the leader is the same process, and a leader
-        /// picked among the group's members was picked among the same pids (start times don't
-        /// change, so the newest or oldest of them is still it).
+        /// process in the same foreground group, the leader is the same process (and still the
+        /// shell's child where it was found as one), and a group's oldest member was picked
+        /// among the same pids. Two or three `proc_pidinfo`s, no process listing (`proc_listpids`
+        /// walks the whole process table: 23 % of a saturated main thread on 2026-10-07).
         func holds(shell: pid_t) -> Bool {
             guard let info = bsdInfo(shell), pid_t(bitPattern: info.e_tpgid) == job.group, Identity(info) == job.shell,
                   let leader = bsdInfo(job.leader), Identity(leader) == job.identity else { return false }
             switch job.via {
             case .leader: return true
-            case .child(let members): return leader.pbi_ppid == UInt32(shell) && ForegroundProgram.members(of: job.group) == members
+            case .child: return leader.pbi_ppid == UInt32(shell)
             case .oldest(let members): return bsdInfo(job.group) == nil && ForegroundProgram.members(of: job.group) == members
             }
         }
@@ -143,12 +146,11 @@ enum ForegroundProgram {
                 return .some(Job(group: group, shell: Identity(info), leader: shell, identity: Identity(info), via: .leader))
             }
             guard argv.contains("-c") else { return .some(nil) }
-            let pids = members(of: group)
-            let child = pids.filter { $0 != shell }.compactMap { pid in bsdInfo(pid).map { (pid, $0) } }
+            let child = members(of: group).filter { $0 != shell }.compactMap { pid in bsdInfo(pid).map { (pid, $0) } }
                 .filter { $0.1.pbi_ppid == UInt32(shell) }
                 .max { ($0.1.pbi_start_tvsec, $0.1.pbi_start_tvusec) < ($1.1.pbi_start_tvsec, $1.1.pbi_start_tvusec) }
             guard let child else { return .some(nil) }
-            return .some(Job(group: group, shell: Identity(info), leader: child.0, identity: Identity(child.1), via: .child(members: pids)))
+            return .some(Job(group: group, shell: Identity(info), leader: child.0, identity: Identity(child.1), via: .child))
         }
         if let leader = bsdInfo(group) {
             return .some(Job(group: group, shell: Identity(info), leader: group, identity: Identity(leader), via: .leader))
