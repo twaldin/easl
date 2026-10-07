@@ -197,6 +197,37 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         return rows
     }
 
+    /// A host typed into File › Open Remote… (`user@host`, an ssh config alias, a tailnet name):
+    /// ssh connects to it as typed, and it goes by its host part.
+    public static func typed(_ target: String) -> (name: String, sshTarget: String) {
+        (target.split(separator: "@").last.map(String.init) ?? target, target)
+    }
+
+    /// The host `text` names among File › Open Remote…'s rows (`candidates`), as
+    /// `board.open_remote` takes it: the row whose ssh target it is, else the one row of that
+    /// name, else `text` as an ssh host typed in (`typed`). Tailnet names aren't unique, so a
+    /// name two rows have is `ambiguous`, naming their ssh targets.
+    public static func target(_ text: String, among rows: [Candidate]) throws -> (name: String, sshTarget: String) {
+        if let row = rows.first(where: { $0.sshTarget == text }) { return (row.name, row.sshTarget) }
+        let named = rows.filter { $0.name == text }
+        guard named.count < 2 else {
+            throw ApiRouter.Failure("ambiguous", "\(text) names \(named.count) hosts: \(named.map(\.sshTarget).joined(separator: ", ")); pass one of these ssh targets as host")
+        }
+        return named.first.map { ($0.name, $0.sshTarget) } ?? typed(text)
+    }
+
+    /// Why `text` can't be a host File › Open Remote… connects to, or nil: a host is one word (a
+    /// tailnet name, an ssh config alias, `user@host`), and one starting with `-` would be an
+    /// option to ssh.
+    public static func problem(withHost text: String) -> String? {
+        if text.isEmpty { return "host is empty: pass a tailnet name, an ssh config alias or user@host" }
+        if text.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) }) {
+            return "host \(text.debugDescription) isn't one host: a tailnet name, an ssh config alias or user@host has no spaces"
+        }
+        if text.hasPrefix("-") { return "host \(text) starts with -, which ssh would take for an option" }
+        return nil
+    }
+
     // MARK: Helpers
 
     /// `word` as one word of a remote shell command: ssh joins its arguments with spaces and the
@@ -352,6 +383,39 @@ public struct RemoteBoard: Equatable, Sendable {
             case .connecting?, .offline?: self = .reconnect
             }
         }
+    }
+}
+
+/// A remote board's tab as `board.open_remote` answers it (`ApiRouter.openRemoteBoard`).
+public struct OpenedRemoteBoard: Equatable, Sendable {
+    /// The host as the tab names it, and what ssh connects to.
+    public var host: String
+    public var sshTarget: String
+    public var board: BoardID
+    /// The board's root on the host.
+    public var root: String
+    /// The tab's title, `<root's name> @ <host>`.
+    public var title: String
+    /// The tab's window number (each tab is a window), as `screencapture -l` and yabai take it.
+    public var window: Int
+    /// The tab was open (or opening) already: it was selected when asked, never opened again.
+    public var alreadyOpen: Bool
+
+    public init(host: String, sshTarget: String, board: BoardID, root: String, title: String, window: Int, alreadyOpen: Bool) {
+        self.host = host
+        self.sshTarget = sshTarget
+        self.board = board
+        self.root = root
+        self.title = title
+        self.window = window
+        self.alreadyOpen = alreadyOpen
+    }
+
+    var json: JSONValue {
+        .object([
+            "host": .string(host), "sshTarget": .string(sshTarget), "board": .string(board), "root": .string(root),
+            "title": .string(title), "window": .number(Double(window)), "alreadyOpen": .bool(alreadyOpen),
+        ])
     }
 }
 

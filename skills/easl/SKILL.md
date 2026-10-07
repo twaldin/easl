@@ -402,6 +402,7 @@ Then address it with `board: <id>` (from the result) on every call, and start ag
 Give each branch's work its own region: a group titled with the branch (`props.key: "branch:<name>"`), and `easl board.get --branch <name>` returns just that part of the board, with `regions` listing that branch's region ids (`[]` before you make one).
 `easl board.list` shows every stored board, and a repository board's `worktrees` (path, branch, `live`: still checked out there).
 `easl board.export` writes a readable snapshot to `<root>/.easl/board.json` for committing when the user asks to save the board with the repo.
+`easl board.open_remote --host <host> --board <brd_…>` opens a board another Mac's easl hosts as a tab, viewed live over ssh (File › Open Remote…'s way): `host` as the picker names it (a tailnet Mac such as `twaldin-work`, or an ssh host), `board` the id from that host's `board.list` (run `easl board.list` there; your own board is never filled in). It stays behind the user's current tab unless `--select true`, and returns the tab already open instead of a second one. Nothing of that board is written here. `unavailable`: the host is offline or its easl isn't running; `not_found`: no such board open there.
 
 ## When the user asks how to use easl
 

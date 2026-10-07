@@ -48,8 +48,11 @@ type Schema = {
   minimum?: number;
   maximum?: number;
 };
-type MethodSpec = { description: string; params: Schema; result: Schema };
+// `unfilled`: params named like ENV_DEFAULTS that are never filled (board.open_remote's `board`).
+type MethodSpec = { description: string; params: Schema; result: Schema; unfilled?: string[] };
 const methods = catalog.methods as Record<string, MethodSpec>;
+/** The params of `spec` the client fills from this tile and board when omitted (ENV_DEFAULTS it takes, less `unfilled`). */
+const envKeysOf = (spec: MethodSpec) => Object.keys(spec.params.properties ?? {}).filter((k) => k in ENV_DEFAULTS && !spec.unfilled?.includes(k));
 const definitions = catalog.definitions as Record<string, Schema>;
 
 /** The shipped skill: how to use easl well, beside this file in the checkout and the app bundle. */
@@ -255,9 +258,10 @@ function typeText(s: Schema, refs: Set<string>): string {
   return Array.isArray(s.type) ? s.type.join(" | ") : (s.type ?? "any");
 }
 
-function fieldLines(schema: Schema, refs: Set<string>, kind: "param" | "result"): string[] {
+/** `filled`: the params the client fills when omitted (`envKeysOf`). */
+function fieldLines(schema: Schema, refs: Set<string>, kind: "param" | "result", filled: string[] = []): string[] {
   // A whole result given as a type (object.measure → Size) lists that type's fields.
-  if (schema.$ref) return fieldLines(definitions[schema.$ref.replace("#/definitions/", "")], refs, kind);
+  if (schema.$ref) return fieldLines(definitions[schema.$ref.replace("#/definitions/", "")], refs, kind, filled);
   const required = schema.required ?? [];
   const fields = Object.entries(schema.properties ?? {});
   if (fields.length === 0) return ["  (none)"];
@@ -267,7 +271,7 @@ function fieldLines(schema: Schema, refs: Set<string>, kind: "param" | "result")
     else if (!required.includes(name)) notes.push("optional");
     if (s.default !== undefined) notes.push(`default ${JSON.stringify(s.default)}`);
     if (s.minimum !== undefined || s.maximum !== undefined) notes.push(`range ${s.minimum ?? ""}..${s.maximum ?? ""}`);
-    if (kind === "param" && name in ENV_DEFAULTS) notes.push(`auto-filled from ${ENV_DEFAULTS[name]}`);
+    if (kind === "param" && filled.includes(name)) notes.push(`auto-filled from ${ENV_DEFAULTS[name]}`);
     const annotation = notes.length ? ` (${notes.join(", ")})` : "";
     return `  ${name}: ${typeText(s, refs)}${annotation}${s.description ? ` — ${s.description}` : ""}`;
   });
@@ -283,7 +287,7 @@ function describe(name: string): void {
   }
   const refs = new Set<string>();
   const lines = spec
-    ? [name, `  ${spec.description}`, "", "params:", ...fieldLines(spec.params, refs, "param"), "", "result:", ...fieldLines(spec.result, refs, "result")]
+    ? [name, `  ${spec.description}`, "", "params:", ...fieldLines(spec.params, refs, "param", envKeysOf(spec)), "", "result:", ...fieldLines(spec.result, refs, "result")]
     : [name, ...(def.description ? [`  ${def.description}`] : []), "", "fields:", ...(def.properties ? fieldLines(def, refs, "result") : [`  ${typeText(def, refs)}`])];
   refs.delete(name);
   if (refs.size > 0) {
@@ -962,9 +966,8 @@ try {
   // `--full` is the CLI's own flag for methods that don't take `full` (view.render does).
   const elide = (method === "object.create" || method === "object.update") && params.full !== true;
   if (!(spec.params.properties && "full" in spec.params.properties)) delete params.full;
-  const envKeys = Object.keys(spec.params.properties ?? {}).filter((k) => k in ENV_DEFAULTS);
   client = new CanvasClient();
-  const result = (await client.call(method, params, envKeys)) as { object?: { props?: Record<string, unknown> } };
+  const result = (await client.call(method, params, envKeysOf(spec))) as { object?: { props?: Record<string, unknown> } };
   // A 28 KB HTML page echoed back buries the result; the app's reply itself is whole.
   const props = elide ? result.object?.props : undefined;
   for (const [key, value] of Object.entries(props ?? {})) {

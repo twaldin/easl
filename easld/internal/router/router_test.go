@@ -190,6 +190,19 @@ func TestUnknownAndMissingParamsNameWhatTheMethodTakes(t *testing.T) {
 	}
 }
 
+// board.open_remote opens a window of the Mac app's: easld checks its params as the app does,
+// then answers unsupported.
+func TestOpeningARemoteBoardIsTheMacAppsOnly(t *testing.T) {
+	f := newFixture(t)
+	if code, message := errorOf(f.call("board.open_remote", map[string]any{"host": "work"})); code != "invalid_params" || !strings.Contains(message, "missing board") {
+		t.Fatalf("%s: %s", code, message)
+	}
+	code, message := errorOf(f.call("board.open_remote", map[string]any{"host": "work", "board": "brd_1"}))
+	if code != "unsupported" || !strings.Contains(message, "Mac app") {
+		t.Fatalf("%s: %s", code, message)
+	}
+}
+
 // Ported from KeyTests.swift.
 func TestAKeyAnotherObjectHoldsIsAConflictNamingIt(t *testing.T) {
 	f := newFixture(t)

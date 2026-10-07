@@ -191,6 +191,12 @@ public final class ApiRouter {
     public var refreshDiagram: ((Board, ObjectID) async throws -> JSONValue)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
     public var openBoard: ((URL, _ select: Bool) -> Board)?
+    /// Opens `board` on another Mac in the UI as File › Open Remote… does, `host` found among the
+    /// picker's hosts (`RemoteHost.target`): a tab of the frontmost board window, selected when
+    /// asked; a tab open already is answered (and selected when asked), never opened twice.
+    /// Throws the picker's failures: `unavailable` (the host can't be reached or its easl doesn't
+    /// answer), `not_found` (the host has no such board open), `ambiguous` (a name two hosts have).
+    public var openRemoteBoard: ((_ host: String, _ board: BoardID, _ select: Bool) async throws -> OpenedRemoteBoard)?
     public static let schemaVersion = 1
     static let readLinesDefault = 100
     static let readLinesMax = 2000
@@ -308,6 +314,7 @@ public final class ApiRouter {
             if method == "object.get" { return Self.ok(id, try await get(params)) }
             if method == "object.find" { return Self.ok(id, try await find(params)) }
             switch method {
+            case "board.open_remote": return Self.ok(id, try await openRemote(params))
             case "object.measure": return Self.ok(id, try await measure(params))
             case "object.reload": return Self.ok(id, try await reload(params))
             case "object.batch": return Self.ok(id, try await batch(params))
@@ -1032,6 +1039,31 @@ public final class ApiRouter {
         result["scale"] = .number(shot.output.scale)
         result["objects"] = .array(shot.output.objects.map(\.json))
         return .object(result)
+    }
+
+    /// `board.open_remote`: the params are checked here, the rest is the app's (`openRemoteBoard`),
+    /// whose failures keep their code: the host's (`not_found`) or the link's (`unavailable`).
+    private func openRemote(_ p: JSONValue) async throws -> JSONValue {
+        guard let host = p["host"]?.string else { throw Failure("invalid_params", "host must be a string: a tailnet name, an ssh config alias or user@host") }
+        if let problem = RemoteHost.problem(withHost: host) { throw Failure("invalid_params", problem) }
+        guard let board = p["board"]?.string, Self.isBoardID(board) else {
+            throw Failure("invalid_params", "board \(p["board"] ?? .null) isn't a board id: pass the host's id for it (brd_…, from its board.list)")
+        }
+        guard let openRemoteBoard else { throw Failure("unsupported", "opening remote boards needs the app UI") }
+        do {
+            return try await openRemoteBoard(host, board, p["select"]?.bool ?? false).json
+        } catch let failure as Failure {
+            throw failure
+        } catch let failure as EaslConnection.Failure {
+            throw Failure(failure.code, failure.message)
+        } catch {
+            throw Failure("unavailable", "couldn't open \(board) on \(host): \(error)")
+        }
+    }
+
+    /// A board id as both servers make them (`BoardStore.boardID`): `brd_`, then letters and digits.
+    static func isBoardID(_ text: String) -> Bool {
+        text.hasPrefix("brd_") && text.count > 4 && text.dropFirst(4).unicodeScalars.allSatisfy { $0.isASCII && CharacterSet.alphanumerics.contains($0) }
     }
 
     /// Where renders and snapshots without `out` go: out of the user's repo, in the app's

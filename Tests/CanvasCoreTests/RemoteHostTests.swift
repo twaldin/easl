@@ -214,6 +214,33 @@ struct RemoteHostTests {
         #expect(rows[4].detail == "opened before" && rows[4].online, "the tailnet doesn't list a name it was opened by")
     }
 
+    @Test func openRemoteFindsTheHostByTargetThenByNameElseAsTyped() throws {
+        let rows = RemoteHost.candidates(
+            peers: [TailnetPeer(name: "twaldin-work", sshTarget: "twaldin-work.tail1234.ts.net", os: "macOS", online: true),
+                    TailnetPeer(name: "MacBook-Pro", sshTarget: "laptop.tail1234.ts.net", os: "macOS", online: true),
+                    TailnetPeer(name: "MacBook-Pro", sshTarget: "studio.tail1234.ts.net", os: "macOS", online: true)],
+            recents: [RemoteHost(name: "deckbox", sshTarget: "tim@deckbox", socketPath: "/s", tmpdir: "/tmp", easlBin: "easl")])
+        func target(_ text: String) throws -> [String] {
+            let found = try RemoteHost.target(text, among: rows)
+            return [found.name, found.sshTarget]
+        }
+        #expect(try target("twaldin-work") == ["twaldin-work", "twaldin-work.tail1234.ts.net"], "a tailnet Mac by its name connects as its row does")
+        #expect(try target("studio.tail1234.ts.net") == ["MacBook-Pro", "studio.tail1234.ts.net"], "a namesake by its ssh target")
+        #expect(try target("deckbox") == ["deckbox", "tim@deckbox"], "a host opened before, by the name it was opened as")
+        #expect(try target("me@elsewhere") == ["elsewhere", "me@elsewhere"], "anything else is an ssh host typed in")
+        let error = #expect(throws: ApiRouter.Failure.self) { try RemoteHost.target("MacBook-Pro", among: rows) }
+        #expect(error?.code == "ambiguous")
+        #expect(error?.message.contains("laptop.tail1234.ts.net, studio.tail1234.ts.net") == true, "\(error?.message ?? "")")
+    }
+
+    @Test func aHostIsOneWordThatSshWontTakeForAnOption() {
+        #expect(RemoteHost.problem(withHost: "twaldin-work") == nil)
+        #expect(RemoteHost.problem(withHost: "tim@100.64.0.9") == nil)
+        for bad in ["", "twaldin work", "work\n", "-oProxyCommand=sh", "-V"] {
+            #expect(RemoteHost.problem(withHost: bad) != nil, "\(bad.debugDescription)")
+        }
+    }
+
     /// Polls for the pid a test script wrote to `file`: long, since a CI runner can stall every
     /// test for seconds.
     func pid(in file: String) async -> Int32? {

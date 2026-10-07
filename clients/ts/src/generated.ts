@@ -897,6 +897,30 @@ export type BoardOpenResult = {
   };
 };
 
+export type BoardOpenRemoteParams = {
+  /** the host as File › Open Remote… names it: a tailnet Mac's name (`twaldin-work`) or ssh target, a host opened before (`remote-hosts.json` `name` or `sshTarget`), an ssh config alias, or `user@host` */
+  host: string;
+  /** the board's id on the host (`brd_…`, from its `board.list`); never filled from this terminal's board */
+  board: Id;
+  /** bring the board's tab to the front, as `board.open`'s `select` does: this switches the user's tab, so only when they asked to see that board */
+  select?: boolean;
+};
+export type BoardOpenRemoteResult = {
+  /** the host as the tab names it */
+  host: string;
+  /** what ssh connects to (a tailnet Mac's DNS name, else the host as given) */
+  sshTarget: string;
+  board: Id;
+  /** the board's root on the host */
+  root: string;
+  /** the tab's title, `<root's name> @ <host>` */
+  title: string;
+  /** the tab's window number (each tab is a window), as `screencapture -l` and yabai take it */
+  window: number;
+  /** the tab was open already: nothing was opened */
+  alreadyOpen: boolean;
+};
+
 export type BoardExportParams = {
   board?: Id;
   /** absolute, or relative to the board root; default .easl/board.json */
@@ -1760,6 +1784,8 @@ export interface CanvasApi {
     list(params?: BoardListParams): Promise<BoardListResult>;
     /** Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). A directory in a git repository opens the repository's board (one per repository, rooted at its main checkout), tagged with the worktree it is in: the window names it, New Terminal starts there, and the view goes to its region. The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true. */
     open(params: BoardOpenParams): Promise<BoardOpenResult>;
+    /** The Mac app only (easld answers `unsupported`): open a board another Mac's easl hosts, as File › Open Remote… does, as a tab of the frontmost board window (its own window when there is none), viewed live over ssh (docs/contracts.md "Remote boards"). `host` is found as the picker finds it: the host opened before (`remote-hosts.json`) or the tailnet Mac whose ssh target or name it is, else it is an ssh host as typed into the picker; then the picker's host discovery over ssh, which remembers the host in `remote-hosts.json`, and the board is read from the host. That host list is the only file this writes: the board is viewed, never copied (no board file, viewport, composer or `open-boards.json` entry). The user's current tab stays in front unless `select` is true. A board already open from that host is answered (`alreadyOpen`) without asking the host again, selected when `select` is true, never opened twice. Fails `unavailable` when the host can't be reached or its easl doesn't answer, `not_found` when the host has no such board open (its `board.list` says which are `open`), `ambiguous` when two hosts have that name, `invalid_params` for a host that isn't one word or a board that isn't a board id. */
+    open_remote(params: BoardOpenRemoteParams): Promise<BoardOpenRemoteResult>;
     /** Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller. */
     export(params?: BoardExportParams): Promise<BoardExportResult>;
   };
@@ -1886,6 +1912,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       history: (params?: BoardHistoryParams) => call("board.history", params ?? {}, ["board"]) as Promise<BoardHistoryResult>,
       list: (params?: BoardListParams) => call("board.list", params ?? {}, []) as Promise<BoardListResult>,
       open: (params: BoardOpenParams) => call("board.open", params ?? {}, []) as Promise<BoardOpenResult>,
+      open_remote: (params: BoardOpenRemoteParams) => call("board.open_remote", params ?? {}, []) as Promise<BoardOpenRemoteResult>,
       export: (params?: BoardExportParams) => call("board.export", params ?? {}, ["board"]) as Promise<BoardExportResult>,
     },
     object: {
@@ -1954,7 +1981,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"] as const;
+export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

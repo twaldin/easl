@@ -428,6 +428,11 @@ class BoardApi:
         params = {"root": root, "select": select}
         return self._call("board.open", params, [])
 
+    def open_remote(self, *, host: str, board: "Id", select: bool | None = None) -> dict[str, Any]:
+        """The Mac app only (easld answers `unsupported`): open a board another Mac's easl hosts, as File › Open Remote… does, as a tab of the frontmost board window (its own window when there is none), viewed live over ssh (docs/contracts.md "Remote boards"). `host` is found as the picker finds it: the host opened before (`remote-hosts.json`) or the tailnet Mac whose ssh target or name it is, else it is an ssh host as typed into the picker; then the picker's host discovery over ssh, which remembers the host in `remote-hosts.json`, and the board is read from the host. That host list is the only file this writes: the board is viewed, never copied (no board file, viewport, composer or `open-boards.json` entry). The user's current tab stays in front unless `select` is true. A board already open from that host is answered (`alreadyOpen`) without asking the host again, selected when `select` is true, never opened twice. Fails `unavailable` when the host can't be reached or its easl doesn't answer, `not_found` when the host has no such board open (its `board.list` says which are `open`), `ambiguous` when two hosts have that name, `invalid_params` for a host that isn't one word or a board that isn't a board id."""
+        params = {"host": host, "board": board, "select": select}
+        return self._call("board.open_remote", params, [])
+
     def export(self, *, board: "Id" | None = None, path: str | None = None) -> dict[str, Any]:
         """Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller."""
         params = {"board": board, "path": path}
@@ -710,7 +715,7 @@ class GeneratedApi:
         self.client = ClientApi(call)
         self.text = TextApi(call)
 
-METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"]
+METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

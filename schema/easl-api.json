@@ -17,7 +17,7 @@
     "unavailable": "target exists but cannot act right now (e.g. a terminal tile without an attached surface), or the app is not running: no attached client (client.attach) serves the call, it didn't answer in time, or it disconnected before answering",
     "timeout": "agent.wait deadline passed before the agent reached a requested state",
     "internal": "unexpected server failure",
-    "ambiguous": "an address (a terminal's name, `name@board`, a board's name) matches more than one terminal or open board; the message lists each candidate as `name@board (tile id)`, so the caller can name one"
+    "ambiguous": "an address (a terminal's name, `name@board`, a board's name, `board.open_remote`'s host name) matches more than one terminal, open board or host; the message lists each candidate (a terminal as `name@board (tile id)`, a host by its ssh target), so the caller can name one"
   },
   "definitions": {
     "Id": { "type": "string", "pattern": "^[a-z]+_[0-9A-Za-z]+$", "description": "Prefixed id, e.g. obj_01H…, men_…" },
@@ -944,6 +944,33 @@
             },
             "additionalProperties": false
           }
+        }
+      }
+    },
+    "board.open_remote": {
+      "description": "The Mac app only (easld answers `unsupported`): open a board another Mac's easl hosts, as File › Open Remote… does, as a tab of the frontmost board window (its own window when there is none), viewed live over ssh (docs/contracts.md \"Remote boards\"). `host` is found as the picker finds it: the host opened before (`remote-hosts.json`) or the tailnet Mac whose ssh target or name it is, else it is an ssh host as typed into the picker; then the picker's host discovery over ssh, which remembers the host in `remote-hosts.json`, and the board is read from the host. That host list is the only file this writes: the board is viewed, never copied (no board file, viewport, composer or `open-boards.json` entry). The user's current tab stays in front unless `select` is true. A board already open from that host is answered (`alreadyOpen`) without asking the host again, selected when `select` is true, never opened twice. Fails `unavailable` when the host can't be reached or its easl doesn't answer, `not_found` when the host has no such board open (its `board.list` says which are `open`), `ambiguous` when two hosts have that name, `invalid_params` for a host that isn't one word or a board that isn't a board id.",
+      "unfilled": ["board"],
+      "params": {
+        "type": "object",
+        "required": ["host", "board"],
+        "properties": {
+          "host": { "type": "string", "description": "the host as File › Open Remote… names it: a tailnet Mac's name (`twaldin-work`) or ssh target, a host opened before (`remote-hosts.json` `name` or `sshTarget`), an ssh config alias, or `user@host`" },
+          "board": { "$ref": "#/definitions/Id", "description": "the board's id on the host (`brd_…`, from its `board.list`); never filled from this terminal's board" },
+          "select": { "type": "boolean", "default": false, "description": "bring the board's tab to the front, as `board.open`'s `select` does: this switches the user's tab, so only when they asked to see that board" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["host", "sshTarget", "board", "root", "title", "window", "alreadyOpen"],
+        "properties": {
+          "host": { "type": "string", "description": "the host as the tab names it" },
+          "sshTarget": { "type": "string", "description": "what ssh connects to (a tailnet Mac's DNS name, else the host as given)" },
+          "board": { "$ref": "#/definitions/Id" },
+          "root": { "type": "string", "description": "the board's root on the host" },
+          "title": { "type": "string", "description": "the tab's title, `<root's name> @ <host>`" },
+          "window": { "type": "integer", "description": "the tab's window number (each tab is a window), as `screencapture -l` and yabai take it" },
+          "alreadyOpen": { "type": "boolean", "description": "the tab was open already: nothing was opened" }
         }
       }
     },
