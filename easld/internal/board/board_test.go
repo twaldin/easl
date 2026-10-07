@@ -385,8 +385,8 @@ func TestANewCodeTileWithoutAFrameWidensToItsFilesLongestLine(t *testing.T) {
 	}
 	a := strings.Repeat("a", 100)
 	write("wide.ts", "short\r\n\t"+strings.Repeat("x", 150)+"\r\nshort\r\n") // CRLF dropped, the tab 4: 154 columns
-	write("cr.ts", a+"\ry\n")                                                  // a lone CR stays a column: 102
-	write("bad.ts", a+"\xE2\x82\n")                                            // one U+FFFD for the cut-off sequence: 101
+	write("cr.ts", a+"\ry\n")                                                // a lone CR stays a column: 102
+	write("bad.ts", a+"\xE2\x82\n")                                          // one U+FFFD for the cut-off sequence: 101
 	write("huge.js", strings.Repeat("y", 300)+"\n")
 	write("short.ts", "let a = 1\n")
 	width := func(columns, lines int) float64 {
