@@ -37,6 +37,13 @@ fires on the main run loop, follows the view's screen, and is paused when idle a
 frame is owed, never recreated. UIKit, and macOS 13, keep MSDisplayLink. Diff:
 `patches/libghostty-spm-frame-link.patch`.
 
+The view's link asks for 60 Hz flat (`CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)`;
+upstream's shared link prefers 120). A terminal gains nothing from 120, and on a ProMotion display
+every frame the window updates costs a Core Animation commit of the whole layer tree on the main
+thread and a WindowServer composite: fifteen agent terminals whose spinners retitle every 80 ms
+kept a visible board updating ~120 times a second all night (easl 17-19% GPU, WindowServer ~50%
+CPU with the user idle). Part of the frame-link patch.
+
 What this doesn't remove: libghostty's own renderer (the prebuilt xcframework) runs a
 `CVDisplayLink` of its own per surface, and upstream's `syncDisplayLink` (`src/renderer/generic.zig`)
 starts it when a frame has cell changes and stops it after the next draw that has none. Every

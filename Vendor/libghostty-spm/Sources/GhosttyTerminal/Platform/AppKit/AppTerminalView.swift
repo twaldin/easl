@@ -182,8 +182,11 @@
             self.tick = tick
             super.init()
             let link = view.displayLink(target: self, selector: #selector(step))
-            // As the shared link: 60 at least while output streams (30 reads as flicker).
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+            // 60 while output streams: 30 reads as flicker on a scrolling screen, and 120 buys
+            // a terminal nothing while costing a ProMotion board one layer-tree commit and one
+            // WindowServer composite per frame (fifteen agent terminals' spinners kept a visible
+            // board at ~120 updates/s all night: easl 17-19% GPU, WindowServer ~50% CPU).
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
             link.isPaused = true
             link.add(to: .main, forMode: .common)
             self.link = link
