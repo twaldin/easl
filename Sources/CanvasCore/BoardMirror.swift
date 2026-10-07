@@ -34,7 +34,8 @@ protocol BoardHost: AnyObject {
 /// so a failed write puts the host's object back (and says why in `onNotice`). A created object
 /// takes the host's id when its create is answered (`Board.rekeyHost`). Back online after a drop,
 /// the board is read again and the difference applied; the host's events wait while it is read
-/// and follow it, so none is undone by the read.
+/// and follow it, so none is undone by the read. Once both links are back, `onRedraw` tells the
+/// tiles that show the host's drawings to ask for new ones.
 @MainActor
 public final class BoardMirror: BoardHost {
     /// The host as the user knows it, for titles and notices.
@@ -52,6 +53,11 @@ public final class BoardMirror: BoardHost {
     public var onState: ((EaslConnection.State) -> Void)?
     /// Something to tell the user (a write the host refused, a create that failed).
     public var onNotice: ((String) -> Void)?
+    /// A link dropped and is back, the board has been read again, and the render link is online:
+    /// the tiles that show the host's drawing of an object ask for a fresh one (once). The read
+    /// announces only objects that changed, so a drawing that failed or went stale while a link
+    /// was down would otherwise stay as it is until the object changes.
+    public var onRedraw: (() -> Void)?
 
     /// The host's objects as last heard (a reply, an event, a read), by host id.
     private var known: [ObjectID: CanvasObject] = [:]
@@ -76,6 +82,12 @@ public final class BoardMirror: BoardHost {
     /// The host's events that arrived while the board was being read or a create was in flight,
     /// applied in order once neither is (`release`), so nothing they say is undone or doubled.
     private var held: [EaslConnection.Event] = []
+    /// The tiles' drawings may be stale or failed: a link dropped after the board loaded, or the
+    /// render link was offline when it did, and `onRedraw` hasn't been told since.
+    private var redrawDue = false
+    /// `renders`' state as last heard (the board's own link is `state`). It starts as the first
+    /// connect's, `connecting`, whether or not that was heard yet.
+    private(set) var rendersState: EaslConnection.State = .connecting
     /// The link went down after the board loaded: read it again once back online.
     private var stale = false
     /// How many times the link went down after the board loaded (a read that spans one reads again).
@@ -106,6 +118,9 @@ public final class BoardMirror: BoardHost {
         self.board = board
         install(objects, on: board)
         reading = nil
+        // The tiles are made now: they ask over a render link that is offline and fail at once, and
+        // that is a drawing to ask for again. (A drop heard before the board was read is no debt.)
+        redrawDue = rendersState == .offline
         release()
         return board
     }
@@ -119,12 +134,15 @@ public final class BoardMirror: BoardHost {
     }
 
     private func listen() {
-        let events = connection.events(), states = connection.states()
+        let events = connection.events(), states = connection.states(), renderStates = renders.states()
         listeners.append(Task { @MainActor [weak self] in
             for await event in events { self?.received(event) }
         })
         listeners.append(Task { @MainActor [weak self] in
             for await state in states { self?.changed(state) }
+        })
+        listeners.append(Task { @MainActor [weak self] in
+            for await state in renderStates { self?.rendersChanged(state) }
         })
     }
 
@@ -135,9 +153,29 @@ public final class BoardMirror: BoardHost {
         if state != .online {
             stale = true
             drops += 1
+            redrawDue = true
         }
         onState?(state)
         if state == .online, stale { Task { await reread() } }
+    }
+
+    /// The render link's next state. Only `offline` is a drop (a link that went down, or an attempt
+    /// that failed: drawings asked for meanwhile failed, or came from before); `connecting` is the
+    /// first connect, or the next attempt after a drop, and heard late it is no reason to draw
+    /// again. Internal for the tests, which hear it where the stream would.
+    func rendersChanged(_ state: EaslConnection.State) {
+        guard state != rendersState else { return }
+        rendersState = state
+        if state == .offline { redrawDue = true }
+        drawAgainIfDue()
+    }
+
+    /// Tells `onRedraw` once both links are online and the board is as the host has it: after a
+    /// read, or when the render link is the last to come back.
+    private func drawAgainIfDue() {
+        guard redrawDue, board != nil, reading == nil, !stale, state == .online, rendersState == .online else { return }
+        redrawDue = false
+        onRedraw?()
     }
 
     /// Why the link isn't online, for the user (ssh's reason); nil while online.
@@ -226,6 +264,7 @@ public final class BoardMirror: BoardHost {
         } while again
         reading = nil
         release()
+        drawAgainIfDue()
     }
 
     /// Applies a read of the whole board: what the read has, unless newer is here already

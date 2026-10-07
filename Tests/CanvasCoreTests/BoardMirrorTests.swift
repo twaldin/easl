@@ -38,11 +38,11 @@ final class BoardMirrorTests {
         SocketServer(path: path) { request, connection in await router.handle(request, connection: connection) }
     }
 
-    func mirror() async throws -> (BoardMirror, Board) {
+    func mirror(rendersAt renderSocket: String? = nil) async throws -> (BoardMirror, Board) {
         // The whole suite keeps the main actor (the router's) busy for seconds at a time.
         let fast = EaslConnection.Backoff(initial: .milliseconds(50), maximum: .milliseconds(200))
-        func link() -> EaslConnection { .unixSocket(socket, backoff: fast, handshakeTimeout: .seconds(60)) }
-        let mirror = BoardMirror(hostName: "home", board: host.id, connection: link(), renders: link())
+        func link(_ path: String) -> EaslConnection { .unixSocket(path, backoff: fast, handshakeTimeout: .seconds(60)) }
+        let mirror = BoardMirror(hostName: "home", board: host.id, connection: link(socket), renders: link(renderSocket ?? socket))
         mirrors.append(mirror)
         return (mirror, try await mirror.load())
     }
@@ -54,6 +54,67 @@ final class BoardMirrorTests {
 
     func note(_ markdown: String, at x: Double = 0) -> CanvasObject {
         host.create(type: .note, props: .object(["markdown": .string(markdown)]), frame: Frame(x: x, y: 0, w: 280, h: 200))
+    }
+
+    // MARK: Host-drawn tiles
+
+    /// The host's render link as the tiles see it, on a socket of its own: counts each
+    /// `view.render` it gets by object and answers it with a canned image.
+    let renderCounts = Locked<[ObjectID: Int]>([:])
+    var renderSocket: String { dir.appendingPathComponent("r").path }
+    var rendered: [ObjectID: Int] { renderCounts.withLock { $0 } }
+
+    func serveRenders() -> SocketServer {
+        let counts = renderCounts, router = router
+        return SocketServer(path: renderSocket) { request, connection in
+            guard request["method"]?.string == "view.render" else { return await router.handle(request, connection: connection) }
+            counts.withLock { $0[request["params"]?["target"]?.string ?? "?", default: 0] += 1 }
+            return .object(["id": request["id"] ?? .null, "ok": .bool(true), "result": .object([
+                "data": .string(Data("not a picture".utf8).base64EncodedString()),
+                "canvasRect": .object(["x": .number(0), "y": .number(0), "w": .number(10), "h": .number(10)]), "scale": .number(1),
+            ])])
+        }
+    }
+
+    /// What `CanvasView` does with a remote board's host-drawn tiles: one `RemoteDrawing` per
+    /// object, drawn when the object appears, again when it changes, and when the mirror says so.
+    @MainActor final class Tiles {
+        private let mirror: BoardMirror
+        private var drawings: [ObjectID: RemoteDrawing] = [:]
+        /// How often the mirror said to draw again.
+        private(set) var redraws = 0
+        /// Each answer by object: whether it was the host's drawing.
+        private(set) var answers: [ObjectID: [Bool]] = [:]
+
+        init(_ mirror: BoardMirror, on board: Board) {
+            self.mirror = mirror
+            board.onEvent = { [weak self] event in
+                guard let self else { return }
+                switch event {
+                case .objectCreated(let object): add(object)
+                case .objectUpdated(let object): drawings[object.id]?.changed()
+                default: break
+                }
+            }
+            mirror.onRedraw = { [weak self] in
+                guard let self else { return }
+                redraws += 1
+                for drawing in drawings.values { drawing.redraw() }
+            }
+            for object in board.objects.values { add(object) }
+        }
+
+        private func add(_ object: CanvasObject) {
+            guard drawings[object.id] == nil else { return }
+            let id = object.id
+            // Weak: a test can end with a render out, and `close` answers it after the test is gone.
+            let drawing = RemoteDrawing(object: id, mirror: mirror, settle: 0.2, scale: { 1 }, drawn: { [weak self] outcome in
+                guard let self else { return }
+                if case .success = outcome { answers[id, default: []].append(true) } else { answers[id, default: []].append(false) }
+            })
+            drawings[id] = drawing
+            drawing.draw()
+        }
     }
 
     @Test func theViewerShowsTheHostsBoardWholeAndFollowsItsChanges() async throws {
@@ -182,6 +243,111 @@ final class BoardMirrorTests {
         try await eventually { mirror.state == .online }
         try await eventually { board.objects[gone.id] == nil && board.objects[added.id] != nil && board.objects[kept.id] == host.objects[kept.id] }
         #expect(states.last == .online && states.contains { $0 != .online })
+    }
+
+    // MARK: Host-drawn tiles after a reconnect (`RemoteDrawing`, `BoardMirror.onRedraw`)
+
+    @Test func afterOnlyTheBoardLinkDropsEachTileDrawsOnceMoreAndOneBuiltMeanwhileDrawsOnce() async throws {
+        let renderServer = serveRenders()
+        try renderServer.start()
+        defer { renderServer.stop() }
+        let kept = note("kept"), changed = note("changed", at: 400)
+        let (mirror, board) = try await mirror(rendersAt: renderSocket)
+        defer { mirror.close() }
+        let tiles = Tiles(mirror, on: board)
+        try await eventually { rendered == [kept.id: 1, changed.id: 1] }
+        // Only the board's link drops: the render link stays up while the host changes.
+        server.stop()
+        try await eventually { mirror.state != .online }
+        #expect(mirror.rendersState == .online)
+        #expect(tiles.redraws == 0, "nothing is drawn while the host can't be reached")
+        let added = note("added while away", at: 800)
+        _ = try host.update(changed.id, props: .object(["markdown": .string("changed while away")]))
+        server = Self.serve(router, at: socket)
+        try server.start()
+        // The read makes the added object's tile (it asks for its drawing at once, the request not
+        // sent yet) and tells the changed one's (its own redraw waits for the changes to settle);
+        // then the mirror says "draw again". Each is asked for exactly once more, the new one once.
+        try await eventually { tiles.redraws == 1 && board.objects[added.id] != nil }
+        try await eventually { rendered == [kept.id: 2, changed.id: 2, added.id: 1] }
+        try await eventually { tiles.answers.values.map(\.count).reduce(0, +) == 5 }
+        // Every answer is in and the settle time has passed: nothing follows.
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(rendered == [kept.id: 2, changed.id: 2, added.id: 1])
+        #expect(tiles.redraws == 1)
+        #expect(tiles.answers.values.flatMap { $0 }.allSatisfy { $0 }, "each answer was a drawing")
+    }
+
+    @Test func aRenderLinkConnectingHeardLateIsNoDropAndEachTileDrawsOnce() async throws {
+        let renderServer = serveRenders()
+        try renderServer.start()
+        defer { renderServer.stop() }
+        let first = note("first"), second = note("second", at: 400)
+        let (mirror, board) = try await mirror(rendersAt: renderSocket)
+        defer { mirror.close() }
+        let tiles = Tiles(mirror, on: board)
+        try await eventually { rendered == [first.id: 1, second.id: 1] }
+        // The render link's first `connecting` reaches the mirror only now, after the board was
+        // read and the tiles drew (a relay's launch can hold the link's queue for longer than the
+        // board's read takes; the stream can't be held up here), and then its `online`: the first
+        // connect, no disconnect, so nothing is drawn again.
+        mirror.rendersChanged(.connecting)
+        mirror.rendersChanged(.online)
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(tiles.redraws == 0)
+        #expect(rendered == [first.id: 1, second.id: 1])
+    }
+
+    @Test func aDrawingThatFailedBecauseTheRenderLinkWasDownIsAskedForOnceItIsBack() async throws {
+        let first = note("first"), second = note("second", at: 400)
+        // Nothing listens on the render socket: the link's first connect fails.
+        let (mirror, board) = try await mirror(rendersAt: renderSocket)
+        defer { mirror.close() }
+        let tiles = Tiles(mirror, on: board)
+        try await eventually { tiles.answers.values.flatMap { $0 } == [false, false] }
+        #expect(rendered.isEmpty && tiles.redraws == 0)
+        let renderServer = serveRenders()
+        try renderServer.start()
+        defer { renderServer.stop() }
+        try await eventually { tiles.redraws == 1 }
+        try await eventually { rendered == [first.id: 1, second.id: 1] }
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(rendered == [first.id: 1, second.id: 1])
+        #expect(tiles.redraws == 1)
+        #expect(tiles.answers.values.flatMap { $0 }.sorted { !$0 && $1 } == [false, false, true, true])
+    }
+
+    @Test func theTilesDrawAgainOnlyOnceTheRenderLinkIsBackToo() async throws {
+        // The render link has its own socket here, so it can be the last to come back.
+        var renderServer = serveRenders()
+        try renderServer.start()
+        defer { renderServer.stop() }
+        let kept = note("kept")
+        let (mirror, board) = try await mirror(rendersAt: renderSocket)
+        defer { mirror.close() }
+        let tiles = Tiles(mirror, on: board)
+        try await eventually { rendered == [kept.id: 1] }
+        server.stop()
+        renderServer.stop()
+        try await eventually { mirror.state != .online && mirror.rendersState != .online }
+        let added = note("added while away", at: 800)
+        server = Self.serve(router, at: socket)
+        try server.start()
+        // The board link is back and read; nothing is drawn through a render link that is not. The new
+        // tile's request fails at once: the render link comes back only after that answer, or the
+        // request could still be queued for it (the one case that renders a tile twice: a request
+        // sent before the link's handshake ends is not told apart from one sent before the drop).
+        try await eventually { board.objects[added.id] != nil }
+        try await eventually { tiles.answers[added.id] == [false] }
+        #expect(mirror.state == .online && tiles.redraws == 0)
+        renderServer = serveRenders()
+        try renderServer.start()
+        try await eventually { tiles.redraws == 1 }
+        // The tile built while the render link was down failed at once; the one before it is drawn again.
+        try await eventually { rendered == [kept.id: 2, added.id: 1] }
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(rendered == [kept.id: 2, added.id: 1])
+        #expect(tiles.redraws == 1)
     }
 
     /// Runs `body` once, on the main actor (a test's host changes, from a server's handler).

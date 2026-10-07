@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - **A plain shell on a Linux host finds easld's socket.** The TS client, the `easl` CLI and the Python SDK defaulted to the Mac app's `~/Library/Application Support/Easl/easl.sock` everywhere, so on a host that runs easld (a deckbox) `easl` needed `EASL_SOCKET` set by hand outside a terminal tile. Off macOS the default is now easld's own socket: `$EASL_HOME/easl.sock`, else `$XDG_STATE_HOME/easl/easl.sock`, else `~/.local/state/easl/easl.sock`, still only when it exists and still after an explicit value and `EASL_SOCKET`. macOS is unchanged.
+- **A remote board redraws its host-drawn tiles after a reconnect.** When the link to the host dropped and came back, the board was read again, but a code, changes, HTML, browser, image or diagram tile whose object hadn't changed kept the drawing it had: a "Not drawn" badge from a render that failed while the link was down, or an image from before the drop. Once both links to the host are back and the board has been read, each of those tiles now asks the host for a fresh drawing, once; ↻ on a tile still asks again.
 
 ## 0.2.2
 
