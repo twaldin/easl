@@ -23,40 +23,41 @@ A native Mac app for macOS 14 or later on Apple silicon, with no AI of its own. 
 
 ## install
 
-Requires macOS 14 or later on Apple silicon.
+Requires macOS 14 or later on Apple silicon. easl is signed with a Developer ID and notarized by Apple.
 
-1. Quit easl if it's running, then run the installer. It downloads the latest release from [Releases](https://github.com/twaldin/easl/releases), checks its SHA-256 and moves `easl.app` to `/Applications` (`~/Applications` if that isn't writable), with no sudo ([read the script](https://easl.sh/install.txt)). curl sets no quarantine flag, so easl opens with no Gatekeeper prompt.
+1. Install it with Homebrew. Installing by the full name trusts only this cask, so there's no `brew trust` step.
+   ```sh
+   brew install --cask twaldin/tap/easl
+   ```
+   `brew upgrade --cask easl` updates it; it quits easl first, and terminal tiles keep running.
+2. Or quit easl if it's running and run the installer. It downloads the latest release from [Releases](https://github.com/twaldin/easl/releases), checks its SHA-256 and moves `easl.app` to `/Applications` (`~/Applications` if that isn't writable), with no sudo ([read the script](https://easl.sh/install.txt)).
    ```sh
    curl -fsSL https://easl.sh/install | sh
    ```
-2. Or download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, and move `easl.app` to `/Applications`. It's ad-hoc signed, so Gatekeeper blocks the first launch. Clear the quarantine flag:
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/easl.app
-   ```
-   Or open it once, then choose **Open Anyway** in System Settings › Privacy & Security. On macOS 14, right-clicking the app and choosing **Open** also works; macOS 15 removed that shortcut.
-3. Install the runtime tools. Terminal tiles need zmx. The `easl` CLI and every agent integration need [bun](https://bun.sh).
+3. Or download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, move `easl.app` to `/Applications` and open it. It's notarized, so it opens like any downloaded app.
+4. Install the runtime tools. Terminal tiles need zmx. The `easl` CLI and every agent integration need [bun](https://bun.sh).
    ```sh
    brew install neurosnap/tap/zmx oven-sh/bun/bun
    ```
    The Python SDK needs Python 3.11 or later; macOS's own `python3` is 3.9 (`brew install python` for a newer one).
-4. Optional, for omp: link the easl extension. omp then reports its state, drives follow tiles, and gets the easl skill.
+5. Optional, for omp: link the easl extension. omp then reports its state, drives follow tiles, and gets the easl skill.
    ```sh
    mkdir -p ~/.omp/agent/extensions
    ln -sf /Applications/easl.app/Contents/Resources/extensions/omp/easl.ts ~/.omp/agent/extensions/easl.ts
    ```
-5. Optional, for code navigation: install the language servers you want (sourcekit-lsp, pyright, typescript-language-server, gopls, rust-analyzer). Without one, Go to Definition, Find References and Outline answer by text search. [docs/install.md](docs/install.md#language-servers) has the install commands and how easl finds a server.
+6. Optional, for code navigation: install the language servers you want (sourcekit-lsp, pyright, typescript-language-server, gopls, rust-analyzer). Without one, Go to Definition, Find References and Outline answer by text search. [docs/install.md](docs/install.md#language-servers) has the install commands and how easl finds a server.
 
 ## first steps
 
 1. Open easl. It opens a board on your home folder, with **Get Started** beside a practice note. Help › Get Started brings it back.
 2. Hyper-click the practice note: hold ⌃⌥⇧⌘ and click a paragraph. A purple chip, the mention, appears in the tray at the bottom of the window. Without a Hyper key, select the note and press ⇧⌘M, or map Caps Lock to Hyper in [Karabiner-Elements](https://karabiner-elements.pqrs.org): Complex Modifications › Add predefined rule › "Change caps_lock to command+control+option+shift".
-3. Press ⌘T for a terminal and run your agent: `claude`, `codex`, `opencode`, or `omp` with its extension (install step 4). Codex first asks whether to trust the folder.
+3. Press ⌘T for a terminal and run your agent: `claude`, `codex`, `opencode`, or `omp` with its extension (install step 5). Codex first asks whether to trust the folder.
 4. Ask it something, like "what does this note say?". The chip goes with your prompt, and Get Started checks off both steps.
 5. Open your project with File › Open Board… (⇧⌘O), open a file as a code tile with ⌘O, and Hyper-click a line of it.
 
 ## uninstall
 
-End the terminal sessions first, or they keep running: `zmx list`, then `zmx kill <name>` for each `canvas-obj_…` session. Then delete `/Applications/easl.app` and the files easl writes, listed step by step in [docs/install.md](docs/install.md#uninstall). easl edits no shell, agent or Ghostty config.
+End the terminal sessions first, or they keep running: `zmx list`, then `zmx kill <name>` for each `canvas-obj_…` session. Then delete `/Applications/easl.app` (with Homebrew: `brew uninstall --cask easl`) and the files easl writes, listed step by step in [docs/install.md](docs/install.md#uninstall). easl edits no shell, agent or Ghostty config.
 
 ## build from source
 

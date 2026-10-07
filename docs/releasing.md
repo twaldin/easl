@@ -59,17 +59,10 @@ Drop `--generate-notes` while no earlier release is published (`gh release list 
 
 With the secrets set (One-time setup, step 6), bump `VERSION`, then push a `v*` tag.
 
-## Once releases are notarized
+## After every release
 
-After the first notarized release, replace step 2 of the README's Install section with:
-
-```markdown
-2. Or download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, move `easl.app` to `/Applications` and open it. It's signed with a Developer ID and notarized by Apple, so it opens like any downloaded app.
-```
-
-and drop "It's ad-hoc signed, not notarized: run `xattr -dr com.apple.quarantine /Applications/easl.app`, or open it once and choose Open Anyway in System Settings › Privacy & Security." from that version's install line in `CHANGELOG.md`.
-
-Every release, and every replaced zip (a notarized rebuild of the same version), also updates the installer's pins (`curl -fsSL https://easl.sh/install | sh`): `RELEASE` in canvas-site `src/brand/brand.ts`, `sha256` included (`curl -fsSL <zip url> | shasum -a 256`), then republish easl.sh. The installer downloads the pinned version's zip and refuses one whose SHA-256 doesn't match, so until then it installs nothing.
+- **Homebrew.** The Release workflow's last step updates the cask `easl` in [twaldin/homebrew-tap](https://github.com/twaldin/homebrew-tap) (`brew install --cask twaldin/tap/easl`). It downloads the release's zip (whoever published it), checks with `spctl` that it's notarized, writes `Casks/easl.rb` from `scripts/homebrew-cask.sh <version> <sha256>` and pushes it with the tap's write deploy key (the `HOMEBREW_TAP_DEPLOY_KEY` secret). A zip that isn't notarized leaves the tap alone with a warning: Homebrew quarantines what a cask downloads and doesn't support casks that fail Gatekeeper. To redo it by hand, from this checkout with the tap cloned at `<tap>`: `mkdir -p <tap>/Casks && scripts/homebrew-cask.sh 0.2.2 <sha256> > <tap>/Casks/easl.rb`, then commit and push in `<tap>`.
+- **The installer's pins.** Every release, and every replaced zip (a notarized rebuild of the same version), also updates `curl -fsSL https://easl.sh/install | sh`: `RELEASE` in canvas-site `src/brand/brand.ts`, `sha256` included (`curl -fsSL <zip url> | shasum -a 256`), then republish easl.sh. The installer downloads the pinned version's zip and refuses one whose SHA-256 doesn't match, so until then it installs nothing.
 
 ## Hardened runtime
 
