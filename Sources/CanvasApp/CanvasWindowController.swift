@@ -83,6 +83,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         window.tabbingIdentifier = "net.waldin.easl.board"
         super.init(window: window)
         window.delegate = self
+        // The titlebar's Update button, shown while a newer easl is on offer (`Updater`).
+        Updater.shared.attach(to: window)
         // Terminal references by file name (`core.py:10`) resolve through the listing (a remote
         // board's files are its host's).
         if remote == nil { BoardFiles.of(board.root).refresh() }
