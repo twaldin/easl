@@ -97,8 +97,10 @@ function replyPath(address: string): string {
   return `agent://${at < 0 ? encodeURIComponent(address) : `${encodeURIComponent(address.slice(0, at))}@${encodeURIComponent(address.slice(at + 1))}`}`;
 }
 
-/** The `<` of an `irc` or `system-*` tag (omp's harness tags), opening or closing. */
-const HARNESS_TAG = /<(?=\s*\/?\s*(?:irc|system-[a-z][a-z-]*)(?![\w-]))/gi;
+/** The block easl's hidden guidance is in: standing orders the system prompt states defer to it (easl.ts). */
+export const GUIDANCE_BLOCK = "easl-guidance";
+/** The `<` of an `irc` or `system-*` tag (omp's harness tags) or of easl's guidance block, opening or closing. */
+const HARNESS_TAG = /<(?=\s*\/?\s*(?:irc|easl-guidance|system-[a-z][a-z-]*)(?![\w-]))/gi;
 /** The line of an envelope that names its message. */
 const ENVELOPE_ID = /^\(easl message (msg_[\w-]+)\)$/gm;
 

@@ -15,7 +15,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { type AgentMessage, CanvasClient, CanvasError } from "../../clients/ts/src/index";
 import { numberedDiffChanges } from "../agent-hooks/follow";
-import { COALESCE_MS, card, EASL_MESSAGE, guided, PROTOCOL, peerAddress, plan, recordedIds, renderCard, sender, senderKey, WakeBudget } from "../agent-hooks/messages";
+import { COALESCE_MS, card, EASL_MESSAGE, GUIDANCE_BLOCK, guided, PROTOCOL, peerAddress, plan, recordedIds, renderCard, sender, senderKey, WakeBudget } from "../agent-hooks/messages";
 import { release, report, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
@@ -368,9 +368,8 @@ export default function canvas(pi: ExtensionAPI): void {
   // Messages this session took that omp hasn't recorded yet, by id: held below, or handed to omp
   // (`handed`). One easl offers again (a new connection) is not delivered twice.
   const waiting = new Map<string, AgentMessage>();
-  // Handed to omp and not recorded yet: whether that delivery started a turn, when it went, and
-  // the messages that went with it (its card).
-  const handed = new Map<string, { started: boolean; at: number; with: string[] }>();
+  // Handed to omp and not recorded yet: whether that delivery started a turn, and when it went.
+  const handed = new Map<string, { started: boolean; at: number }>();
   // What omp recorded in this session (its `easl.messages` entries): offered again (easl never
   // took the ack: a lost connection, a restart), it is acked, not delivered.
   let recorded = new Set<string>();
@@ -390,8 +389,9 @@ export default function canvas(pi: ExtensionAPI): void {
   // guidance and standing orders that hook adds, or with standing orders since changed. So every
   // card's id is marked, and until omp next prepares a turn, each request of a turn it didn't
   // prepare gets the guidance and the standing orders as they are now (read once a turn) as
-  // hidden context, just before the first marked card (`guided`). `prepared`: omp prepared the
-  // turn running now.
+  // hidden context, just before the first marked card (`guided`), in the block the standing
+  // orders of the system prompt defer to (`standingOrders`, `guidanceBlock`). `prepared`: omp
+  // prepared the turn running now; a card that starts a run ends it.
   const marked = new Set<string>();
   let prepared = false;
   let policy: Promise<string> | undefined;
@@ -505,31 +505,30 @@ export default function canvas(pi: ExtensionAPI): void {
     const ids = messages.map((message) => message.id);
     // `steer` and `turn` go in as a steer: at the running turn's next step, an interruptible wait
     // cut short. An omp streaming nothing (idle, or awaiting background work) starts a turn with
-    // the card instead (`triggerTurn`). `aside` joins the step omp streams without interrupting it.
+    // the card instead (`triggerTurn`), one it doesn't prepare: whatever omp prepared before (a
+    // turn now paused, a preparation the user cancelled) is over. `aside` joins the step omp
+    // streams without interrupting it.
+    if (session ? session.isIdle() : !active) {
+      prepared = false;
+      policy = undefined;
+    }
     mark(ids);
     pi.sendMessage(card(messages), how === "aside" ? { deliverAs: "aside" } : { deliverAs: "steer", triggerTurn: true });
     const at = Date.now();
-    for (const id of ids) handed.set(id, { started: how === "turn", at, with: ids });
+    for (const id of ids) handed.set(id, { started: how === "turn", at });
     recordCheck ??= setTimeout(unrecorded, RECORD_MS);
   }
 
   // A card may start a turn omp doesn't prepare: now, or by being left in omp's queue at a run's
   // end. Such a turn's requests get the guidance and standing orders before_agent_start would
-  // have put in its system prompt; the standing orders as they are now replace any that system
-  // prompt still has, and with none now, it says so.
+  // have put in its system prompt, in the block that system prompt's standing orders defer to.
   function mark(ids: readonly string[]): void {
     for (const id of ids) marked.add(id);
     if (listening) return;
     listening = true;
     pi.on("context", async (event) => {
       if (prepared || marked.size === 0) return;
-      policy ??= boardRules(client).then((rules) =>
-        rules === undefined
-          ? guidance
-          : rules === null
-            ? `${guidance}\n\nThis board has no standing orders now (no note keyed \`${RULES_KEY}\`): disregard any standing orders earlier in your system prompt.`
-            : `${guidance}\n\n${standingOrders(rules)}\n\nThese are the board's standing orders now: they replace any standing orders earlier in your system prompt.`,
-      );
+      policy ??= boardRules(client).then((rules) => guidanceBlock(guidance, rules));
       return { messages: guided(event.messages, marked, await policy) };
     });
   }
@@ -539,7 +538,7 @@ export default function canvas(pi: ExtensionAPI): void {
   // omp offered them again acks them), then easl gets the ack.
   pi.on("message_end", (event) => {
     if (waiting.size === 0) return;
-    const ids = [...new Set(recordedIds(event.message).flatMap((id) => handed.get(id)?.with ?? [id]))].filter((id) => waiting.has(id));
+    const ids = [...new Set(recordedIds(event.message))].filter((id) => waiting.has(id));
     if (ids.length === 0) return;
     const started = ids.filter((id) => handed.get(id)?.started);
     for (const id of ids) {
@@ -745,9 +744,28 @@ async function boardRules(client: CanvasClient): Promise<string | null | undefin
   return typeof markdown === "string" && markdown.trim() ? capBytes(markdown.trim(), RULES_MAX_BYTES) : null;
 }
 
-/** The board's standing orders (`boardRules`) as a system prompt entry. */
+/**
+ * The board's standing orders (`boardRules`) as a system prompt entry. A turn omp starts without
+ * preparing it keeps this system prompt, so the entry defers to the `guidanceBlock` easl gives
+ * such a turn, which has them as they are then.
+ */
 function standingOrders(rules: string): string {
-  return `Standing orders for this board (its note keyed \`${RULES_KEY}\`, read fresh each turn; the user and the board's chief of staff edit it). Follow them:\n\n${rules}`;
+  return `Standing orders for this board (its note keyed \`${RULES_KEY}\` as of this prompt; the user and the board's chief of staff edit it). Follow them. A later <${GUIDANCE_BLOCK}> block that gives this board's standing orders, or says it has none, supersedes these.\n\n${rules}`;
+}
+
+/**
+ * easl's guidance and the board's standing orders as they are now (`boardRules`; nothing about
+ * them when easl doesn't answer), in the block the standing orders of a system prompt easl
+ * prepared defer to: hidden context for a turn omp didn't prepare.
+ */
+function guidanceBlock(guidance: string, rules: string | null | undefined): string {
+  const orders =
+    rules === undefined
+      ? ""
+      : rules === null
+        ? `\n\nThis board has no standing orders now (no note keyed \`${RULES_KEY}\`): any in your system prompt no longer apply.`
+        : `\n\nStanding orders for this board (its note keyed \`${RULES_KEY}\` as of now; the user and the board's chief of staff edit it). They supersede any in your system prompt. Follow them:\n\n${rules}`;
+  return `<${GUIDANCE_BLOCK}>\n${guidance}${orders}\n</${GUIDANCE_BLOCK}>`;
 }
 
 /** `text` cut to at most `max` UTF-8 bytes on a character boundary, with a notice when it was cut. */
