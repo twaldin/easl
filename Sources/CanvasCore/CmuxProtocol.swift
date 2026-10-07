@@ -152,6 +152,10 @@ public enum CmuxEval {
 public enum BrowserURL {
     static let schemes: Set<String> = ["http", "https", "about", "file", "data"]
 
+    /// Where a browser tile the user makes without an address opens (New Browser Here, File ›
+    /// New Browser Tile… left empty). An agent's tile without one stays `about:blank`.
+    public static let home = URL(string: "https://www.google.com/")!
+
     /// Full URLs pass through; bare hosts get a scheme (http for local hosts, https otherwise).
     /// Text that isn't an address (spaces, no dot or port) returns nil.
     public static func normalize(_ input: String) -> URL? {

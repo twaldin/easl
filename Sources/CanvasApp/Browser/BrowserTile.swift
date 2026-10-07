@@ -735,7 +735,7 @@ final class BrowserTile: NSView, TileContent {
         return browserTile?(opened.id)?.adoptPopup(configuration, opener: objectID, returnsToOpener: actor == .user)
     }
 
-    /// Puts keyboard focus in the address field (a new, empty tile the user made; ⌘L).
+    /// Puts keyboard focus in the address field (a new tile the user made; ⌘L).
     func focusAddress() {
         chrome.focusAddress()
     }
@@ -1160,13 +1160,13 @@ final class BrowserTile: NSView, TileContent {
     }
 
     /// File > New Browser Tile: asks for an address and hands it to `open` (which places the
-    /// tile in view). A sheet, not an app-modal alert, so the sockets keep answering agents
-    /// while the user types.
+    /// tile in view); left empty, the home page (`BrowserURL.home`). A sheet, not an app-modal
+    /// alert, so the sockets keep answering agents while the user types.
     static func promptForNew(in window: NSWindow, open: @escaping @MainActor (URL) -> Void) {
         let alert = NSAlert()
         alert.messageText = "New Browser Tile"
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        field.placeholderString = "localhost:3000 or https://…"
+        field.placeholderString = "localhost:3000 or https://… (empty: Google)"
         alert.accessoryView = field
         alert.addButton(withTitle: "Open")
         alert.addButton(withTitle: "Cancel")
@@ -1174,7 +1174,7 @@ final class BrowserTile: NSView, TileContent {
         alert.beginSheetModal(for: window) { response in
             guard response == .alertFirstButtonReturn else { return }
             let text = field.stringValue.trimmingCharacters(in: .whitespaces)
-            guard let url = text.isEmpty ? URL(string: "about:blank") : BrowserURL.normalize(text) else { return NSSound.beep() }
+            guard let url = text.isEmpty ? BrowserURL.home : BrowserURL.normalize(text) else { return NSSound.beep() }
             open(url)
         }
     }

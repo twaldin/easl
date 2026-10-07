@@ -1227,10 +1227,10 @@ final class CanvasView: NSScrollView {
         showNew(createHere(.note, props: .object(["markdown": .string("")]), at: point))
     }
 
-    /// An empty browser tile at a document point (`createHere`), with the address field focused
-    /// for the user to type where to go.
+    /// A new browser tile on the home page (`BrowserURL.home`) at a document point (`createHere`),
+    /// with the address field focused for the user to type where to go.
     func createBrowser(at point: NSPoint) {
-        let browser = createHere(.browser, props: .object(["url": .string("about:blank")]), at: point)
+        let browser = createHere(.browser, props: .object(["url": .string(BrowserURL.home.absoluteString)]), at: point)
         setSelection([browser.id])
         DispatchQueue.main.async { [weak self] in
             (self?.tiles[browser.id]?.content as? BrowserTile)?.focusAddress()

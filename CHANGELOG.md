@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Google Docs text is sharp in browser tiles. A browser tile now tells its page the size and place of its "window" (`window.outerWidth`, `outerHeight`, `screenX`, `screenY`), as Safari does. Before, outerWidth was 0, and Docs, taking outerWidth / innerWidth for the browser's zoom, drew its text at a quarter of the screen's resolution.
+- A new browser tile you make without an address (New Browser Here, File › New Browser Tile… left empty) opens Google instead of a blank page. Agents' tiles still start blank.
 
 ## 0.2.1
 
