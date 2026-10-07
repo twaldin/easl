@@ -425,6 +425,11 @@ function metricsText(m: Metrics): string {
   ];
   if (m.longest) lines.push(`         longest ${Math.round(m.longest.ms)} ms, ${Math.round(m.longest.agoS)} s ago: ${m.longest.cause}`);
   lines.push(`process  cpu ${p.cpuPercent ?? 0}%  wakeups ${p.interruptWakeupsPerS ?? 0}/s  memory ${m.process.footprintMB ?? 0} MB (peak ${m.process.peakFootprintMB ?? 0})`);
+  const keys = c("key.wait"), keysTotal = c("key.wait", "total");
+  if (keysTotal.n) {
+    // How long keys into terminals waited for the main thread (a stall holds them) and how long handing them to Ghostty took.
+    lines.push(`keys     ${keys.n} (total ${keysTotal.n}), waited ${ms((keys.ms ?? 0) / (keys.n || 1))} ms mean, ${ms(keys.maxMs)} ms max (total max ${ms(keysTotal.maxMs)}); handling ${ms(c("key.handle").maxMs)} ms max`);
+  }
   for (const h of m.process.helpers ?? []) lines.push(`         ${h.name} ${h.pid}: ${h.footprintMB} MB${h.cpuPercent === undefined ? "" : `, ${h.cpuPercent}%`}`);
   // Requests by method: every request counts `api.in.<method>` on arrival and `api.<method>` when
   // answered; `api.main.<method>` is the main-thread part of its dispatches (a batch's operations

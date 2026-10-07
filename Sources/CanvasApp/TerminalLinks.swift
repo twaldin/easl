@@ -124,6 +124,23 @@ final class CanvasTerminalView: TerminalView {
         updateHover(at: convert(event.locationInWindow, from: nil), command: event.modifierFlags.contains(.command))
     }
 
+    /// How long the key waited in the event queue for the main thread (`event.timestamp` is the
+    /// press, on the uptime clock) and how long handing it to Ghostty's key handler took: summed
+    /// in `KeyLatency` here (six numbers, no lock, no allocation) and handed to `Metrics` once a
+    /// second by one long-lived timer (`KeyLatencyFlush`), for `easl metrics` "keys". A
+    /// main-thread stall holds every key typed during it and releases them together, late and in
+    /// order; a long wait here is the board's doing, upstream of the terminal, zmx and the
+    /// program. `key.handle` ends at the hand-over: Ghostty queues the PTY write for its IO
+    /// thread, which this doesn't see, and a consumed binding or a composing IME key writes
+    /// nothing at all.
+    override func keyDown(with event: NSEvent) {
+        let waited = (ProcessInfo.processInfo.systemUptime - event.timestamp) * 1000
+        let start = Metrics.now()
+        super.keyDown(with: event)
+        let handled = (Metrics.now() - start) * 1000
+        KeyLatencyFlush.shared.latency.add(waitMs: waited, handleMs: handled)
+    }
+
     override func flagsChanged(with event: NSEvent) {
         super.flagsChanged(with: event)
         guard let window else { return }
@@ -184,5 +201,37 @@ final class TerminalLinkUnderline: NSView {
     override func draw(_ dirtyRect: NSRect) {
         color.setFill()
         rects.forEach { $0.fill() }
+    }
+}
+
+/// The second's key batch into Metrics: a repeating main-queue timer that costs a wakeup a second
+/// and nothing on the key path; `flush` also runs before an `app.metrics` snapshot or reset (so a
+/// key typed before a reset lands in its own epoch) and logs once when keys waited 50 ms or more.
+@MainActor
+final class KeyLatencyFlush {
+    static let shared = KeyLatencyFlush()
+    var latency = KeyLatency()
+    private var timer: DispatchSourceTimer?
+
+    private init() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(100))
+        timer.setEventHandler { MainActor.assumeIsolated { KeyLatencyFlush.shared.flush() } }
+        timer.resume()
+        self.timer = timer
+        Metrics.flushBeforeSnapshot = { KeyLatencyFlush.shared.flush() }
+    }
+
+    /// Called once at launch so the timer and the snapshot hook exist before the first key.
+    func start() {}
+
+    func flush() {
+        let batch = latency.flush()
+        guard !batch.isEmpty else { return }
+        Metrics.shared.record("key.wait", batchMs: batch.waitMs, maxMs: batch.waitMaxMs, count: batch.keys)
+        Metrics.shared.record("key.handle", batchMs: batch.handleMs, maxMs: batch.handleMaxMs, count: batch.keys)
+        if batch.late > 0 {
+            NSLog("easl: %d of %d keys waited %.0f ms or more for the main thread (longest %.0f ms)", batch.late, batch.keys, KeyLatency.lateMs, batch.waitMaxMs)
+        }
     }
 }

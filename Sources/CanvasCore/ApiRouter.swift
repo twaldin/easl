@@ -1096,6 +1096,7 @@ public final class ApiRouter {
 
         case "app.metrics":
             if p["watch"]?.bool == true { Metrics.shared.watching() }
+            Metrics.flushBeforeSnapshot?()
             let snapshot = Metrics.shared.snapshot()
             if p["reset"]?.bool == true { Metrics.shared.reset() }
             return snapshot
