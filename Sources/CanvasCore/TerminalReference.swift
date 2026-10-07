@@ -390,8 +390,9 @@ extension Board {
     ///   it since (moved, resized, re-based, re-aimed: its `rev`) and the user hasn't kept it
     ///   (`keepCode`: scrolled, clicked or selected in it, opened it in an editor), as
     ///   navigation (`reaimForNavigation`: not an undo step, Back re-aims it back);
-    /// - else a new tile opens beside the terminal (`place(near:)`, shrunk down to
-    ///   `followMinimumSize` to land wholly in view) and becomes the terminal's preview.
+    /// - else a new tile opens beside the terminal (`place(near:)`), as wide as its file's lines
+    ///   need (`newCodeSize`) and only its height cut down, to `followMinimumSize`'s, to land in
+    ///   view, and becomes the terminal's preview.
     /// `newTile` (⌥⌘-click) always opens a new tile, which the user keeps.
     @discardableResult
     public func openCode(path: String, lines: LineRange?, beside tile: ObjectID, newTile: Bool = false) -> CodeOpened {
@@ -407,9 +408,9 @@ extension Board {
                 return CodeOpened(id: object.id, created: false, reaim: reaim)
             }
         }
-        let size = Board.defaultSize(.code)
-        let created = create(type: .code, props: .object(["path": .string(stored), "range": range].filter { $0.value != .null }),
-                             frame: place(width: size.w, height: size.h, near: tile, shrinkingTo: Self.followMinimumSize))
+        let props: JSONValue = .object(["path": .string(stored), "range": range].filter { $0.value != .null })
+        let size = newCodeSize(props)
+        let created = create(type: .code, props: props, frame: place(width: size.w, height: size.h, near: tile, shrinkingTo: (size.w, Self.followMinimumSize.h)))
         if !newTile { codePreviews[tile] = (created.id, created.rev) }
         return CodeOpened(id: created.id, created: true, reaim: nil)
     }

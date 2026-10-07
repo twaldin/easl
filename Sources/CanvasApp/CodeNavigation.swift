@@ -440,9 +440,9 @@ final class CodeNavigation: NSObject {
         let go = { [weak self] () -> CodeReaim? in
             var opened = CodeOpened(id: tile, created: false, reaim: nil)
             if newTile {
-                let size = Board.defaultSize(.code)
-                opened.id = board.create(type: .code, props: .object(["path": .string(aim.path), "range": location.range.lines.json]),
-                                         frame: board.place(width: size.w, height: size.h, near: tile)).id
+                let props: JSONValue = .object(["path": .string(aim.path), "range": location.range.lines.json])
+                let size = board.newCodeSize(props)
+                opened.id = board.create(type: .code, props: props, frame: board.place(width: size.w, height: size.h, near: tile)).id
             } else {
                 opened = board.openForNavigation(aim, from: tile)
             }

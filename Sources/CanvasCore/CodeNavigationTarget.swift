@@ -159,8 +159,9 @@ extension Board {
         if let symbol = aim.symbol { props["symbol"] = .string(symbol) }
         if let pinnedCommit = aim.pinnedCommit { props["pinnedCommit"] = .string(pinnedCommit) }
         if let ref = aim.ref { props["ref"] = .string(ref) }
-        let size = Board.defaultSize(.code)
-        let frame = source.map { place(width: size.w, height: size.h, near: $0, shrinkingTo: Board.followMinimumSize) }
+        // As wide as the file's lines need; only its height may be cut down to land in view.
+        let size = newCodeSize(.object(props))
+        let frame = source.map { place(width: size.w, height: size.h, near: $0, shrinkingTo: (size.w, Board.followMinimumSize.h)) }
             ?? place(width: size.w, height: size.h, near: nil)
         let created = create(type: .code, props: .object(props), frame: frame)
         if preview, let source { codePreviews[source] = (created.id, created.rev) }

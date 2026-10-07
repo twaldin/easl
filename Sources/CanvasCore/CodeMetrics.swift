@@ -46,10 +46,13 @@ public enum CodeMetrics {
     public static let trailingPadding: CGFloat = 12
     /// Narrowest frame the header controls fit in.
     public static let minWidth: CGFloat = 280
+    /// Text columns a code tile is widened to hold when nobody names its width.
+    public static let autoColumns = 200
     /// Widest frame `size: "fit"` and `object.measure` give a code tile when the caller names no
-    /// width: about 120 columns of text, which holds lines within the usual formatter limits
-    /// (80–120) unwrapped while one long line can't stretch a tile across a whole board.
-    public static let defaultFitWidth: CGFloat = 960
+    /// width, and the widest a new tile without a frame gets (`autoWidth`): `autoColumns` columns
+    /// beside a 4-digit gutter, so lines past the usual formatter limits (80–120) stay unwrapped
+    /// too, while one minified or generated line can't stretch a tile across a whole board.
+    public static let defaultFitWidth = (gutterWidth(lineCount: 1) + CGFloat(autoColumns) * charAdvance + trailingPadding).rounded(.up)
     /// Continuation rows start this many columns right of their line's indentation.
     public static let wrapIndent = 2
 
@@ -89,6 +92,15 @@ public enum CodeMetrics {
         let width = gutterWidth + CGFloat(max(0, longestLine)) * charAdvance + trailingPadding
         let height = headerHeight + 2 * verticalPadding + CGFloat(max(1, rows)) * rowHeight
         return CGSize(width: max(minWidth, width.rounded(.up)), height: height.rounded(.up))
+    }
+
+    /// Frame width of a new code tile without a frame (opened by a click or created without one)
+    /// over a file of `lineCount` lines whose longest is `longestLine` columns, its content drawn
+    /// at `zoom`: `defaultWidth`, widened so that line doesn't wrap, up to `defaultFitWidth` of
+    /// content (200 columns at any zoom). Never narrower than the default.
+    public static func autoWidth(longestLine: Int, lineCount: Int, zoom: Double, defaultWidth: CGFloat) -> CGFloat {
+        let needed = min((gutterWidth(lineCount: lineCount) + CGFloat(longestLine) * charAdvance + trailingPadding).rounded(.up), defaultFitWidth)
+        return max(defaultWidth, (needed * CGFloat(zoom)).rounded(.up))
     }
 
     /// Columns one UTF-16 unit other than a tab takes. East Asian wide and fullwidth characters

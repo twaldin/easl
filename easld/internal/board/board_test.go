@@ -2,12 +2,14 @@ package board
 
 import (
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/store"
 )
@@ -368,5 +370,50 @@ func TestFollowHistoryToleratesEntriesThatArentObjects(t *testing.T) {
 	got := follow.Props["history"].([]any)
 	if len(got) != FollowHistoryLimit || got[0].(map[string]any)["path"] != "b.go" || got[1] != "junk" {
 		t.Fatalf("history %v", got)
+	}
+}
+
+// A new code tile without a frame is as wide as its file's longest line needs at its zoom (200
+// columns at most), never narrower than the default (Board.newCodeSize). The same files, and
+// widths, as BoardTests' aNewCodeTileWithoutAFrameWidensToItsFilesLongestLine.
+func TestANewCodeTileWithoutAFrameWidensToItsFilesLongestLine(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, text string) {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := strings.Repeat("a", 100)
+	write("wide.ts", "short\r\n\t"+strings.Repeat("x", 150)+"\r\nshort\r\n") // CRLF dropped, the tab 4: 154 columns
+	write("cr.ts", a+"\ry\n")                                                // a lone CR stays a column: 102
+	write("bad.ts", a+"\xE2\x82\n")                                          // one U+FFFD for the cut-off sequence: 101
+	write("huge.js", strings.Repeat("y", 300)+"\n")
+	write("short.ts", "let a = 1\n")
+	width := func(columns, lines int) float64 {
+		return math.Ceil(measure.GutterWidth(lines) + float64(columns)*measure.CharAdvance + measure.TrailingPadding)
+	}
+	b := New("brd", root)
+	fallback, _ := DefaultSize(model.Code)
+	for _, c := range []struct {
+		props map[string]any
+		frame *model.Frame
+		w     float64
+	}{
+		{map[string]any{"path": "wide.ts"}, nil, width(154, 3)},
+		{map[string]any{"path": filepath.Join(root, "wide.ts")}, nil, width(154, 3)},
+		{map[string]any{"path": "cr.ts"}, nil, width(102, 1)},
+		{map[string]any{"path": "bad.ts"}, nil, width(101, 1)},
+		{map[string]any{"path": "wide.ts", "zoom": 1.5}, nil, math.Ceil(width(154, 3) * 1.5)},
+		{map[string]any{"path": "huge.js"}, nil, measure.DefaultFitWidth},
+		{map[string]any{"path": "short.ts"}, nil, fallback},
+		{map[string]any{"path": "gone.ts"}, nil, fallback},
+		{map[string]any{"path": "wide.ts", "pinnedCommit": "HEAD"}, nil, fallback},
+		{map[string]any{"path": "wide.ts", "ref": "main"}, nil, fallback},
+		{map[string]any{"path": "wide.ts", "followOf": "obj_t"}, nil, fallback},
+		{map[string]any{"path": "wide.ts"}, frame(0, 0, 500, 300), 500},
+	} {
+		if got := b.Create(model.Code, c.props, c.frame, "", ""); got.Frame.W != c.w {
+			t.Errorf("%v: width %v, want %v", c.props, got.Frame.W, c.w)
+		}
 	}
 }

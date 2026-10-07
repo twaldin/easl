@@ -464,6 +464,10 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 	if typ == model.Question {
 		w, h = question.Size(props)
 	}
+	// A code tile without a frame is as wide as its file's lines need.
+	if typ == model.Code && frame == nil {
+		w, h = b.NewCodeSize(props)
+	}
 	if typ == model.Terminal {
 		props = b.stampingWorktree(props)
 	}
