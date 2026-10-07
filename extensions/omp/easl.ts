@@ -15,7 +15,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { type AgentMessage, CanvasClient, CanvasError } from "../../clients/ts/src/index";
 import { numberedDiffChanges } from "../agent-hooks/follow";
-import { COALESCE_MS, deliveryText, PROTOCOL, peerAddress, plan, recordedIds, senderKey, WakeBudget } from "../agent-hooks/messages";
+import { COALESCE_MS, card, guided, PROTOCOL, peerAddress, plan, recordedIds, sender, senderKey, WakeBudget } from "../agent-hooks/messages";
 import { release, report, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
@@ -343,6 +343,7 @@ export default function canvas(pi: ExtensionAPI): void {
     if (!active) {
       final = lastAnswer(event.messages);
       failure = turnError(event.messages);
+      unprepared = undefined;
     }
     publish();
     if (!active) setTimeout(releaseAfterTurn, 0);
@@ -350,11 +351,12 @@ export default function canvas(pi: ExtensionAPI): void {
 
   // Out-of-band messages (docs/contracts.md, Peer messages): easl queues `agent.prompt` for this
   // tile instead of typing into it, and the root session takes them with one long poll and hands
-  // them to omp as user messages, so the editor (a half-typed draft) and an open question or
-  // approval stay as they are. A message is acked once omp has recorded it (the user message
-  // carrying its header, `message_end`); until then easl keeps it. Polls and acks go over the
-  // inbox connection only: what easl answers is held by that connection, and any call on it
-  // that fails closes it, so easl offers what it held again.
+  // them to omp as IRC cards (custom `irc:incoming` messages, as omp delivers its own agents'
+  // messages), so the editor (a half-typed draft) and an open question or approval stay as they
+  // are, and the session tells them from the user's prompts. A message is acked once omp has
+  // recorded it (the card carrying its id, `message_end`); until then easl keeps it. Polls and
+  // acks go over the inbox connection only: what easl answers is held by that connection, and any
+  // call on it that fails closes it, so easl offers what it held again.
   const inbox = new CanvasClient({ timeoutMs: INBOX_WAIT_MS + 15_000, reconnectTimeoutMs: 0 });
   const wakes = new WakeBudget();
   // The session (with a UI) messages go into: whether omp streams, or holds queued messages.
@@ -362,8 +364,9 @@ export default function canvas(pi: ExtensionAPI): void {
   // Messages this session took that omp hasn't recorded yet, by id: held below, or handed to omp
   // (`handed`). One easl offers again (a new connection) is not delivered twice.
   const waiting = new Map<string, AgentMessage>();
-  // Handed to omp and not recorded yet: whether that delivery started a turn, and when it went.
-  const handed = new Map<string, { started: boolean; at: number }>();
+  // Handed to omp and not recorded yet: whether that delivery started a turn, when it went, and
+  // the messages that went with it (its card).
+  const handed = new Map<string, { started: boolean; at: number; with: string[] }>();
   // What omp recorded in this session (its `easl.messages` entries): offered again (easl never
   // took the ack: a lost connection, a restart), it is acked, not delivered.
   let recorded = new Set<string>();
@@ -376,6 +379,16 @@ export default function canvas(pi: ExtensionAPI): void {
   let polling = false;
   // A session switch whose report easl hasn't answered yet: messages arriving meanwhile were the old session's.
   let switching = false;
+  // A turn a card starts at an omp streaming nothing, not prepared yet: omp starts it without
+  // before_agent_start (AgentSession #promptAgentInitiatedMessage, oh-my-pi v18.6.1
+  // packages/coding-agent/src/session/agent-session.ts L8209-L8229), so without the guidance and
+  // standing orders that hook adds to the system prompt. Until omp prepares a turn or the run
+  // settles, each request gets them as hidden context before the card (`guided`), the standing
+  // orders read once for the run.
+  let unprepared: { ids: Set<string>; policy?: Promise<string> } | undefined;
+  // omp deep-copies every request's context once any extension listens for it (`context`), so
+  // this one listens from the first such turn on.
+  let listening = false;
 
   // The session messages go into from now: nothing held is for it (easl bounces what the session
   // before never recorded), and what it recorded is in its entries.
@@ -385,6 +398,7 @@ export default function canvas(pi: ExtensionAPI): void {
     handed.clear();
     afterTurn = [];
     nextStart = [];
+    unprepared = undefined;
     recorded = new Set(
       ctx.sessionManager.getEntries().flatMap((entry) => (entry.type === "custom" && entry.customType === RECORDED_ENTRY ? ((entry.data as { ids?: string[] } | undefined)?.ids ?? []) : [])),
     );
@@ -477,22 +491,39 @@ export default function canvas(pi: ExtensionAPI): void {
   function send(messages: readonly AgentMessage[], how: "steer" | "turn" | "aside"): void {
     if (messages.length === 0) return;
     if (how !== "aside") wakes.spend(new Set(messages.map(senderKey)));
-    // A script's message is on the user's behalf: with one among them, the delivery is the user's.
-    const attribution = messages.some((message) => message.attribution === "user") ? "user" : "agent";
-    // `aside` at an idle omp starts a turn (and stays non-interrupting should a run start meanwhile).
-    pi.sendUserMessage(deliveryText(messages), { deliverAs: how === "steer" ? "steer" : "aside", attribution });
+    const ids = messages.map((message) => message.id);
+    // `steer` and `turn` go in as a steer: at the running turn's next step, an interruptible wait
+    // cut short. An omp streaming nothing (idle, or awaiting background work) starts a turn with
+    // the card instead (`triggerTurn`), one it doesn't prepare. `aside` joins the step omp
+    // streams without interrupting it.
+    if (how !== "aside" && (session ? session.isIdle() : !active)) unprepare(ids);
+    pi.sendMessage(card(messages), how === "aside" ? { deliverAs: "aside" } : { deliverAs: "steer", triggerTurn: true });
     const at = Date.now();
-    for (const message of messages) handed.set(message.id, { started: how === "turn", at });
+    for (const id of ids) handed.set(id, { started: how === "turn", at, with: ids });
     recordCheck ??= setTimeout(unrecorded, RECORD_MS);
   }
 
-  // omp recorded a user message: the messages whose headers it carries are in its session now.
-  // Their ids go into it too (a restarted omp offered them again acks them), then easl gets the ack.
+  // The turn the card with `ids` starts gets the guidance and standing orders before_agent_start
+  // would have put in its system prompt.
+  function unprepare(ids: readonly string[]): void {
+    unprepared ??= { ids: new Set() };
+    for (const id of ids) unprepared.ids.add(id);
+    if (listening) return;
+    listening = true;
+    pi.on("context", async (event) => {
+      const run = unprepared;
+      if (!run) return;
+      run.policy ??= standingOrders(client).then((orders) => (orders ? `${guidance}\n\n${orders}` : guidance));
+      return { messages: guided(event.messages, run.ids, await run.policy) };
+    });
+  }
+
+  // omp recorded a message: the easl messages it carries (a card, or the one a `wait` took from
+  // omp's queue as its result) are in its session now. Their ids go into it too (a restarted omp
+  // offered them again acks them), then easl gets the ack.
   pi.on("message_end", (event) => {
-    const message = event.message as { role?: unknown; content?: unknown };
-    if (message.role !== "user" || waiting.size === 0) return;
-    const text = typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.map((part) => (part?.type === "text" ? part.text : "")).join("\n") : "";
-    const ids = recordedIds(text).filter((id) => waiting.has(id));
+    if (waiting.size === 0) return;
+    const ids = [...new Set(recordedIds(event.message).flatMap((id) => handed.get(id)?.with ?? [id]))].filter((id) => waiting.has(id));
     if (ids.length === 0) return;
     const started = ids.filter((id) => handed.get(id)?.started);
     for (const id of ids) {
@@ -520,7 +551,8 @@ export default function canvas(pi: ExtensionAPI): void {
       for (const message of lost) handed.delete(message.id);
       nextStart.push(...lost);
       if (lost.length > 0) {
-        const senders = [...new Set(lost.map((message) => message.from.address ?? message.from.name))].join(", ");
+        unprepared = undefined;
+        const senders = [...new Set(lost.map(sender))].join(", ");
         const what = lost.length === 1 ? "the message" : `${lost.length} messages`;
         session.ui.notify(`easl: omp started no turn with ${what} from ${senders}; easl keeps ${lost.length === 1 ? "it" : "them"} for the next turn that starts`, "warning");
       }
@@ -598,6 +630,8 @@ export default function canvas(pi: ExtensionAPI): void {
   // packages/agent/src/agent-loop.ts L1317-L1324), so committing at agent_start would leave a
   // steering prompt's mentions uncommitted. A retried preparation gets the same context again.
   pi.on("before_agent_start", async (event) => {
+    // omp prepares this turn: its system prompt has the guidance and standing orders from here on.
+    unprepared = undefined;
     const orders = await standingOrders(client);
     const systemPrompt = [...event.systemPrompt, guidance, ...(orders ? [orders] : [])];
     const delivered = staged.filter((entry) => event.prompt.includes(entry.prompt));

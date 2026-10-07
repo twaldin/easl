@@ -28,29 +28,109 @@ export function senderKey(message: AgentMessage): string {
 }
 
 /**
- * The line ahead of a message: its id, who sent it and how to reply. The id is how the
- * integration knows omp recorded the message (`recordedIds`); the reply's `agent://` URI has its
- * name and board percent-encoded, which `peerAddress` decodes.
+ * The custom message omp makes of an IRC message to its agent: its TUI draws it as a card
+ * (`IRC ← <from>` over the quoted text), and session history and retros print it as
+ * `[irc] <from> → me: <text>`, apart from the user's prompts.
  */
-export function header(message: AgentMessage): string {
+export const IRC_INCOMING = "irc:incoming";
+
+/** A card's `details`: the fields omp's card and history read, and the messages it carries. */
+export type CardDetails = {
+  /** the message's id (a burst's first) */
+  id: string;
+  /** who sent it (`sender`; a burst's senders, joined) */
+  from: string;
+  /** what the sender wrote, unescaped (a burst's texts, joined) */
+  message: string;
+  /** every message the card carries, acked once omp records it */
+  easl: { ids: string[] };
+};
+
+/** One delivery as omp's `pi.sendMessage` takes it. */
+export type Card = { customType: typeof IRC_INCOMING; content: string; display: true; details: CardDetails; attribution: AgentMessage["attribution"] };
+
+/**
+ * One delivery as one card: a burst goes in as one message, so it is steered, starts a turn, is
+ * recorded and acked as a whole. The content, what the model reads, has each message in omp's
+ * IRC envelope (`envelope`).
+ */
+export function card(messages: readonly AgentMessage[]): Card {
+  const ids = messages.map((message) => message.id);
+  return {
+    customType: IRC_INCOMING,
+    content: messages.map(envelope).join("\n\n"),
+    display: true,
+    details: { id: ids[0], from: [...new Set(messages.map(sender))].join(", "), message: messages.map((message) => message.text.trim()).join("\n\n"), easl: { ids } },
+    // A script's message is on the user's behalf: with one among them, the delivery is the user's.
+    attribution: messages.some((message) => message.attribution === "user") ? "user" : "agent",
+  };
+}
+
+/** Who sent a message: its terminal's address, else the script's label or the closed terminal's id. */
+export function sender(message: AgentMessage): string {
+  return message.from.address ?? message.from.name;
+}
+
+/**
+ * One message as omp's own IRC envelope puts it: its id, who sent it and how to reply (the
+ * `agent://` path with the address's name and board percent-encoded, which `peerAddress`
+ * decodes), then its text and its mentions' block. What others wrote can't close the envelope or
+ * open a harness block of its own.
+ */
+function envelope(message: AgentMessage): string {
   const from = message.from;
-  const intro = `[message ${message.id} from`;
-  if (!from.tile) return `${intro} ${from.name}, a script; no reply address]`;
-  if (!from.address) return `${intro} terminal ${from.tile}, closed since it sent this; no reply address]`;
-  const named = from.address === from.tile ? `terminal ${from.tile}` : `${from.address} (terminal ${from.tile})`;
-  const at = from.address.lastIndexOf("@");
-  const uri = at < 0 ? encodeURIComponent(from.address) : `${encodeURIComponent(from.address.slice(0, at))}@${encodeURIComponent(from.address.slice(at + 1))}`;
-  return `${intro} ${named}; reply with write agent://${uri}]`;
+  const who = !from.tile ? `\`${from.name}\`, a script` : !from.address ? `terminal ${from.tile}, closed since it sent this` : from.address === from.tile ? `terminal ${from.tile}` : `\`${from.address}\` (terminal ${from.tile})`;
+  const reply = from.tile && from.address ? `If a response is expected, reply via \`write\` (\`path: "${replyPath(from.address)}"\`, \`content: "…"\`).` : "It has no reply address.";
+  // omp's escapeHarnessTags: what others wrote reaches the model as written, but for `<` of an
+  // `irc` or `system-*` tag.
+  const said = `Incoming easl message ${message.id} from ${who}:\n\n${[message.text.trim(), message.context].filter(Boolean).join("\n\n")}`;
+  return `<irc>\n${said.replace(HARNESS_TAG, "&lt;")}\n\n${reply}\n</irc>`;
 }
 
-/** The ids of the messages whose headers a user message carries: the messages omp recorded with it. */
-export function recordedIds(text: string): string[] {
-  return [...text.matchAll(/^\[message (msg_[\w-]+) from /gm)].map((match) => match[1]);
+/** `agent://<address>` as omp's `write` takes it, the name and board percent-encoded. */
+function replyPath(address: string): string {
+  const at = address.lastIndexOf("@");
+  return `agent://${at < 0 ? encodeURIComponent(address) : `${encodeURIComponent(address.slice(0, at))}@${encodeURIComponent(address.slice(at + 1))}`}`;
 }
 
-/** What one delivery hands the agent: each message under its header, its mentions' block after its text. */
-export function deliveryText(messages: readonly AgentMessage[]): string {
-  return messages.map((message) => [header(message), message.text.trim(), message.context].filter(Boolean).join("\n")).join("\n\n");
+/** The `<` of an `irc` or `system-*` tag (omp's harness tags), opening or closing. */
+const HARNESS_TAG = /<(?=\s*\/?\s*(?:irc|system-[a-z][a-z-]*)(?![\w-]))/gi;
+
+/** The fields of an omp session message `recordedIds` reads. */
+export type Recorded = { role?: unknown; customType?: unknown; toolName?: unknown; details?: unknown; timestamp?: unknown };
+
+/**
+ * The ids of the easl messages omp recorded with `message`: an easl card's, or the one omp's
+ * `wait` took from its queue as its result instead of injecting the card (that card's `id`).
+ */
+export function recordedIds(message: Recorded): string[] {
+  const details = message.details;
+  if (!details || typeof details !== "object") return [];
+  if (message.role === "custom" && message.customType === IRC_INCOMING) {
+    const easl = "easl" in details ? details.easl : undefined;
+    const ids = easl && typeof easl === "object" && "ids" in easl ? easl.ids : undefined;
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+  }
+  if (message.role !== "toolResult" || message.toolName !== "wait" || !("waited" in details)) return [];
+  const waited = details.waited;
+  return waited && typeof waited === "object" && "id" in waited && typeof waited.id === "string" ? [waited.id] : [];
+}
+
+/** The hidden context `guided` adds: omp hands it to the model as developer context, and never records it. */
+export const GUIDANCE = "easl.guidance";
+export type Guidance = { role: "custom"; customType: typeof GUIDANCE; content: string; display: false; attribution: "agent"; timestamp: number };
+
+/**
+ * One request's messages with `text` as hidden context: just before the card carrying one of
+ * `ids` (the card that started the turn), else before the last message, so the request ends on
+ * what it ended on.
+ */
+export function guided<M extends Recorded>(messages: readonly M[], ids: ReadonlySet<string>, text: string): (M | Guidance)[] {
+  const found = messages.findIndex((message) => recordedIds(message).some((id) => ids.has(id)));
+  const at = found >= 0 ? found : Math.max(messages.length - 1, 0);
+  const stamp = messages[at]?.timestamp;
+  const guidance: Guidance = { role: "custom", customType: GUIDANCE, content: text, display: false, attribution: "agent", timestamp: typeof stamp === "number" ? stamp : Date.now() };
+  return [...messages.slice(0, at), guidance, ...messages.slice(at)];
 }
 
 /** How a message goes in now. */

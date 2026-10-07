@@ -67,6 +67,8 @@ function fakeEasl() {
     sessionReported: undefined as Promise<void> | undefined,
     /** Fails the next agent.report_session call it matches after applying it, as a reply lost to a timeout. */
     failingSession: undefined as ((params: Params) => boolean) | undefined,
+    /** The markdown of the board's note keyed `rules` (object.find), if it has one. */
+    rules: undefined as string | undefined,
     send(queued: AgentMessage): void {
       easl.queue.push(queued);
       const waiter = waiters.findIndex((w) => open.has(w.connection));
@@ -110,6 +112,7 @@ function fakeEasl() {
         return void socket.write(`${JSON.stringify({ id, ok: false, error: { code: "timeout", message: "agent.report_session timed out" } })}\n`);
       }
     }
+    if (method === "object.find") return void answer(socket, id, easl.rules ? { object: { type: "note", props: { markdown: easl.rules } } } : {});
     if (method !== "agent.inbox") return void answer(socket, id, {});
     const acked: string[] = params.ack ?? [];
     if (easl.failing?.(params)) {
@@ -162,13 +165,14 @@ function fakeEasl() {
 
 /** omp with the extension loaded, its root session (with a UI) idle until `state` says otherwise. */
 function fakeOmp(easl: { socketPath: string }, entries: Params[] = [], sessionId = "ses_1") {
-  Object.assign(process.env, { EASL_ENV: "1", EASL_TILE_ID: TILE, EASL_SOCKET: easl.socketPath });
+  Object.assign(process.env, { EASL_ENV: "1", EASL_TILE_ID: TILE, EASL_SOCKET: easl.socketPath, EASL_BOARD_ID: "brd_c" });
   const handlers = new Map<string, Handler[]>();
   const state = { streaming: false, pending: false, sessionId };
   const omp = {
     state,
     entries,
-    delivered: [] as { text: string; deliverAs?: string; attribution?: string }[],
+    /** Each `pi.sendMessage`: the card and how it goes in. */
+    delivered: [] as { message: Params; options: Params }[],
     notices: [] as string[],
     /** Each session's branch, root first (`grow`). */
     branches: {} as Record<string, Params[]>,
@@ -203,14 +207,22 @@ function fakeOmp(easl: { socketPath: string }, entries: Params[] = [], sessionId
     async emit(event: string, payload: Params = {}): Promise<void> {
       for (const handler of handlers.get(event) ?? []) await handler({ type: event, ...payload }, omp.ctx);
     },
-    /** omp records a user message with this text (its `message_end`). */
-    record(text: string): Promise<void> {
-      return omp.emit("message_end", { message: { role: "user", content: [{ type: "text", text }], attribution: "agent", timestamp: Date.now() } });
+    /** omp records a card it was handed (its `message_end`). */
+    record(card: Params): Promise<void> {
+      return omp.emit("message_end", { message: { role: "custom", ...card, timestamp: Date.now() } });
+    },
+    /** The messages one provider request sends, as the extension's `context` handlers leave them. */
+    async request(messages: Params[]): Promise<Params[]> {
+      for (const handler of handlers.get("context") ?? []) {
+        const result = await handler({ type: "context", messages }, omp.ctx);
+        if (result && typeof result === "object" && "messages" in result && Array.isArray(result.messages)) messages = result.messages;
+      }
+      return messages;
     },
   };
   const pi = {
     on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
-    sendUserMessage: (text: string, options: Params = {}) => omp.delivered.push({ text, ...options }),
+    sendMessage: (message: Params, options: Params = {}) => omp.delivered.push({ message, options }),
     appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
   };
   canvas(pi as unknown as ExtensionAPI);
@@ -226,14 +238,15 @@ test("a message is acked once omp records it, over the inbox connection; a resta
   easl.send(sent);
   await until(() => omp.delivered.length === 1);
   const [delivered] = omp.delivered;
-  expect(delivered.text.startsWith(`[message ${sent.id} from alice@canvas (terminal obj_alice); reply with write agent://alice@canvas]\nCheck the cache key.`)).toBe(true);
-  expect(delivered.deliverAs).toBe("aside");
+  // An IRC card from alice, starting a turn at the idle omp.
+  expect(delivered.message).toMatchObject({ customType: "irc:incoming", display: true, attribution: "agent", details: { id: sent.id, from: "alice@canvas", message: "Check the cache key." } });
+  expect(delivered.options).toEqual({ deliverAs: "steer", triggerTurn: true });
   // Handed over is not recorded: easl keeps it (the poll after the burst's follow-up is out by now).
   await until(() => easl.polls() === 3);
   expect(easl.acks).toEqual([]);
   expect(easl.queue).toEqual([sent]);
 
-  await omp.record(delivered.text);
+  await omp.record(delivered.message);
   await until(() => easl.acks.length === 1);
   expect(easl.acks[0]).toMatchObject({ ids: [sent.id], started: true });
   expect(omp.entries).toContainEqual({ type: "custom", customType: "easl.messages", data: { ids: [sent.id] } });
@@ -265,13 +278,13 @@ test("an ack easl doesn't answer closes the inbox connection: what it held is of
   const second = message("two");
   easl.queue.push(second);
   easl.failing = (params) => params.ack?.length > 0;
-  await omp.record(omp.delivered[0].text);
+  await omp.record(omp.delivered[0].message);
 
   await until(() => easl.closed.includes(connection));
   await until(() => omp.delivered.length === 2 && easl.acks.length === 1, 5000);
   expect(easl.acks[0]).toMatchObject({ ids: [first.id] });
   expect(easl.acks[0].connection).not.toBe(connection);
-  expect(omp.delivered[1].text).toContain(`[message ${second.id} from alice@canvas`);
+  expect(omp.delivered[1].message.details.id).toBe(second.id);
   expect(easl.queue).toEqual([second]);
 });
 
@@ -283,7 +296,7 @@ test("a burst whose follow-up fetch fails delivers what already came", async () 
   const sent = message("Build failed.");
   easl.send(sent);
   await until(() => omp.delivered.length === 1);
-  expect(omp.delivered[0].text).toContain(`[message ${sent.id} from`);
+  expect(omp.delivered[0].message.details.id).toBe(sent.id);
   const [connection] = easl.connections(true);
   await until(() => easl.closed.includes(connection));
 });
@@ -305,8 +318,8 @@ test("a message omp started no turn with waits for the next turn, the user told,
   omp.state.streaming = true;
   await omp.emit("agent_start");
   expect(omp.delivered).toHaveLength(2);
-  expect(omp.delivered[1]).toMatchObject({ text: omp.delivered[0].text, deliverAs: "aside" });
-  await omp.record(omp.delivered[1].text);
+  expect(omp.delivered[1]).toEqual({ message: omp.delivered[0].message, options: { deliverAs: "aside" } });
+  await omp.record(omp.delivered[1].message);
   await until(() => easl.acks.length === 1);
   expect(easl.acks[0]).toMatchObject({ ids: [sent.id], started: false });
 });
@@ -318,7 +331,7 @@ test("past its wake bound, a sender doesn't wake an omp in its turn that streams
   for (let i = 1; i <= 20; i++) {
     easl.send(message(`ping ${i}`));
     await until(() => omp.delivered.length === i);
-    await omp.record(omp.delivered[i - 1].text);
+    await omp.record(omp.delivered[i - 1].message);
   }
   // A turn awaiting a background job: omp ended its run but will resume it.
   omp.state.streaming = true;
@@ -336,8 +349,7 @@ test("past its wake bound, a sender doesn't wake an omp in its turn that streams
   omp.state.streaming = true;
   await omp.emit("agent_start");
   expect(omp.delivered).toHaveLength(21);
-  expect(omp.delivered[20]).toMatchObject({ deliverAs: "aside" });
-  expect(omp.delivered[20].text).toContain(`[message ${late.id} from`);
+  expect(omp.delivered[20]).toMatchObject({ message: { details: { id: late.id } }, options: { deliverAs: "aside" } });
 });
 
 test("messages arriving while omp reports a session switch were the old session's and never go into the new one", async () => {
@@ -364,7 +376,81 @@ test("messages arriving while omp reports a session switch were the old session'
   const fresh = message("for the new session");
   easl.send(fresh);
   await until(() => omp.delivered.length === 1, 5000);
-  expect(omp.delivered[0].text).toContain(`[message ${fresh.id} from`);
+  expect(omp.delivered[0].message.details.id).toBe(fresh.id);
+});
+
+test("a working omp is steered: the card joins its turn, which it didn't start", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  omp.state.streaming = true;
+  await omp.emit("agent_start");
+  const sent = message("Stop: the key is wrong.");
+  easl.send(sent);
+  await until(() => omp.delivered.length === 1);
+  expect(omp.delivered[0].options).toEqual({ deliverAs: "steer", triggerTurn: true });
+  await omp.record(omp.delivered[0].message);
+  await until(() => easl.acks.length === 1);
+  expect(easl.acks[0]).toMatchObject({ ids: [sent.id], started: false });
+});
+
+test("a card omp's wait took from its queue as its result is acked, not delivered again", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  omp.state.streaming = true;
+  await omp.emit("agent_start");
+  const sent = message("Done with the review.");
+  easl.send(sent);
+  await until(() => omp.delivered.length === 1);
+  await omp.emit("message_end", { message: { role: "toolResult", toolName: "wait", details: { op: "wait", waited: { id: sent.id, from: "alice@canvas", body: sent.text } }, timestamp: Date.now() } });
+  await until(() => easl.acks.length === 1);
+  expect(easl.acks[0]).toMatchObject({ ids: [sent.id] });
+  // The run ends; nothing is left to go in with the next one.
+  omp.state.streaming = false;
+  await omp.emit("agent_end", { messages: [] });
+  await until(() => easl.polling());
+  vi.advanceTimersByTime(12_000);
+  omp.state.streaming = true;
+  await omp.emit("agent_start");
+  expect(omp.delivered).toHaveLength(1);
+  expect(omp.notices).toEqual([]);
+});
+
+test("a turn a card starts gets the easl guidance and standing orders until omp prepares a turn", async () => {
+  const easl = fakeEasl();
+  easl.rules = "Limits never block.";
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  const sent = message("Review PR 52.");
+  easl.send(sent);
+  await until(() => omp.delivered.length === 1);
+  const history = [{ role: "user", content: "earlier", timestamp: 1 }, { role: "custom", ...omp.delivered[0].message, timestamp: 2 }];
+  // omp started this turn with the card, without before_agent_start: each request carries them, before the card.
+  for (let step = 0; step < 2; step++) {
+    const request = await omp.request(history);
+    expect(request.map((m) => m.customType ?? m.role)).toEqual(["user", "easl.guidance", "irc:incoming"]);
+    expect(request[1].content).toContain(`You are running in an easl terminal tile (${TILE})`);
+    expect(request[1].content).toContain("Limits never block.");
+  }
+  // The user's prompt joins and omp prepares it: its system prompt has them from here on.
+  await omp.emit("before_agent_start", { prompt: "and the tests", systemPrompt: [] });
+  expect(await omp.request(history)).toEqual(history);
+
+  // A turn a card starts ends: the next turn is on its own.
+  const next = message("One more thing.");
+  easl.send(next);
+  await until(() => omp.delivered.length === 2);
+  expect((await omp.request(history)).length).toBe(3);
+  await omp.emit("agent_end", { messages: [] });
+  expect(await omp.request(history)).toEqual(history);
+
+  // A card steered into a running turn joins that turn as it is.
+  omp.state.streaming = true;
+  await omp.emit("agent_start");
+  easl.send(message("And the docs."));
+  await until(() => omp.delivered.length === 3);
+  expect(await omp.request(history)).toEqual(history);
 });
 
 /** What the extension sent as `field` with each agent.report_session, in order. */
