@@ -69,6 +69,34 @@ class SanitizeTests(unittest.TestCase):
         self.assertEqual(sanitizer.leaks(source, json.dumps({"x": "preACQUISITIONpost"})), {"Acquisition"})
         self.assertEqual(sanitizer.leaks(source, json.dumps({"x": "lorem ipsum"})), set())
 
+    def test_a_lorem_fragment_after_a_newline_is_not_a_leak(self):
+        # An input word that is part of a lorem word ("citation" in "exercitation") must not be
+        # flagged by the output's own filler: in the JSON text the escape of a line break before
+        # that word (`\nexercitation`) is one letter run, which `run` no longer reads.
+        source = board(obj("obj_01A", "note", {"markdown": "citation needed"}))
+        filler = {"objects": [{"props": {"markdown": "line one\nexercitation ullamco"}}]}
+        original = sanitizer.sanitize
+        sanitizer.sanitize = lambda board: filler
+        try:
+            clean, text = sanitizer.run(source)
+        finally:
+            sanitizer.sanitize = original
+        self.assertEqual(clean, filler)
+        self.assertEqual(sanitizer.leaks(source, text), {"citation"}, "the JSON text run() returns still spells one run; run() itself passed")
+
+    def test_numbers_that_spell_an_input_string_are_still_caught(self):
+        # Non-string scalars are checked as JSON spells them (a `revision` of 123456 against a
+        # note saying "123456"), as the JSON-text check did.
+        source = board(obj("obj_01A", "note", {"markdown": "123456"}))
+        original = sanitizer.sanitize
+        sanitizer.sanitize = lambda board: {"revision": 123456, "objects": [{"props": {"markdown": "lorem"}}]}
+        try:
+            with self.assertRaises(SystemExit) as raised:
+                sanitizer.run(source)
+        finally:
+            sanitizer.sanitize = original
+        self.assertIn("$.revision", str(raised.exception))
+
     def test_input_words_inside_schema_keys_are_not_leaks(self):
         source = board(obj("obj_01A", "note", {"markdown": "Update created members", "title": "Updated"}))
         clean, text = sanitizer.run(source)
