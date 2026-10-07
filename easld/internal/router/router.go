@@ -81,6 +81,9 @@ type Router struct {
 	// its boards that have no `props.host` (lifecycle.go), with its variables and labels. Nil: a
 	// Mac's app runs them, and easld starts none.
 	Owns *session.Owner
+	// Reopens is the file listing the boards easld reopens at start when it owns their
+	// terminals (Restore): each board opened is added. "": none.
+	Reopens string
 	// lifecycle runs owned terminals' sessions off the lock.
 	lifecycle lifecycle
 }
@@ -93,6 +96,7 @@ func New(reg *board.Registry) *Router {
 	reg.Hook = r.observe
 	reg.Bounced = r.bounce
 	reg.Terminals = r.terminals
+	reg.Opened = r.opened
 	reg.Texts = r.clients
 	return r
 }

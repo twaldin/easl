@@ -302,6 +302,56 @@ func TestEndTakesTheLogOfASessionAlreadyGone(t *testing.T) {
 	}
 }
 
+// EndIf ends a session only while it is the one a listing found: started again under its name
+// since (another process), it is left alone with its log; gone, its log stays too (its terminal
+// may have one of its own by then); still the same, it ends with its log. Another owner's is
+// refused as End refuses it.
+func TestEndIfEndsOnlyTheSessionTheListingFound(t *testing.T) {
+	m, state := fixture(t)
+	labels := map[string]string{HomeLabel: "easld", "canvas.board": "brd_1", "canvas.tile": "obj_o"}
+	path, log := filepath.Join(state, "canvas-obj_o"), filepath.Join(state, "logs", "canvas-obj_o.log")
+	plant := func(pid string) {
+		t.Helper()
+		for file, content := range map[string]string{path: "labels=canvas.board=brd_1 canvas.home=easld canvas.tile=obj_o\npid=" + pid + "\n", log: "x"} {
+			if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	plant("2")
+	if ended, err := m.EndIf("obj_o", labels, 1); err != nil || ended {
+		t.Fatalf("a session started again: %v %v", ended, err)
+	}
+	for _, file := range []string{path, log} {
+		if _, err := os.Stat(file); err != nil {
+			t.Errorf("%s is gone though its session was started again: %v", file, err)
+		}
+	}
+	if _, err := m.EndIf("obj_o", map[string]string{HomeLabel: "mac-1"}, 2); code(err) != "conflict" {
+		t.Errorf("another home's: %v", err)
+	}
+	if ended, err := m.EndIf("obj_o", labels, 2); err != nil || !ended {
+		t.Fatalf("the same session: %v %v", ended, err)
+	}
+	for _, file := range []string{path, log} {
+		if _, err := os.Stat(file); !os.IsNotExist(err) {
+			t.Errorf("%s is still there: %v", file, err)
+		}
+	}
+	if err := os.WriteFile(log, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ended, err := m.EndIf("obj_o", labels, 2); err != nil || ended {
+		t.Fatalf("a session gone: %v %v", ended, err)
+	}
+	if _, err := os.Stat(log); err != nil {
+		t.Errorf("the log of a session gone was taken: %v", err)
+	}
+	if _, err := m.EndIf("obj_o", labels, 0); code(err) != "invalid_params" {
+		t.Errorf("no pid: %v", err)
+	}
+}
+
 func TestSpawnChecksItsParams(t *testing.T) {
 	m, _ := fixture(t)
 	for name, req := range map[string]SpawnRequest{

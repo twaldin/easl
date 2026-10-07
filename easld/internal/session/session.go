@@ -272,7 +272,7 @@ func (m *Manager) Kill(tile, home string) (bool, error) {
 	if home != "" {
 		want = map[string]string{HomeLabel: home}
 	}
-	return m.kill(tile, want, false)
+	return m.kill(tile, want, false, 0)
 }
 
 // End is Kill for a terminal gone for good (an owned terminal's delete), of the session that
@@ -280,10 +280,23 @@ func (m *Manager) Kill(tile, home string) (bool, error) {
 // root keeps its tile ids, so the home alone doesn't say whose it is). When its session is no
 // longer there (it exited, or zmx found its daemon dead), zmx's log of it goes too.
 func (m *Manager) End(tile string, labels map[string]string) (bool, error) {
-	return m.kill(tile, labels, true)
+	return m.kill(tile, labels, true, 0)
 }
 
-func (m *Manager) kill(tile string, want map[string]string, gone bool) (bool, error) {
+// EndIf is End of a session as a listing found it, run by process `pid` (Session.PID): checked
+// again under the manager's lock, so a session started again under its name since (another
+// process, maybe the terminal's own after its spawn) is left alone, with its log; so is the log
+// of one no longer there. False when it ended nothing.
+func (m *Manager) EndIf(tile string, labels map[string]string, pid int) (bool, error) {
+	if pid <= 0 {
+		return false, failure("invalid_params", "pid %d names no process", pid)
+	}
+	return m.kill(tile, labels, false, pid)
+}
+
+// kill ends tile's session when it carries `want` and, with `pid`, is run by that process;
+// `gone` deletes zmx's log of one no longer there.
+func (m *Manager) kill(tile string, want map[string]string, gone bool, pid int) (bool, error) {
 	if err := m.ready(); err != nil {
 		return false, err
 	}
@@ -301,6 +314,9 @@ func (m *Manager) kill(tile string, want map[string]string, gone bool) (bool, er
 		if gone {
 			m.removeLog(name)
 		}
+		return false, nil
+	}
+	if pid != 0 && existing.PID != pid {
 		return false, nil
 	}
 	if len(want) > 0 {
@@ -337,6 +353,10 @@ func (m *Manager) find(name string) (*Session, error) {
 	}
 	return nil, nil
 }
+
+// Carries is whether s carries every owner label `want` names, with the same value: whether it
+// is the session of the instance, board and tile `want` says.
+func (s Session) Carries(want map[string]string) bool { return owned(&s, want) == nil }
 
 // owned is nil when `s` carries every owner label `want` names, with the same value.
 func owned(s *Session, want map[string]string) error {

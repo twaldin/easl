@@ -43,6 +43,9 @@ type Registry struct {
 	Bounced func(*Board, Bounce)
 	// Terminals handles the terminals created and ended on any open board (Board.OnTerminals).
 	Terminals func(b *Board, created, ended []model.Object)
+	// Opened observes each board as it opens from `root` (standardized), its spooled reports
+	// replayed (the router's restore of owned terminals' sessions).
+	Opened func(b *Board, root string)
 	// AgentReports is where integrations spool reports they couldn't deliver; "" replays nothing.
 	AgentReports string
 	// Texts measures text the app lays out (arrow captions, for routing) on every board opened
@@ -80,11 +83,7 @@ func (r *Registry) SortedBoards() []*Board {
 // directory's own board. A board file easld can't read (store.Unreadable) isn't opened.
 func (r *Registry) Open(root string) (*Board, error) {
 	root = store.Standardized(root)
-	worktree := store.Containing(root)
-	id := store.PathID(root)
-	if worktree != nil {
-		id = store.RepoID(worktree.CommonDir)
-	}
+	id, worktree := store.Identify(root)
 	if existing, ok := r.boards[id]; ok {
 		if worktree != nil {
 			existing.OpenedFrom(*worktree)
@@ -127,6 +126,9 @@ func (r *Registry) Open(root string) (*Board, error) {
 	r.replayAgentReports(b)
 	// Questions that expired while the board was closed expire now.
 	b.ScheduleQuestionExpiry()
+	if r.Opened != nil {
+		r.Opened(b, root)
+	}
 	return b, nil
 }
 

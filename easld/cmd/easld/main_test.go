@@ -248,3 +248,87 @@ func TestOwnTerminalsStartsAndEndsTheirSessions(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
 }
+
+// With --own-terminals easld reopens at start the boards it had open. Restarted with their
+// sessions still running it starts none; after a reboot (no session left) each terminal's starts
+// again, resuming the agent session it recorded, or running its command once its agent released.
+func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
+	dir := shortDir(t)
+	home, root, socket := filepath.Join(dir, "home"), filepath.Join(dir, "root"), filepath.Join(dir, "s.sock")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	zmx, err := zmxtest.Install(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--home", home, "--socket", socket, "--zmx", zmx, "--own-terminals"}
+	terminal := func(c *client, board string, command ...any) string {
+		props := map[string]any{}
+		if len(command) > 0 {
+			props["command"] = command
+		}
+		created := c.call(t, "object.create", map[string]any{"board": board, "type": "terminal", "props": props})
+		return created["object"].(map[string]any)["id"].(string)
+	}
+	done, stderr := start(t, args...)
+	c := connect(t, socket, stderr)
+	board := c.call(t, "board.open", map[string]any{"root": root})["board"].(string)
+	agent := terminal(c, board, "omp", "--model", "opus")
+	c.call(t, "agent.report_session", map[string]any{"tile": agent, "kind": "omp", "sessionId": "s1"})
+	released := terminal(c, board, "claude")
+	c.call(t, "agent.report_session", map[string]any{"tile": released, "kind": "claude", "sessionId": "u-1"})
+	c.call(t, "agent.release", map[string]any{"tile": released, "kind": "claude"})
+	if code := stop(t, done, syscall.SIGTERM); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	sessions := filepath.Join(home, "zmx")
+	mark := func(tile string) string {
+		path := filepath.Join(sessions, "canvas-"+tile)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("no session for %s: %v", tile, err)
+		}
+		marked := string(data) + "mark=before the restart\n"
+		if err := os.WriteFile(path, []byte(marked), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return marked
+	}
+	before := map[string]string{agent: mark(agent), released: mark(released)}
+
+	done, stderr = start(t, args...)
+	c = connect(t, socket, stderr)
+	// Answered once the sessions queued before its own have started.
+	terminal(c, board)
+	for tile, want := range before {
+		if data, _ := os.ReadFile(filepath.Join(sessions, "canvas-"+tile)); string(data) != want {
+			t.Errorf("%s's session was started again by a restart: %q", tile, data)
+		}
+	}
+	if code := stop(t, done, syscall.SIGTERM); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+
+	entries, err := os.ReadDir(sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "canvas-") {
+			os.Remove(filepath.Join(sessions, e.Name()))
+		}
+	}
+	done, stderr = start(t, args...)
+	c = connect(t, socket, stderr)
+	terminal(c, board)
+	for tile, want := range map[string]string{agent: `'omp' '--model' 'opus' '--resume=s1'; exec`, released: `'claude'; exec`} {
+		got, err := zmxtest.Read(sessions, "canvas-"+tile)
+		if err != nil || len(got.Args) != 4 || !strings.HasPrefix(got.Args[3], want) {
+			t.Errorf("%s after a reboot: %q (%v), want %s…; easld said %q", tile, got.Args, err, want, stderr.String())
+		}
+	}
+	if code := stop(t, done, syscall.SIGTERM); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+}

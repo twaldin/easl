@@ -14,6 +14,8 @@ bun test clients/ts                         # TS client: the default socket's pl
 
 `CanvasCoreTests` is an executable target, not a test target: with only the Command Line Tools installed, `swift test` doesn't discover swift-testing suites, so `main.swift` calls the swift-testing entry point. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.
 
+What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` that `CanvasCoreTests` and easld's `go test` both check, so the two can't drift: `terminal-env.json` (a hosted and an owned terminal's session variables) and `agent-resume.json` (the command resuming a recorded agent session with the tile's own options, `AgentResume.argv` and `session.ResumeArgv`). Change a case there, then make both pass.
+
 ## API conformance
 
 `conformance/` drives the socket API the way agents do and checks a server against transcripts recorded from today's app. It is how `easld` (docs/design/next.md, "Getting there") proves it behaves like the app before the app becomes its client.

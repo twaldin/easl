@@ -199,13 +199,16 @@ func TestAtlasObjectsSurviveAStoreRoundTrip(t *testing.T) {
 	}
 }
 
+// Changes within the debounce coalesce into one write, of the last, which Flush makes at once;
+// left alone, a save is written once its debounce is up. Neither depends on how fast the test
+// runs: the debounce that must not pass is an hour, and the one that must is waited for.
 func TestDebouncedSaveWritesOnceAndFlushWritesPending(t *testing.T) {
 	dir := t.TempDir()
 	var mu sync.Mutex
-	s := New(dir, 50*time.Millisecond, &mu)
-	revision := 0 // guarded by mu, which snap is called under
-	snap := func() *Snapshot { return &Snapshot{ID: "brd_x", Root: "/x", Revision: revision, Objects: nil} }
+	revision, snapshots := 0, 0 // guarded by mu, which snap is called under
+	snap := func() *Snapshot { snapshots++; return &Snapshot{ID: "brd_x", Root: "/x", Revision: revision} }
 	setRevision := func(n int) { mu.Lock(); revision = n; mu.Unlock() }
+	s := New(dir, time.Hour, &mu)
 	for n := 1; n <= 3; n++ {
 		setRevision(n)
 		s.ScheduleSave("brd_x", snap)
@@ -213,16 +216,24 @@ func TestDebouncedSaveWritesOnceAndFlushWritesPending(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "brd_x.json")); err == nil {
 		t.Fatal("saved before the debounce")
 	}
-	time.Sleep(200 * time.Millisecond)
-	got, err := s.Read("brd_x")
-	if err != nil || got == nil || got.Revision != 3 {
-		t.Fatalf("debounced save: %+v %v", got, err)
-	}
-	setRevision(9)
-	s.ScheduleSave("brd_x", snap)
 	s.Flush()
-	if got, _ := s.Read("brd_x"); got.Revision != 9 {
-		t.Fatalf("flush wrote revision %d", got.Revision)
+	mu.Lock()
+	taken := snapshots
+	mu.Unlock()
+	if got, err := s.Read("brd_x"); err != nil || got == nil || got.Revision != 3 || taken != 1 {
+		t.Fatalf("flushed: %+v %v, %d snapshots", got, err, taken)
+	}
+
+	quick := New(dir, 10*time.Millisecond, &mu)
+	setRevision(9)
+	quick.ScheduleSave("brd_x", snap)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if got, _ := quick.Read("brd_x"); got != nil && got.Revision == 9 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the debounced save wasn't written within 10 s")
+		}
 	}
 }
 

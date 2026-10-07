@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/relay"
@@ -18,6 +19,10 @@ import (
 	"github.com/twaldin/easl/easld/internal/session"
 	"github.com/twaldin/easl/easld/internal/store"
 )
+
+// orphanGrace is how long a session of easld's home must have been without its terminal (on a
+// board that is open) before easld ends it (Router.SweepOrphans).
+const orphanGrace = time.Minute
 
 // defaultHome is $EASL_HOME, else the platform's per-user state directory.
 func defaultHome() string {
@@ -95,17 +100,38 @@ func run(args []string, stderr io.Writer) int {
 			return fail(err)
 		}
 		r.Owns = &session.Owner{Socket: socketPath, Home: homePath, Resources: session.Resources(r.Sessions.Home)}
+		r.Reopens = filepath.Join(*home, "open-boards.json")
 	}
 	// Hosted terminals reach their board through `<home>/run/<instance>/` (relay.open).
 	r.Relays = relay.New(filepath.Join(*home, "run"))
 	defer r.Relays.Close()
+	// The boards it owned reopen, every one loaded and its spool replayed before it serves; their
+	// missing sessions (after a reboot) start once it serves, so their agents' first reports
+	// reach it.
+	for _, err := range r.Restore() {
+		fmt.Fprintln(stderr, "easld:", err)
+	}
 	srv, err := server.Listen(path, r.Handle, r.Answer)
 	if err != nil {
 		return fail(err)
 	}
+	r.StartSessions()
 	owns := ""
 	if r.Owns != nil {
 		owns = "; it starts and ends their terminals"
+		// A session of easld's home left without its terminal ends after orphanGrace.
+		stopped := make(chan struct{})
+		defer close(stopped)
+		go func() {
+			for {
+				r.SweepOrphans()
+				select {
+				case <-stopped:
+					return
+				case <-time.After(orphanGrace):
+				}
+			}
+		}()
 	}
 	fmt.Fprintf(stderr, "easld: serving %s (boards in %s%s)\n", path, filepath.Join(*home, "boards"), owns)
 	<-signals

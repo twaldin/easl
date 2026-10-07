@@ -432,40 +432,20 @@ struct TerminalBoardTests {
 }
 
 struct AgentResumeTests {
-    @Test func eachAgentResumesItsOwnWay() {
-        #expect(AgentResume.argv(kind: "omp", sessionId: "s1") == ["omp", "--resume=s1"])
-        #expect(AgentResume.argv(kind: "claude", sessionId: "u-1") == ["claude", "--resume", "u-1"])
-        #expect(AgentResume.argv(kind: "codex", sessionId: "t-1") == ["codex", "resume", "t-1"])
-        #expect(AgentResume.argv(kind: "gemini", sessionId: "g-1") == ["gemini", "--resume", "g-1"])
-        #expect(AgentResume.argv(kind: "opencode", sessionId: "ses_1") == ["opencode", "--session", "ses_1"])
-        #expect(AgentResume.argv(kind: "aider", sessionId: "x") == nil)
-    }
-
-    /// PreScreen's capture: a restart of a resumed Codex tile ran plain `codex resume <id>` and
-    /// dropped the tile's `-c` trust override, so Codex asked about the folder again. The tile's
-    /// own options come along; its session selectors and prompt don't, and nothing is doubled.
-    @Test func aRestartKeepsTheTilesOwnOptionsAndResumesTheRecordedSession() {
-        let trust = #"projects."/tmp/w".trust_level="trusted""#
-        #expect(AgentResume.argv(kind: "codex", sessionId: "t-1", command: ["codex", "-c", trust, "-m", "gpt-6", "fix the build"])
-                == ["codex", "resume", "-c", trust, "-m", "gpt-6", "t-1"], "options after resume, where Codex keeps them; no prompt")
-        #expect(AgentResume.argv(kind: "codex", sessionId: "t-2", command: ["codex", "resume", "t-1", "-c", trust, "--last"])
-                == ["codex", "resume", "-c", trust, "t-2"], "its own resume is replaced, not doubled")
-        #expect(AgentResume.argv(kind: "codex", sessionId: "t-1", command: ["/opt/homebrew/bin/codex", "--dangerously-bypass-approvals-and-sandbox"])
-                == ["/opt/homebrew/bin/codex", "resume", "--dangerously-bypass-approvals-and-sandbox", "t-1"])
-        #expect(AgentResume.argv(kind: "claude", sessionId: "u-2",
-                                 command: ["claude", "--model", "opus", "--dangerously-skip-permissions", "--resume", "u-1", "--allowed-tools", "Read", "Edit", "--", "write the tests"])
-                == ["claude", "--model", "opus", "--dangerously-skip-permissions", "--allowed-tools", "Read", "Edit", "--resume", "u-2"])
-        #expect(AgentResume.argv(kind: "claude", sessionId: "u-2", command: ["claude", "-c", "--debug", "--verbose"])
-                == ["claude", "--debug", "--verbose", "--resume", "u-2"], "--continue would pick another conversation")
-        #expect(AgentResume.argv(kind: "omp", sessionId: "s2", command: ["omp", "--no-extensions", "-e", "/src/easl.ts", "--resume=s1", "--model=opus", "hi"])
-                == ["omp", "--no-extensions", "-e", "/src/easl.ts", "--model=opus", "--resume=s2"])
-        #expect(AgentResume.argv(kind: "opencode", sessionId: "ses_2", command: ["opencode", "-m", "zai/glm-4.7", "-c", "--prompt", "go", "../app"])
-                == ["opencode", "-m", "zai/glm-4.7", "../app", "--session", "ses_2"], "its project is kept, its prompt isn't")
-        #expect(AgentResume.argv(kind: "gemini", sessionId: "g-2", command: ["gemini", "-m", "flash", "-i", "explain", "--yolo"])
-                == ["gemini", "-m", "flash", "--yolo", "--resume", "g-2"])
-        // A command that runs something else (a shell, another agent) says nothing about the agent's options.
-        #expect(AgentResume.argv(kind: "codex", sessionId: "t-1", command: ["zsh", "-c", "codex -c x"]) == ["codex", "resume", "t-1"])
-        #expect(AgentResume.argv(kind: "claude", sessionId: "u-1", command: []) == ["claude", "--resume", "u-1"])
+    /// Every case of Tests/Fixtures/agent-resume.json, which easld's `session.ResumeArgv` is
+    /// checked against too. Each agent resumes its own way, with the tile's own options (PreScreen's
+    /// capture: a restart of a resumed Codex tile ran plain `codex resume <id>` and dropped the
+    /// tile's `-c` trust override, so Codex asked about the folder again); its session selectors
+    /// and prompt don't come along, and nothing is doubled.
+    @Test func eachAgentResumesItsOwnWayAsTheSharedFixtureSays() throws {
+        struct Case: Decodable { var note: String?; var kind: String; var sessionId: String; var command: [String]; var argv: [String]? }
+        struct Fixture: Decodable { var cases: [Case] }
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../Fixtures/agent-resume.json")
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
+        #expect(!fixture.cases.isEmpty)
+        for c in fixture.cases {
+            #expect(AgentResume.argv(kind: c.kind, sessionId: c.sessionId, command: c.command) == c.argv, "\(c.kind) \(c.command): \(c.note ?? "")")
+        }
     }
 }
 
