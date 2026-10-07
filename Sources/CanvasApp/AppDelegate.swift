@@ -313,6 +313,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !noActivate { shown.makeKeyAndOrderFront(nil) }
     }
 
+    /// A board window's tab brought forward from outside the app delegate (a web extension's
+    /// `windows.focus`), as `bringForward` does.
+    func focusBoardWindow(_ window: NSWindow) {
+        bringForward(window)
+    }
+
     /// Shows `window`'s tab in its tab group, unless the group is on a Space nobody is viewing:
     /// AppKit shows a newly selected tab on the active Space, out of its group's place and in
     /// front of whatever the user is working on there (2026-10-07: a background
@@ -323,8 +329,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func selectTab(_ window: NSWindow) -> Bool {
         guard let group = window.tabGroup else { return true }
         let key = ObjectIdentifier(group)
+        // `isOnActiveSpace` of a window that isn't on screen says where it would be ordered in,
+        // not where its group is: only a shown tab tells.
         if let shown = group.selectedWindow, shown !== window, shown.isVisible, !shown.isOnActiveSpace {
-            heldTabs[key] = HeldTab(group: group, window: window)
+            heldTabs[key] = HeldTab(group: group, window: window, shown: shown)
             return false
         }
         heldTabs[key] = nil
@@ -332,16 +340,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// The active Space changed: shows each held tab whose group is now on it.
+    /// The active Space changed: shows each held tab whose group is now on it. A request goes
+    /// unshown when the group's tab changed since (the user, or a web extension, picked another
+    /// one: the newer choice stands), or the group was put away (minimized, the app hidden),
+    /// where selecting a tab would bring it out on the current Space.
     @objc private func showHeldTabs() {
         for (key, held) in heldTabs {
-            guard let group = held.group, let window = held.window, window.tabGroup === group else {
+            guard let group = held.group, let window = held.window, window.tabGroup === group,
+                  let shown = group.selectedWindow, shown === held.shown, shown.isVisible,
+                  !group.windows.contains(where: \.isMiniaturized) else {
                 heldTabs[key] = nil
                 continue
             }
-            guard group.selectedWindow?.isOnActiveSpace ?? true else { continue }
+            guard shown.isOnActiveSpace else { continue }
             heldTabs[key] = nil
-            let wasKey = group.selectedWindow?.isKeyWindow ?? false
+            let wasKey = shown.isKeyWindow
             group.selectedWindow = window
             if wasKey { window.makeKeyAndOrderFront(nil) }
         }
@@ -836,9 +849,10 @@ private final class TrayMenu: NSObject, NSMenuDelegate {
     }
 }
 
-/// A tab switch waiting for its group's Space (`AppDelegate.selectTab`). Weak: a closed window
-/// or a group that broke up drops it.
+/// A tab switch waiting for its group's Space (`AppDelegate.selectTab`): `window` to show in
+/// place of `shown`. Weak: a closed window or a group that broke up drops it.
 private struct HeldTab {
     weak var group: NSWindowTabGroup?
     weak var window: NSWindow?
+    weak var shown: NSWindow?
 }

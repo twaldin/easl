@@ -879,7 +879,7 @@ export type BoardListResult = {
 export type BoardOpenParams = {
   /** absolute directory path (`~` allowed): a directory in a git repository opens its repository's board; any other directory its own */
   root: string;
-  /** bring the board's tab to the front: this switches the user's tab, so only when they asked to see that board. While the board window is on a Space other than the one on screen, the tab comes forward when the user goes to that Space (AppKit would otherwise show it on the Space they are working in) */
+  /** bring the board's tab to the front: this switches the user's tab, so only when they asked to see that board. While the board window is on a Space other than the one on screen, macOS switches to that Space (activating easl) and the tab comes forward there; an instance that never activates (`EASL_NO_ACTIVATE`) leaves the tab to come forward when the user goes there. AppKit would otherwise show the tab on the Space the user is working in */
   select?: boolean;
 };
 export type BoardOpenResult = {

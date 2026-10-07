@@ -889,10 +889,8 @@ final class ExtensionWindow: NSObject, WKWebExtensionWindow {
     func screenFrame(for context: WKWebExtensionContext) -> CGRect { board?.window?.screen?.frame ?? .null }
 
     func focus(for context: WKWebExtensionContext, completionHandler: @escaping ((any Error)?) -> Void) {
-        if let window = board?.window {
-            window.tabGroup?.selectedWindow = window
-            window.makeKeyAndOrderFront(nil)
-        }
+        // As the app brings any board tab forward: a group on another Space waits for it.
+        if let window = board?.window { (NSApp.delegate as? AppDelegate)?.focusBoardWindow(window) }
         completionHandler(nil)
     }
 }
