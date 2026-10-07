@@ -137,6 +137,7 @@ final class Updater {
             var incoming: URL?
             do {
                 let app = try Self.replaceable()
+                try await Self.requireSoleInstance(of: app)
                 let staging = try AppUpdate.Staging(updates: AppPaths.updates, version: release.version.description)
                 try await download(release, into: staging)
                 phase = phase.after(.downloaded) ?? phase
@@ -147,6 +148,8 @@ final class Updater {
                 if !gatekeeper { NSLog("easl: development instance: skipping spctl for an ad hoc update") }
                 incoming = try await AppUpdate.prepareInstall(staging, release: release, replacing: app, team: team, gatekeeper: gatekeeper)
                 phase = phase.after(.verified) ?? phase
+                // Again: one may have started from the bundle while this downloaded.
+                try await Self.requireSoleInstance(of: app)
                 try startHelper(staging, replacing: app)
                 phase = phase.after(.install) ?? phase
                 NSLog("easl: installing %@ from %@ over %@; quitting", release.version.description, incoming?.path ?? "", app.path)
@@ -163,6 +166,17 @@ final class Updater {
                 phase = phase.after(.fail(reason)) ?? phase
                 inform("Couldn't update to easl \(release.version)", "\(reason). This easl wasn't changed.", over: window)
             }
+        }
+    }
+
+    /// Refuses while another easl process (on another home: one home has one instance) runs from
+    /// `app`: the swap would pull its bundle from under it.
+    private static func requireSoleInstance(of app: URL) async throws {
+        let running = NSWorkspace.shared.runningApplications.map { AppUpdate.RunningInstance(pid: $0.processIdentifier, bundle: $0.bundleURL) }
+        let me = getpid()
+        if let other = await offPool({ AppUpdate.otherInstance(sharing: app, among: running, except: me) }) {
+            NSLog("easl: easl pid %d also runs from %@; not updating", other.pid, app.path)
+            throw AppUpdate.InstallProblem.otherInstance(app.path)
         }
     }
 
@@ -248,7 +262,8 @@ final class Updater {
 
     /// At launch, off the main thread: logs what the helper did (and says so when it failed),
     /// deletes `updates/`'s folders, except one easl now runs from, and the hidden copies a
-    /// stopped update left beside this app (`AppUpdate.isLeftover`), except this app.
+    /// stopped update left beside this app over an hour ago (`AppUpdate.staleLeftovers`: a newer
+    /// one may be another home's update under way), never this app.
     private func cleanUp() {
         let updates = AppPaths.updates
         let running = Bundle.main.bundleURL.resolvingSymlinksInPath()
@@ -271,8 +286,10 @@ final class Updater {
                 try? files.removeItem(at: folder)
             }
             let beside = running.deletingLastPathComponent()
-            for name in (try? files.contentsOfDirectory(atPath: beside.path)) ?? []
-            where AppUpdate.isLeftover(name) && name != running.lastPathComponent {
+            let entries = ((try? files.contentsOfDirectory(at: beside, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []).compactMap { url in
+                (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).map { Housekeeping.File(name: url.lastPathComponent, modified: $0) }
+            }
+            for name in AppUpdate.staleLeftovers(entries, running: running.lastPathComponent, now: Date()) {
                 NSLog("easl: removing %@, left by an update", beside.appendingPathComponent(name).path)
                 try? files.removeItem(at: beside.appendingPathComponent(name))
             }

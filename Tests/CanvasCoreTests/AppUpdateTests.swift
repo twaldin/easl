@@ -229,12 +229,58 @@ struct UpdateStagingTests {
         #expect(files.fileExists(atPath: other.path))
     }
 
-    @Test func leftoversAreOnlyAnUpdatesHiddenCopies() {
-        #expect(AppUpdate.isLeftover(".easl-update-0.2.3.app"))
-        #expect(AppUpdate.isLeftover(".easl-previous-0.2.3-rc.1.app"))
-        for name in ["easl.app", ".easl-update-x.app", ".easl-update-0.2.3", ".easl-previous-.app", "Safari.app", ".easl-update-../a.app"] {
+    @Test func leftoversAreOnlyAnUpdatesHiddenCopies() throws {
+        let id = "0f8b5d3a-6a8e-4c2b-9d1e-2b7c4e5f6a7b"
+        #expect(AppUpdate.isLeftover(".easl-update-0.2.3-\(id).app"))
+        #expect(AppUpdate.isLeftover(".easl-previous-0.2.3-rc.1-\(id).app"))
+        let staging = try AppUpdate.Staging(updates: updates, version: "0.2.3")
+        let installed = root.appendingPathComponent("Applications/easl.app")
+        #expect(AppUpdate.isLeftover(staging.incoming(beside: installed).lastPathComponent))
+        #expect(AppUpdate.isLeftover(staging.backup(beside: installed).lastPathComponent))
+        for name in ["easl.app", ".easl-update-0.2.3.app", ".easl-update-x-\(id).app", ".easl-update-0.2.3-\(id)", ".easl-previous--\(id).app",
+                     ".easl-update-0.2.3-not-a-uuid.app", "Safari.app", ".easl-update-../a-\(id).app"] {
             #expect(!AppUpdate.isLeftover(name), "\(name)")
         }
+    }
+
+    @Test func twoUpdatesNeverShareTheirHiddenCopies() throws {
+        let installed = root.appendingPathComponent("Applications/easl.app")
+        // Two instances on other homes, running one bundle, updating to one version.
+        let a = try AppUpdate.Staging(updates: root.appendingPathComponent("a/updates"), version: "0.2.3")
+        let b = try AppUpdate.Staging(updates: root.appendingPathComponent("b/updates"), version: "0.2.3")
+        #expect(a.incoming(beside: installed) != b.incoming(beside: installed))
+        #expect(a.backup(beside: installed) != b.backup(beside: installed))
+        #expect(a.incoming(beside: installed).deletingLastPathComponent() == installed.deletingLastPathComponent(), "on the app's volume")
+    }
+
+    @Test func aLaunchDeletesOnlyLeftoversAnHourOld() {
+        let now = Date()
+        let id = "0f8b5d3a-6a8e-4c2b-9d1e-2b7c4e5f6a7b"
+        let files = [
+            Housekeeping.File(name: ".easl-update-0.2.3-\(id).app", modified: now.addingTimeInterval(-30)),
+            Housekeeping.File(name: ".easl-previous-0.2.3-\(id).app", modified: now.addingTimeInterval(-2 * 60 * 60)),
+            Housekeeping.File(name: ".easl-previous-0.2.2-\(id).app", modified: now.addingTimeInterval(-3 * 60 * 60)),
+            Housekeeping.File(name: "easl.app", modified: now.addingTimeInterval(-9 * 60 * 60)),
+        ]
+        // A fresh copy may be another home's update under way; the running bundle is never one.
+        #expect(AppUpdate.staleLeftovers(files, running: ".easl-previous-0.2.2-\(id).app", now: now) == [".easl-previous-0.2.3-\(id).app"])
+    }
+
+    @Test func anotherInstanceRunningFromTheSameBundleIsFound() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appendingPathComponent("Applications/easl.app", isDirectory: true)
+        let other = root.appendingPathComponent("elsewhere/easl.app", isDirectory: true)
+        let link = root.appendingPathComponent("link.app")
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: app)
+        let me: Int32 = 100
+        let sharing = [AppUpdate.RunningInstance(pid: me, bundle: app), AppUpdate.RunningInstance(pid: 7, bundle: nil),
+                       AppUpdate.RunningInstance(pid: 42, bundle: link)]
+        #expect(AppUpdate.otherInstance(sharing: app, among: sharing, except: me)?.pid == 42, "the same bundle through a symlink")
+        let apart = [AppUpdate.RunningInstance(pid: me, bundle: app), AppUpdate.RunningInstance(pid: 42, bundle: other)]
+        #expect(AppUpdate.otherInstance(sharing: app, among: apart, except: me) == nil, "another copy elsewhere")
+        #expect(AppUpdate.otherInstance(sharing: app, among: [AppUpdate.RunningInstance(pid: me, bundle: app)], except: me) == nil)
     }
 }
 
@@ -304,7 +350,11 @@ struct UpdateHelperTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("easl-helper-\(UUID().uuidString)", isDirectory: true)
     var applications: URL { root.appendingPathComponent("Applications", isDirectory: true) }
     var app: URL { applications.appendingPathComponent("easl.app", isDirectory: true) }
-    var staging: AppUpdate.Staging { try! AppUpdate.Staging(updates: root.appendingPathComponent("updates", isDirectory: true), version: "0.2.3") }
+    let staging: AppUpdate.Staging
+
+    init() throws {
+        staging = try AppUpdate.Staging(updates: root.appendingPathComponent("updates", isDirectory: true), version: "0.2.3")
+    }
     var relaunched: URL { root.appendingPathComponent("relaunched") }
 
     func runHelper() async throws -> AppUpdate.Outcome? {
@@ -314,10 +364,14 @@ struct UpdateHelperTests {
     @Test func theHelperRenamesTheNewAppInAndLeavesNoHiddenCopy() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        // A rename keeps the app's old date; the helper dates the backup now.
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)], ofItemAtPath: app.path)
         try TestBundle.make(staging.incoming(beside: app), version: "0.2.3", executable: Data("new".utf8))
         #expect(try await runHelper() == .installed)
         #expect(AppUpdate.bundleVersion(of: app) == "0.2.3")
         #expect(AppUpdate.bundleVersion(of: staging.previous) == "0.2.2")
+        let backupDate = try FileManager.default.attributesOfItem(atPath: staging.previous.path)[.modificationDate] as? Date
+        #expect(backupDate.map { -$0.timeIntervalSinceNow < AppUpdate.leftoverAge } == true)
         #expect(try FileManager.default.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
     }
@@ -423,6 +477,8 @@ struct UpdateInstallTests {
 
         let incoming = try await AppUpdate.prepareInstall(staging, release: release, replacing: installed, team: nil, gatekeeper: false)
         #expect(incoming == staging.incoming(beside: installed))
+        let copied = try FileManager.default.attributesOfItem(atPath: incoming.path)[.modificationDate] as? Date
+        #expect(copied.map { -$0.timeIntervalSinceNow < AppUpdate.leftoverAge } == true, "dated now, not the release's date")
         #expect(AppUpdate.bundleVersion(of: incoming) == "0.2.3")
         #expect(AppUpdate.bundleVersion(of: installed) == "0.2.2", "nothing replaced before easl quits")
         #expect(try TestBundle.snapshot(incoming) == TestBundle.snapshot(new))

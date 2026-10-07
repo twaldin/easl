@@ -80,6 +80,8 @@ public enum AppUpdate {
         /// Copying the verified app beside the installed one failed.
         case copy(String)
         case quarantine(String)
+        /// Another easl process runs from the bundle the update would replace (its path).
+        case otherInstance(String)
 
         public var description: String {
             switch self {
@@ -95,6 +97,7 @@ public enum AppUpdate {
             case let .version(expected, got): "the zip holds easl \(got ?? "of no version"), not \(expected)"
             case let .copy(detail): "couldn't copy the new app beside this one: \(detail)"
             case let .quarantine(detail): "couldn't clear the new app's quarantine flag: \(detail)"
+            case let .otherInstance(path): "quit the other easl running from \(path) first"
             }
         }
     }
@@ -110,20 +113,24 @@ public enum AppUpdate {
 
     /// One update's files, in `<updates>/<version>/` (the app's support directory's `updates`;
     /// never `/tmp`), and the two hidden names beside the installed app the helper renames
-    /// between. Deleted at the next launch, except a bundle easl runs from.
+    /// between, unique to this update (`transaction`): two instances on other homes running one
+    /// bundle never share them. Deleted at the next launch, except a bundle easl runs from.
     public struct Staging: Equatable, Sendable {
         public let updates: URL
         public let directory: URL
         public let version: String
+        /// A UUID naming this update's hidden copies.
+        public let transaction: String
 
         /// Refuses a `version` that isn't one plain path component, so `directory` names a child
         /// of `updates` (a version `AppVersion` reads always is one).
-        public init(updates: URL, version: String) throws {
+        public init(updates: URL, version: String, transaction: UUID = UUID()) throws {
             guard !version.isEmpty, version != ".", version != "..", !version.contains("/"), !version.contains("\0") else {
                 throw InstallProblem.outsideUpdates(updates.appendingPathComponent(version).path)
             }
             self.updates = updates
             self.version = version
+            self.transaction = transaction.uuidString.lowercased()
             directory = updates.appendingPathComponent(version, isDirectory: true)
         }
 
@@ -141,14 +148,15 @@ public enum AppUpdate {
         public var log: URL { directory.appendingPathComponent("helper.log") }
 
         /// The verified copy of the new app beside `installed`, on its volume, so the helper only
-        /// ever renames.
+        /// ever renames: `.easl-update-<version>-<transaction>.app`.
         public func incoming(beside installed: URL) -> URL {
-            installed.deletingLastPathComponent().appendingPathComponent("\(AppUpdate.incomingPrefix)\(version).app", isDirectory: true)
+            installed.deletingLastPathComponent().appendingPathComponent("\(AppUpdate.incomingPrefix)\(version)-\(transaction).app", isDirectory: true)
         }
 
-        /// Where the helper renames `installed` while the new app takes its name.
+        /// Where the helper renames `installed` while the new app takes its name:
+        /// `.easl-previous-<version>-<transaction>.app`.
         public func backup(beside installed: URL) -> URL {
-            installed.deletingLastPathComponent().appendingPathComponent("\(AppUpdate.backupPrefix)\(version).app", isDirectory: true)
+            installed.deletingLastPathComponent().appendingPathComponent("\(AppUpdate.backupPrefix)\(version)-\(transaction).app", isDirectory: true)
         }
 
         /// Empties the folder for a new download. Before deleting or creating anything it checks
@@ -174,13 +182,45 @@ public enum AppUpdate {
     }
 
     /// A hidden copy an update leaves beside the installed app when it stops partway
-    /// (`.easl-update-<version>.app`, `.easl-previous-<version>.app`), which the next launch
-    /// deletes.
+    /// (`.easl-update-<version>-<uuid>.app`, `.easl-previous-<version>-<uuid>.app`).
     public static func isLeftover(_ name: String) -> Bool {
         for prefix in [incomingPrefix, backupPrefix] where name.hasPrefix(prefix) && name.hasSuffix(".app") {
-            return AppVersion(String(name.dropFirst(prefix.count).dropLast(4))) != nil
+            let rest = name.dropFirst(prefix.count).dropLast(4)
+            guard rest.count > 37, UUID(uuidString: String(rest.suffix(36))) != nil, rest.dropLast(36).last == "-" else { return false }
+            return AppVersion(String(rest.dropLast(37))) != nil
         }
         return false
+    }
+
+    /// How old a leftover must be before a launch deletes it: an update renames its copies within
+    /// seconds, so one this old belongs to no update still running (another home's instance of
+    /// the same bundle may be mid-update).
+    public static let leftoverAge: TimeInterval = 60 * 60
+
+    /// The leftovers in the installed app's folder a launch deletes: older than `leftoverAge`,
+    /// and never `running`, the name of the bundle easl runs from.
+    public static func staleLeftovers(_ files: [Housekeeping.File], running: String, now: Date) -> [String] {
+        files.filter { isLeftover($0.name) && $0.name != running && now.timeIntervalSince($0.modified) >= leftoverAge }.map(\.name)
+    }
+
+    /// An easl process: its pid and the bundle it runs from.
+    public struct RunningInstance: Equatable, Sendable {
+        public var pid: Int32
+        public var bundle: URL?
+
+        public init(pid: Int32, bundle: URL?) {
+            self.pid = pid
+            self.bundle = bundle
+        }
+    }
+
+    /// Another process than `me` running from `bundle` (paths compared with symlinks resolved):
+    /// replacing the bundle under it would pull it from a running instance on another home.
+    /// Blocking (resolves paths).
+    public static func otherInstance(sharing bundle: URL, among instances: [RunningInstance], except me: Int32) -> RunningInstance? {
+        func canonical(_ url: URL) -> String { realPath(url) ?? url.standardizedFileURL.path }
+        let ours = canonical(bundle)
+        return instances.first { $0.pid != me && $0.bundle.map(canonical) == ours }
     }
 
     /// What the helper did, from its `result` file.
@@ -233,13 +273,11 @@ public enum AppUpdate {
         try await verify(staged, release: release, team: team, gatekeeper: gatekeeper)
         // ditto gives a quarantined zip's flag to everything it unpacks.
         if try await blocking({ isQuarantined(zip) || isQuarantined(staged) }) { try await clearQuarantine(staged) }
-        let incoming = staging.incoming(beside: installed), backup = staging.backup(beside: installed)
-        try await blocking {
-            // An earlier attempt's (a symlink is removed itself, never what it points to).
-            for leftover in [incoming, backup] where exists(leftover) { try FileManager.default.removeItem(at: leftover) }
-        }
+        let incoming = staging.incoming(beside: installed)
         do {
             try await run("/usr/bin/ditto", [staged.path, incoming.path], or: InstallProblem.copy)
+            // ditto keeps the release's dates; a launch deletes only leftovers an hour old.
+            try await blocking { try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: incoming.path) }
             try await verify(incoming, release: release, team: team, gatekeeper: gatekeeper)
             if try await blocking({ isQuarantined(incoming) }) { try await clearQuarantine(incoming) }
         } catch {
@@ -354,7 +392,8 @@ public enum AppUpdate {
           printf 'unchanged: %s is in the way\\n' "$backup" > "$result"
         elif ! err=$(/bin/mv "$app" "$backup" 2>&1); then
           printf 'unchanged: %s\\n' "$err" > "$result"
-        elif vacant "$app" && err=$(/bin/mv "$new" "$app" 2>&1); then
+        # Dated now (a rename keeps the app's date): a launch deletes only leftovers an hour old.
+        elif /usr/bin/touch "$backup"; vacant "$app" && err=$(/bin/mv "$new" "$app" 2>&1); then
           echo installed > "$result"
           /bin/mv "$backup" "$previous" || echo "easl: $backup stays until the next launch"
         elif vacant "$app" && /bin/mv "$backup" "$app"; then
