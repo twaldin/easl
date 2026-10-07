@@ -12,7 +12,7 @@
 //  - provides the shipped `easl` skill (skills/easl) to the agent, only inside easl
 // Load explicitly with `omp -e /path/to/easl.ts`, or install into ~/.omp/agent/extensions.
 import { isAbsolute, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { type AgentMessage, CanvasClient, CanvasError } from "../../clients/ts/src/index";
 import { numberedDiffChanges } from "../agent-hooks/follow";
 import { COALESCE_MS, card, EASL_MESSAGE, GUIDANCE_BLOCK, guided, PROTOCOL, peerAddress, plan, recordedIds, renderCard, sender, senderKey, WakeBudget } from "../agent-hooks/messages";
@@ -138,26 +138,46 @@ export default function canvas(pi: ExtensionAPI): void {
   let acked: RunsWith | undefined;
   let tried: RunsWith | undefined;
   let triedAt = 0;
+  // Bumped whenever the session the tile's agent runs starts, changes or ends (`watchSession`,
+  // `stopWatchingSession`): a session report still waiting on the session's file is then for a
+  // session that's over (a release may already have gone out) and isn't sent.
+  let watched = 0;
   const launch = ((globalThis as unknown as Record<symbol, Launch | undefined>)[LAUNCH] ??= { thinking: launchOption(process.argv, "--thinking"), switched: false });
 
+  // agent.restart and a reboot resume relaunch omp with `--resume=<sessionPath>`, so the session's
+  // file goes on disk before easl gets its path, as omp's own ACP `session/new` puts it there
+  // (`ensureOnDisk`). omp writes a session lazily, once it has a reply; until then its path names
+  // no file, which omp 18.6 resumed as a fresh session there and 18.8 refuses (`Session "<path>"
+  // not found.`, exit 1): a tile with no reply yet (just started, or after /new) relaunched
+  // nothing. An omp without the method, or a write that fails, reports as before. The session's
+  // id and path are read once it is written: writing can move it to a new id and file.
   function reportSession(ctx: ExtensionContext): Promise<unknown> {
     if (!reporting) return Promise.resolve();
     const runs = runsWith(ctx);
     tried = runs;
     triedAt = Date.now();
     acked = undefined;
-    const params = { tile: tile!, kind: "omp", sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), ...runs };
-    return client.api.agent.report_session(params).then(
-      () => {
-        // A later report's answer is the one that counts.
-        if (tried === runs) acked = runs;
-      },
-      () => undefined,
-    );
+    const session = watched;
+    const manager = ctx.sessionManager as Partial<Pick<SessionManager, "ensureOnDisk">>;
+    return Promise.resolve()
+      .then(() => manager.ensureOnDisk?.())
+      .catch(() => undefined)
+      .then(() => {
+        if (!reporting || session !== watched) return;
+        const params = { tile: tile!, kind: "omp", sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile(), ...runs };
+        return client.api.agent.report_session(params).then(
+          () => {
+            // A later report's answer is the one that counts.
+            if (tried === runs) acked = runs;
+          },
+          () => undefined,
+        );
+      });
   }
 
   /** Starts looking at `ctx`, the session the tile's agent runs now (session start and switch). */
   function watchSession(ctx: ExtensionContext): void {
+    watched++;
     sessionCtx = reporting ? ctx : undefined;
     draft = sessionCtx ? editorDraft(sessionCtx) : undefined;
     acked = tried = undefined;
@@ -168,6 +188,7 @@ export default function canvas(pi: ExtensionAPI): void {
   }
 
   function stopWatchingSession(): void {
+    watched++;
     clearInterval(reconciling);
     reconciling = undefined;
     sessionCtx = undefined;

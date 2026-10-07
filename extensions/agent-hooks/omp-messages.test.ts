@@ -6,7 +6,7 @@
 // something (`until`), so the extension's coalescing, retry, record and reconcile checks run
 // without real waits.
 import { afterEach, beforeEach, expect, test, vi } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -654,4 +654,75 @@ test("the checks while omp runs read only what its session added since the last 
   await until(() => ++ticks > 200);
   expect(omp.read - read).toBeLessThanOrEqual(2);
   expect(reported(easl, "thinking")).toEqual(["low"]);
+});
+
+test("the session easl gets to resume is on disk before easl has it, a new session's too", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  const dir = mkdtempSync(join(tmpdir(), "easl-omp-sessions-"));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  const file = () => join(dir, `${omp.state.sessionId}.jsonl`);
+  // omp writes a session once it has a reply; ensureOnDisk writes it now (its header and entries).
+  const writing = Promise.withResolvers<void>();
+  Object.assign(omp.ctx.sessionManager, {
+    getSessionFile: file,
+    ensureOnDisk: async () => {
+      await writing.promise;
+      writeFileSync(file(), `{"type":"session","id":"${omp.state.sessionId}"}\n`);
+    },
+  });
+  const sessions = () => easl.calls.filter((call) => call.method === "agent.report_session").map((call) => call.params);
+  await omp.emit("session_start");
+  // The tile reports idle meanwhile; its session waits for the file.
+  await until(() => easl.calls.some((call) => call.method === "agent.report"));
+  expect(sessions()).toEqual([]);
+  writing.resolve();
+  await until(() => sessions().length === 1);
+  expect(sessions()[0]).toMatchObject({ sessionId: "ses_1", sessionPath: file() });
+  expect(existsSync(sessions()[0].sessionPath)).toBe(true);
+
+  // /new: the new session, with no reply yet either, is on disk when easl gets it.
+  omp.state.sessionId = "ses_2";
+  await omp.emit("session_switch");
+  expect(sessions().at(-1)).toMatchObject({ sessionId: "ses_2", sessionPath: file() });
+  expect(existsSync(file())).toBe(true);
+});
+
+test("a session that ends while its file is written isn't reported after its release; one the write moved is reported where it went", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  const dir = mkdtempSync(join(tmpdir(), "easl-omp-sessions-"));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  const file = () => join(dir, `${omp.state.sessionId}.jsonl`);
+  const writing = Promise.withResolvers<void>();
+  Object.assign(omp.ctx.sessionManager, {
+    getSessionFile: file,
+    ensureOnDisk: async () => {
+      await writing.promise;
+      writeFileSync(file(), "{}\n");
+    },
+  });
+  const calls = () => easl.calls.map((call) => call.method).filter((method) => method === "agent.report_session" || method === "agent.release");
+  // The tile's omp exits before its session's file is written: the release is the last word.
+  await omp.emit("session_start");
+  await omp.emit("session_shutdown");
+  writing.resolve();
+  await until(() => calls().includes("agent.release"));
+  let ticks = 0;
+  await until(() => ++ticks > 100);
+  expect(calls()).toEqual(["agent.release"]);
+
+  // Writing the file moves the session to a new id and file (omp's #moveOffSessionFile).
+  const moved = fakeOmp(easl);
+  Object.assign(moved.ctx.sessionManager, {
+    getSessionFile: () => join(dir, `${moved.state.sessionId}.jsonl`),
+    ensureOnDisk: async () => {
+      moved.state.sessionId = "ses_moved";
+      writeFileSync(join(dir, "ses_moved.jsonl"), "{}\n");
+    },
+  });
+  await moved.emit("session_start");
+  await until(() => calls().includes("agent.report_session"));
+  const [report] = easl.calls.filter((call) => call.method === "agent.report_session");
+  expect(report.params).toMatchObject({ sessionId: "ses_moved", sessionPath: join(dir, "ses_moved.jsonl") });
 });
