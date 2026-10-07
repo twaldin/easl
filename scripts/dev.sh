@@ -113,6 +113,10 @@ launch() {
   [ -z "${EASL_DEV_DOWNLOADS:-}" ] || set -- "$@" EASL_DEV_DOWNLOADS="$EASL_DEV_DOWNLOADS"
   [ -z "${EASL_DEV_SSH:-}" ] || set -- "$@" EASL_DEV_SSH="$EASL_DEV_SSH"
   [ -z "${EASL_DEV_REMOTE_HOME:-}" ] || set -- "$@" EASL_DEV_REMOTE_HOME="$EASL_DEV_REMOTE_HOME"
+  # EASL_DEV_FRAME="x y w h" (AppKit screen coordinates): where the board window opens, e.g.
+  # on a headless virtual screen, so it never shows on a viewed Space before a launcher's guard
+  # moves it (DevInput.frame; docs/testing.md).
+  [ -z "${EASL_DEV_FRAME:-}" ] || set -- "$@" EASL_DEV_FRAME="$EASL_DEV_FRAME"
   # The checkout's own home keeps the release bundle id, so a developer's everyday instance keeps
   # its browser logins and window frames; other homes get their own (dev-bundle.sh).
   bundle="$("$repo/scripts/dev-bundle.sh" $([ -n "${EASL_DEV_HOME:-}" ] || echo --release-id) "$app" "$home" "$@")"

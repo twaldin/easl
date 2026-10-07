@@ -63,13 +63,20 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         window.title = remote?.title(of: board) ?? board.root.lastPathComponent
         window.subtitle = remote.map { "\(board.root.path) on \($0.host.name)" } ?? board.root.path
         window.acceptsMouseMovedEvents = true
-        if remote == nil {
-            window.setFrameAutosaveName("Canvas-\(board.id)")
-        } else {
+        if remote != nil {
             // Nothing of another Mac's board is kept here: AppKit saves a titled window's state
             // and a snapshot of it for restoration unless told not to.
             window.isRestorable = false
             window.disableSnapshotRestoration()
+        }
+        if let frame = DevInput.frame {
+            // A development instance opens where its launcher says (a headless screen): the
+            // Space a new window joins is the one of the display holding its frame. No saved
+            // frame is read or written: the checkout's own instance shares the installed app's
+            // defaults, and a test frame must not become the user's geometry for the board.
+            window.setFrame(frame, display: false)
+        } else if remote == nil {
+            window.setFrameAutosaveName("Canvas-\(board.id)")
         }
         // Boards open as tabs of one window (AppDelegate.open adds them to the frontmost group).
         window.tabbingMode = .preferred
