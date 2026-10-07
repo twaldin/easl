@@ -64,33 +64,20 @@ def cpu_seconds(pid):
 
 def rusage(pid):
     """The process's CPU time (s) and interrupt wakeups so far, from `proc_pid_rusage`
-    (RUSAGE_INFO_V4: `ri_user_time` + `ri_system_time` in ns, `ri_interrupt_wkups`; docs/testing.md,
-    "Performance probes"); None when the process is gone."""
+    (RUSAGE_INFO_V4: `ri_user_time` + `ri_system_time` in Mach absolute time units, converted with
+    `mach_timebase_info` (41.67 ns each on Apple silicon; reading them as ns reported 1/42 of the
+    CPU), `ri_interrupt_wkups`; docs/testing.md, "Performance probes"); None when the process is gone."""
     import ctypes
     import struct
+    libc = ctypes.CDLL(None)
     buffer = ctypes.create_string_buffer(16 + 8 * 40)
-    if ctypes.CDLL(None).proc_pid_rusage(pid, 4, buffer) != 0:
+    if libc.proc_pid_rusage(pid, 4, buffer) != 0:
         return None
     user, system, _, wakeups = struct.unpack_from("<4Q", buffer.raw, 16)
-    return {"cpu_s": (user + system) / 1e9, "wakeups": wakeups}
-
-
-def birth_frame(display_index):
-    """`EASL_DEV_FRAME` for a 1492×926 window on yabai display `display_index` (10 pt in from its
-    left, 50 pt down from its top), in AppKit's screen coordinates (origin at the primary display's
-    bottom left; yabai's frames are top-down): AppKit opens a window on the Space of the display
-    holding its frame, so a window born on a headless virtual screen never shows on the user's
-    display before the launcher's guard moves it (docs/testing.md)."""
-    displays = json.loads(sh(YABAI, "-m", "query", "--displays"))
-    primary = next((d["frame"] for d in displays if d["frame"]["x"] == 0 and d["frame"]["y"] == 0), None)
-    frame = next((d["frame"] for d in displays if d["index"] == display_index), None)
-    if primary is None or frame is None:
-        raise SystemExit(f"--birth-display {display_index}: yabai lists displays {[d['index'] for d in displays]}; "
-                         "no launch on a display that isn't there")
-    sx, sw, sh_ = frame["x"], frame["w"], frame["h"]
-    sy = primary["h"] - (frame["y"] + frame["h"])
-    w, h = min(1492, sw - 20), min(926, sh_ - 60)
-    return f"{int(sx + 10)} {int(sy + sh_ - 50 - h)} {int(w)} {int(h)}"
+    timebase = ctypes.create_string_buffer(8)
+    libc.mach_timebase_info(timebase)
+    numer, denom = struct.unpack_from("<2I", timebase.raw, 0)
+    return {"cpu_s": (user + system) * numer / denom / 1e9, "wakeups": wakeups}
 
 
 class Instance:
