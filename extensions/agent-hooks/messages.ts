@@ -1,6 +1,8 @@
 // Out-of-band messages (docs/contracts.md, Peer messages): what an integration that takes
 // messages (agent.report `protocol` 1, `agent.inbox`) does with them. omp's extension uses it;
 // the rules live here so they are tested without an agent.
+import type { MessageRenderer } from "@oh-my-pi/pi-coding-agent";
+import type { Component } from "@oh-my-pi/pi-tui";
 import type { AgentMessage } from "../../clients/ts/src/index";
 
 /** The integration protocol this checkout's integrations speak: 1 takes messages. */
@@ -28,13 +30,15 @@ export function senderKey(message: AgentMessage): string {
 }
 
 /**
- * The custom message omp makes of an IRC message to its agent: its TUI draws it as a card
- * (`IRC ← <from>` over the quoted text), and session history and retros print it as
- * `[irc] <from> → me: <text>`, apart from the user's prompts.
+ * easl's custom message type for a delivery. The extension draws it as omp draws its own IRC
+ * messages (`renderCard`), and omp's session history and retros print it as
+ * `[easl:message] <irc> Message from …`, apart from the user's prompts. Not omp's `irc:incoming`:
+ * omp's own IRC handling would take that over (its `wait` returns one as a bare text result, and
+ * one left over at a run's end wakes the agent even after the user stopped it).
  */
-export const IRC_INCOMING = "irc:incoming";
+export const EASL_MESSAGE = "easl:message";
 
-/** A card's `details`: the fields omp's card and history read, and the messages it carries. */
+/** A card's `details`: what its look reads, and the messages it carries. */
 export type CardDetails = {
   /** the message's id (a burst's first) */
   id: string;
@@ -43,24 +47,24 @@ export type CardDetails = {
   /** what the sender wrote, unescaped (a burst's texts, joined) */
   message: string;
   /** every message the card carries, acked once omp records it */
-  easl: { ids: string[] };
+  ids: string[];
 };
 
 /** One delivery as omp's `pi.sendMessage` takes it. */
-export type Card = { customType: typeof IRC_INCOMING; content: string; display: true; details: CardDetails; attribution: AgentMessage["attribution"] };
+export type Card = { customType: typeof EASL_MESSAGE; content: string; display: true; details: CardDetails; attribution: AgentMessage["attribution"] };
 
 /**
  * One delivery as one card: a burst goes in as one message, so it is steered, starts a turn, is
- * recorded and acked as a whole. The content, what the model reads, has each message in omp's
- * IRC envelope (`envelope`).
+ * recorded and acked as a whole. The content, what the model reads, has each message in an IRC
+ * envelope as omp's own (`envelope`).
  */
 export function card(messages: readonly AgentMessage[]): Card {
   const ids = messages.map((message) => message.id);
   return {
-    customType: IRC_INCOMING,
+    customType: EASL_MESSAGE,
     content: messages.map(envelope).join("\n\n"),
     display: true,
-    details: { id: ids[0], from: [...new Set(messages.map(sender))].join(", "), message: messages.map((message) => message.text.trim()).join("\n\n"), easl: { ids } },
+    details: { id: ids[0], from: [...new Set(messages.map(sender))].join(", "), message: messages.map((message) => message.text.trim()).join("\n\n"), ids },
     // A script's message is on the user's behalf: with one among them, the delivery is the user's.
     attribution: messages.some((message) => message.attribution === "user") ? "user" : "agent",
   };
@@ -72,19 +76,19 @@ export function sender(message: AgentMessage): string {
 }
 
 /**
- * One message as omp's own IRC envelope puts it: its id, who sent it and how to reply (the
- * `agent://` path with the address's name and board percent-encoded, which `peerAddress`
- * decodes), then its text and its mentions' block. What others wrote can't close the envelope or
- * open a harness block of its own.
+ * One message in an IRC envelope as omp's own: who sent it, its text and its mentions' block, how
+ * to reply (the `agent://` path with the address's name and board percent-encoded, which
+ * `peerAddress` decodes), and its id on a line of its own (`ENVELOPE_ID`). What others wrote can't
+ * close the envelope or open a harness block of its own.
  */
 function envelope(message: AgentMessage): string {
   const from = message.from;
-  const who = !from.tile ? `\`${from.name}\`, a script` : !from.address ? `terminal ${from.tile}, closed since it sent this` : from.address === from.tile ? `terminal ${from.tile}` : `\`${from.address}\` (terminal ${from.tile})`;
+  const who = !from.tile ? `\`${from.name}\`, a script` : !from.address ? `terminal ${from.tile}, closed since it sent this` : from.address === from.tile ? `terminal ${from.tile}` : `\`${from.address}\`, terminal ${from.tile}`;
   const reply = from.tile && from.address ? `If a response is expected, reply via \`write\` (\`path: "${replyPath(from.address)}"\`, \`content: "…"\`).` : "It has no reply address.";
   // omp's escapeHarnessTags: what others wrote reaches the model as written, but for `<` of an
   // `irc` or `system-*` tag.
-  const said = `Incoming easl message ${message.id} from ${who}:\n\n${[message.text.trim(), message.context].filter(Boolean).join("\n\n")}`;
-  return `<irc>\n${said.replace(HARNESS_TAG, "&lt;")}\n\n${reply}\n</irc>`;
+  const said = `Message from ${who}:\n\n${[message.text.trim(), message.context].filter(Boolean).join("\n\n")}`;
+  return `<irc>\n${said.replace(HARNESS_TAG, "&lt;")}\n\n${reply}\n(easl message ${message.id})\n</irc>`;
 }
 
 /** `agent://<address>` as omp's `write` takes it, the name and board percent-encoded. */
@@ -95,25 +99,27 @@ function replyPath(address: string): string {
 
 /** The `<` of an `irc` or `system-*` tag (omp's harness tags), opening or closing. */
 const HARNESS_TAG = /<(?=\s*\/?\s*(?:irc|system-[a-z][a-z-]*)(?![\w-]))/gi;
+/** The line of an envelope that names its message. */
+const ENVELOPE_ID = /^\(easl message (msg_[\w-]+)\)$/gm;
 
 /** The fields of an omp session message `recordedIds` reads. */
-export type Recorded = { role?: unknown; customType?: unknown; toolName?: unknown; details?: unknown; timestamp?: unknown };
+export type Recorded = { role?: unknown; customType?: unknown; content?: unknown; details?: unknown; timestamp?: unknown };
 
 /**
- * The ids of the easl messages omp recorded with `message`: an easl card's, or the one omp's
- * `wait` took from its queue as its result instead of injecting the card (that card's `id`).
+ * The ids of the easl messages omp recorded with `message`: a card's, or those of the cards
+ * whose text a user message carries (omp put a script's queued card back in the editor on
+ * Esc or Alt+Up, as text, and the user sent it).
  */
 export function recordedIds(message: Recorded): string[] {
-  const details = message.details;
-  if (!details || typeof details !== "object") return [];
-  if (message.role === "custom" && message.customType === IRC_INCOMING) {
-    const easl = "easl" in details ? details.easl : undefined;
-    const ids = easl && typeof easl === "object" && "ids" in easl ? easl.ids : undefined;
+  if (message.role === "custom" && message.customType === EASL_MESSAGE) {
+    const details = message.details;
+    const ids = details && typeof details === "object" && "ids" in details ? details.ids : undefined;
     return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
   }
-  if (message.role !== "toolResult" || message.toolName !== "wait" || !("waited" in details)) return [];
-  const waited = details.waited;
-  return waited && typeof waited === "object" && "id" in waited && typeof waited.id === "string" ? [waited.id] : [];
+  if (message.role !== "user") return [];
+  const content = message.content;
+  const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => (part?.type === "text" && typeof part.text === "string" ? part.text : "")).join("\n") : "";
+  return [...text.matchAll(ENVELOPE_ID)].map((match) => match[1]);
 }
 
 /** The hidden context `guided` adds: omp hands it to the model as developer context, and never records it. */
@@ -121,16 +127,74 @@ export const GUIDANCE = "easl.guidance";
 export type Guidance = { role: "custom"; customType: typeof GUIDANCE; content: string; display: false; attribution: "agent"; timestamp: number };
 
 /**
- * One request's messages with `text` as hidden context: just before the card carrying one of
- * `ids` (the card that started the turn), else before the last message, so the request ends on
- * what it ended on.
+ * One request's messages with `text` as hidden context: just before the first card carrying one
+ * of `ids`, else (compacted away) first, so it stays where it was from one request to the next.
  */
 export function guided<M extends Recorded>(messages: readonly M[], ids: ReadonlySet<string>, text: string): (M | Guidance)[] {
-  const found = messages.findIndex((message) => recordedIds(message).some((id) => ids.has(id)));
-  const at = found >= 0 ? found : Math.max(messages.length - 1, 0);
+  const at = Math.max(
+    messages.findIndex((message) => recordedIds(message).some((id) => ids.has(id))),
+    0,
+  );
   const stamp = messages[at]?.timestamp;
   const guidance: Guidance = { role: "custom", customType: GUIDANCE, content: text, display: false, attribution: "agent", timestamp: typeof stamp === "number" ? stamp : Date.now() };
   return [...messages.slice(0, at), guidance, ...messages.slice(at)];
+}
+
+/** Body rows a card shows folded and unfolded, and the widest a body row gets (omp's IRC card's). */
+const CARD_ROWS = { folded: 3, unfolded: 12 };
+const CARD_ROW_COLUMNS = 100;
+
+/**
+ * A card as omp draws its own incoming IRC messages (pi-tui `createIrcMessageCard`, which omp
+ * doesn't export): `💬 IRC ← <from>` and the message's age, then its text quoted, three nonblank
+ * lines until the user unfolds it (twelve then), each cut at 100 columns.
+ */
+export const renderCard: MessageRenderer<CardDetails> = (message, { expanded }, theme) => {
+  const from = message.details?.from.trim() || "?";
+  const rows = (message.details?.message ?? "").split("\n").filter((line) => line.trim());
+  const minutes = Math.floor((Date.now() - message.timestamp) / 60_000);
+  const [hours, days] = [Math.floor(minutes / 60), Math.floor(minutes / 1440)];
+  const age = days >= 30 ? `${Math.floor(days / 30)}mo ago` : days >= 7 ? `${Math.floor(days / 7)}w ago` : days ? `${days}d ago` : hours ? `${hours}h ago` : minutes ? `${minutes}m ago` : "just now";
+  let drawn: { width: number; lines: string[] } | undefined;
+  const component: Component = {
+    render(width) {
+      if (drawn?.width === width) return drawn.lines;
+      // One column of padding each side, as omp's card.
+      const inner = Math.max(1, width - 2);
+      const glyph = theme.styledSymbol("tool.irc", "accent");
+      const title = `IRC ${theme.nav.back} ${from}`;
+      const room = inner - Bun.stringWidth(glyph) - 1;
+      const meta = Bun.stringWidth(title) + 1 + Bun.stringWidth(age) <= room ? ` ${theme.fg("dim", age)}` : "";
+      const quote = `  ${theme.fg("dim", theme.md.quoteBorder)} `;
+      const columns = Math.min(CARD_ROW_COLUMNS, inner - Bun.stringWidth(quote));
+      const shown = expanded ? CARD_ROWS.unfolded : CARD_ROWS.folded;
+      const hidden = rows.length - shown;
+      const lines = [
+        `${glyph} ${theme.fg("accent", fit(title, room))}${meta}`,
+        ...rows.slice(0, shown).map((row) => `${quote}${theme.fg("toolOutput", fit(row.trim().replaceAll("\t", "   "), columns))}`),
+        ...(hidden > 0 ? [`${quote}${theme.fg("dim", fit(`… +${hidden} more ${hidden === 1 ? "line" : "lines"}`, columns))}`] : []),
+      ];
+      drawn = { width, lines: lines.map((line) => ` ${line} `) };
+      return drawn.lines;
+    },
+    invalidate() {
+      drawn = undefined;
+    },
+  };
+  return component;
+};
+
+/** `text` cut to `columns` terminal columns with an ellipsis, at a character boundary. */
+function fit(text: string, columns: number): string {
+  if (Bun.stringWidth(text) <= columns) return text;
+  let kept = "";
+  let used = 0;
+  for (const { segment } of new Intl.Segmenter().segment(text)) {
+    used += Bun.stringWidth(segment);
+    if (used > columns - 1) break;
+    kept += segment;
+  }
+  return columns > 0 ? `${kept}…` : "";
 }
 
 /** How a message goes in now. */

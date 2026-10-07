@@ -1,7 +1,8 @@
 // bun test extensions/agent-hooks — how an integration hands out-of-band messages to its agent.
 import { expect, test } from "bun:test";
+import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { AgentMessage } from "../../clients/ts/src/index";
-import { card, GUIDANCE, guided, peerAddress, plan, recordedIds, WakeBudget } from "./messages";
+import { card, GUIDANCE, guided, peerAddress, plan, recordedIds, renderCard, WakeBudget } from "./messages";
 
 const message = (from: AgentMessage["from"], text = "hi", context?: string): AgentMessage => ({
   id: "msg_1",
@@ -23,10 +24,10 @@ test("omp's agent:// paths name easl addresses; the broadcast and other paths do
   expect(peerAddress("local://notes.md")).toBeUndefined();
 });
 
-test("a card carries omp's card fields and the sender's reply route; a script's has none", () => {
+test("a card names the sender, its text and its reply route; a script's has none", () => {
   const lead = message({ tile: "obj_l", name: "lead", address: "lead@canvas", board: "brd_c" }, "  Check the key.\n", "<canvas-mentions>…</canvas-mentions>");
   const sent = card([lead]);
-  expect(sent).toMatchObject({ customType: "irc:incoming", display: true, attribution: "agent", details: { id: "msg_1", from: "lead@canvas", message: "Check the key.", easl: { ids: ["msg_1"] } } });
+  expect(sent).toMatchObject({ customType: "easl:message", display: true, attribution: "agent", details: { id: "msg_1", from: "lead@canvas", message: "Check the key.", ids: ["msg_1"] } });
   // The model reads the id, the text and its mentions.
   expect(sent.content).toContain("msg_1");
   expect(sent.content).toContain("Check the key.");
@@ -53,29 +54,44 @@ test("text another agent wrote can't close the card's envelope or forge a harnes
 test("a burst is one card, from each sender, carrying every message; any script's makes it the user's", () => {
   const lead = { tile: "obj_l", name: "lead", address: "lead@canvas", board: "brd_c" };
   const sent = card([{ ...message(lead, "Check the key."), id: "msg_01A" }, { ...message({ name: "ci" }, "Build failed."), id: "msg_01B" }]);
-  expect(sent).toMatchObject({ attribution: "user", details: { id: "msg_01A", from: "lead@canvas, ci", easl: { ids: ["msg_01A", "msg_01B"] } } });
+  expect(sent).toMatchObject({ attribution: "user", details: { id: "msg_01A", from: "lead@canvas, ci", ids: ["msg_01A", "msg_01B"] } });
   expect(sent.content).toContain("msg_01A");
   expect(sent.content).toContain("msg_01B");
 });
 
-test("a recorded card names the messages it carries; a wait that took a card from omp's queue names its id", () => {
-  const sent = { role: "custom", ...card([{ ...message({ tile: "obj_l", name: "lead", address: "lead@canvas", board: "brd_c" }), id: "msg_01A" }]), timestamp: 1 };
-  expect(recordedIds(sent)).toEqual(["msg_01A"]);
-  expect(recordedIds({ role: "toolResult", toolName: "wait", details: { op: "wait", waited: { id: "msg_01A", from: "lead@canvas", body: "hi" } } })).toEqual(["msg_01A"]);
-  // omp's own agents' messages and the user's prompts carry none.
-  expect(recordedIds({ role: "custom", customType: "irc:incoming", details: { id: "1", from: "Main", message: "hi" } })).toEqual([]);
-  expect(recordedIds({ role: "user", content: "msg_01A" })).toEqual([]);
+test("easl's card is its own type: omp's IRC handling (its wait's inbox, its IRC wakes) leaves it alone", () => {
+  // omp's `wait` returns an `irc:incoming` from its queue as a bare text result, and one left
+  // in its queue at a run's end wakes the agent even after the user stopped it (Esc).
+  expect(card([message({ name: "ci" })]).customType).not.toStartWith("irc:");
 });
 
-test("guidance goes just before the card that started the turn, else before the request's last message", () => {
+test("a recorded card names the messages it carries, and so does its text sent back as a user message", () => {
+  const sent = { role: "custom", ...card([{ ...message({ tile: "obj_l", name: "lead", address: "lead@canvas", board: "brd_c" }), id: "msg_01A" }, { ...message({ name: "ci" }), id: "msg_01B" }]), timestamp: 1 };
+  expect(recordedIds(sent)).toEqual(["msg_01A", "msg_01B"]);
+  // omp put the queued card back in the editor (Esc, Alt+Up) and the user sent it.
+  expect(recordedIds({ role: "user", content: [{ type: "text", text: sent.content }] })).toEqual(["msg_01A", "msg_01B"]);
+  // A prompt naming a message, and omp's own agents' messages, carry none.
+  expect(recordedIds({ role: "user", content: "see (easl message msg_01A) above" })).toEqual([]);
+  expect(recordedIds({ role: "custom", customType: "irc:incoming", details: { id: "1", from: "Main", message: "hi" } })).toEqual([]);
+});
+
+test("guidance goes just before the first marked card, else (compacted away) first", () => {
   const history = { role: "user", content: "earlier", timestamp: 1 };
   const sent = { role: "custom", ...card([{ ...message({ name: "ci" }), id: "msg_01A" }]), timestamp: 2 };
   const reply = { role: "assistant", content: [], timestamp: 3 };
   const added = guided([history, sent, reply], new Set(["msg_01A"]), "You are running in an easl terminal tile.");
-  expect(added.map((m) => ("customType" in m ? m.customType : m.role))).toEqual(["user", GUIDANCE, "irc:incoming", "assistant"]);
+  expect(added.map((m) => ("customType" in m ? m.customType : m.role))).toEqual(["user", GUIDANCE, "easl:message", "assistant"]);
   expect(added[1]).toMatchObject({ role: "custom", content: "You are running in an easl terminal tile.", display: false, attribution: "agent" });
-  // Compacted away: the request still ends on its last message.
-  expect(guided([history, reply], new Set(["msg_01A"]), "g").map((m) => ("customType" in m ? m.customType : m.role))).toEqual(["user", GUIDANCE, "assistant"]);
+  expect(guided([history, reply], new Set(["msg_01A"]), "g").map((m) => ("customType" in m ? m.customType : m.role))).toEqual([GUIDANCE, "user", "assistant"]);
+});
+
+test("a card draws as omp's IRC card: the sender, its age, the text quoted, three lines until unfolded", () => {
+  const theme = { fg: (_: string, text: string) => text, styledSymbol: () => "💬", nav: { back: "←" }, md: { quoteBorder: "│" } } as unknown as Theme;
+  const sent = { role: "custom" as const, ...card([message({ tile: "obj_l", name: "lead", address: "lead@canvas", board: "brd_c" }, "one\n\ntwo\nthree\nfour\nfive")]), timestamp: Date.now() - 120_000 };
+  expect(renderCard(sent, { expanded: false }, theme)?.render(80)).toEqual([" 💬 IRC ← lead@canvas 2m ago ", "   │ one ", "   │ two ", "   │ three ", "   │ … +2 more lines "]);
+  expect(renderCard(sent, { expanded: true }, theme)?.render(80)).toHaveLength(6);
+  // Narrow: every row fits.
+  for (const row of renderCard(sent, { expanded: false }, theme)?.render(12) ?? []) expect(Bun.stringWidth(row)).toBeLessThanOrEqual(12);
 });
 
 test("now steers a working agent and starts a turn when idle; next-turn never joins a running turn", () => {
