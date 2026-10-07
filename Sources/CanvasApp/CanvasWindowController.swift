@@ -71,6 +71,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             window.isRestorable = false
             window.disableSnapshotRestoration()
         }
+        // A development instance opens where its launcher says (a headless screen): the Space a
+        // new window joins is the one of the display holding its frame.
+        if let frame = DevInput.frame { window.setFrame(frame, display: false) }
         // Boards open as tabs of one window (AppDelegate.open adds them to the frontmost group).
         window.tabbingMode = .preferred
         window.tabbingIdentifier = "net.waldin.easl.board"
