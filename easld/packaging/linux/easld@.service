@@ -1,8 +1,9 @@
 # easld for user %i on a Linux machine that hosts easl terminal tiles (docs/contracts.md
-# "Hosted terminals"). A system unit, not a user one: the tiles' sessions are easld's children
-# (session.spawn), so they and everything they run stay in this unit's cgroup, under
-# agents.slice's CPU and memory caps, even after zmx's daemon detaches. A tile process started
-# through an ssh session or `systemd --user` would land in user-<uid>.slice instead.
+# "Hosted terminals", "Owned terminals"). A system unit, not a user one: the tiles' sessions are
+# easld's children (session.spawn, and with --own-terminals those of its own boards' terminals),
+# so they and everything they run stay in this unit's cgroup, under agents.slice's CPU and memory
+# caps, even after zmx's daemon detaches. A tile process started through an ssh session or
+# `systemd --user` would land in user-<uid>.slice instead.
 #
 # Installed by the machine's administrator, not by scripts/offload-setup.sh (which installs the
 # user binaries this runs):
@@ -19,7 +20,7 @@ Slice=agents.slice
 WorkingDirectory=/home/%i
 Environment=PATH=/home/%i/.local/bin:/home/%i/.bun/bin:/usr/local/bin:/usr/bin:/bin
 Environment=LANG=C.UTF-8
-ExecStart=/home/%i/.local/bin/easld --home /home/%i/.local/state/easl
+ExecStart=/home/%i/.local/bin/easld --home /home/%i/.local/state/easl --own-terminals
 # Stopping or restarting easld (an upgrade) ends easld, not the sessions it started: they stay
 # in this unit's cgroup, as a Mac's tiles outlive the app.
 KillMode=process

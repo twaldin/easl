@@ -346,6 +346,20 @@ struct HostedTerminalTests {
         #expect(shell["command"] == nil && shell["cwd"] == .string("/srv/repo") && shell["env"]?["EASL_GHOSTTY_INTEGRATION"] == nil)
     }
 
+    /// A hosted terminal's session gets what an easld-owned one gets (Tests/Fixtures/terminal-env.json,
+    /// which easld's session tests check `Owner.Env` against), with this instance's relayed sockets
+    /// and home instead of easld's socket, the board's root there and easld's home.
+    @Test func theSessionsVariablesMatchTheSharedFixture() throws {
+        struct Side: Decodable { var run: String; var env: [String: String]; var labels: [String: String] }
+        struct Fixture: Decodable { var tile: String; var board: String; var userHome: String; var env: [String: String]; var hosted: Side }
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../Fixtures/terminal-env.json")
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
+        let params = HostedTerminal.spawnParams(tile: fixture.tile, board: fixture.board, argv: nil, cwd: nil, home: fixture.userHome, run: fixture.hosted.run,
+                                                homeLabel: fixture.hosted.labels["canvas.home"] ?? "", cmuxPassword: nil, ghosttyIntegration: true)
+        #expect(params["env"]?.object?.compactMapValues(\.string) == fixture.env.merging(fixture.hosted.env) { $1 })
+        #expect(params["labels"]?.object?.compactMapValues(\.string) == fixture.hosted.labels)
+    }
+
     /// Two Macs, or a dev instance beside the app, get run directories of their own.
     @Test func eachInstanceHasItsOwnRunDirectory() {
         let app = HostedTerminal.instance(hostname: "twaldin-home.local", support: "/Users/t/Library/Application Support/Easl")

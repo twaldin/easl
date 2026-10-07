@@ -142,7 +142,15 @@ unit=easld@$user.service
 state=$(on_host "systemctl is-active $unit 2>/dev/null" || true)
 if [ "$state" = active ]; then
   say "$unit: active"
-  [ "$easld_changed" = no ] || say "easld changed: restart it to use the new one (sessions keep running: KillMode=process): sudo systemctl restart $unit"
+  # The unit installed is the administrator's copy: a changed one (a new flag) takes effect only
+  # once installed again and reloaded, or the restart keeps the old command line.
+  if ! on_host 'cat /etc/systemd/system/easld@.service 2>/dev/null' | cmp -s - "$repo/easld/packaging/linux/easld@.service"; then
+    say "The unit changed (or isn't /etc/systemd/system/easld@.service). Its administrator installs it again, reloads systemd and restarts easld (sessions keep running: KillMode=process):"
+    say "  sudo install -m 0644 $home/.local/share/easl/easld@.service /etc/systemd/system/easld@.service"
+    say "  sudo systemctl daemon-reload && sudo systemctl restart $unit"
+  elif [ "$easld_changed" != no ]; then
+    say "easld changed: restart it to use the new one (sessions keep running: KillMode=process): sudo systemctl restart $unit"
+  fi
 else
   say ""
   say "easld isn't running as $unit on $host. Its administrator installs the unit once (it is $home/.local/share/easl/easld@.service there, and below):"

@@ -54,6 +54,8 @@ easld and the app never share a home: easld takes the app's `instance.lock` on i
 
 Mac clients attach to easld (`client.attach`, docs/design/next.md "The client protocol") and serve what needs AppKit, WebKit or a live terminal surface: view.get, view.render, view.snapshot, agent.prompt, agent.read's live modes, agent.restart, object.reload, and text measurement. easld checks each call first, then forwards it to the client showing the board; with no client attached it answers `unavailable`. Text measurement instead falls back to the glyph table, within a few points of AppKit (no kerning), and marks those results `approximate: true`. The app doesn't attach yet.
 
+With `--own-terminals` (its Linux unit, `easld@.service`, sets it) easld starts and ends the sessions of the terminals on its own boards that have no `props.host`, as the app does for its tiles, with a hosted session's variables pointed at easld itself (docs/contracts.md "Owned terminals"). Without it easld starts none: on a Mac the app runs its terminals.
+
 ## Decisions
 
 ### Interaction

@@ -97,6 +97,10 @@ type Board struct {
 	messages map[string][]Message
 	// bouncing are messages bounced in the open step, handed on when it closes (flushBounces).
 	bouncing []Bounce
+	// createdTerminals and removedTerminals are the terminals created and deleted in the open
+	// step, checked against objects when it closes (flushTerminals).
+	createdTerminals []string
+	removedTerminals []model.Object
 
 	changedAt        map[string]int
 	keyHolders       map[string]map[string]bool
@@ -125,6 +129,11 @@ type Board struct {
 	// OnMessagesBounced receives messages whose receiver's agent session ended before its
 	// integration took them (the registry's router sends them back or logs them).
 	OnMessagesBounced func(Bounce)
+	// OnTerminals receives, once the outermost step closes, the terminals it created that are
+	// still there (as they are then) and those it deleted that are still gone (as they last
+	// were): a failed batch reverts both, so it reports neither (Board.onTerminalsEnded, plus the
+	// created). The registry's router starts and ends the sessions of those easld owns.
+	OnTerminals func(created, ended []model.Object)
 	// OnChange is called after any persisted change (the store debounces saves).
 	OnChange func()
 	// Viewport is the canvas rect a window shows; easld has none (nil), so placement ignores it.
@@ -486,8 +495,13 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 	b.commit(o)
 	b.countWrite(caller, "")
 	b.history.record(change{kind: changeCreated, object: o})
+	if typ == model.Terminal {
+		b.createdTerminals = append(b.createdTerminals, o.ID)
+	}
 	b.log(KindCreated, o, ActorFor(caller), "created "+Describe(o)+" at "+Position(b.ReportedOne(o).Frame), "", nil)
 	b.emit(EventObjectCreated, o.APIJSON())
+	// A create opens no step of its own: outside one it is reported now.
+	b.flushTerminals()
 	return o
 }
 
@@ -675,6 +689,9 @@ func (b *Board) Delete(id, caller string) error {
 		b.history.record(change{kind: changeUnstaged, unstaged: unstaged})
 	}
 	b.history.record(change{kind: changeDeleted, object: removed})
+	if removed.Type == model.Terminal {
+		b.removedTerminals = append(b.removedTerminals, removed)
+	}
 	b.log(KindDeleted, removed, actor, "deleted "+Describe(removed), "", nil)
 	before := len(b.tray)
 	kept := b.tray[:0:0]
@@ -835,10 +852,39 @@ func (b *Board) bumpRevision() {
 }
 
 // endStep closes a step opened with history.begin; when the outermost one closes, the messages
-// it bounced are handed on (flushBounces).
+// it bounced are handed on (flushBounces) and its terminals reported (flushTerminals).
 func (b *Board) endStep() {
 	b.history.end()
 	b.flushBounces()
+	b.flushTerminals()
+}
+
+// flushTerminals hands OnTerminals, once no step is open, the terminals created since that are
+// still there and those deleted since that are still gone, each once, in the order it happened.
+// A terminal created and deleted in the same step is neither: nothing started it.
+func (b *Board) flushTerminals() {
+	if b.history.isOpen() || (len(b.createdTerminals) == 0 && len(b.removedTerminals) == 0) {
+		return
+	}
+	createdIDs, removed := b.createdTerminals, b.removedTerminals
+	b.createdTerminals, b.removedTerminals = nil, nil
+	seen := map[string]bool{}
+	var created, ended []model.Object
+	for _, id := range createdIDs {
+		seen[id] = true
+		if o, ok := b.objects[id]; ok {
+			created = append(created, o)
+		}
+	}
+	for _, o := range removed {
+		if _, back := b.objects[o.ID]; !back && !seen[o.ID] {
+			ended = append(ended, o)
+		}
+		seen[o.ID] = true
+	}
+	if (len(created) > 0 || len(ended) > 0) && b.OnTerminals != nil {
+		b.OnTerminals(created, ended)
+	}
 }
 
 // Atomically runs body as one step and one board revision; when it fails, every change it made

@@ -175,6 +175,8 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 	var records []Record
 	var raw []rawRecord
 	var schema map[string]any
+	// opened are the boards the scenario opened, its own first.
+	var opened []any
 
 	steps := append([]Step{
 		{Call: "board.open", Params: map[string]any{"root": "{{root}}"}, Save: "open"},
@@ -231,6 +233,9 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 			r.response = resp
 			if step.Call == "events.subscribe" && resp["ok"] == true {
 				subscribed[connName] = true
+			}
+			if result, _ := resp["result"].(map[string]any); step.Call == "board.open" && result["board"] != nil {
+				opened = append(opened, result["board"])
 			}
 			if step.Save != "" {
 				vars[step.Save] = resp["result"]
@@ -326,7 +331,9 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 		}
 		raw = append(raw, r)
 	}
-	teardown(conns["main"], vars["board"], o.Timeout)
+	for _, board := range opened {
+		teardown(conns["main"], board, o.Timeout)
+	}
 
 	for _, r := range raw {
 		records = append(records, r.normalized(norm, s.Ignore, mergeMaps(s.Unordered, r.step.Unordered)))
@@ -577,7 +584,8 @@ func expandReplies(replies map[string][]Reply, vars map[string]any) (map[string]
 	return out, nil
 }
 
-// teardown deletes the scenario's terminal tiles, so their sessions end with the scenario.
+// teardown deletes the terminal tiles on a board the scenario opened, so their sessions end with
+// the scenario.
 func teardown(c *conn, board any, timeout time.Duration) {
 	if c == nil || board == nil {
 		return

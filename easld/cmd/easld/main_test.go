@@ -13,6 +13,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/twaldin/easl/easld/internal/session"
+	"github.com/twaldin/easl/easld/internal/session/zmxtest"
 )
 
 // shortDir is a directory for sockets (their paths are short; TMPDIR on macOS is long).
@@ -196,5 +199,52 @@ func TestHangupSavesPendingChanges(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(home, "boards", board+".json"))
 	if err != nil || !strings.Contains(string(data), id) {
 		t.Fatalf("the new shape isn't in the board file: %v\n%s", err, data)
+	}
+}
+
+// With --own-terminals easld starts a new terminal's session pointed at its own socket, beside
+// which the agent's integration spools what easld isn't there to take (the directory easld
+// replays), labelled with its home; deleting the terminal ends the session and that spool.
+func TestOwnTerminalsStartsAndEndsTheirSessions(t *testing.T) {
+	dir := shortDir(t)
+	home, root, socket := filepath.Join(dir, "home"), filepath.Join(dir, "root"), filepath.Join(dir, "s.sock")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	zmx, err := zmxtest.Install(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, stderr := start(t, "--home", home, "--socket", socket, "--zmx", zmx, "--own-terminals")
+	c := connect(t, socket, stderr)
+	board := c.call(t, "board.open", map[string]any{"root": root})["board"].(string)
+	created := c.call(t, "object.create", map[string]any{"board": board, "type": "terminal", "props": map[string]any{"command": []any{"omp"}}})
+	tile := created["object"].(map[string]any)["id"].(string)
+	sessions := filepath.Join(home, "zmx")
+	got, err := zmxtest.Read(sessions, "canvas-"+tile)
+	if err != nil {
+		t.Fatalf("no session for %s: %v (easld said %q)", tile, err, stderr.String())
+	}
+	if got.Env["EASL_SOCKET"] != socket || got.Env["EASL_TILE_ID"] != tile || got.Env["EASL_BOARD_ID"] != board {
+		t.Errorf("env %v", got.Env)
+	}
+	if want := "canvas.home=" + session.Label(home); !strings.Contains(got.Labels, want) {
+		t.Errorf("labels %q, want %s", got.Labels, want)
+	}
+	spooled := filepath.Join(filepath.Dir(got.Env["EASL_SOCKET"]), "agent-reports", tile)
+	if err := os.MkdirAll(spooled, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(spooled, "1-1-r.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c.call(t, "object.delete", map[string]any{"id": tile})
+	for _, path := range []string{filepath.Join(sessions, "canvas-"+tile), spooled} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s is still there after the delete: %v", path, err)
+		}
+	}
+	if code := stop(t, done, syscall.SIGTERM); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
 }

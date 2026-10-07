@@ -6,43 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-)
 
-// fakeZmx is a zmx that keeps its sessions as files in `$ZMX_DIR`: `attach` records the labels,
-// the directory, the environment and the command of a session it creates; `list`, `kill` and
-// `version` answer from them as zmx 0.8.1 does. A session file holding `dead` is one whose
-// daemon died: `list` finds its socket refused and deletes it, as zmx does.
-const fakeZmx = `#!/bin/sh
-state="$ZMX_DIR"
-case "$1" in
-attach)
-  shift; labels=""
-  if [ "$1" = "--labels" ]; then labels="$2"; shift 2; fi
-  name="$1"; shift
-  [ -e "$state/$name" ] && exit 0
-  { printf 'labels=%s\n' "$labels"; printf 'cwd=%s\n' "$(pwd)"; printf 'socket=%s\n' "$EASL_SOCKET"; printf 'tile=%s\n' "$EASL_TILE_ID"; printf 'path=%s\n' "$PATH"; for a in "$@"; do printf 'arg=%s\n' "$a"; done; } > "$state/$name"
-  ;;
-list)
-  found=""
-  for f in "$state"/*; do
-    [ -f "$f" ] || continue; found=1; name=$(basename "$f")
-    if grep -qx dead "$f"; then rm "$f"; printf '  name=%s\terr=ConnectionRefused\tstatus=cleaning up\n' "$name"; continue; fi
-    labels=$(sed -n 's/^labels=//p' "$f" | tr ' ' '\t')
-    printf '  name=%s\tpid=4242\tclients=0\tcreated=1\tcwd=file://h/tmp\tcmd=sh' "$name"
-    [ -n "$labels" ] && printf '\t%s' "$labels"
-    printf '\n'
-  done
-  [ -n "$found" ] || echo "no sessions found in $state"
-  ;;
-kill)
-  [ -e "$state/$2" ] || { echo "error: failed to kill session=$2: SessionNotFound"; exit 1; }
-  rm "$state/$2"; echo "killed session $2"
-  ;;
-version)
-  printf 'zmx\t\t0.8.1\nsocket_dir\t%s\nlog_dir\t\t%s/logs\n' "$state" "$state"
-  ;;
-esac
-`
+	"github.com/twaldin/easl/easld/internal/session/zmxtest"
+)
 
 func fixture(t *testing.T) (*Manager, string) {
 	t.Helper()
@@ -51,8 +17,8 @@ func fixture(t *testing.T) (*Manager, string) {
 	if err := os.MkdirAll(filepath.Join(state, "logs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	zmx := filepath.Join(dir, "zmx")
-	if err := os.WriteFile(zmx, []byte(fakeZmx), 0o755); err != nil {
+	zmx, err := zmxtest.Install(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
 	home := filepath.Join(dir, "home")
@@ -278,6 +244,61 @@ func TestKillEndsTheSessionAndItsLog(t *testing.T) {
 	}
 	if killed, err := m.Kill("obj_d", "mac-1"); err != nil || killed {
 		t.Errorf("second kill: %v %v", killed, err)
+	}
+}
+
+// End (an owned terminal's delete) also deletes the log of a session already gone, which Kill
+// leaves; a live session another home's or another board's (every owner label is checked), and
+// its log, it leaves alone, and its own it ends.
+func TestEndTakesTheLogOfASessionAlreadyGone(t *testing.T) {
+	m, state := fixture(t)
+	gone := filepath.Join(state, "logs", "canvas-obj_g.log")
+	foreign := filepath.Join(state, "logs", "canvas-obj_h.log")
+	for _, f := range []string{gone, foreign} {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mine := func(tile string) map[string]string {
+		return map[string]string{HomeLabel: "mac-1", "canvas.board": "brd_1", "canvas.tile": tile}
+	}
+	if killed, err := m.Kill("obj_g", "mac-1"); err != nil || killed {
+		t.Fatalf("kill: %v %v", killed, err)
+	}
+	if _, err := os.Stat(gone); err != nil {
+		t.Fatalf("Kill took the log of a session that isn't there: %v", err)
+	}
+	if ended, err := m.End("obj_g", mine("obj_g")); err != nil || ended {
+		t.Fatalf("end: %v %v", ended, err)
+	}
+	if _, err := os.Stat(gone); !os.IsNotExist(err) {
+		t.Errorf("the gone session's log is still there: %v", err)
+	}
+	for owner, labels := range map[string]map[string]string{
+		"another home's":  {HomeLabel: "mac-2", "canvas.board": "brd_1", "canvas.tile": "obj_h"},
+		"another board's": {HomeLabel: "mac-1", "canvas.board": "brd_2", "canvas.tile": "obj_h"},
+	} {
+		if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_h", Labels: labels}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.End("obj_h", mine("obj_h")); code(err) != "conflict" {
+			t.Errorf("end of %s session: %v", owner, err)
+		}
+		if _, err := os.Stat(foreign); err != nil {
+			t.Errorf("%s log was touched: %v", owner, err)
+		}
+		if _, err := os.Stat(filepath.Join(state, "canvas-obj_h")); err != nil {
+			t.Errorf("%s session was ended: %v", owner, err)
+		}
+		if err := os.Remove(filepath.Join(state, "canvas-obj_h")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_h", Labels: mine("obj_h")}); err != nil {
+		t.Fatal(err)
+	}
+	if ended, err := m.End("obj_h", mine("obj_h")); err != nil || !ended {
+		t.Errorf("end of its own session: %v %v", ended, err)
 	}
 }
 

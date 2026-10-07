@@ -11,6 +11,8 @@ import (
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/router"
 	"github.com/twaldin/easl/easld/internal/server"
+	"github.com/twaldin/easl/easld/internal/session"
+	"github.com/twaldin/easl/easld/internal/session/zmxtest"
 	"github.com/twaldin/easl/easld/internal/store"
 )
 
@@ -20,7 +22,7 @@ import (
 var passing = []string{
 	"agent-control", "agents", "arrows", "batch", "board-get-history", "boards", "client-delegation", "client-failures", "client-mode", "client-versions",
 	"code-tiles", "events", "follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "messages",
-	"metrics", "no-client", "objects-crud", "open-url", "placement", "protocol", "questions", "tray",
+	"metrics", "no-client", "objects-crud", "open-url", "owned-terminals", "placement", "protocol", "questions", "tray",
 }
 
 // Not passing, and why:
@@ -29,7 +31,13 @@ var passing = []string{
 //     measures them from the glyph table (measure/glyphs): within a few points, and marked
 //     `approximate: true`. client-delegation replays exact measurement through a scripted client.
 
-// The suite replayed against easld in-process: a fresh home, the real router and socket server.
+// owning are the scenarios replayed against an easld that owns its boards' terminals
+// (--own-terminals), with a zmx that runs no session (zmxtest); the rest run against one in its
+// default mode (an easld on a Mac, where the app runs its terminals): no zmx, no ownership.
+var owning = map[string]bool{"owned-terminals": true}
+
+// The suite replayed against easld in-process: a fresh home, the real router and socket server,
+// in the mode each scenario needs (owning).
 func TestConformance(t *testing.T) {
 	if testing.Short() {
 		t.Skip("replays the whole conformance suite")
@@ -40,13 +48,6 @@ func TestConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	reg := board.NewRegistry(filepath.Join(dir, "boards"), store.DefaultDebounce, filepath.Join(dir, "agent-reports"))
-	r := router.New(reg)
-	srv, err := server.Listen(filepath.Join(dir, "easl.sock"), r.Handle, r.Answer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer srv.Close()
 
 	wd, _ := os.Getwd()
 	suite, err := conformance.FindSuite(wd)
@@ -57,19 +58,40 @@ func TestConformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := suite.ReplayAll(scenarios, conformance.Options{Socket: srv.Path(), WorkDir: dir, Settle: 40 * time.Millisecond})
-	if err != nil {
-		t.Fatal(err)
+	var plain, owned []conformance.Scenario
+	for _, sc := range scenarios {
+		if owning[sc.Name] {
+			owned = append(owned, sc)
+		} else {
+			plain = append(plain, sc)
+		}
 	}
+	var results []conformance.ScenarioResult
+	var uncovered []string
 	var table strings.Builder
-	report.Print(&table)
+	for _, run := range []struct {
+		home      string
+		own       bool
+		scenarios []conformance.Scenario
+	}{{filepath.Join(dir, "default"), false, plain}, {filepath.Join(dir, "owning"), true, owned}} {
+		srv := serve(t, run.home, run.own)
+		report, err := suite.ReplayAll(run.scenarios, conformance.Options{Socket: srv.Path(), WorkDir: dir, Settle: 40 * time.Millisecond})
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		report.Print(&table)
+		results = append(results, report.Scenarios...)
+		// Uncovered is the whole suite's (every scenario on disk), the same for both runs.
+		uncovered = report.Uncovered
+	}
 	t.Log("\n" + table.String())
 
 	expected := map[string]bool{}
 	for _, name := range passing {
 		expected[name] = true
 	}
-	for _, sc := range report.Scenarios {
+	for _, sc := range results {
 		switch {
 		case expected[sc.Scenario] && !sc.Pass:
 			t.Errorf("scenario %s no longer passes (see the table above)", sc.Scenario)
@@ -81,7 +103,32 @@ func TestConformance(t *testing.T) {
 	for name := range expected {
 		t.Errorf("`passing` names %s, which is no scenario (renamed or removed?)", name)
 	}
-	if len(report.Uncovered) > 0 {
-		t.Errorf("schema methods with no scenario and not delegated: %v", report.Uncovered)
+	if len(uncovered) > 0 {
+		t.Errorf("schema methods with no scenario and not delegated: %v", uncovered)
 	}
+}
+
+// serve is easld on `home` (its socket there): by default, or owning its boards' terminals with
+// zmxtest's zmx (--own-terminals).
+func serve(t *testing.T, home string, own bool) *server.Server {
+	t.Helper()
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(home, "easl.sock")
+	reg := board.NewRegistry(filepath.Join(home, "boards"), store.DefaultDebounce, filepath.Join(home, "agent-reports"))
+	r := router.New(reg)
+	if own {
+		zmx, err := zmxtest.Install(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Sessions = session.New(zmx, filepath.Join(home, "sessions"))
+		r.Owns = &session.Owner{Socket: socket, Home: home, Resources: session.Resources(r.Sessions.Home)}
+	}
+	srv, err := server.Listen(socket, r.Handle, r.Answer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv
 }

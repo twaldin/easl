@@ -1,0 +1,73 @@
+{
+  "description": "easld --own-terminals (recorded against easld with a zmx that runs no session: the app runs its terminals itself, and answers session.* `unsupported`): a terminal without props.host gets its session canvas-<tile> by the time its create is answered, labelled with the board, the tile and easld's home; a hosted terminal's session is its Mac's to start (session.spawn), and to end; a batch that fails starts nothing; deleting the terminal ends its session and leaves another home's alone.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "owned" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } },
+      "save": "owned"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "terminal", "props": { "host": "deckbox", "command": ["/bin/cat"], "name": "hosted" }, "frame": { "x": 50700, "y": 50000, "w": 600, "h": 400 } },
+      "save": "hosted"
+    },
+    {
+      "call": "session.list",
+      "note": "only the owned terminal's session, labelled with easld's home",
+      "mask": {
+        "response.result.sessions.*.labels.*": { "match": "^_[A-Za-z0-9._-]*$", "as": "<easld home>", "why": "canvas.home is easld's home directory as a label value, which differs between runs" }
+      }
+    },
+    {
+      "call": "object.batch",
+      "note": "fails at its second op: the terminal its first created is put back, with no session",
+      "params": { "board": "{{board}}", "ops": [
+        { "method": "object.create", "params": { "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "doomed" }, "frame": { "x": 51400, "y": 50000, "w": 600, "h": 400 } } },
+        { "method": "object.update", "params": { "id": "obj_missing", "props": { "name": "x" } } }
+      ] }
+    },
+    {
+      "call": "session.list",
+      "mask": {
+        "response.result.sessions.*.labels.*": { "match": "^_[A-Za-z0-9._-]*$", "as": "<easld home>", "why": "canvas.home is easld's home directory as a label value, which differs between runs" }
+      }
+    },
+    {
+      "call": "session.spawn",
+      "note": "the hosted terminal's Mac starts its session, labelled with that Mac's home",
+      "params": { "tile": "{{hosted.object.id}}", "command": ["/bin/cat"], "labels": { "canvas.home": "mac-1", "canvas.board": "{{board}}", "canvas.tile": "{{hosted.object.id}}" } }
+    },
+    {
+      "call": "object.delete",
+      "params": { "id": "{{hosted.object.id}}" }
+    },
+    {
+      "call": "session.list",
+      "note": "the hosted terminal's session is its Mac's to end",
+      "unordered": { "response.result.sessions": "zmx lists sessions by name, and ids made in the same millisecond sort either way" },
+      "mask": {
+        "response.result.sessions.*.labels.*": { "match": "^_[A-Za-z0-9._-]*$", "as": "<easld home>", "why": "canvas.home is easld's home directory as a label value, which differs between runs" }
+      }
+    },
+    {
+      "call": "object.delete",
+      "params": { "id": "{{owned.object.id}}" }
+    },
+    {
+      "call": "session.list",
+      "note": "the owned terminal's session is gone; the Mac's stays"
+    },
+    {
+      "call": "session.kill",
+      "note": "easld ends a session only for its own home",
+      "params": { "tile": "{{hosted.object.id}}", "home": "_another_home" }
+    },
+    {
+      "call": "session.kill",
+      "params": { "tile": "{{hosted.object.id}}", "home": "mac-1" }
+    },
+    {
+      "call": "session.list"
+    }
+  ]
+}

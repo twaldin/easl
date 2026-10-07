@@ -1,0 +1,47 @@
+{
+  "description": "The variables and labels of a terminal session that runs on an easld host: `env` is what every such session gets, `owned` what easld adds to the sessions it starts itself (--own-terminals: easld/internal/session/env.go, Owner.Env and Owner.Labels), `hosted` what a Mac's offloaded terminal adds (HostedTerminal.spawnParams, with ghosttyIntegration on and no cmux password). Go's session tests and Swift's HostedTerminalTests each check their side against it, so the two can't drift: a variable for both goes in `env`.",
+  "tile": "obj_01M3MWD38ZV1P794MV",
+  "board": "brd_6b395ed3472e5837df80",
+  "userHome": "/home/tim",
+  "env": {
+    "EASL_ENV": "1",
+    "EASL_TILE_ID": "obj_01M3MWD38ZV1P794MV",
+    "EASL_BOARD_ID": "brd_6b395ed3472e5837df80",
+    "PATH": "/home/tim/.local/share/easl/bin",
+    "PYTHONPATH": "/home/tim/.local/share/easl/clients/python",
+    "ZDOTDIR": "/home/tim/.local/share/easl/extensions/shell/zsh",
+    "BROWSER": "/home/tim/.local/share/easl/bin/open",
+    "PROMPT_COMMAND": ". '/home/tim/.local/share/easl/extensions/shell/bash/easl.bash'",
+    "EASL_GHOSTTY_INTEGRATION": "/home/tim/.local/share/easl/ghostty/shell-integration",
+    "TERM": "xterm-256color",
+    "COLORTERM": "truecolor"
+  },
+  "owned": {
+    "easldHome": "/home/tim/.local/state/easl",
+    "socket": "/home/tim/.local/state/easl/easl.sock",
+    "root": "/home/tim/src/hone",
+    "env": {
+      "EASL_SOCKET": "/home/tim/.local/state/easl/easl.sock",
+      "EASL_BOARD_ROOT": "/home/tim/src/hone"
+    },
+    "labels": {
+      "canvas.board": "brd_6b395ed3472e5837df80",
+      "canvas.tile": "obj_01M3MWD38ZV1P794MV",
+      "canvas.home": "_home_tim_.local_state_easl"
+    }
+  },
+  "hosted": {
+    "run": "/home/tim/.local/state/easl/run/twaldin-home-1a2b3c4d",
+    "env": {
+      "EASL_SOCKET": "/home/tim/.local/state/easl/run/twaldin-home-1a2b3c4d/easl.sock",
+      "CMUX_SOCKET_PATH": "/home/tim/.local/state/easl/run/twaldin-home-1a2b3c4d/cmux.sock",
+      "CMUX_SURFACE_ID": "obj_01M3MWD38ZV1P794MV",
+      "CMUX_WORKSPACE_ID": "brd_6b395ed3472e5837df80"
+    },
+    "labels": {
+      "canvas.board": "brd_6b395ed3472e5837df80",
+      "canvas.tile": "obj_01M3MWD38ZV1P794MV",
+      "canvas.home": "_Users_tim_Library_Application_Support_Easl"
+    }
+  }
+}

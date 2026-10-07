@@ -47,6 +47,8 @@ func run(args []string, stderr io.Writer) int {
 	// Not $EASL_SOCKET: every terminal tile of the app exports it, pointing at the app's socket.
 	socket := flags.String("socket", "", "unix socket to serve (default <home>/easl.sock)")
 	zmx := flags.String("zmx", "", "zmx binary for hosted terminals' sessions (default: zmx on PATH, else ~/.local/bin/zmx)")
+	// Off by default: on a Mac the app runs its terminals, and an easld there must not compete.
+	own := flags.Bool("own-terminals", false, "start and end the sessions of the terminals on its boards that have no props.host (a machine whose boards run wholly here)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -74,12 +76,25 @@ func run(args []string, stderr io.Writer) int {
 	// Integrations spool undelivered reports in `agent-reports/` beside the socket.
 	reg := board.NewRegistry(filepath.Join(*home, "boards"), store.DefaultDebounce, filepath.Join(filepath.Dir(path), "agent-reports"))
 	r := router.New(reg)
-	// Hosted terminals' sessions keep their zmx sockets and logs in `<home>/zmx`, the user's own.
+	// Hosted and owned terminals' sessions keep their zmx sockets and logs in `<home>/zmx`, the
+	// user's own.
 	r.Sessions = session.New(session.Locate(*zmx), filepath.Join(*home, "zmx"))
 	if r.Sessions.Zmx != "" {
 		if err := r.Sessions.Secure(); err != nil {
-			fmt.Fprintln(stderr, "easld: hosted terminals can't start:", err)
+			fmt.Fprintln(stderr, "easld: terminal sessions can't start:", err)
 		}
+	}
+	// Owned terminals' sessions reach easld at its own socket, as absolute paths.
+	if *own {
+		socketPath, err := filepath.Abs(path)
+		if err != nil {
+			return fail(err)
+		}
+		homePath, err := filepath.Abs(*home)
+		if err != nil {
+			return fail(err)
+		}
+		r.Owns = &session.Owner{Socket: socketPath, Home: homePath, Resources: session.Resources(r.Sessions.Home)}
 	}
 	// Hosted terminals reach their board through `<home>/run/<instance>/` (relay.open).
 	r.Relays = relay.New(filepath.Join(*home, "run"))
@@ -88,7 +103,11 @@ func run(args []string, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	fmt.Fprintf(stderr, "easld: serving %s (boards in %s)\n", path, filepath.Join(*home, "boards"))
+	owns := ""
+	if r.Owns != nil {
+		owns = "; it starts and ends their terminals"
+	}
+	fmt.Fprintf(stderr, "easld: serving %s (boards in %s%s)\n", path, filepath.Join(*home, "boards"), owns)
 	<-signals
 	// Close stops accepting, lets the requests already read finish and unlinks the socket (only
 	// if it is still ours); the boards are saved after that, with nothing left changing them.

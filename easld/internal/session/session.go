@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -171,6 +172,9 @@ type SpawnRequest struct {
 	Cwd     string
 	Env     map[string]string
 	Labels  map[string]string
+	// Unset are name prefixes of easld's own environment (Manager.Env) the session doesn't
+	// inherit: an owned terminal's (Owner.Request). session.spawn sets none.
+	Unset []string
 }
 
 // Spawn starts the tile's session unless it runs already (created false). A session whose
@@ -223,7 +227,7 @@ func (m *Manager) Spawn(req SpawnRequest) (session string, created bool, err err
 		args = append(args, "--labels", labels)
 	}
 	args = append(append(args, name), m.loginCommand(req.Command)...)
-	if out, err := m.run(cwd, environ(m.Env, req.Env), args...); err != nil {
+	if out, err := m.run(cwd, environ(m.Env, req.Env, req.Unset), args...); err != nil {
 		return "", false, failure("unavailable", "zmx couldn't start %s: %s", name, describe(err, out))
 	}
 	// The daemon lists the session once its socket is up.
@@ -264,6 +268,22 @@ func (m *Manager) List() ([]Session, error) {
 // `home` is given, a session not labelled with it is `conflict` (one that doesn't answer can't
 // say whose it is: `unavailable`).
 func (m *Manager) Kill(tile, home string) (bool, error) {
+	var want map[string]string
+	if home != "" {
+		want = map[string]string{HomeLabel: home}
+	}
+	return m.kill(tile, want, false)
+}
+
+// End is Kill for a terminal gone for good (an owned terminal's delete), of the session that
+// carries every owner label `labels` names (OwnerLabels: in one home, a board copied to another
+// root keeps its tile ids, so the home alone doesn't say whose it is). When its session is no
+// longer there (it exited, or zmx found its daemon dead), zmx's log of it goes too.
+func (m *Manager) End(tile string, labels map[string]string) (bool, error) {
+	return m.kill(tile, labels, true)
+}
+
+func (m *Manager) kill(tile string, want map[string]string, gone bool) (bool, error) {
 	if err := m.ready(); err != nil {
 		return false, err
 	}
@@ -274,24 +294,35 @@ func (m *Manager) Kill(tile, home string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, err := m.find(name)
-	if err != nil || existing == nil {
+	if err != nil {
 		return false, err
 	}
-	if home != "" {
+	if existing == nil {
+		if gone {
+			m.removeLog(name)
+		}
+		return false, nil
+	}
+	if len(want) > 0 {
 		if existing.Unreachable {
 			return false, failure("unavailable", "session %s doesn't answer, so whose it is can't be told; not ending it", name)
 		}
-		if err := owned(existing, map[string]string{HomeLabel: home}); err != nil {
+		if err := owned(existing, want); err != nil {
 			return false, err
 		}
 	}
 	if out, err := m.run("", m.Env, "kill", name); err != nil {
 		return false, failure("unavailable", "zmx couldn't end %s: %s", name, describe(err, out))
 	}
+	m.removeLog(name)
+	return true, nil
+}
+
+// removeLog deletes zmx's log of session `name`, which zmx keeps forever.
+func (m *Manager) removeLog(name string) {
 	if dir := m.logDir(); dir != "" {
 		_ = os.Remove(filepath.Join(dir, name+".log"))
 	}
-	return true, nil
 }
 
 func (m *Manager) find(name string) (*Session, error) {
@@ -427,9 +458,10 @@ func labelArg(labels map[string]string) (string, error) {
 	return strings.Join(pairs, " "), nil
 }
 
-// environ is `base` with `extra` set over it, except that `extra`'s PATH goes before base's: a
-// hosted tile puts easl's bin first, as the Mac's tiles do before the app's PATH.
-func environ(base []string, extra map[string]string) []string {
+// environ is `base` without the names starting with an `unset` prefix, with `extra` set over it,
+// except that `extra`'s PATH goes before base's: a hosted tile puts easl's bin first, as the
+// Mac's tiles do before the app's PATH.
+func environ(base []string, extra map[string]string, unset []string) []string {
 	out := make([]string, 0, len(base)+len(extra))
 	basePath := ""
 	for _, kv := range base {
@@ -437,7 +469,7 @@ func environ(base []string, extra map[string]string) []string {
 		if key == "PATH" {
 			basePath = value
 		}
-		if _, replaced := extra[key]; !replaced {
+		if _, replaced := extra[key]; !replaced && !slices.ContainsFunc(unset, func(prefix string) bool { return strings.HasPrefix(key, prefix) }) {
 			out = append(out, kv)
 		}
 	}

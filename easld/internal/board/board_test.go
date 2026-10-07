@@ -132,6 +132,49 @@ func TestATerminalsHostCantChange(t *testing.T) {
 	}
 }
 
+// The terminals a step created and ended are reported once it closes: a create or delete on its
+// own at once, a batch's at its end, and none of a batch that failed (it put back what it did) or
+// of a terminal created and deleted in one step (nothing started it). Other objects aren't.
+func TestTerminalsAreReportedWhenTheirStepCloses(t *testing.T) {
+	b := New("brd", "/r")
+	var reports [][2][]string
+	b.OnTerminals = func(created, ended []model.Object) {
+		ids := func(list []model.Object) []string {
+			out := []string{}
+			for _, o := range list {
+				out = append(out, o.ID)
+			}
+			return out
+		}
+		reports = append(reports, [2][]string{ids(created), ids(ended)})
+	}
+	alone := b.Create(model.Terminal, map[string]any{}, frame(0, 0, 100, 100), "", "")
+	b.Create(model.Note, map[string]any{"markdown": "n"}, frame(0, 200, 100, 100), "", "")
+	var batched model.Object
+	_ = b.Atomically(func() error {
+		batched = b.Create(model.Terminal, map[string]any{"host": "deckbox"}, frame(200, 0, 100, 100), "", "")
+		brief := b.Create(model.Terminal, map[string]any{}, frame(400, 0, 100, 100), "", "")
+		if len(reports) != 1 {
+			t.Errorf("reported before the step closed: %v", reports)
+		}
+		return b.Delete(brief.ID, "")
+	})
+	_ = b.Atomically(func() error {
+		b.Create(model.Terminal, map[string]any{}, frame(600, 0, 100, 100), "", "")
+		if err := b.Delete(alone.ID, ""); err != nil {
+			return err
+		}
+		return InvalidParams("boom")
+	})
+	if err := b.Delete(alone.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	want := [][2][]string{{{alone.ID}, {}}, {{batched.ID}, {}}, {{}, {alone.ID}}}
+	if !reflect.DeepEqual(reports, want) {
+		t.Errorf("reports %v, want %v", reports, want)
+	}
+}
+
 func TestFailedAtomicStepRevertsEverythingAsOneRevision(t *testing.T) {
 	b := New("brd", "/r")
 	keep := b.Create(model.Note, map[string]any{"markdown": "keep", "key": "K"}, frame(0, 0, 100, 100), "", "")
