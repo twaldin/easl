@@ -76,6 +76,11 @@ final class RemoteImageTile: NSView, TileContent {
 
     @objc private func refreshPressed() { draw() }
 
+    /// The link to the host dropped and is back (`BoardMirror.onRedraw`): asks for a fresh drawing.
+    /// The host's read after the drop announces only objects that changed, so a tile whose drawing
+    /// failed or went stale meanwhile gets no other cue.
+    func redraw() { draw() }
+
     /// Asks the host for the tile's drawing now (one at a time; a request meanwhile runs after).
     private func draw() {
         scheduled?.cancel()

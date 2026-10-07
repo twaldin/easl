@@ -250,6 +250,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         banner.show(mirror.state, host: host, problem: mirror.problem)
         mirror.onState = { [weak self] state in self?.banner.show(state, host: host, problem: mirror.problem) }
         mirror.onNotice = { [weak self] text in self?.canvas.showNotice(text) }
+        mirror.onRedraw = { [weak self] in self?.canvas.redrawRemoteTiles() }
         sendPrompt = { text, terminal, mentions, answer in
             try await mirror.prompt(text, to: terminal, mentions: mentions, answer: answer)
         }

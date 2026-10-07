@@ -184,6 +184,59 @@ final class BoardMirrorTests {
         #expect(states.last == .online && states.contains { $0 != .online })
     }
 
+    @Test func backOnlineTheTilesAreToldToDrawAgainOnceTheBoardIsRead() async throws {
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        var redraws = 0
+        var added: ObjectID?
+        // What the board held at each call: the host's change while away must already be in it.
+        var catchUp: [Bool] = []
+        mirror.onRedraw = {
+            redraws += 1
+            catchUp.append(added.map { board.objects[$0] != nil } ?? false)
+        }
+        for round in 1...2 {
+            server.stop()
+            try await eventually { mirror.state != .online }
+            #expect(redraws == round - 1, "nothing is drawn while the host can't be reached")
+            added = note("added while away \(round)", at: Double(round) * 400).id
+            server = Self.serve(router, at: socket)
+            try server.start()
+            try await eventually { redraws == round }
+        }
+        #expect(catchUp == [true, true])
+    }
+
+    @Test func theTilesDrawAgainOnlyOnceTheRenderLinkIsBackToo() async throws {
+        // The render link has its own socket here, so it can be the last to come back.
+        let renderSocket = dir.appendingPathComponent("r").path
+        var renderServer = Self.serve(router, at: renderSocket)
+        try renderServer.start()
+        let fast = EaslConnection.Backoff(initial: .milliseconds(50), maximum: .milliseconds(200))
+        let mirror = BoardMirror(hostName: "home", board: host.id, connection: .unixSocket(socket, backoff: fast, handshakeTimeout: .seconds(60)),
+                                 renders: .unixSocket(renderSocket, backoff: fast, handshakeTimeout: .seconds(60)))
+        mirrors.append(mirror)
+        let board = try await mirror.load()
+        defer {
+            mirror.close()
+            renderServer.stop()
+        }
+        var redraws = 0
+        mirror.onRedraw = { redraws += 1 }
+        server.stop()
+        renderServer.stop()
+        try await eventually { mirror.state != .online }
+        let added = note("added while away", at: 800)
+        server = Self.serve(router, at: socket)
+        try server.start()
+        // The board link is back and read; nothing is drawn through a render link that is not.
+        try await eventually { board.objects[added.id] != nil }
+        #expect(mirror.state == .online && redraws == 0)
+        renderServer = Self.serve(router, at: renderSocket)
+        try renderServer.start()
+        try await eventually { redraws == 1 }
+    }
+
     /// Runs `body` once, on the main actor (a test's host changes, from a server's handler).
     @MainActor final class Once {
         var body: (() -> Void)?
