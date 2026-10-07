@@ -1,11 +1,12 @@
 import CryptoKit
 import Foundation
+import Security
 
 /// easl's in-app updater (easl › Check for Updates…, the titlebar Update button; docs/design.md
 /// "Updates"): the release `latest.json` offers, whether it's newer than the running app, the
-/// update's phases, the checks on what was downloaded, and the helper script that swaps the app
-/// once it has quit. The app does the networking, the subprocesses and the windows
-/// (`Sources/CanvasApp/Updater.swift`).
+/// update's phases, the checks on what was downloaded and the copy that gets installed, and the
+/// helper script that swaps the app once it has quit. The app does the networking, the helper's
+/// launch and the windows (`Sources/CanvasApp/Updater.swift`).
 public enum AppUpdate {
     /// The release on offer, published beside the installer's pins by canvas-site
     /// (`src/pages/latest.json.ts`, from `RELEASE` in `src/brand/brand.ts`).
@@ -14,8 +15,13 @@ public enum AppUpdate {
     public static let firstCheck: TimeInterval = 60
     /// Automatic checks after the first, while easl runs.
     public static let checkInterval: TimeInterval = 24 * 60 * 60
-    /// The bundle a release zip holds, and the name the helper's moves keep.
+    /// The bundle a release zip holds.
     public static let appName = "easl.app"
+    /// The verified copy beside the installed app, `<prefix><version>.app`, that the helper
+    /// renames into its place.
+    static let incomingPrefix = ".easl-update-"
+    /// The installed app, renamed aside by the helper, `<prefix><version>.app`.
+    static let backupPrefix = ".easl-previous-"
 
     /// Where to read `latest.json`: `override` (`EASL_UPDATE_URL`, for testing against a local
     /// server) when set, else `defaultSource`. Nil when the override isn't an http(s) URL.
@@ -26,7 +32,7 @@ public enum AppUpdate {
     }
 
     /// Checks a downloaded zip against `latest.json` before anything unpacks it: its size, then
-    /// its SHA-256.
+    /// its SHA-256. Blocking.
     public static func checkDownload(_ file: URL, against release: LatestRelease) throws {
         let size = try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int ?? -1
         guard size == release.size else { throw DownloadProblem.size(expected: release.size, got: size) }
@@ -34,7 +40,7 @@ public enum AppUpdate {
         guard sum == release.sha256 else { throw DownloadProblem.checksum(expected: release.sha256, got: sum) }
     }
 
-    /// A file's SHA-256 in lowercase hex, read 1 MiB at a time.
+    /// A file's SHA-256 in lowercase hex, read 1 MiB at a time. Blocking.
     public static func sha256(of file: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
@@ -56,8 +62,45 @@ public enum AppUpdate {
         }
     }
 
+    /// Why the new app isn't installed. Each stops the update before easl quits, with nothing
+    /// replaced.
+    public enum InstallProblem: Error, Equatable, CustomStringConvertible {
+        /// The update's folder wouldn't be a direct child of `updates/` (symlinks resolved).
+        case outsideUpdates(String)
+        /// Nothing at the path: the zip has no `easl.app`.
+        case noApp(String)
+        /// The path is a symlink or a file, not an app bundle's folder.
+        case notABundle(String)
+        case unpack(String)
+        case signature(String)
+        /// The new app's Team ID isn't the running app's (nil: signed ad hoc).
+        case team(expected: String?, got: String?)
+        case gatekeeper(String)
+        case version(expected: String, got: String?)
+        /// Copying the verified app beside the installed one failed.
+        case copy(String)
+        case quarantine(String)
+
+        public var description: String {
+            switch self {
+            case let .outsideUpdates(path): "the update's folder would be outside easl's updates folder (\(path))"
+            case let .noApp(path): "there's no \(AppUpdate.appName) at \(path)"
+            case let .notABundle(path): "\(path) is a symlink or a file, not an app"
+            case let .unpack(detail): "couldn't unpack the zip: \(detail)"
+            case let .signature(detail): "the new app's signature doesn't verify: \(detail)"
+            case .team(nil, let got?): "this easl isn't signed with a Developer ID (a build from source?), so it can't take an app signed by team \(got)"
+            case .team(let expected?, nil): "the new app isn't signed by easl's team (\(expected))"
+            case let .team(expected, got): "the new app is signed by team \(got ?? "none"), not easl's (\(expected ?? "none"))"
+            case let .gatekeeper(detail): "Gatekeeper doesn't accept the new app: \(detail)"
+            case let .version(expected, got): "the zip holds easl \(got ?? "of no version"), not \(expected)"
+            case let .copy(detail): "couldn't copy the new app beside this one: \(detail)"
+            case let .quarantine(detail): "couldn't clear the new app's quarantine flag: \(detail)"
+            }
+        }
+    }
+
     /// An app bundle's `CFBundleShortVersionString`, read from its Info.plist (never `Bundle`'s
-    /// cache).
+    /// cache). Blocking.
     public static func bundleVersion(of app: URL) -> String? {
         let plist = app.appendingPathComponent("Contents/Info.plist")
         guard let data = try? Data(contentsOf: plist),
@@ -66,12 +109,20 @@ public enum AppUpdate {
     }
 
     /// One update's files, in `<updates>/<version>/` (the app's support directory's `updates`;
-    /// never `/tmp`). Deleted at the next launch, except a bundle easl runs from.
+    /// never `/tmp`), and the two hidden names beside the installed app the helper renames
+    /// between. Deleted at the next launch, except a bundle easl runs from.
     public struct Staging: Equatable, Sendable {
+        public let updates: URL
         public let directory: URL
         public let version: String
 
-        public init(updates: URL, version: String) {
+        /// Refuses a `version` that isn't one plain path component, so `directory` names a child
+        /// of `updates` (a version `AppVersion` reads always is one).
+        public init(updates: URL, version: String) throws {
+            guard !version.isEmpty, version != ".", version != "..", !version.contains("/"), !version.contains("\0") else {
+                throw InstallProblem.outsideUpdates(updates.appendingPathComponent(version).path)
+            }
+            self.updates = updates
             self.version = version
             directory = updates.appendingPathComponent(version, isDirectory: true)
         }
@@ -80,64 +131,237 @@ public enum AppUpdate {
         public var zip: URL { directory.appendingPathComponent("easl-\(version).zip") }
         /// Where `ditto -x -k` unpacks it.
         public var unpacked: URL { directory.appendingPathComponent("unpacked", isDirectory: true) }
-        /// The new app, verified here before the helper moves it into place.
+        /// The new app as unpacked, verified before it's copied beside the installed one.
         public var app: URL { unpacked.appendingPathComponent(AppUpdate.appName, isDirectory: true) }
-        /// Where the helper moves the app it replaces.
+        /// Where the helper moves the replaced app once the new one is in place.
         public var previous: URL { directory.appendingPathComponent("previous.app", isDirectory: true) }
-        /// The helper's one-line outcome (`Outcome`), which the next launch reports.
+        /// The helper's outcome (`Outcome`), which the next launch reports.
         public var result: URL { directory.appendingPathComponent("result") }
         /// The helper's output.
         public var log: URL { directory.appendingPathComponent("helper.log") }
+
+        /// The verified copy of the new app beside `installed`, on its volume, so the helper only
+        /// ever renames.
+        public func incoming(beside installed: URL) -> URL {
+            installed.deletingLastPathComponent().appendingPathComponent("\(AppUpdate.incomingPrefix)\(version).app", isDirectory: true)
+        }
+
+        /// Where the helper renames `installed` while the new app takes its name.
+        public func backup(beside installed: URL) -> URL {
+            installed.deletingLastPathComponent().appendingPathComponent("\(AppUpdate.backupPrefix)\(version).app", isDirectory: true)
+        }
+
+        /// Empties the folder for a new download. Before deleting or creating anything it checks
+        /// that the folder, symlinks resolved, is a direct child of `updates`, and again once
+        /// it's made. Blocking: call it off the main thread.
+        public func prepare() throws {
+            let files = FileManager.default
+            try files.createDirectory(at: updates, withIntermediateDirectories: true)
+            try requireInside()
+            if AppUpdate.exists(directory) { try files.removeItem(at: directory) }
+            try files.createDirectory(at: directory, withIntermediateDirectories: false)
+            try requireInside()
+        }
+
+        private func requireInside() throws {
+            guard let root = AppUpdate.realPath(updates) else { throw InstallProblem.outsideUpdates(directory.path) }
+            guard AppUpdate.exists(directory) else { return }
+            guard let real = AppUpdate.realPath(directory), (real as NSString).deletingLastPathComponent == root,
+                  (real as NSString).lastPathComponent == version else {
+                throw InstallProblem.outsideUpdates(directory.path)
+            }
+        }
+    }
+
+    /// A hidden copy an update leaves beside the installed app when it stops partway
+    /// (`.easl-update-<version>.app`, `.easl-previous-<version>.app`), which the next launch
+    /// deletes.
+    public static func isLeftover(_ name: String) -> Bool {
+        for prefix in [incomingPrefix, backupPrefix] where name.hasPrefix(prefix) && name.hasSuffix(".app") {
+            return AppVersion(String(name.dropFirst(prefix.count).dropLast(4))) != nil
+        }
+        return false
     }
 
     /// What the helper did, from its `result` file.
     public enum Outcome: Equatable, Sendable {
         /// The new version is in place.
         case installed
-        /// Nothing was replaced, or the old version was put back; the reason, for the user.
-        case failed(String)
+        /// Nothing was replaced; what stopped it.
+        case unchanged(String)
+        /// The new version couldn't be renamed into place, so the old one was renamed back; why.
+        case restored(String)
+        /// Neither rename worked: the old app is at this path, and that's what was opened.
+        case stranded(String)
 
         public init?(result text: String) {
-            let line = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if line == "installed" {
+            let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text == "installed" {
                 self = .installed
-            } else if line.hasPrefix("failed: ") {
-                self = .failed(String(line.dropFirst(8)))
-            } else {
-                return nil
+                return
+            }
+            for (prefix, outcome) in [("unchanged: ", Outcome.unchanged), ("restored: ", Outcome.restored), ("stranded: ", Outcome.stranded)]
+            where text.hasPrefix(prefix) {
+                self = outcome(String(text.dropFirst(prefix.count)))
+                return
+            }
+            return nil
+        }
+
+        /// What the user is told about an update that didn't install; nil when it did.
+        public var failure: String? {
+            switch self {
+            case .installed: nil
+            case let .unchanged(detail): "nothing was replaced (\(detail))"
+            case let .restored(detail): "the new version couldn't be moved into place (\(detail)), so the old version was put back"
+            case let .stranded(path): "the new version couldn't be moved into place and the old version couldn't be put back: easl is at \(path); rename it to \(AppUpdate.appName)"
             }
         }
     }
 
-    /// The detached helper's `/bin/sh` script. It waits for `pid` (the app) to exit, moves `app`
-    /// aside to `staging.previous` and `staging.app` into its place, writes the outcome to
-    /// `staging.result` and runs `relaunch`, a shell command that opens `"$app"`: the new
-    /// version, or the old one when a move failed (put back in place, or, if even that failed,
-    /// where it was moved aside). `relaunch` is `relaunchCommand` in the app; tests pass their own.
+    // MARK: verifying
+
+    /// Everything before easl quits: checks the zip against `latest.json`, unpacks it, verifies
+    /// the app it holds, copies that app beside `installed` (`Staging.incoming`, on the installed
+    /// app's volume) and verifies the copy, which is what the helper installs. `team` is the
+    /// running app's Team ID; `gatekeeper` false skips `spctl` (a development instance updating
+    /// ad hoc to ad hoc). On any failure nothing beside `installed` is left. Returns the copy.
+    public static func prepareInstall(_ staging: Staging, release: LatestRelease, replacing installed: URL, team: String?, gatekeeper: Bool) async throws -> URL {
+        let zip = staging.zip, staged = staging.app
+        try await blocking { try checkDownload(zip, against: release) }
+        try await run("/usr/bin/ditto", ["-x", "-k", zip.path, staging.unpacked.path], or: InstallProblem.unpack)
+        try await verify(staged, release: release, team: team, gatekeeper: gatekeeper)
+        // ditto gives a quarantined zip's flag to everything it unpacks.
+        if try await blocking({ isQuarantined(zip) || isQuarantined(staged) }) { try await clearQuarantine(staged) }
+        let incoming = staging.incoming(beside: installed), backup = staging.backup(beside: installed)
+        try await blocking {
+            // An earlier attempt's (a symlink is removed itself, never what it points to).
+            for leftover in [incoming, backup] where exists(leftover) { try FileManager.default.removeItem(at: leftover) }
+        }
+        do {
+            try await run("/usr/bin/ditto", [staged.path, incoming.path], or: InstallProblem.copy)
+            try await verify(incoming, release: release, team: team, gatekeeper: gatekeeper)
+            if try await blocking({ isQuarantined(incoming) }) { try await clearQuarantine(incoming) }
+        } catch {
+            try? await blocking { if exists(incoming) { try FileManager.default.removeItem(at: incoming) } }
+            throw error
+        }
+        return incoming
+    }
+
+    /// The new app is a real folder (not a symlink to one), its signature verifies
+    /// (`codesign --verify --deep --strict`), its Team ID is `team`, Gatekeeper accepts it
+    /// (`spctl --assess --type execute`, when `gatekeeper`) and its Info.plist version is
+    /// exactly `latest.json`'s.
+    public static func verify(_ app: URL, release: LatestRelease, team: String?, gatekeeper: Bool) async throws {
+        try await blocking { try requireBundle(app) }
+        try await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path], or: InstallProblem.signature)
+        let theirs = try await blocking { teamID(of: app) }
+        guard theirs == team else { throw InstallProblem.team(expected: team, got: theirs) }
+        if gatekeeper {
+            try await run("/usr/sbin/spctl", ["--assess", "--type", "execute", app.path], or: InstallProblem.gatekeeper)
+        }
+        let version = try await blocking { bundleVersion(of: app) }
+        guard version == release.version.description else { throw InstallProblem.version(expected: release.version.description, got: version) }
+    }
+
+    /// `app` itself (not what a symlink there points to) is a folder.
+    static func requireBundle(_ app: URL) throws {
+        var info = stat()
+        guard lstat(app.path, &info) == 0 else { throw InstallProblem.noApp(app.path) }
+        guard info.st_mode & S_IFMT == S_IFDIR else { throw InstallProblem.notABundle(app.path) }
+    }
+
+    /// The Team ID `app` is signed with; nil when it's signed ad hoc or not at all. Blocking.
+    public static func teamID(of app: URL) -> String? {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(app as CFURL, [], &code) == errSecSuccess, let code else { return nil }
+        return teamID(of: code)
+    }
+
+    /// This process's Team ID; nil when it's signed ad hoc (a build from source). Blocking.
+    public static func runningTeamID() -> String? {
+        var me: SecCode?
+        guard SecCodeCopySelf([], &me) == errSecSuccess, let me else { return nil }
+        var code: SecStaticCode?
+        guard SecCodeCopyStaticCode(me, [], &code) == errSecSuccess, let code else { return nil }
+        return teamID(of: code)
+    }
+
+    private static func teamID(of code: SecStaticCode) -> String? {
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let info = info as? [String: Any] else { return nil }
+        return info[kSecCodeInfoTeamIdentifier as String] as? String
+    }
+
+    private static func isQuarantined(_ file: URL) -> Bool {
+        getxattr(file.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0
+    }
+
+    /// Only after Gatekeeper has accepted the app: a pending first-launch prompt would block the
+    /// relaunch (issue #60).
+    private static func clearQuarantine(_ app: URL) async throws {
+        try await run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", app.path], or: InstallProblem.quarantine)
+    }
+
+    private static func run(_ executable: String, _ arguments: [String], or problem: (String) -> InstallProblem) async throws {
+        let result = try await RemoteHost.run(executable, arguments, timeout: 120)
+        guard result.status != 0 else { return }
+        throw problem(RemoteHost.lastLine(result.errors) ?? RemoteHost.lastLine(result.output) ?? "exit status \(result.status)")
+    }
+
+    /// File work off the cooperative pool (docs/design.md, Performance).
+    private static func blocking<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await offPool { Result { try work() } }.get()
+    }
+
+    /// Whether anything, a dangling symlink included, is at `url`.
+    static func exists(_ url: URL) -> Bool {
+        var info = stat()
+        return lstat(url.path, &info) == 0
+    }
+
+    static func realPath(_ url: URL) -> String? {
+        guard let resolved = realpath(url.path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    // MARK: the helper
+
+    /// The detached helper's `/bin/sh` script. It waits for `pid` (the app) to exit, then only
+    /// renames within `app`'s folder: `app` to `staging.backup(beside:)` and
+    /// `staging.incoming(beside:)` (the verified copy) to `app`; if the second rename fails, the
+    /// backup goes straight back. A rename never copies, so a failure leaves each bundle whole;
+    /// `mv` would move into a folder already at the destination, so each destination must be
+    /// free first. After a success the backup goes to `staging.previous` (a failure there is
+    /// harmless: the next launch deletes it). It writes the outcome to `staging.result`
+    /// (`Outcome`) and runs `relaunch`, a shell command that opens `"$app"`: the new version, or
+    /// the old one. `relaunch` is `relaunchCommand` in the app; tests pass their own.
     public static func helperScript(pid: Int32, app: URL, staging: Staging, relaunch: String) -> String {
         let q = RemoteHost.quote
         return """
         pid=\(pid)
         app=\(q(app.path))
-        new=\(q(staging.app.path))
+        new=\(q(staging.incoming(beside: app).path))
+        backup=\(q(staging.backup(beside: app).path))
         previous=\(q(staging.previous.path))
         result=\(q(staging.result.path))
+        vacant() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
         while kill -0 "$pid" 2>/dev/null; do /bin/sleep 0.2; done
-        /bin/rm -rf "$previous"
-        if ! err=$(/bin/mv "$app" "$previous" 2>&1); then
-          printf "failed: couldn't move %s aside (%s); nothing was replaced\\n" "$app" "$err" > "$result"
-        elif ! err=$(/bin/mv "$new" "$app" 2>&1); then
-          # What a move across volumes left half-copied. mv into a directory that still exists
-          # would nest the old app inside it, so that counts as a failed restore.
-          /bin/rm -rf "$app"
-          if [ ! -e "$app" ] && /bin/mv "$previous" "$app" 2>/dev/null; then
-            printf "failed: couldn't move the new version to %s (%s); the old version is back\\n" "$app" "$err" > "$result"
-          else
-            printf "failed: couldn't move the new version to %s (%s) or put the old one back, which is at %s\\n" "$app" "$err" "$previous" > "$result"
-            app=$previous
-          fi
-        else
+        if ! vacant "$backup"; then
+          printf 'unchanged: %s is in the way\\n' "$backup" > "$result"
+        elif ! err=$(/bin/mv "$app" "$backup" 2>&1); then
+          printf 'unchanged: %s\\n' "$err" > "$result"
+        elif vacant "$app" && err=$(/bin/mv "$new" "$app" 2>&1); then
           echo installed > "$result"
+          /bin/mv "$backup" "$previous" || echo "easl: $backup stays until the next launch"
+        elif vacant "$app" && /bin/mv "$backup" "$app"; then
+          printf 'restored: %s\\n' "${err:-something else took $app}" > "$result"
+        else
+          printf 'stranded: %s\\n' "$backup" > "$result"
+          app=$backup
         fi
         \(relaunch)
 
@@ -157,9 +381,10 @@ public enum AppUpdate {
 }
 
 /// A release version: `major[.minor[.patch…]]`, an optional pre-release (`-rc.1`) and build
-/// metadata (`+…`, ignored), compared as semantic versions: numbers numerically (0.2.10 is
-/// newer than 0.2.9; missing numbers are 0, so 0.3 is 0.3.0) and a pre-release before its
-/// release.
+/// metadata (`+build.7`, ignored in comparisons), each a dot-separated list of `[0-9A-Za-z-]`
+/// identifiers as semantic versioning allows, so the text is always one plain path component.
+/// Compared as semantic versions: numbers numerically (0.2.10 is newer than 0.2.9; missing
+/// numbers are 0, so 0.3 is 0.3.0) and a pre-release before its release.
 public struct AppVersion: Comparable, Sendable, CustomStringConvertible {
     public let numbers: [Int]
     public let prerelease: [String]
@@ -168,11 +393,15 @@ public struct AppVersion: Comparable, Sendable, CustomStringConvertible {
 
     public init?(_ text: String) {
         var core = Substring(text)
-        if let plus = core.firstIndex(of: "+") { core = core[..<plus] }
+        if let plus = core.firstIndex(of: "+") {
+            guard core[core.index(after: plus)...].split(separator: ".", omittingEmptySubsequences: false).allSatisfy(Self.isIdentifier) else { return nil }
+            core = core[..<plus]
+        }
         var prerelease: [String] = []
         if let dash = core.firstIndex(of: "-") {
-            prerelease = core[core.index(after: dash)...].split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-            guard prerelease.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") } }) else { return nil }
+            let identifiers = core[core.index(after: dash)...].split(separator: ".", omittingEmptySubsequences: false)
+            guard identifiers.allSatisfy(Self.isIdentifier) else { return nil }
+            prerelease = identifiers.map(String.init)
             core = core[..<dash]
         }
         var numbers: [Int] = []
@@ -184,6 +413,11 @@ public struct AppVersion: Comparable, Sendable, CustomStringConvertible {
         self.numbers = numbers
         self.prerelease = prerelease
         description = text
+    }
+
+    /// A pre-release or build identifier: one or more of `[0-9A-Za-z-]`.
+    private static func isIdentifier(_ part: Substring) -> Bool {
+        !part.isEmpty && part.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
     }
 
     public static func == (lhs: AppVersion, rhs: AppVersion) -> Bool {
@@ -243,57 +477,66 @@ public struct LatestRelease: Equatable, Sendable {
     /// Whether it's a newer version than `running`, the app's `CFBundleShortVersionString`.
     public func isNewer(than running: AppVersion) -> Bool { version > running }
 
-    /// What's wrong with a `latest.json`.
+    /// What's wrong with a `latest.json`, by field.
     public enum Problem: Error, Equatable, CustomStringConvertible {
         case notJSON
         case missing(String)
-        case invalid(String, String)
+        case wrongType(String)
+        /// The field's value breaks its rule (`rules`).
+        case invalid(String)
+
+        private static let rules = [
+            "version": "isn't a version (like 0.2.3)", "url": "isn't an https address", "sha256": "isn't 64 hex digits",
+            "size": "isn't a positive whole number of bytes", "notes": "isn't a web address",
+        ]
 
         public var description: String {
             switch self {
             case .notJSON: "latest.json isn't a JSON object"
             case let .missing(field): "latest.json has no \(field)"
-            case let .invalid(field, why): "latest.json's \(field) \(why)"
+            case let .wrongType(field): "latest.json's \(field) has the wrong type"
+            case let .invalid(field): "latest.json's \(field) \(Self.rules[field] ?? "isn't valid")"
             }
         }
     }
 
-    /// Reads `latest.json`. Every field is required. `url` must be https (http only to this Mac,
-    /// for a test server: `EASL_UPDATE_URL`), `sha256` 64 hex digits, `size` a positive whole
-    /// number of bytes; fields it doesn't know are ignored.
+    /// Reads `latest.json`. Every field is required. `version` is a semantic version, `url` https
+    /// (http only to this Mac, for a test server: `EASL_UPDATE_URL`), `sha256` 64 hex digits,
+    /// `size` a positive whole number of bytes, `notes` a web address; fields it doesn't know are
+    /// ignored.
     public static func decode(_ data: Data) throws -> LatestRelease {
         let raw: Raw
         do {
             raw = try JSONDecoder().decode(Raw.self, from: data)
         } catch let DecodingError.typeMismatch(_, context), let DecodingError.dataCorrupted(context) {
             guard let field = context.codingPath.first?.stringValue else { throw Problem.notJSON }
-            throw Problem.invalid(field, "has the wrong type")
+            throw Problem.wrongType(field)
         } catch {
             throw Problem.notJSON
         }
         guard let versionText = raw.version else { throw Problem.missing("version") }
-        guard let version = AppVersion(versionText) else { throw Problem.invalid("version", "isn't a version: \(versionText)") }
+        guard let version = AppVersion(versionText) else { throw Problem.invalid("version") }
         guard let urlText = raw.url else { throw Problem.missing("url") }
-        let url = try download(urlText)
+        guard let url = download(urlText) else { throw Problem.invalid("url") }
         guard let sha = raw.sha256 else { throw Problem.missing("sha256") }
-        guard sha.count == 64, sha.allSatisfy(\.isHexDigit) else { throw Problem.invalid("sha256", "isn't 64 hex digits") }
+        guard sha.count == 64, sha.allSatisfy(\.isHexDigit) else { throw Problem.invalid("sha256") }
         guard let bytes = raw.size else { throw Problem.missing("size") }
         // Any JSON number decodes (JSONDecoder names no field when 1.5 won't fit an Int).
-        guard bytes > 0, bytes == bytes.rounded(), bytes < 1e15 else { throw Problem.invalid("size", "isn't a positive whole number of bytes") }
-        let size = Int(bytes)
+        guard bytes > 0, bytes == bytes.rounded(), bytes < 1e15 else { throw Problem.invalid("size") }
         guard let notesText = raw.notes else { throw Problem.missing("notes") }
         guard let notes = URL(string: notesText), ["http", "https"].contains(notes.scheme?.lowercased() ?? ""), notes.host != nil else {
-            throw Problem.invalid("notes", "isn't a web address: \(notesText)")
+            throw Problem.invalid("notes")
         }
-        return LatestRelease(version: version, url: url, sha256: sha.lowercased(), size: size, notes: notes)
+        return LatestRelease(version: version, url: url, sha256: sha.lowercased(), size: Int(bytes), notes: notes)
     }
 
-    private static func download(_ text: String) throws -> URL {
-        guard let url = URL(string: text), let scheme = url.scheme?.lowercased() else { throw Problem.invalid("url", "isn't a web address: \(text)") }
+    /// The zip's address: https, or http only to this Mac.
+    private static func download(_ text: String) -> URL? {
+        guard let url = URL(string: text), let scheme = url.scheme?.lowercased() else { return nil }
         let host = url.host?.lowercased() ?? ""
         if scheme == "https", !host.isEmpty { return url }
         if scheme == "http", ["127.0.0.1", "localhost", "::1"].contains(host) { return url }
-        throw Problem.invalid("url", "isn't https: \(text)")
+        return nil
     }
 
     private struct Raw: Decodable {
@@ -314,8 +557,9 @@ public enum UpdatePhase: Equatable, Sendable {
     case checking(offered: LatestRelease?)
     case available(LatestRelease)
     case downloading(LatestRelease)
-    /// The zip's size and SHA-256, unpacking it, the new app's signature, Team ID, Gatekeeper's
-    /// verdict and version.
+    /// `AppUpdate.prepareInstall`: the zip's size and SHA-256, unpacking it, the new app's
+    /// signature, Team ID, Gatekeeper's verdict and version, then the same for its copy beside
+    /// the installed app.
     case verifying(LatestRelease)
     /// Verified and staged: next the helper starts and easl quits.
     case ready(LatestRelease)

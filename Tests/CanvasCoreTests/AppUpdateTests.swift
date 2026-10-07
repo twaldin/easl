@@ -2,6 +2,11 @@ import Foundation
 import Testing
 import CanvasCore
 
+extension AppUpdate.InstallProblem {
+    /// The case's name, so tests match the case and not the reason's wording.
+    var kind: String? { Mirror(reflecting: self).children.first?.label }
+}
+
 struct AppVersionTests {
     func v(_ text: String) -> AppVersion { AppVersion(text)! }
 
@@ -17,6 +22,7 @@ struct AppVersionTests {
         #expect(!(v("0.2.2") < v("0.2.2")) && !(v("0.2.2") > v("0.2.2")))
         #expect(v("0.3") == v("0.3.0"), "missing numbers are 0")
         #expect(v("0.2.2+build.7") == v("0.2.2"), "build metadata is ignored")
+        #expect(v("1.0.0-rc.1+exp.sha-5114f85") == v("1.0.0-rc.1"))
     }
 
     @Test func aPreReleaseComesBeforeItsRelease() {
@@ -33,6 +39,13 @@ struct AppVersionTests {
             #expect(AppVersion(text) == nil, "\(text.debugDescription)")
         }
         #expect(AppVersion("0.2.2")?.description == "0.2.2")
+    }
+
+    @Test func buildMetadataIsOnlyWhatSemverAllows() {
+        // The version names the update's folder: nothing in it may step outside.
+        for text in ["99+cache/../../boards", "1.0+", "1.0+a..b", "1.0+a/b", "1.0+a b", "1.0+a+b", "1.0-rc/1", "1.0+.."] {
+            #expect(AppVersion(text) == nil, "\(text.debugDescription)")
+        }
     }
 }
 
@@ -77,21 +90,22 @@ struct LatestReleaseTests {
     }
 
     @Test func badValuesAreRefusedWithTheField() {
-        #expect(throws: LatestRelease.Problem.invalid("size", "has the wrong type")) { try decode { $0["size"] = "12 MB" } }
-        #expect(throws: LatestRelease.Problem.invalid("size", "isn't a positive whole number of bytes")) { try decode { $0["size"] = 1.5 } }
-        #expect(throws: LatestRelease.Problem.invalid("version", "has the wrong type")) { try decode { $0["version"] = 3 } }
-        #expect(throws: LatestRelease.Problem.invalid("version", "isn't a version: v0.2.3")) { try decode { $0["version"] = "v0.2.3" } }
-        #expect(throws: LatestRelease.Problem.invalid("sha256", "isn't 64 hex digits")) { try decode { $0["sha256"] = "6b0029f1" } }
-        #expect(throws: LatestRelease.Problem.invalid("sha256", "isn't 64 hex digits")) { try decode { $0["sha256"] = String(Self.sha.dropLast()) + "g" } }
-        #expect(throws: LatestRelease.Problem.invalid("size", "isn't a positive whole number of bytes")) { try decode { $0["size"] = 0 } }
-        #expect(throws: LatestRelease.Problem.invalid("size", "isn't a positive whole number of bytes")) { try decode { $0["size"] = -3 } }
-        #expect(throws: LatestRelease.Problem.invalid("notes", "isn't a web address: release notes")) { try decode { $0["notes"] = "release notes" } }
+        #expect(throws: LatestRelease.Problem.wrongType("size")) { try decode { $0["size"] = "12 MB" } }
+        #expect(throws: LatestRelease.Problem.wrongType("version")) { try decode { $0["version"] = 3 } }
+        for size in [1.5, 0, -3] {
+            #expect(throws: LatestRelease.Problem.invalid("size")) { try decode { $0["size"] = size } }
+        }
+        #expect(throws: LatestRelease.Problem.invalid("version")) { try decode { $0["version"] = "v0.2.3" } }
+        #expect(throws: LatestRelease.Problem.invalid("version")) { try decode { $0["version"] = "99+cache/../../boards" } }
+        #expect(throws: LatestRelease.Problem.invalid("sha256")) { try decode { $0["sha256"] = "6b0029f1" } }
+        #expect(throws: LatestRelease.Problem.invalid("sha256")) { try decode { $0["sha256"] = String(Self.sha.dropLast()) + "g" } }
+        #expect(throws: LatestRelease.Problem.invalid("notes")) { try decode { $0["notes"] = "release notes" } }
     }
 
     @Test func theZipComesOverHTTPSOrFromThisMac() throws {
-        #expect(throws: LatestRelease.Problem.invalid("url", "isn't https: http://easl.sh/easl.zip")) { try decode { $0["url"] = "http://easl.sh/easl.zip" } }
-        #expect(throws: LatestRelease.Problem.invalid("url", "isn't https: file:///tmp/easl.zip")) { try decode { $0["url"] = "file:///tmp/easl.zip" } }
-        #expect(throws: LatestRelease.Problem.invalid("url", "isn't a web address: easl.zip")) { try decode { $0["url"] = "easl.zip" } }
+        for url in ["http://easl.sh/easl.zip", "file:///tmp/easl.zip", "easl.zip", "https:///easl.zip"] {
+            #expect(throws: LatestRelease.Problem.invalid("url")) { try decode { $0["url"] = url } }
+        }
         #expect(try decode { $0["url"] = "http://127.0.0.1:8765/easl-0.2.3.zip" }.url.port == 8765)
         #expect(try decode { $0["url"] = "http://localhost/easl-0.2.3.zip" }.url.host == "localhost")
     }
@@ -165,6 +179,292 @@ struct UpdateDownloadTests {
     }
 }
 
+struct UpdateStagingTests {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("easl-staging-\(UUID().uuidString)", isDirectory: true)
+    var updates: URL { root.appendingPathComponent("updates", isDirectory: true) }
+    var boards: URL { root.appendingPathComponent("boards", isDirectory: true) }
+
+    /// A sibling of `updates` holding the user's data, which no update may touch.
+    func sentinel() throws -> URL {
+        try FileManager.default.createDirectory(at: boards, withIntermediateDirectories: true)
+        let file = boards.appendingPathComponent("brd_1.json")
+        try Data("{}".utf8).write(to: file)
+        return file
+    }
+
+    @Test func aVersionThatIsntOnePlainNameIsRefused() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = try sentinel()
+        for version in ["", ".", "..", "99+cache/../../boards", "../boards", "a/b"] {
+            let error = #expect(throws: AppUpdate.InstallProblem.self, "\(version.debugDescription)") {
+                try AppUpdate.Staging(updates: updates, version: version).prepare()
+            }
+            #expect(error?.kind == "outsideUpdates")
+        }
+        #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func aFolderThatResolvesOutsideUpdatesIsNeitherDeletedNorMade() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = try sentinel()
+        try FileManager.default.createDirectory(at: updates, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: updates.appendingPathComponent("0.2.3").path, withDestinationPath: "../boards")
+        let staging = try AppUpdate.Staging(updates: updates, version: "0.2.3")
+        let error = #expect(throws: AppUpdate.InstallProblem.self) { try staging.prepare() }
+        #expect(error?.kind == "outsideUpdates")
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: staging.directory.path)) == "../boards")
+    }
+
+    @Test func prepareEmptiesOnlyItsVersionsFolder() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        let other = updates.appendingPathComponent("0.2.2/result")
+        try files.createDirectory(at: other.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("installed\n".utf8).write(to: other)
+        let staging = try AppUpdate.Staging(updates: updates, version: "0.2.3")
+        try files.createDirectory(at: staging.unpacked, withIntermediateDirectories: true)
+        try staging.prepare()
+        #expect(try files.contentsOfDirectory(atPath: staging.directory.path).isEmpty)
+        #expect(files.fileExists(atPath: other.path))
+    }
+
+    @Test func leftoversAreOnlyAnUpdatesHiddenCopies() {
+        #expect(AppUpdate.isLeftover(".easl-update-0.2.3.app"))
+        #expect(AppUpdate.isLeftover(".easl-previous-0.2.3-rc.1.app"))
+        for name in ["easl.app", ".easl-update-x.app", ".easl-update-0.2.3", ".easl-previous-.app", "Safari.app", ".easl-update-../a.app"] {
+            #expect(!AppUpdate.isLeftover(name), "\(name)")
+        }
+    }
+}
+
+/// Bundles on disk for the install tests: an app folder with an Info.plist and an executable.
+enum TestBundle {
+    static func make(_ app: URL, version: String, executable: Data? = nil) throws {
+        let files = FileManager.default
+        let macOS = app.appendingPathComponent("Contents/MacOS", isDirectory: true)
+        try files.createDirectory(at: macOS, withIntermediateDirectories: true)
+        let info: [String: Any] = ["CFBundleIdentifier": "net.waldin.easl.test", "CFBundleExecutable": "Easl", "CFBundlePackageType": "APPL",
+                                   "CFBundleShortVersionString": version]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0).write(to: app.appendingPathComponent("Contents/Info.plist"))
+        if let executable {
+            try executable.write(to: macOS.appendingPathComponent("Easl"))
+        } else {
+            try files.copyItem(at: URL(fileURLWithPath: "/usr/bin/true"), to: macOS.appendingPathComponent("Easl"))
+        }
+    }
+
+    /// Signs ad hoc, as a development build is.
+    static func sign(_ app: URL) async throws {
+        let result = try await RemoteHost.run("/usr/bin/codesign", ["--force", "--sign", "-", app.path], timeout: 60)
+        #expect(result.status == 0, "\(result.errors)")
+    }
+
+    /// Every file under `folder`, by relative path, with its bytes.
+    static func snapshot(_ folder: URL) throws -> [String: Data] {
+        var contents: [String: Data] = [:]
+        for path in try FileManager.default.subpathsOfDirectory(atPath: folder.path) {
+            var isFolder: ObjCBool = false
+            let url = folder.appendingPathComponent(path)
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder), !isFolder.boolValue {
+                contents[path] = try Data(contentsOf: url)
+            }
+        }
+        return contents
+    }
+}
+
+extension TestBundle {
+    /// Runs the helper for a process that has already exited, relaunching by writing `"$app"`
+    /// to `relaunched`; its outcome.
+    static func runHelper(app: URL, staging: AppUpdate.Staging, relaunched: URL) async throws -> AppUpdate.Outcome? {
+        try FileManager.default.createDirectory(at: staging.directory, withIntermediateDirectories: true)
+        let status = await offPool { () -> Int32 in
+            let exited = Process()
+            exited.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+            guard (try? exited.run()) != nil else { return -1 }
+            exited.waitUntilExit()
+            let script = AppUpdate.helperScript(pid: exited.processIdentifier, app: app, staging: staging,
+                                                relaunch: "printf %s \"$app\" > \(RemoteHost.quote(relaunched.path))")
+            let helper = Process()
+            helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+            helper.arguments = ["-c", script]
+            helper.standardOutput = FileHandle.nullDevice
+            helper.standardError = FileHandle.nullDevice
+            guard (try? helper.run()) != nil else { return -1 }
+            helper.waitUntilExit()
+            return helper.terminationStatus
+        }
+        #expect(status == 0)
+        return (try? String(contentsOf: staging.result, encoding: .utf8)).flatMap(AppUpdate.Outcome.init(result:))
+    }
+}
+
+struct UpdateHelperTests {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("easl-helper-\(UUID().uuidString)", isDirectory: true)
+    var applications: URL { root.appendingPathComponent("Applications", isDirectory: true) }
+    var app: URL { applications.appendingPathComponent("easl.app", isDirectory: true) }
+    var staging: AppUpdate.Staging { try! AppUpdate.Staging(updates: root.appendingPathComponent("updates", isDirectory: true), version: "0.2.3") }
+    var relaunched: URL { root.appendingPathComponent("relaunched") }
+
+    func runHelper() async throws -> AppUpdate.Outcome? {
+        try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched)
+    }
+
+    @Test func theHelperRenamesTheNewAppInAndLeavesNoHiddenCopy() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3", executable: Data("new".utf8))
+        #expect(try await runHelper() == .installed)
+        #expect(AppUpdate.bundleVersion(of: app) == "0.2.3")
+        #expect(AppUpdate.bundleVersion(of: staging.previous) == "0.2.2")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
+        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+    }
+
+    @Test func aFailedSecondRenamePutsTheOriginalBackByteForByte() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(app, version: "0.2.2", executable: Data((0..<4096).map { _ in UInt8.random(in: 0...255) }))
+        let original = try TestBundle.snapshot(app)
+        let incoming = staging.incoming(beside: app)
+        try TestBundle.make(incoming, version: "0.2.3")
+        // An immutable folder can't be renamed: the second rename fails.
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: incoming.path)
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: incoming.path) }
+        let outcome = try await runHelper()
+        guard case .restored? = outcome else {
+            Issue.record("expected the old app back, got \(String(describing: outcome))")
+            return
+        }
+        #expect(try TestBundle.snapshot(app) == original)
+        #expect(!FileManager.default.fileExists(atPath: staging.backup(beside: app).path))
+        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+    }
+
+    @Test func aBackupInTheWayReplacesNothing() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        let original = try TestBundle.snapshot(app)
+        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
+        try FileManager.default.createDirectory(at: staging.backup(beside: app), withIntermediateDirectories: true)
+        let outcome = try await runHelper()
+        guard case .unchanged? = outcome else {
+            Issue.record("expected nothing replaced, got \(String(describing: outcome))")
+            return
+        }
+        #expect(try TestBundle.snapshot(app) == original)
+        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+    }
+
+    @Test func theRelaunchOpensANewInstanceWithTheOldEnvironmentNeverInTheBackground() {
+        let command = AppUpdate.relaunchCommand(environment: ["EASL_HOME": "/Users/me/dev home", "EASL_NO_ACTIVATE": "1"])
+        #expect(command.hasSuffix("/usr/bin/open -n --env 'EASL_HOME=/Users/me/dev home' --env EASL_NO_ACTIVATE=1 \"$app\""))
+        #expect(!command.contains(" -g"))
+        #expect(AppUpdate.relaunchCommand(environment: [:]).hasSuffix("/usr/bin/open -n \"$app\""))
+    }
+
+    @Test func theResultFileSaysWhatHappened() {
+        #expect(AppUpdate.Outcome(result: "installed\n") == .installed)
+        #expect(AppUpdate.Outcome(result: "unchanged: x\n") == .unchanged("x"))
+        #expect(AppUpdate.Outcome(result: "restored: x\n") == .restored("x"))
+        #expect(AppUpdate.Outcome(result: "stranded: /Applications/.easl-previous-0.2.3.app\n") == .stranded("/Applications/.easl-previous-0.2.3.app"))
+        #expect(AppUpdate.Outcome(result: "") == nil)
+        #expect(AppUpdate.Outcome.installed.failure == nil)
+        #expect(AppUpdate.Outcome.restored("x").failure != nil)
+    }
+}
+
+/// `AppUpdate.prepareInstall` on real zips, signed ad hoc as a development instance's update is
+/// (no Team ID, no Gatekeeper).
+struct UpdateInstallTests {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("easl-install-\(UUID().uuidString)", isDirectory: true)
+    var applications: URL { root.appendingPathComponent("Applications", isDirectory: true) }
+    var installed: URL { applications.appendingPathComponent("easl.app", isDirectory: true) }
+
+    /// Zips `source` into a fresh staging folder; the release pins the zip's size and SHA-256.
+    func stage(_ source: URL, keepParent: Bool) async throws -> (AppUpdate.Staging, LatestRelease) {
+        let staging = try AppUpdate.Staging(updates: root.appendingPathComponent("updates", isDirectory: true), version: "0.2.3")
+        try staging.prepare()
+        let zipped = try await RemoteHost.run("/usr/bin/ditto", ["-c", "-k"] + (keepParent ? ["--keepParent"] : []) + [source.path, staging.zip.path], timeout: 60)
+        #expect(zipped.status == 0, "\(zipped.errors)")
+        let size = try FileManager.default.attributesOfItem(atPath: staging.zip.path)[.size] as? Int ?? 0
+        let release = LatestRelease(version: AppVersion("0.2.3")!, url: URL(string: "https://example.com/easl-0.2.3.zip")!,
+                                    sha256: try AppUpdate.sha256(of: staging.zip), size: size, notes: URL(string: "https://example.com/notes")!)
+        return (staging, release)
+    }
+
+    @Test func aZipWhoseAppIsASymlinkIsRefusedBeforeAnythingMoves() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(installed, version: "0.2.2", executable: Data("old".utf8))
+        let original = try TestBundle.snapshot(installed)
+        // A valid app beside an `easl.app` that only points to it.
+        let payload = root.appendingPathComponent("payload", isDirectory: true)
+        try TestBundle.make(payload.appendingPathComponent("payload.app"), version: "0.2.3")
+        try await TestBundle.sign(payload.appendingPathComponent("payload.app"))
+        try FileManager.default.createSymbolicLink(atPath: payload.appendingPathComponent("easl.app").path, withDestinationPath: "payload.app")
+        let (staging, release) = try await stage(payload, keepParent: false)
+
+        let error = await #expect(throws: AppUpdate.InstallProblem.self) {
+            try await AppUpdate.prepareInstall(staging, release: release, replacing: installed, team: nil, gatekeeper: false)
+        }
+        #expect(error?.kind == "notABundle")
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: staging.app.path)) == "payload.app", "unpacked as a symlink")
+        #expect(try TestBundle.snapshot(installed) == original)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
+    }
+
+    @Test func theVerifiedCopyBesideTheAppIsWhatTheHelperInstalls() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(installed, version: "0.2.2", executable: Data("old".utf8))
+        let new = root.appendingPathComponent("new/easl.app", isDirectory: true)
+        try TestBundle.make(new, version: "0.2.3")
+        try await TestBundle.sign(new)
+        let (staging, release) = try await stage(new, keepParent: true)
+
+        let incoming = try await AppUpdate.prepareInstall(staging, release: release, replacing: installed, team: nil, gatekeeper: false)
+        #expect(incoming == staging.incoming(beside: installed))
+        #expect(AppUpdate.bundleVersion(of: incoming) == "0.2.3")
+        #expect(AppUpdate.bundleVersion(of: installed) == "0.2.2", "nothing replaced before easl quits")
+        #expect(try TestBundle.snapshot(incoming) == TestBundle.snapshot(new))
+
+        let relaunched = root.appendingPathComponent("relaunched")
+        #expect(try await TestBundle.runHelper(app: installed, staging: staging, relaunched: relaunched) == .installed)
+        #expect(try TestBundle.snapshot(installed) == TestBundle.snapshot(new))
+        #expect(AppUpdate.bundleVersion(of: staging.previous) == "0.2.2")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
+    }
+
+    @Test func aVersionOtherThanLatestJSONsIsRefusedAndLeavesNoCopy() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(installed, version: "0.2.2", executable: Data("old".utf8))
+        let new = root.appendingPathComponent("new/easl.app", isDirectory: true)
+        try TestBundle.make(new, version: "0.2.4")
+        try await TestBundle.sign(new)
+        let (staging, release) = try await stage(new, keepParent: true)
+
+        let error = await #expect(throws: AppUpdate.InstallProblem.self) {
+            try await AppUpdate.prepareInstall(staging, release: release, replacing: installed, team: nil, gatekeeper: false)
+        }
+        #expect(error?.kind == "version")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
+    }
+
+    @Test func anAppFromAnotherTeamIsRefused() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(installed, version: "0.2.2", executable: Data("old".utf8))
+        let new = root.appendingPathComponent("new/easl.app", isDirectory: true)
+        try TestBundle.make(new, version: "0.2.3")
+        try await TestBundle.sign(new)
+        let (staging, release) = try await stage(new, keepParent: true)
+
+        let error = await #expect(throws: AppUpdate.InstallProblem.self) {
+            try await AppUpdate.prepareInstall(staging, release: release, replacing: installed, team: "RPJT9J47TS", gatekeeper: false)
+        }
+        #expect(error?.kind == "team")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
+    }
+}
+
 struct UpdatePhaseTests {
     let release = LatestRelease(version: AppVersion("0.2.3")!, url: URL(string: "https://example.com/easl-0.2.3.zip")!,
                                 sha256: String(repeating: "a", count: 64), size: 1, notes: URL(string: "https://example.com/notes")!)
@@ -222,81 +522,5 @@ struct UpdatePhaseTests {
             #expect(busy.after(.check) == nil, "no check while updating")
             #expect(busy.after(.download) == nil)
         }
-    }
-}
-
-struct UpdateHelperTests {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("easl-helper-\(UUID().uuidString)", isDirectory: true)
-    var app: URL { root.appendingPathComponent("Applications/easl.app", isDirectory: true) }
-    var staging: AppUpdate.Staging { AppUpdate.Staging(updates: root.appendingPathComponent("updates", isDirectory: true), version: "0.2.3") }
-    var relaunched: URL { root.appendingPathComponent("relaunched") }
-
-    func bundle(_ url: URL, version: String) throws {
-        try FileManager.default.createDirectory(at: url.appendingPathComponent("Contents"), withIntermediateDirectories: true)
-        let plist = try PropertyListSerialization.data(fromPropertyList: ["CFBundleShortVersionString": version], format: .xml, options: 0)
-        try plist.write(to: url.appendingPathComponent("Contents/Info.plist"))
-    }
-
-    /// Runs the helper for a process that has already exited, relaunching by writing `"$app"`
-    /// to `relaunched`.
-    func runHelper() async throws {
-        let app = app, staging = staging, relaunched = relaunched
-        let status = await offPool { () -> Int32 in
-            let exited = Process()
-            exited.executableURL = URL(fileURLWithPath: "/usr/bin/true")
-            guard (try? exited.run()) != nil else { return -1 }
-            exited.waitUntilExit()
-            let script = AppUpdate.helperScript(pid: exited.processIdentifier, app: app, staging: staging,
-                                                relaunch: "printf %s \"$app\" > \(RemoteHost.quote(relaunched.path))")
-            let helper = Process()
-            helper.executableURL = URL(fileURLWithPath: "/bin/sh")
-            helper.arguments = ["-c", script]
-            guard (try? helper.run()) != nil else { return -1 }
-            helper.waitUntilExit()
-            return helper.terminationStatus
-        }
-        #expect(status == 0)
-    }
-
-    @Test func theHelperSwapsTheAppAndRelaunchesTheNewOne() async throws {
-        defer { try? FileManager.default.removeItem(at: root) }
-        try bundle(app, version: "0.2.2")
-        try bundle(staging.app, version: "0.2.3")
-        try await runHelper()
-        #expect(AppUpdate.bundleVersion(of: app) == "0.2.3")
-        #expect(AppUpdate.bundleVersion(of: staging.previous) == "0.2.2")
-        #expect(!FileManager.default.fileExists(atPath: staging.app.path))
-        #expect(AppUpdate.Outcome(result: try String(contentsOf: staging.result, encoding: .utf8)) == .installed)
-        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
-    }
-
-    @Test func aFailedMovePutsTheOldAppBackAndRelaunchesIt() async throws {
-        defer { try? FileManager.default.removeItem(at: root) }
-        try bundle(app, version: "0.2.2")
-        // No new app staged: the second move fails.
-        try FileManager.default.createDirectory(at: staging.directory, withIntermediateDirectories: true)
-        try await runHelper()
-        #expect(AppUpdate.bundleVersion(of: app) == "0.2.2")
-        #expect(!FileManager.default.fileExists(atPath: staging.previous.path))
-        let outcome = AppUpdate.Outcome(result: try String(contentsOf: staging.result, encoding: .utf8))
-        guard case let .failed(reason)? = outcome else {
-            Issue.record("expected a failure, got \(String(describing: outcome))")
-            return
-        }
-        #expect(reason.hasSuffix("the old version is back"), "\(reason)")
-        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
-    }
-
-    @Test func theRelaunchOpensANewInstanceWithTheOldEnvironmentNeverInTheBackground() {
-        let command = AppUpdate.relaunchCommand(environment: ["EASL_HOME": "/Users/me/dev home", "EASL_NO_ACTIVATE": "1"])
-        #expect(command.hasSuffix("/usr/bin/open -n --env 'EASL_HOME=/Users/me/dev home' --env EASL_NO_ACTIVATE=1 \"$app\""))
-        #expect(!command.contains(" -g"))
-        #expect(AppUpdate.relaunchCommand(environment: [:]).hasSuffix("/usr/bin/open -n \"$app\""))
-    }
-
-    @Test func theResultFileSaysWhatHappened() {
-        #expect(AppUpdate.Outcome(result: "installed\n") == .installed)
-        #expect(AppUpdate.Outcome(result: "failed: couldn't move x aside (denied); nothing was replaced\n") == .failed("couldn't move x aside (denied); nothing was replaced"))
-        #expect(AppUpdate.Outcome(result: "") == nil)
     }
 }

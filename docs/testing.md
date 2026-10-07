@@ -169,8 +169,8 @@ EASL_DEV_HOME="$t/home" scripts/dev.sh input key return                         
 ```
 
 - `dev.sh` passes `EASL_UPDATE_URL` through (into the bundle's `LSEnvironment`), and the helper relaunches with that environment, so the new version comes back on `$t/home` with `EASL_NO_ACTIVATE` and `EASL_DEV_FRAME`. The relaunch is `open -n`, not the `EASL_DEV_LAUNCHER`, so set `EASL_DEV_FRAME` on a shared Mac.
-- After the update: `plutil -extract CFBundleShortVersionString raw "$t/home/easl.app/Contents/Info.plist"` says 0.2.99, `app.log` says `updated to 0.2.99`, `$t/home/updates/` is gone, and `dev.sh cli system.ping` answers from the new pid.
-- Failures leave the app running as it was, with a sheet saying why: a wrong `sha256` or `size`, a zip without `easl.app`, `version` other than the zip's. `version` equal to the running one says "easl … is up to date"; the server stopped says "Couldn't check for updates".
+- After the update: `plutil -extract CFBundleShortVersionString raw "$t/home/easl.app/Contents/Info.plist"` says 0.2.99, `app.log` says `updated to 0.2.99`, `$t/home/updates/0.2.99/` is gone (`updates/` is empty: the launch deletes its folders, not `updates/` itself), `ls -a "$t/home"` shows no `.easl-update-…` or `.easl-previous-…` copy, and `dev.sh cli system.ping` answers from the new pid.
+- Failures leave the app running as it was, with no `.easl-update-…` copy beside it and a sheet saying why: a wrong `sha256` or `size`, a zip without `easl.app` or whose `easl.app` is a symlink, `version` other than the zip's. `version` equal to the running one says "easl … is up to date"; the server stopped says "Couldn't check for updates".
 - `input key escape` is Later: the titlebar keeps its Update button (`dev.sh shot`). Release Notes only logs with `EASL_DEV_EXTERNAL_OPEN=log`.
 - Afterwards: `EASL_DEV_HOME="$t/home" scripts/dev.sh stop`, stop the server, `rm -rf "$t"`.
 

@@ -1,16 +1,16 @@
 import AppKit
 import CanvasCore
-import Security
 
 /// easl › Check for Updates… and the titlebar Update button (docs/design.md "Updates"). Checks
 /// `latest.json` (`AppUpdate.source`: easl.sh, or `EASL_UPDATE_URL`) a minute after launch and
 /// then daily, and offers a newer release in every board window's titlebar. Update downloads the
-/// zip into the support directory's `updates/<version>/`, checks it as the installer does,
-/// verifies the new app (signature, Team ID, Gatekeeper, version), starts a detached helper that
-/// swaps the bundle once easl has quit and opens it again, and quits the way ⌘Q does. A failure
-/// before the quit leaves this app as it is and says why; one in the helper puts the old app
-/// back, and the next launch says why. A development instance (`EASL_DEV_INPUT=1`) checks only
-/// when asked.
+/// zip into the support directory's `updates/<version>/`, then `AppUpdate.prepareInstall` checks
+/// it as the installer does, verifies the new app (a real folder, signature, Team ID, Gatekeeper,
+/// version), copies it beside the installed app and verifies the copy. A detached helper renames
+/// the copy into place once easl has quit (the way ⌘Q does) and opens it again. A failure before
+/// the quit leaves this app as it is and says why; one in the helper renames the old app back,
+/// and the next launch says why. A development instance (`EASL_DEV_INPUT=1`) checks only when
+/// asked.
 @MainActor
 final class Updater {
     static let shared = Updater()
@@ -134,21 +134,30 @@ final class Updater {
         guard let next = phase.after(.download), let release = next.offered else { return }
         phase = next
         Task {
+            var incoming: URL?
             do {
                 let app = try Self.replaceable()
-                let staging = AppUpdate.Staging(updates: AppPaths.updates, version: release.version.description)
+                let staging = try AppUpdate.Staging(updates: AppPaths.updates, version: release.version.description)
                 try await download(release, into: staging)
                 phase = phase.after(.downloaded) ?? phase
-                try await verify(release, staging)
+                let team = await offPool { AppUpdate.runningTeamID() }
+                // A development build updating to another, both ad hoc, which Gatekeeper refuses
+                // whatever they are: the swap can be tested without notarizing.
+                let gatekeeper = !(team == nil && DevInput.enabled)
+                if !gatekeeper { NSLog("easl: development instance: skipping spctl for an ad hoc update") }
+                incoming = try await AppUpdate.prepareInstall(staging, release: release, replacing: app, team: team, gatekeeper: gatekeeper)
                 phase = phase.after(.verified) ?? phase
                 try startHelper(staging, replacing: app)
                 phase = phase.after(.install) ?? phase
-                NSLog("easl: installing %@ from %@ over %@; quitting", release.version.description, staging.app.path, app.path)
+                NSLog("easl: installing %@ from %@ over %@; quitting", release.version.description, incoming?.path ?? "", app.path)
                 NSApp.terminate(nil)
-                // Back here only when the quit didn't happen.
+                // Here while the quit waits on something (language servers ending:
+                // `terminateLater`), or when it didn't happen.
+                try await Task.sleep(for: .seconds(30))
                 stopHelper()
                 throw UpdateError("easl didn't quit, so nothing was replaced")
             } catch {
+                if let incoming { await offPool { try? FileManager.default.removeItem(at: incoming) } }
                 let reason = Self.reason(error)
                 NSLog("easl: update to %@ failed: %@", release.version.description, reason)
                 phase = phase.after(.fail(reason)) ?? phase
@@ -157,17 +166,17 @@ final class Updater {
         }
     }
 
-    /// The bundle the update replaces: this app's, wherever it is, if the helper can move it.
+    /// The bundle the update replaces: this app's, wherever it is, if the helper can rename it.
     private static func replaceable() throws -> URL {
         let app = Bundle.main.bundleURL
         guard app.pathExtension == "app" else { throw UpdateError("this easl isn't running from an app bundle (\(app.path))") }
         guard !app.path.contains("/AppTranslocation/") else {
             throw UpdateError("macOS runs this easl from a read-only copy (App Translocation): move easl.app to /Applications, open it from there and update again")
         }
-        // Where the helper left it when it couldn't put it back: replacing it would delete it.
+        // Where a stopped update left it: a hidden copy the next launch deletes, or `updates/`.
         let updates = AppPaths.updates.resolvingSymlinksInPath().path + "/"
-        guard !app.resolvingSymlinksInPath().path.hasPrefix(updates) else {
-            throw UpdateError("this easl runs from its updates folder (\(app.path)): move easl.app to /Applications, open it from there and update again")
+        guard !AppUpdate.isLeftover(app.lastPathComponent), !app.resolvingSymlinksInPath().path.hasPrefix(updates) else {
+            throw UpdateError("this easl runs from a copy an update left (\(app.path)): rename it to easl.app, open it and update again")
         }
         let folder = app.deletingLastPathComponent().path
         guard FileManager.default.isWritableFile(atPath: folder), FileManager.default.isWritableFile(atPath: app.path) else {
@@ -176,61 +185,21 @@ final class Updater {
         return app
     }
 
+    /// The zip into `staging` (`Staging.prepare` empties its folder first); the file work off the
+    /// main thread.
     private func download(_ release: LatestRelease, into staging: AppUpdate.Staging) async throws {
-        let files = FileManager.default
-        try? files.removeItem(at: staging.directory)
-        try files.createDirectory(at: staging.directory, withIntermediateDirectories: true)
-        let (file, response) = try await Self.session.download(for: URLRequest(url: release.url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60))
-        defer { try? files.removeItem(at: file) }
+        try await offPool { Result { try staging.prepare() } }.get()
+        let request = URLRequest(url: release.url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
+        let (file, response) = try await Self.session.download(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw UpdateError("\(release.url.absoluteString) answered HTTP \(status)") }
-        try files.moveItem(at: file, to: staging.zip)
-    }
-
-    /// The installer's checks and then the new app's: size and SHA-256 against latest.json,
-    /// unpacked with `ditto`, a valid signature (`codesign --verify --deep --strict`), this app's
-    /// Team ID, Gatekeeper's yes (`spctl --assess --type execute`) and latest.json's version.
-    private func verify(_ release: LatestRelease, _ staging: AppUpdate.Staging) async throws {
-        let zip = staging.zip, app = staging.app
-        try await offPool { Result { try AppUpdate.checkDownload(zip, against: release) } }.get()
-        try await Self.run("/usr/bin/ditto", ["-x", "-k", zip.path, staging.unpacked.path], or: "couldn't unpack the zip")
-        guard FileManager.default.fileExists(atPath: app.path) else { throw UpdateError("the zip has no \(AppUpdate.appName)") }
-        try await Self.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path], or: "the new app's signature doesn't verify")
-        let ours = Self.runningTeam(), theirs = Self.team(of: app)
-        guard ours == theirs else {
-            let mismatch = switch (ours, theirs) {
-            case (nil, let team?): "this easl isn't signed with a Developer ID (a build from source?), so it can't take a release signed by team \(team)"
-            case (let team?, nil): "the new app isn't signed by easl's team (\(team))"
-            default: "the new app is signed by team \(theirs ?? ""), not easl's (\(ours ?? ""))"
+        let zip = staging.zip, url = release.url
+        try await offPool {
+            Result {
+                defer { try? FileManager.default.removeItem(at: file) }
+                guard status == 200 else { throw UpdateError("\(url.absoluteString) answered HTTP \(status)") }
+                try FileManager.default.moveItem(at: file, to: zip)
             }
-            throw UpdateError(mismatch)
-        }
-        if ours == nil, DevInput.enabled {
-            // A development build updating to another (both ad hoc, which Gatekeeper refuses
-            // whatever they are): the swap can be tested without notarizing.
-            NSLog("easl: development instance: skipping spctl for an ad hoc update")
-        } else {
-            try await Self.run("/usr/sbin/spctl", ["--assess", "--type", "execute", app.path], or: "Gatekeeper doesn't accept the new app")
-        }
-        let version = AppUpdate.bundleVersion(of: app)
-        guard let version, version == release.version.description else {
-            throw UpdateError("the zip holds easl \(version ?? "of no version"), not \(release.version)")
-        }
-        // A URLSession download isn't quarantined (easl doesn't set LSFileQuarantineEnabled), so
-        // this is for an unexpected flag (ditto gives a quarantined zip's flag to every file it
-        // unpacks): Gatekeeper has accepted the app, and a pending first-launch prompt would
-        // block the relaunch (issue #60).
-        if [zip, app].contains(where: { getxattr($0.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0 }) {
-            NSLog("easl: the update carries a quarantine flag; clearing it")
-            try await Self.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", app.path], or: "couldn't clear the new app's quarantine flag")
-        }
-    }
-
-    private static func run(_ executable: String, _ arguments: [String], or failure: String) async throws {
-        let result = try await RemoteHost.run(executable, arguments, timeout: 120)
-        guard result.status != 0 else { return }
-        let said = RemoteHost.lastLine(result.errors) ?? RemoteHost.lastLine(result.output) ?? "exit status \(result.status)"
-        throw UpdateError("\(failure): \(said)")
+        }.get()
     }
 
     /// The helper (`AppUpdate.helperScript`) in a session of its own, so it outlives easl and
@@ -272,31 +241,40 @@ final class Updater {
     private func stopHelper() {
         guard let pid = helper else { return }
         helper = nil
-        kill(pid, SIGTERM)
+        // Its session's group: the shell and the sleep it waits in.
+        kill(-pid, SIGTERM)
         DispatchQueue.global(qos: .utility).async { waitpid(pid, nil, 0) }
     }
 
-    /// At launch, off the main thread: logs what the helper did (and says so when it failed)
-    /// and deletes `updates/`'s folders, except one easl now runs from (the helper couldn't put
-    /// the old app back).
+    /// At launch, off the main thread: logs what the helper did (and says so when it failed),
+    /// deletes `updates/`'s folders, except one easl now runs from, and the hidden copies a
+    /// stopped update left beside this app (`AppUpdate.isLeftover`), except this app.
     private func cleanUp() {
         let updates = AppPaths.updates
-        let running = Bundle.main.bundleURL.resolvingSymlinksInPath().path
+        let running = Bundle.main.bundleURL.resolvingSymlinksInPath()
         DispatchQueue.global(qos: .utility).async {
             let files = FileManager.default
             var failures: [String] = []
             for folder in (try? files.contentsOfDirectory(at: updates, includingPropertiesForKeys: nil)) ?? [] {
-                let staging = AppUpdate.Staging(updates: updates, version: folder.lastPathComponent)
-                switch (try? String(contentsOf: staging.result, encoding: .utf8)).flatMap(AppUpdate.Outcome.init(result:)) {
-                case .installed?: NSLog("easl: updated to %@", staging.version)
-                case let .failed(reason)?:
-                    NSLog("easl: the update to %@ failed: %@", staging.version, reason)
-                    failures.append("easl couldn't install \(staging.version): \(reason).")
-                case nil: break
+                let version = folder.lastPathComponent
+                let result = updates.appendingPathComponent(version).appendingPathComponent("result")
+                if let outcome = (try? String(contentsOf: result, encoding: .utf8)).flatMap(AppUpdate.Outcome.init(result:)) {
+                    if let failure = outcome.failure {
+                        NSLog("easl: the update to %@ failed: %@", version, failure)
+                        failures.append("easl couldn't install \(version): \(failure).")
+                    } else {
+                        NSLog("easl: updated to %@", version)
+                    }
                 }
                 let path = folder.resolvingSymlinksInPath().path
-                guard running != path, !running.hasPrefix(path + "/") else { continue }
+                guard running.path != path, !running.path.hasPrefix(path + "/") else { continue }
                 try? files.removeItem(at: folder)
+            }
+            let beside = running.deletingLastPathComponent()
+            for name in (try? files.contentsOfDirectory(atPath: beside.path)) ?? []
+            where AppUpdate.isLeftover(name) && name != running.lastPathComponent {
+                NSLog("easl: removing %@, left by an update", beside.appendingPathComponent(name).path)
+                try? files.removeItem(at: beside.appendingPathComponent(name))
             }
             guard !failures.isEmpty else { return }
             let message = failures.joined(separator: "\n\n")
@@ -355,32 +333,9 @@ final class Updater {
         case let error as UpdateError: error.reason
         case let error as LatestRelease.Problem: error.description
         case let error as AppUpdate.DownloadProblem: error.description
+        case let error as AppUpdate.InstallProblem: error.description
         default: error.localizedDescription
         }
-    }
-
-    // MARK: code signing
-
-    /// This process's Team ID; nil when it's signed ad hoc (a build from source).
-    private static func runningTeam() -> String? {
-        var me: SecCode?
-        guard SecCodeCopySelf([], &me) == errSecSuccess, let me else { return nil }
-        var code: SecStaticCode?
-        guard SecCodeCopyStaticCode(me, [], &code) == errSecSuccess, let code else { return nil }
-        return team(of: code)
-    }
-
-    private static func team(of app: URL) -> String? {
-        var code: SecStaticCode?
-        guard SecStaticCodeCreateWithPath(app as CFURL, [], &code) == errSecSuccess, let code else { return nil }
-        return team(of: code)
-    }
-
-    private static func team(of code: SecStaticCode) -> String? {
-        var info: CFDictionary?
-        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
-              let info = info as? [String: Any] else { return nil }
-        return info[kSecCodeInfoTeamIdentifier as String] as? String
     }
 }
 
