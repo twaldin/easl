@@ -39,10 +39,36 @@ enum ForegroundProgram {
     /// `state`, and the directory what runs works in: the foreground job's current directory
     /// (`cd ../wt && codex` runs codex in `wt`, which the shell reports only at its next
     /// prompt), at the prompt the shell's own; nil when the shell is gone or it can't be read.
-    static func foreground(shell: pid_t) -> (state: State, directory: String?) {
-        guard let leader = leader(shell: shell) else { return (.gone, nil) }
-        guard let pid = leader, let argv = arguments(pid) else { return (.prompt, SessionProcesses.directory(of: shell)) }
-        return (.running(argv), SessionProcesses.directory(of: pid))
+    /// Asked on every title change (omp's working title changes every 80 ms per tile), so the
+    /// running job it finds is kept in `job` (the tile's, so it ends with the tile) and reused
+    /// while it holds (`ForegroundJob.holds`: two or three `proc_pidinfo`s, no walk); the walk
+    /// runs again when it doesn't, and at least every `ForegroundJob.maxAge`.
+    static func foreground(shell: pid_t, job: inout ForegroundJob?, now: Date = Date()) -> (state: State, directory: String?) {
+        if let kept = job {
+            let gone = kept.via == .oldest ? bsdInfo(kept.shell.foregroundGroup) == nil : true
+            if kept.holds(shell: bsdInfo(shell).map(process), leader: bsdInfo(kept.leader.pid).map(process), groupLeaderGone: gone, at: now) {
+                return (.running(kept.argv), SessionProcesses.directory(of: kept.leader.pid))
+            }
+            job = nil
+        }
+        guard let found = self.job(shell: shell) else { return (.gone, nil) }
+        guard let found, let argv = arguments(found.leader.pid) else { return (.prompt, SessionProcesses.directory(of: shell)) }
+        job = ForegroundJob(shell: found.shell, leader: found.leader, via: found.via, argv: argv, found: now)
+        return (.running(argv), SessionProcesses.directory(of: found.leader.pid))
+    }
+
+    /// A process as the walk saw it (`ForegroundJob.Process`).
+    private static func process(_ info: proc_bsdinfo) -> ForegroundJob.Process {
+        ForegroundJob.Process(pid: pid_t(bitPattern: info.pbi_pid), startSeconds: info.pbi_start_tvsec, startMicros: info.pbi_start_tvusec,
+                              executable: withUnsafeBytes(of: info.pbi_comm) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) },
+                              parent: pid_t(bitPattern: info.pbi_ppid), group: pid_t(bitPattern: info.pbi_pgid), foregroundGroup: pid_t(bitPattern: info.e_tpgid))
+    }
+
+    /// A foreground job the walk found, with how (`ForegroundJob.Via`).
+    private struct Job {
+        var shell: ForegroundJob.Process
+        var leader: ForegroundJob.Process
+        var via: ForegroundJob.Via
     }
 
     /// What process `pid` runs, as a person names it (`TerminalName.program`; a login shell's
@@ -61,27 +87,33 @@ enum ForegroundProgram {
 
     /// The foreground job's leader (`state`): nil when the shell is gone, `.some(nil)` at its prompt.
     private static func leader(shell: pid_t) -> pid_t?? {
+        job(shell: shell).map { $0?.leader.pid }
+    }
+
+    /// The foreground job (`leader`), with how it was found; nil when the shell is gone,
+    /// `.some(nil)` at its prompt.
+    private static func job(shell: pid_t) -> Job?? {
         guard let info = bsdInfo(shell) else { return nil }
         let group = pid_t(bitPattern: info.e_tpgid)
         guard group > 0 else { return .some(nil) }
-        var leader = group
-        if leader == shell {
+        if group == shell {
             let argv = arguments(shell) ?? []
             if let first = argv.first, !SessionProcesses.isShell(first) {
-                return .some(shell)
+                return .some(Job(shell: process(info), leader: process(info), via: .leader))
             }
             guard argv.contains("-c") else { return .some(nil) }
-            let child = members(of: group).filter { $0 != shell }.compactMap { pid in bsdInfo(pid).map { (pid, $0) } }
-                .filter { $0.1.pbi_ppid == UInt32(shell) }
-                .max { ($0.1.pbi_start_tvsec, $0.1.pbi_start_tvusec) < ($1.1.pbi_start_tvsec, $1.1.pbi_start_tvusec) }
+            let child = members(of: group).filter { $0 != shell }.compactMap(bsdInfo)
+                .filter { $0.pbi_ppid == UInt32(shell) }
+                .max { ($0.pbi_start_tvsec, $0.pbi_start_tvusec) < ($1.pbi_start_tvsec, $1.pbi_start_tvusec) }
             guard let child else { return .some(nil) }
-            leader = child.0
-        } else if bsdInfo(leader) == nil {
-            // The group's leader exited (the first stage of a pipeline): its oldest member.
-            guard let member = members(of: group).min() else { return .some(nil) }
-            leader = member
+            return .some(Job(shell: process(info), leader: process(child), via: .child))
         }
-        return .some(leader)
+        if let leader = bsdInfo(group) {
+            return .some(Job(shell: process(info), leader: process(leader), via: .leader))
+        }
+        // The group's leader exited (the first stage of a pipeline): its oldest member.
+        guard let member = members(of: group).min(), let oldest = bsdInfo(member) else { return .some(nil) }
+        return .some(Job(shell: process(info), leader: process(oldest), via: .oldest))
     }
 
     /// What closing the session ends (`SessionProcesses`): its foreground program and the
@@ -162,12 +194,13 @@ enum ForegroundProgram {
     }
 
     private static func arguments(_ pid: pid_t) -> [String]? {
-        process(pid)?.argv
+        process(pid, environment: false)?.argv
     }
 
     /// `KERN_PROCARGS2`: argc, the executable path, padding, argc NUL-terminated arguments, then
-    /// the environment's `NAME=value` strings up to an empty one.
-    private static func process(_ pid: pid_t) -> (argv: [String], environment: [String])? {
+    /// the environment's `NAME=value` strings up to an empty one (read only when asked: a few
+    /// kilobytes of strings nobody wants for the argv).
+    private static func process(_ pid: pid_t, environment wanted: Bool = true) -> (argv: [String], environment: [String])? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
@@ -183,12 +216,13 @@ enum ForegroundProgram {
             argv.append(String(decoding: buffer[index..<end], as: UTF8.self))
             index = end + 1
         }
+        guard !argv.isEmpty else { return nil }
         var environment: [String] = []
-        while index < size, buffer[index] != 0 {
+        while wanted, index < size, buffer[index] != 0 {
             let end = buffer[index..<size].firstIndex(of: 0) ?? size
             environment.append(String(decoding: buffer[index..<end], as: UTF8.self))
             index = end + 1
         }
-        return argv.isEmpty ? nil : (argv, environment)
+        return (argv, environment)
     }
 }

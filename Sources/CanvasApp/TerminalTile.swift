@@ -336,6 +336,7 @@ final class TerminalTile: NSView, TileContent {
         shell = nil
         shellName = nil
         shellLookup = nil
+        foregroundJob = nil
         restartedAt = Date()
         guard let object = board.objects[objectID] else { throw ApiRouter.Failure("not_found", "terminal \(objectID) was closed while it restarted") }
         var options = terminal.configuration
@@ -445,6 +446,9 @@ final class TerminalTile: NSView, TileContent {
     private var shell: pid_t?
     private var shellName: String?
     private var shellLookup: Date?
+    /// The foreground job `refreshProgram` found last (`ForegroundProgram.foreground`), reused
+    /// while it holds; nil at the prompt or until a job was found.
+    private var foregroundJob: ForegroundJob?
 
     /// Reads the foreground program again (a few syscalls once the session's shell is known).
     /// A program starting clears the header's last-command status (the integration's title,
@@ -457,7 +461,7 @@ final class TerminalTile: NSView, TileContent {
             worksIn(reportedCwd)
             return findShell()
         }
-        let (state, directory) = ForegroundProgram.foreground(shell: shell)
+        let (state, directory) = ForegroundProgram.foreground(shell: shell, job: &foregroundJob)
         if state == .gone { self.shell = nil }
         worksIn(directory ?? reportedCwd)
         let program: String? = switch state {
