@@ -687,3 +687,42 @@ test("the session easl gets to resume is on disk before easl has it, a new sessi
   expect(sessions().at(-1)).toMatchObject({ sessionId: "ses_2", sessionPath: file() });
   expect(existsSync(file())).toBe(true);
 });
+
+test("a session that ends while its file is written isn't reported after its release; one the write moved is reported where it went", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  const dir = mkdtempSync(join(tmpdir(), "easl-omp-sessions-"));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  const file = () => join(dir, `${omp.state.sessionId}.jsonl`);
+  const writing = Promise.withResolvers<void>();
+  Object.assign(omp.ctx.sessionManager, {
+    getSessionFile: file,
+    ensureOnDisk: async () => {
+      await writing.promise;
+      writeFileSync(file(), "{}\n");
+    },
+  });
+  const calls = () => easl.calls.map((call) => call.method).filter((method) => method === "agent.report_session" || method === "agent.release");
+  // The tile's omp exits before its session's file is written: the release is the last word.
+  await omp.emit("session_start");
+  await omp.emit("session_shutdown");
+  writing.resolve();
+  await until(() => calls().includes("agent.release"));
+  let ticks = 0;
+  await until(() => ++ticks > 100);
+  expect(calls()).toEqual(["agent.release"]);
+
+  // Writing the file moves the session to a new id and file (omp's #moveOffSessionFile).
+  const moved = fakeOmp(easl);
+  Object.assign(moved.ctx.sessionManager, {
+    getSessionFile: () => join(dir, `${moved.state.sessionId}.jsonl`),
+    ensureOnDisk: async () => {
+      moved.state.sessionId = "ses_moved";
+      writeFileSync(join(dir, "ses_moved.jsonl"), "{}\n");
+    },
+  });
+  await moved.emit("session_start");
+  await until(() => calls().includes("agent.report_session"));
+  const [report] = easl.calls.filter((call) => call.method === "agent.report_session");
+  expect(report.params).toMatchObject({ sessionId: "ses_moved", sessionPath: join(dir, "ses_moved.jsonl") });
+});
