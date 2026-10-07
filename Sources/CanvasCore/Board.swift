@@ -328,11 +328,14 @@ public final class Board {
 
     @discardableResult
     public func create(type: ObjectType, props: JSONValue, frame: Frame? = nil, parent: ObjectID? = nil, caller: ObjectID? = nil) -> CanvasObject {
-        let size = switch type {
-        case .question: QuestionSpec.size(props)
-        // A code tile without a frame is as wide as its file's lines need.
-        case .code where frame == nil: props["path"]?.string.map { newCodeSize(path: $0, fromGit: CodeAim(props: props).map { $0.ref != nil || $0.pinnedCommit != nil } ?? false) } ?? Self.defaultSize(type)
-        default: Self.defaultSize(type)
+        let size: (w: Double, h: Double)
+        if type == .question {
+            size = QuestionSpec.size(props)
+        } else if type == .code, frame == nil, let aim = CodeAim(props: props) {
+            // A code tile without a frame is as wide as its file's lines need.
+            size = newCodeSize(path: aim.path, fromGit: aim.ref != nil || aim.pinnedCommit != nil)
+        } else {
+            size = Self.defaultSize(type)
         }
         let z = (objects.values.map(\.z).max() ?? 0) + 1
         // A remote board's terminal is stamped by its host, which knows its checkouts.
