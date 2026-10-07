@@ -157,7 +157,8 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
     @objc private func connect(_ sender: Any?) {
         let typed = hostField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.isEmpty {
-            showBoards(name: typed.split(separator: "@").last.map(String.init) ?? typed, sshTarget: typed)
+            let host = RemoteHost.typed(typed)
+            showBoards(name: host.name, sshTarget: host.sshTarget)
         } else if hostTable.selectedRow >= 0, hostTable.selectedRow < hosts.count {
             let row = hosts[hostTable.selectedRow]
             showBoards(name: row.name, sshTarget: row.sshTarget)

@@ -595,6 +595,79 @@ final class ApiRouterTests {
         #expect(opened.count == 2)
     }
 
+    @Test func openRemoteChecksItsParamsAndAnswersWithThePickersFailures() async throws {
+        let client = try connect()
+        client.send(#"{"id":"u","method":"board.open_remote","params":{"host":"twaldin-work","board":"brd_7f94"}}"#)
+        #expect(try await client.next()["error"]?["code"] == .string("unsupported"), "without the app UI")
+
+        var asked: [String] = []
+        router.openRemoteBoard = { host, board, select in
+            asked.append("\(host) \(board) \(select)")
+            switch host {
+            case "asleep": throw EaslConnection.Failure("unavailable", "asleep is offline: ssh: connect to host asleep port 22: Operation timed out")
+            case "gone": throw CancellationError()
+            case "work" where board == "brd_nope": throw ApiRouter.Failure("not_found", "couldn't open brd_nope on work: board brd_nope")
+            default: return OpenedRemoteBoard(host: host, sshTarget: "\(host).tail1234.ts.net", board: board, root: "/Users/tim/lindy", title: "lindy @ \(host)", window: 42, alreadyOpen: false)
+            }
+        }
+        let refused = [
+            #"{"host":"work"}"#, #"{"board":"brd_7f94"}"#, #"{"host":"","board":"brd_7f94"}"#, #"{"host":"two words","board":"brd_7f94"}"#,
+            #"{"host":"-oProxyCommand=sh","board":"brd_7f94"}"#, #"{"host":7,"board":"brd_7f94"}"#, #"{"host":"work","board":"lindy"}"#,
+            #"{"host":"work","board":"brd_"}"#, #"{"host":"work","board":"brd_a b"}"#, #"{"host":"work","board":"brd_7f94","root":"/x"}"#,
+            #"{"host":"tim@","board":"brd_7f94"}"#, #"{"host":"@work","board":"brd_7f94"}"#,
+        ]
+        for (index, params) in refused.enumerated() {
+            client.send(#"{"id":"r\#(index)","method":"board.open_remote","params":\#(params)}"#)
+            #expect(try await client.next()["error"]?["code"] == .string("invalid_params"), "\(params)")
+        }
+        #expect(asked.isEmpty, "nothing malformed reaches the host")
+
+        client.send(#"{"id":"a","method":"board.open_remote","params":{"host":"asleep","board":"brd_7f94"}}"#)
+        let offline = try await client.next()["error"]
+        #expect(offline?["code"] == .string("unavailable"))
+        #expect(offline?["message"]?.string?.contains("asleep is offline") == true)
+        client.send(#"{"id":"g","method":"board.open_remote","params":{"host":"gone","board":"brd_7f94"}}"#)
+        #expect(try await client.next()["error"]?["code"] == .string("unavailable"))
+        client.send(#"{"id":"n","method":"board.open_remote","params":{"host":"work","board":"brd_nope"}}"#)
+        #expect(try await client.next()["error"]?["code"] == .string("not_found"))
+
+        client.send(#"{"id":"o","method":"board.open_remote","params":{"host":"work","board":"brd_7f94"}}"#)
+        let opened = try #require(try await client.next()["result"])
+        #expect(opened == .object(["host": .string("work"), "sshTarget": .string("work.tail1234.ts.net"), "board": .string("brd_7f94"), "root": .string("/Users/tim/lindy"),
+                                   "title": .string("lindy @ work"), "window": .number(42), "alreadyOpen": .bool(false)]))
+        client.send(#"{"id":"s","method":"board.open_remote","params":{"host":"work","board":"brd_7f94","select":true}}"#)
+        _ = try await client.next()
+        #expect(asked == ["asleep brd_7f94 false", "gone brd_7f94 false", "work brd_nope false", "work brd_7f94 false", "work brd_7f94 true"],
+                "select is false unless asked")
+    }
+
+    @Test func openRemoteAgainAnswersTheTabAlreadyOpen() async throws {
+        // The app's side as it keeps its windows: one per host and board, by ssh target.
+        var windows: [String: Int] = [:]
+        var selected: [Int] = []
+        router.openRemoteBoard = { host, board, select in
+            let key = "\(host)|\(board)"
+            let alreadyOpen = windows[key] != nil
+            let window = windows[key] ?? 100 + windows.count
+            windows[key] = window
+            if select { selected.append(window) }
+            return OpenedRemoteBoard(host: host, sshTarget: host, board: board, root: "/r", title: "r @ \(host)", window: window, alreadyOpen: alreadyOpen)
+        }
+        let client = try connect()
+        client.send(#"{"id":"1","method":"board.open_remote","params":{"host":"work","board":"brd_a1"}}"#)
+        let first = try #require(try await client.next()["result"])
+        client.send(#"{"id":"2","method":"board.open_remote","params":{"host":"work","board":"brd_a1","select":true}}"#)
+        let again = try #require(try await client.next()["result"])
+        #expect(first["alreadyOpen"] == .bool(false))
+        #expect(again["alreadyOpen"] == .bool(true))
+        #expect(again["window"] == first["window"], "the same tab, not a second one")
+        #expect(selected == [100], "selected when asked")
+        client.send(#"{"id":"3","method":"board.open_remote","params":{"host":"home","board":"brd_a1"}}"#)
+        let other = try #require(try await client.next()["result"])
+        #expect(other["alreadyOpen"] == .bool(false) && other["window"] != first["window"], "another host's board of that id is another tab")
+        #expect(windows.count == 2)
+    }
+
     @Test(.timeLimit(.minutes(1))) func aSubscriberThatStopsReadingDoesNotStallTheBoardOrOtherClients() async throws {
         let stalled = try connect()
         stalled.send(#"{"id":"s","method":"events.subscribe","params":{}}"#)

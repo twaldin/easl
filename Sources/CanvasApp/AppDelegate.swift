@@ -154,6 +154,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         router.openBoard = { [weak self, registry] root, select in
             self?.open(root: root, select: select) ?? registry.open(root: root)
         }
+        router.openRemoteBoard = { [weak self] host, board, select in
+            guard let self else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
+            return try await self.openRemoteBoard(named: host, board: board, select: select)
+        }
         router.readTerminal = { [weak self] board, tile, lines in
             // Rows the terminal soft-wrapped join when its tile knows its width; the live
             // screen's by Ghostty's own wrap flags.
@@ -376,13 +380,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return ordered
     }
 
-    /// A remote board's window by its host and board (`remoteControllers`, `openedOrder`).
-    private static func remoteKey(_ host: RemoteHost, _ board: BoardID) -> String { "\(host.sshTarget)|\(board)" }
+    /// A remote board's window by its host's ssh target and board (`remoteControllers`, `openedOrder`).
+    private static func remoteKey(_ sshTarget: String, _ board: BoardID) -> String { "\(sshTarget)|\(board)" }
 
     /// A board window in ⌘J's tour: its board's id, a remote board's with its host (another
     /// host's board may have the id of one of ours).
     private func tourKey(_ controller: CanvasWindowController) -> String {
-        controller.remote.map { Self.remoteKey($0.host, controller.board.id) } ?? controller.board.id
+        controller.remote.map { Self.remoteKey($0.host.sshTarget, controller.board.id) } ?? controller.board.id
     }
 
     /// ⌘J, Go to Next Needs-You, on `current`, the board the user is on: the next thing that needs
@@ -406,49 +410,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         target.canvas.visit(stop.item)
     }
 
-    /// Opens a window mirroring `board` on `host` (docs/design.md "Client mode"): a tab of the
-    /// frontmost board window, or its own window when there's none; again, its tab comes forward.
-    /// The board is read before the window opens, so a host that can't be reached, or that has no
-    /// such board, says so in an alert instead. Nothing about the board is written on this Mac.
+    /// File › Open Remote…'s board (and DevInput's): opened and selected by
+    /// `openRemoteBoard(host:board:select:)`, or why not in an alert.
     func openRemoteBoard(host: RemoteHost, board: BoardID) {
-        let key = Self.remoteKey(host, board)
-        if let open = remoteControllers[key], let window = open.window {
-            bringForward(window)
-            return
-        }
-        let mirror = BoardMirror(hostName: host.name, board: board, connection: host.connection(), renders: host.connection())
         Task { @MainActor [weak self] in
-            let loaded: Board
             do {
-                loaded = try await mirror.load()
+                _ = try await self?.openRemoteBoard(host: host, board: board, select: true)
             } catch {
-                mirror.close()
                 let alert = NSAlert()
                 alert.messageText = "Couldn't open the board on \(host.name)"
                 alert.informativeText = BoardMirror.reason(error)
                 // A sheet: a modal run loop would stall every socket request.
                 if let window = self?.keyController?.window { alert.beginSheetModal(for: window, completionHandler: nil) } else { alert.runModal() }
-                return
             }
-            guard let self else { return mirror.close() }
-            let controller = CanvasWindowController(board: loaded, registry: self.registry, remote: RemoteSource(host: host, mirror: mirror))
-            self.remoteControllers[key] = controller
-            if !self.openedOrder.contains(key) { self.openedOrder.append(key) }
-            loaded.onEvent = { [weak controller] event in controller?.apply(event) }
-            controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
-            controller.onClose = { [weak self] in self?.remoteControllers.removeValue(forKey: key) }
-            self.show(controller)
         }
     }
 
-    /// A new board window as a tab of the frontmost one (its own window when there's none), selected.
-    private func show(_ controller: CanvasWindowController) {
+    /// `board.open_remote`: the host `name` names as File › Open Remote… would connect to it
+    /// (`RemoteHost.target` among the picker's rows: the hosts opened before and the tailnet's
+    /// Macs), then `board` there as the picker opens it. A tab open already is answered without
+    /// asking the host; else the picker's host discovery, which remembers the host
+    /// (`AppPaths.remoteHosts`), then `openRemoteBoard(host:board:select:)`.
+    func openRemoteBoard(named name: String, board: BoardID, select: Bool) async throws -> OpenedRemoteBoard {
+        let recents = RemoteHost.Recents.load(AppPaths.remoteHosts)
+        // The picker lists the tailnet's Macs when Tailscale answers, else only the hosts opened before.
+        let peers = (try? await Tailnet.peers()) ?? []
+        let target = try RemoteHost.target(name, among: RemoteHost.candidates(peers: peers, recents: recents))
+        if let open = shownRemote(Self.remoteKey(target.sshTarget, board), select: select) {
+            return try Self.opened(open, alreadyOpen: true)
+        }
+        let host: RemoteHost
+        do {
+            host = try await RemoteHost.discover(name: target.name, sshTarget: target.sshTarget, support: AppPaths.devRemoteHome)
+        } catch let failure as EaslConnection.Failure {
+            NSLog("easl: board.open_remote: %@ unreachable: %@", target.sshTarget, failure.message)
+            throw ApiRouter.Failure(failure.code, "\(target.name) is offline: \(failure.message)")
+        }
+        RemoteHost.Recents.remember(host, in: AppPaths.remoteHosts)
+        do {
+            let (controller, alreadyOpen) = try await openRemoteBoard(host: host, board: board, select: select)
+            return try Self.opened(controller, alreadyOpen: alreadyOpen)
+        } catch let failure as ApiRouter.Failure {
+            NSLog("easl: board.open_remote: %@ on %@ failed (%@)", board, host.sshTarget, failure.code)
+            throw ApiRouter.Failure(failure.code, "couldn't open \(board) on \(host.name): \(failure.message)")
+        }
+    }
+
+    /// Remote boards being read before their window opens, by `remoteKey`: a second open of one
+    /// waits for that read instead of opening the board again.
+    private var remoteLoads: [String: Task<CanvasWindowController, Error>] = [:]
+
+    /// Opens a window mirroring `board` on `host` (docs/design.md "Client mode"): a tab of the
+    /// frontmost board window, or its own window when there's none, its tab brought forward when
+    /// `select`. One open (or opening) already isn't opened again (`alreadyOpen`): its tab comes
+    /// forward when `select`. The board is read before the window opens, so a host that can't be
+    /// reached, or that has no such board, throws its failure instead (`BoardMirror.load`:
+    /// `unavailable`, `not_found`). Nothing about the board is written on this Mac.
+    func openRemoteBoard(host: RemoteHost, board: BoardID, select: Bool) async throws -> (controller: CanvasWindowController, alreadyOpen: Bool) {
+        let key = Self.remoteKey(host.sshTarget, board)
+        if let open = shownRemote(key, select: select) { return (open, true) }
+        if let loading = remoteLoads[key] {
+            let controller = try await loading.value
+            if select, let window = controller.window { bringForward(window) }
+            return (controller, true)
+        }
+        let loading = Task { @MainActor in try await self.loadRemoteBoard(host: host, board: board, key: key, select: select) }
+        remoteLoads[key] = loading
+        defer { remoteLoads[key] = nil }
+        return (try await loading.value, false)
+    }
+
+    /// The open window of the remote board `key`, its tab brought forward when `select`.
+    private func shownRemote(_ key: String, select: Bool) -> CanvasWindowController? {
+        guard let open = remoteControllers[key], let window = open.window else { return nil }
+        if select { bringForward(window) }
+        return open
+    }
+
+    /// Reads the board, then shows its window (`openRemoteBoard(host:board:select:)`).
+    private func loadRemoteBoard(host: RemoteHost, board: BoardID, key: String, select: Bool) async throws -> CanvasWindowController {
+        let mirror = BoardMirror(hostName: host.name, board: board, connection: host.connection(), renders: host.connection())
+        let loaded: Board
+        do {
+            loaded = try await mirror.load()
+        } catch {
+            mirror.close()
+            throw error
+        }
+        let controller = CanvasWindowController(board: loaded, registry: registry, remote: RemoteSource(host: host, mirror: mirror))
+        remoteControllers[key] = controller
+        if !openedOrder.contains(key) { openedOrder.append(key) }
+        loaded.onEvent = { [weak controller] event in controller?.apply(event) }
+        controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
+        controller.onClose = { [weak self] in self?.remoteControllers.removeValue(forKey: key) }
+        show(controller, select: select)
+        return controller
+    }
+
+    /// What `board.open_remote` answers for a remote board's window.
+    private static func opened(_ controller: CanvasWindowController, alreadyOpen: Bool) throws -> OpenedRemoteBoard {
+        guard let remote = controller.remote else { throw ApiRouter.Failure("internal", "\(controller.board.id)'s window mirrors no host") }
+        return OpenedRemoteBoard(host: remote.host.name, sshTarget: remote.host.sshTarget, board: controller.board.id, root: controller.board.root.path,
+                                 title: remote.title(of: controller.board), window: controller.window?.windowNumber ?? 0, alreadyOpen: alreadyOpen)
+    }
+
+    /// A new board window as a tab of the frontmost one (its own window when there's none),
+    /// selected when `select`. Otherwise the tab in front stays in front, as `open(root:select:)`
+    /// leaves it, and a window of its own is ordered in behind the others, never made key.
+    private func show(_ controller: CanvasWindowController, select: Bool) {
         guard let window = controller.window else { return }
         let noActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
         if let host = tabHost(excluding: window) {
+            let front = host.tabGroup?.selectedWindow ?? host
             if host.isMiniaturized, let group = host.tabGroup { group.addWindow(window) } else { host.addTabbedWindow(window, ordered: .above) }
-            bringForward(window)
-        } else if noActivate {
+            if select { bringForward(window) } else { window.tabGroup?.selectedWindow = front }
+        } else if noActivate || !select {
             window.orderBack(nil)
         } else {
             controller.showWindow(nil)
@@ -463,9 +539,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The board window new boards join as tabs: the key one, else any on screen, else a
     /// minimized one (a board opened while the window is in the Dock joins it there rather than
-    /// opening a window of its own on the user's current Space).
+    /// opening a window of its own on the user's current Space). Remote boards' windows count.
     private func tabHost(excluding window: NSWindow) -> NSWindow? {
-        let windows = controllers.values.compactMap(\.window).filter { $0 !== window && ($0.isVisible || $0.isMiniaturized) }
+        let windows = (Array(controllers.values) + remoteControllers.values).compactMap(\.window).filter { $0 !== window && ($0.isVisible || $0.isMiniaturized) }
         return windows.first(where: \.isKeyWindow) ?? windows.first(where: \.isVisible) ?? windows.first
     }
 

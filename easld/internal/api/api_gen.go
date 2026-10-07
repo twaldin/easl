@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "687d2e5375ccb6df"
+const SchemaHash = "5b68971893bd4848"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -24,7 +24,7 @@ const (
 	CodeTimeout = "timeout"
 	// unexpected server failure.
 	CodeInternal = "internal"
-	// an address (a terminal's name, `name@board`, a board's name) matches more than one terminal or open board; the message lists each candidate as `name@board (tile id)`, so the caller can name one.
+	// an address (a terminal's name, `name@board`, a board's name, `board.open_remote`'s host name) matches more than one terminal, open board or host; the message lists each candidate (a terminal as `name@board (tile id)`, a host by its ssh target), so the caller can name one.
 	CodeAmbiguous = "ambiguous"
 )
 
@@ -59,6 +59,10 @@ var Methods = map[string]ParamSpec{
 	"board.open": {
 		Accepted: []string{"root", "select"},
 		Required: []string{"root"},
+	},
+	"board.open_remote": {
+		Accepted: []string{"host", "board", "select"},
+		Required: []string{"host", "board"},
 	},
 	"board.export": {
 		Accepted: []string{"board", "path"},

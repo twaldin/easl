@@ -38,6 +38,10 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 		return r.boardList(), nil
 	case "board.open":
 		return r.boardOpen(p)
+	case "board.open_remote":
+		// The Mac app opens another Mac's board in a window of its own (docs/contracts.md
+		// "Remote boards"); easld has no windows.
+		return nil, fail(api.CodeUnsupported, "board.open_remote is the Mac app's: it opens another Mac's board in a window, and easld has none")
 	case "board.export":
 		b, err := r.boardOf(p)
 		if err != nil {
