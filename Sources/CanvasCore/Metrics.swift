@@ -121,6 +121,10 @@ public final class Metrics: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Batches summed on the main actor (`KeyLatency` in the app) are handed in before a snapshot
+    /// or reset taken there, so a key typed before a reset lands in the epoch it belongs to.
+    @MainActor public static var flushBeforeSnapshot: (@MainActor () -> Void)?
+
     /// Adds a batch summed elsewhere (`KeyLatency`): `count` occurrences, their total and longest.
     public func record(_ name: String, batchMs ms: Double, maxMs: Double, count: Int) {
         guard count > 0 else { return }

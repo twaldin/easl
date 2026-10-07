@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import CanvasCore
+@testable import CanvasCore
 
 /// Keys into terminals are summed on the key path and handed over in batches: wait and handling
 /// stay apart, the longest of each survives the sum, late keys are counted, and a flush empties.
