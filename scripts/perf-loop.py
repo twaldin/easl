@@ -85,6 +85,10 @@ class Instance:
         park = os.environ.get("EASL_DEV_PARK_SPACE", "9")
         self.env = dict(os.environ, EASL_DEV_HOME=home, EASL_DEV_APP=app, EASL_DEV_DISPLAY=display,
                         EASL_DEV_PARK_SPACE=park, EASL_SOCKET=os.path.join(home, "easl.sock"))
+        # Run from an easl tile, the CLI would address the tile's own board, which the instance
+        # doesn't have (`not_found`): the instance's board is the one on its socket.
+        for key in ("EASL_BOARD_ID", "EASL_TILE_ID"):
+            self.env.pop(key, None)
         # Headless: the window stays on the parking Space, which nobody views (no virtual screen).
         if headless:
             self.env["EASL_DEV_SPACE"] = park
