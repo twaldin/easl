@@ -119,9 +119,9 @@ public final class LoginShell: @unchecked Sendable {
     private var resolved: [String: (url: URL?, at: ContinuousClock.Instant)] = [:]
     private var cachedPath: String?
     private var cachedEditor: String??
-    private var interactivePaths: [String: (path: String?, stamp: [String], at: ContinuousClock.Instant)] = [:]
+    private var interactivePaths: [String: (path: String?, zdotdir: String?, stamp: [String], at: ContinuousClock.Instant)] = [:]
     /// Held while `interactivePath` asks the shell: a start waiting on the question in flight
-    /// (the app asks at launch, before its terminals start) takes its answer rather than asking again.
+    /// (a background retry) takes its answer rather than asking again.
     private let pathProbe = NSLock()
 
     /// `home` is what a leading `~` in a server's install directories stands for, and where the
@@ -196,53 +196,57 @@ public final class LoginShell: @unchecked Sendable {
         return editor
     }
 
-    /// The PATH the user's interactive login shell sets up when it starts with `path` (and the
-    /// user's `zdotdir` as ZDOTDIR), with only the session variables otherwise, as `editor`: what
-    /// a command typed at a terminal tile's prompt is looked up on. A tile's initial command runs
-    /// in a non-interactive login shell (`LoginSession.tileStart`), which reads no `.zshrc` (bash:
-    /// a `.bashrc` that returns early when not interactive), where installers put their PATH
-    /// (bun's, nvm's); an app launched by launchd inherits only `/usr/bin:/bin:/usr/sbin:/sbin`.
+    /// The PATH the user's interactive login shell sets up when it starts in `cwd` with `path`
+    /// (and the user's `zdotdir` as ZDOTDIR), with only the session variables otherwise, as
+    /// `editor`: what a command typed at a terminal tile's prompt there is looked up on. A tile's
+    /// initial command runs in a non-interactive login shell (`LoginSession.tileStart`), which
+    /// reads no `.zshrc` (bash: a `.bashrc` that returns early when not interactive), where
+    /// installers put their PATH (bun's, nvm's); an app launched by launchd inherits only
+    /// `/usr/bin:/bin:/usr/sbin:/sbin`.
     ///
-    /// Nil when the shell failed or outlived `spawnTimeout`: the command then keeps the login
-    /// shell's own PATH. Cached until a startup file changes (`startupStamp`); a nil is asked
-    /// again in the background after `missRetry`. Blocks while the shell is asked, at most
-    /// `spawnTimeout` (or `timeout`) beyond a question already in flight.
-    public func interactivePath(from path: String, zdotdir: String? = nil) -> String? {
-        let key = path + "\0" + (zdotdir ?? "")
-        let stamp = startupStamp(zdotdir: zdotdir)
-        if let known = lock.withLock({ interactivePaths[key] }), known.stamp == stamp {
+    /// Nil when the shell failed, or hadn't exited by `spawnTimeout`: the command then keeps the
+    /// login shell's own PATH. Cached per `cwd` until a startup file changes (`startupStamp`,
+    /// with the ZDOTDIR the shell ended with); a nil is asked again in the background after
+    /// `missRetry`. Blocks while the shell is asked, at most `spawnTimeout` (or `timeout`) beyond
+    /// a question already in flight.
+    public func interactivePath(from path: String, in cwd: String, zdotdir: String? = nil) -> String? {
+        let key = [path, cwd, zdotdir ?? ""].joined(separator: "\0")
+        if let known = lock.withLock({ interactivePaths[key] }), known.stamp == startupStamp(zdotdir: zdotdir, resolved: known.zdotdir) {
             if known.path == nil, known.at.duration(to: .now) >= Self.missRetry {
-                DispatchQueue.global(qos: .utility).async { _ = self.askInteractivePath(from: path, zdotdir: zdotdir) }
+                DispatchQueue.global(qos: .utility).async { _ = self.askInteractivePath(key, from: path, in: cwd, zdotdir: zdotdir) }
             }
             return known.path
         }
-        return askInteractivePath(from: path, zdotdir: zdotdir)
+        return askInteractivePath(key, from: path, in: cwd, zdotdir: zdotdir)
     }
 
-    private func askInteractivePath(from path: String, zdotdir: String?) -> String? {
+    private func askInteractivePath(_ key: String, from path: String, in cwd: String, zdotdir: String?) -> String? {
         pathProbe.withLock {
-            let key = path + "\0" + (zdotdir ?? "")
-            let stamp = startupStamp(zdotdir: zdotdir)
             // The question that held the lock may have answered this one.
-            if let known = lock.withLock({ interactivePaths[key] }), known.stamp == stamp,
+            if let known = lock.withLock({ interactivePaths[key] }), known.stamp == startupStamp(zdotdir: zdotdir, resolved: known.zdotdir),
                known.path != nil || known.at.duration(to: .now) < Self.missRetry {
                 return known.path
             }
             let variables = ["PATH": path].merging(zdotdir.map { ["ZDOTDIR": $0] } ?? [:]) { $1 }
-            let value = probe(["$PATH"], interactive: variables, timeout: min(timeout, Self.spawnTimeout)).first ?? ""
-            let found = value.isEmpty ? nil : value
-            lock.withLock { interactivePaths[key] = (found, stamp, .now) }
+            let values = probe(["$PATH", "$ZDOTDIR"], interactive: variables, in: cwd, timeout: min(timeout, Self.spawnTimeout))
+            let found = values.first.flatMap { $0.isEmpty ? nil : $0 }
+            let resolved = values.count > 1 && !values[1].isEmpty ? values[1] : nil
+            lock.withLock { interactivePaths[key] = (found, resolved, startupStamp(zdotdir: zdotdir, resolved: resolved), .now) }
             return found
         }
     }
 
-    /// What `stat` says of each of the shells' startup files (zsh's, bash's, fish's, and what
-    /// macOS's path_helper reads): one edited, replaced or repointed (a symlinked `.zshrc`) asks
-    /// the shell again. Files they source in turn aren't followed.
-    private func startupStamp(zdotdir: String?) -> [String] {
-        let zsh = [".zshenv", ".zprofile", ".zshrc", ".zlogin"]
-        let files = zsh.map { (zdotdir ?? home) + "/" + $0 } + zsh.map { home + "/.config/zsh/" + $0 }
-            + [".bash_profile", ".bash_login", ".profile", ".bashrc", ".config/fish/config.fish", ".config/fish/conf.d", ".config/fish/fish_variables"].map { home + "/" + $0 }
+    /// What `stat` says of each of the shells' startup files (zsh's in `zdotdir`, `HOME`,
+    /// `~/.config/zsh` and the ZDOTDIR the shell ended with (`resolved`: one `~/.zshenv` set),
+    /// bash's, fish's under `XDG_CONFIG_HOME`, and what macOS's path_helper reads): one edited,
+    /// replaced or repointed (a symlinked `.zshrc`) asks the shell again. Files they source in
+    /// turn aren't followed.
+    private func startupStamp(zdotdir: String?, resolved: String?) -> [String] {
+        let zsh = Set([zdotdir, resolved, home, home + "/.config/zsh"].compactMap { $0 }).sorted()
+            .flatMap { directory in [".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout"].map { directory + "/" + $0 } }
+        let config = inherited["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/.config"
+        let files = zsh + [".bash_profile", ".bash_login", ".profile", ".bashrc", ".bash_logout"].map { home + "/" + $0 }
+            + ["fish/config.fish", "fish/conf.d", "fish/fish_variables"].map { config + "/" + $0 }
             + ["/etc/zshenv", "/etc/zprofile", "/etc/zshrc", "/etc/zlogin", "/etc/profile", "/etc/bashrc", "/etc/paths", "/etc/paths.d"]
         return files.map { file in
             var info = stat()
@@ -255,27 +259,35 @@ public final class LoginShell: @unchecked Sendable {
         "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// What the login shell expands each of `values` (shell words) to, trimmed; a marker before
-    /// each keeps anything rc files print out of the answers. Empty when the shell failed.
-    /// `interactive`: asked of an interactive login shell (`-lic`) started with only the session
-    /// variables (`LoginSession.variables`, from `inherited`) and these, not the app's environment.
-    private func probe(_ values: [String], interactive: [String: String]? = nil, timeout: Duration? = nil) -> [String] {
-        let marker = "__CANVAS_VALUE__"
-        let script = values.map { "printf '\\n\(marker)%s' \"\($0)\"" }.joined(separator: "; ")
-        return run(script, fresh: interactive.map(fresh), timeout: timeout ?? self.timeout).components(separatedBy: "\n" + marker).dropFirst().map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// What the login shell expands each of `values` (shell words) to, trimmed: what it printed
+    /// between a marker before each and an end marker after it, so what rc files print around them
+    /// (a `.zlogout`, an EXIT trap) stays out of the answers; empty when the shell failed or an
+    /// answer wasn't ended. `interactive`: asked of an interactive login shell (`-lic`) started
+    /// in `cwd` with only the session variables (`fresh`) and these, not the app's environment.
+    private func probe(_ values: [String], interactive: [String: String]? = nil, in cwd: String? = nil, timeout: Duration? = nil) -> [String] {
+        let (marker, end) = ("__CANVAS_VALUE__", "__CANVAS_END__")
+        let script = values.map { "printf '\\n\(marker)%s\(end)' \"\($0)\"" }.joined(separator: "; ")
+        let output = run(script, fresh: interactive.map(fresh), in: cwd, timeout: timeout ?? self.timeout)
+        return output.components(separatedBy: "\n" + marker).dropFirst().map { answer in
+            answer.range(of: end).map { answer[..<$0.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        }
     }
 
-    /// The session variables (`LoginSession.variables`) of `inherited`, with `variables` over them.
+    /// What a fresh login session's shell starts with: the session variables (`LoginSession.variables`)
+    /// and the `XDG_*` and `LC_*` ones a tile keeps, of `inherited`, with `variables` over them.
     private func fresh(_ variables: [String: String]) -> [String] {
-        let session: [String] = LoginSession.variables.subtracting(variables.keys).sorted().compactMap { name in inherited[name].map { "\(name)=\($0)" } }
-        return session + variables.keys.sorted().map { "\($0)=\(variables[$0] ?? "")" }
+        let names = inherited.keys.filter { name in
+            variables[name] == nil && (LoginSession.variables.contains(name) || name.hasPrefix("XDG_") || name.hasPrefix("LC_"))
+        }
+        return (names.sorted().map { "\($0)=\(inherited[$0] ?? "")" }) + variables.keys.sorted().map { "\($0)=\(variables[$0] ?? "")" }
     }
 
     /// Runs `$SHELL -lc script` in its own process group and reads its output until EOF or the
     /// deadline. At the deadline the whole group is killed and the read abandoned: rc files can
     /// start children that outlive the shell and keep the output pipe open. `fresh`: `-lic`,
-    /// with only these variables, not the app's environment.
-    private func run(_ script: String, fresh variables: [String]?, timeout: Duration) -> String {
+    /// with only these variables, not the app's environment; `cwd`: where it starts. Empty when
+    /// the shell hadn't exited by the deadline, even after closing its output.
+    private func run(_ script: String, fresh variables: [String]?, in cwd: String? = nil, timeout: Duration) -> String {
         var fds: [Int32] = [-1, -1]
         guard pipe(&fds) == 0 else { return "" }
         let (readEnd, writeEnd) = (fds[0], fds[1])
@@ -288,6 +300,7 @@ public final class LoginShell: @unchecked Sendable {
         posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
         posix_spawn_file_actions_addclose(&actions, readEnd)
         posix_spawn_file_actions_addclose(&actions, writeEnd)
+        if let cwd { posix_spawn_file_actions_addchdir_np(&actions, cwd) }
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
@@ -344,10 +357,23 @@ public final class LoginShell: @unchecked Sendable {
             }
             output.append(contentsOf: buffer[0..<count])
         }
-        // Anything in the group still holding the pipe (a hung shell, or a child an rc file
-        // left behind) is ended with it.
-        if !eof { kill(-pid, SIGKILL) }
+        // A shell that closed its output (`exec >/dev/null` in an rc file) and hasn't exited is
+        // waited for only until the deadline.
+        while eof, !reaped, ContinuousClock.now < deadline {
+            let done = waitpid(pid, &status, WNOHANG)
+            if done == pid {
+                reaped = true
+            } else if done < 0, errno != EINTR {
+                break
+            } else {
+                usleep(10_000)
+            }
+        }
+        let exited = reaped
+        // Anything in the group still holding the pipe or running (a hung shell, or a child an
+        // rc file left behind) is ended with it.
+        if !eof || !reaped { kill(-pid, SIGKILL) }
         if !reaped { while waitpid(pid, &status, 0) < 0, errno == EINTR {} }
-        return String(decoding: output, as: UTF8.self)
+        return exited ? String(decoding: output, as: UTF8.self) : ""
     }
 }

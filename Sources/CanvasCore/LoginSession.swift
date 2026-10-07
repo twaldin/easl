@@ -35,8 +35,15 @@ public enum LoginSession {
     /// the user's files itself. Without one the command has the login shell's own PATH.
     public static func tileStart(shell: String, command: String?, path: String?) -> [String] {
         guard let command else { return [shell, "-l"] }
-        let run = path.map { "PATH=" + ShellWords.quote([$0]) + " " + command } ?? command
+        let run = path.map { "PATH=" + word($0, for: shell) + " " + command } ?? command
         return [shell, "-l", "-c", "\(run); exec \(ShellWords.quote([shell])) -l"]
+    }
+
+    /// `value` as one single-quoted word of `shell`: fish reads `\\` and `\'` as escapes inside
+    /// single quotes (a PATH entry ending in `\` would end the quote), POSIX shells read nothing.
+    static func word(_ value: String, for shell: String) -> String {
+        guard shell.split(separator: "/").last == "fish" else { return ShellWords.quote([value]) }
+        return "'" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'") + "'"
     }
 
     /// An interactive login shell's PATH (`resolved`) for a tile's command: easl's `bin` first,

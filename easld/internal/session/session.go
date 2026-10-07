@@ -209,6 +209,15 @@ func (m *Manager) Spawn(req SpawnRequest) (session string, created bool, err err
 		return "", false, failure("invalid_params", "cwd %s is not a directory on %s", cwd, host)
 	}
 	name := Prefix + req.Tile
+	// The command's PATH is asked before the lock (it can take PathTimeout, and kills wait on
+	// the lock), and only for a session that isn't there yet.
+	env := environ(m.Env, req.Env, req.Unset)
+	path := ""
+	if len(req.Command) > 0 {
+		if existing, err := m.find(name); err == nil && existing == nil {
+			path = m.interactivePath(env, cwd)
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, err := m.find(name)
@@ -229,8 +238,7 @@ func (m *Manager) Spawn(req SpawnRequest) (session string, created bool, err err
 	if labels != "" {
 		args = append(args, "--labels", labels)
 	}
-	env := environ(m.Env, req.Env, req.Unset)
-	args = append(append(args, name), m.loginCommand(req.Command, env, req.Env["PATH"])...)
+	args = append(append(args, name), m.loginCommand(req.Command, path, req.Env["PATH"])...)
 	if out, err := m.run(cwd, env, args...); err != nil {
 		return "", false, failure("unavailable", "zmx couldn't start %s: %s", name, describe(err, out))
 	}
@@ -248,36 +256,47 @@ func (m *Manager) Spawn(req SpawnRequest) (session string, created bool, err err
 }
 
 // loginCommand is what the session runs: `command` in the login shell, then the login shell,
-// as a terminal tile on the Mac does (LoginSession.tileStart). The command gets the PATH an
-// interactive login shell sets up in the session's environment `env` (interactivePath), with
-// `first` (easl's bin) before it: `-l -c` reads neither ~/.zshrc nor a ~/.bashrc past its
-// interactive guard, where PATH is often set (bun's and nvm's installers write there). When that
-// shell doesn't answer, the command has the login shell's own PATH.
-func (m *Manager) loginCommand(command []string, env []string, first string) []string {
+// as a terminal tile on the Mac does (LoginSession.tileStart). The command gets `path`, what an
+// interactive login shell sets up in the session (interactivePath), with `first` (easl's bin)
+// before it: `-l -c` reads neither ~/.zshrc nor a ~/.bashrc past its interactive guard, where
+// PATH is often set (bun's and nvm's installers write there). Without one ("": that shell
+// didn't answer) the command has the login shell's own PATH.
+func (m *Manager) loginCommand(command []string, path, first string) []string {
 	if len(command) == 0 {
 		return []string{m.Shell, "-l"}
 	}
 	run := Quote(command)
-	if path := m.interactivePath(env); path != "" {
-		run = "PATH=" + Quote([]string{commandPath(path, first)}) + " " + run
+	if path != "" {
+		run = "PATH=" + shellWord(commandPath(path, first), m.Shell) + " " + run
 	}
 	return []string{m.Shell, "-l", "-c", run + "; exec " + Quote([]string{m.Shell}) + " -l"}
 }
 
-// interactivePath is the PATH `$SHELL -lic` prints in `env`: what a command typed at the
-// session's prompt is looked up on. "" when the shell failed or outlived PathTimeout. The shell
-// runs in its own process group, ended at the deadline or when what the rc files started holds
-// the output open after the shell exited.
-func (m *Manager) interactivePath(env []string) string {
+// shellWord is `value` as one single-quoted word of `shell` (LoginSession.word): fish reads `\\`
+// and `\'` as escapes inside single quotes, POSIX shells read nothing.
+func shellWord(value, shell string) string {
+	if filepath.Base(shell) != "fish" {
+		return Quote([]string{value})
+	}
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(value) + "'"
+}
+
+// interactivePath is the PATH `$SHELL -lic` prints in `env`, started in `cwd`: what a command
+// typed at the session's prompt is looked up on. Only what it prints between a marker and an end
+// marker counts, so a ~/.bash_logout or an EXIT trap that prints stays out. "" when the shell
+// failed or hadn't exited by PathTimeout. The shell runs in its own process group, ended at the
+// deadline or when what the rc files started holds the output open after the shell exited.
+func (m *Manager) interactivePath(env []string, cwd string) string {
 	timeout := m.PathTimeout
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	const marker = "__EASL_PATH__"
-	cmd := exec.CommandContext(ctx, m.Shell, "-lic", `printf '\n`+marker+`%s' "$PATH"`)
+	const marker, end = "__EASL_PATH__", "__EASL_END__"
+	cmd := exec.CommandContext(ctx, m.Shell, "-lic", `printf '\n`+marker+`%s`+end+`' "$PATH"`)
 	cmd.Env = env
+	cmd.Dir = cwd
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 500 * time.Millisecond
@@ -286,8 +305,12 @@ func (m *Manager) interactivePath(env []string) string {
 	if err := cmd.Run(); errors.Is(err, exec.ErrWaitDelay) {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
-	_, value, found := strings.Cut(out.String(), "\n"+marker)
-	if !found {
+	if ctx.Err() != nil {
+		return ""
+	}
+	_, rest, found := strings.Cut(out.String(), "\n"+marker)
+	value, _, ended := strings.Cut(rest, end)
+	if !found || !ended {
 		return ""
 	}
 	return strings.TrimSpace(value)

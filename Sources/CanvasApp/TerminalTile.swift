@@ -132,7 +132,8 @@ final class TerminalTile: NSView, TileContent {
     /// initial command gets the PATH of the tile's interactive shell (`commandPath`).
     static func command(session: String, object: CanvasObject, board: Board, environment: [String: String], start initial: String? = nil) -> String {
         let command = initial ?? initialCommand(object)
-        let start = LoginSession.tileStart(shell: AppPaths.userShell, command: command, path: command == nil ? nil : commandPath(environment))
+        let path = command == nil ? nil : commandPath(environment, in: object.props["cwd"]?.string ?? board.root.path)
+        let start = LoginSession.tileStart(shell: AppPaths.userShell, command: command, path: path)
         guard let zmx = AppPaths.zmx else { return ShellWords.quote(start) }
         let strip = LoginSession.strippedForTile(ProcessInfo.processInfo.environment, keep: Set(environment.keys)).flatMap { ["-u", $0] }
         // `canvas.home` names the owning instance: board copies in another home (replicas, dev
@@ -145,20 +146,14 @@ final class TerminalTile: NSView, TileContent {
     }
 
     /// The PATH a tile's initial command runs with (`LoginSession.tileStart`): what the user's
-    /// interactive login shell sets up from the tile's own (`environment`'s, else the app's) and
-    /// the user's ZDOTDIR (`LoginShell.interactivePath`), easl's bin first; nil when that shell
-    /// didn't answer. Blocks while the shell is asked; the app asks at launch (`primeCommandPath`).
-    nonisolated static func commandPath(_ environment: [String: String]) -> String? {
+    /// interactive login shell sets up in the tile's `cwd` from its own PATH (`environment`'s, else
+    /// the app's) and the user's ZDOTDIR (`LoginShell.interactivePath`), easl's bin first; nil
+    /// when that shell didn't answer. Blocks while the shell is asked: once per directory until a
+    /// startup file changes.
+    static func commandPath(_ environment: [String: String], in cwd: String) -> String? {
         let path = environment["PATH"] ?? ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        return LoginShell.shared.interactivePath(from: path, zdotdir: environment["EASL_ZSH_ZDOTDIR"])
+        return LoginShell.shared.interactivePath(from: path, in: cwd, zdotdir: environment["EASL_ZSH_ZDOTDIR"])
             .map { LoginSession.commandPath($0, bin: AppPaths.resources.map { $0.path + "/bin" }) }
-    }
-
-    /// Asks for `commandPath` in the background, before the board's terminals start: the tiles'
-    /// variables it depends on are their shell integration's (`environment`).
-    nonisolated static func primeCommandPath() {
-        let environment = AppPaths.resources.map { LoginSession.tileShellIntegration(resources: $0.path, inherited: ProcessInfo.processInfo.environment) } ?? [:]
-        DispatchQueue.global(qos: .userInitiated).async { _ = commandPath(environment) }
     }
 
     /// A prologue for `sh -c` with $1 = zmx, $2 = session name, $3 = this instance's home label:

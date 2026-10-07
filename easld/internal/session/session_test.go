@@ -413,28 +413,47 @@ func TestCommandGetsTheInteractiveShellsPath(t *testing.T) {
 	if !strings.Contains(before, "command not found") || strings.Contains(before, "stub omp") {
 		t.Fatalf("without the interactive PATH the stub should be missing: %q", before)
 	}
-	args := m.loginCommand(command, env, "/easl/bin")
+	args := m.loginCommand(command, m.interactivePath(env, home), "/easl/bin")
 	out := runs(t, args, env)
 	if !strings.Contains(out, "stub omp --model x\n") || !strings.Contains(out, "PATH=/easl/bin:"+tools+":") {
 		t.Errorf("%q printed %q, want the stub on its PATH after easl's bin", args, out)
 	}
-	if got := m.loginCommand(nil, env, "/easl/bin"); strings.Join(got, " ") != "/bin/bash -l" {
+	if got := m.loginCommand(nil, "/a", "/easl/bin"); strings.Join(got, " ") != "/bin/bash -l" {
 		t.Errorf("a plain shell reads the user's files itself: %q", got)
 	}
 }
 
-// An rc file that hangs or fails doesn't hold the spawn: the shell's group is ended at the
-// deadline, and the command runs with the login shell's own PATH, as before.
+// The shell is asked in the session's directory (startup files may add `$PWD/…`), and what
+// it prints after the PATH (an EXIT trap here) isn't part of it.
+func TestThePathIsAskedInTheSessionsDirectoryAndFramed(t *testing.T) {
+	home, tools := rcHome(t, `trap 'printf junk' EXIT; export PATH="$PWD/venv:$PATH"`)
+	m := &Manager{Shell: "/bin/bash"}
+	env := []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
+	// bash's $PWD is the physical directory (macOS's temp directories are under a symlink).
+	project, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := m.interactivePath(env, project)
+	if !strings.HasPrefix(path, tools+":"+project+"/venv:") || strings.Contains(path, "junk") {
+		t.Errorf("PATH %q, want %s, then %s/venv, and nothing the logout printed", path, tools, project)
+	}
+}
+
+// An rc file that hangs (even after closing its output) or fails doesn't hold the spawn: the
+// shell's group is ended at the deadline, and the command runs with the login shell's own PATH,
+// as before.
 func TestAHangingOrFailingRcStillSpawns(t *testing.T) {
-	for _, rc := range []string{"sleep 60", "exit 3"} {
+	for _, rc := range []string{"sleep 60", "exec >/dev/null; sleep 60", "exit 3"} {
 		home, tools := rcHome(t, rc)
 		m := &Manager{Shell: "/bin/bash", PathTimeout: time.Second}
 		env := []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
 		start := time.Now()
-		args := m.loginCommand([]string{"/bin/sh", "-c", `echo spawned; echo "PATH=$PATH"`}, env, "")
-		if elapsed := time.Since(start); elapsed > 10*time.Second {
-			t.Errorf("%s: asking took %v", rc, elapsed)
+		path := m.interactivePath(env, home)
+		if elapsed := time.Since(start); path != "" || elapsed > 10*time.Second {
+			t.Errorf("%s: PATH %q after %v, want none within the deadline", rc, path, elapsed)
 		}
+		args := m.loginCommand([]string{"/bin/sh", "-c", `echo spawned; echo "PATH=$PATH"`}, path, "")
 		if want := `'/bin/sh' '-c' 'echo spawned; echo "PATH=$PATH"'; exec '/bin/bash' -l`; len(args) != 4 || args[3] != want {
 			t.Errorf("%s: command %q, want %q", rc, args, want)
 		}
@@ -450,6 +469,20 @@ func TestCommandPathPutsEaslsBinFirstOnce(t *testing.T) {
 	}
 	if got := commandPath("/a:/b", ""); got != "/a:/b" {
 		t.Errorf("got %q", got)
+	}
+}
+
+// fish reads `\\` and `\'` inside single quotes: a PATH entry ending in a backslash would end
+// the word there.
+func TestThePathWordIsQuotedForFish(t *testing.T) {
+	if got := shellWord(`/a\:/b'c`, "/usr/local/bin/fish"); got != `'/a\\:/b\'c'` {
+		t.Errorf("fish: %s", got)
+	}
+	if got := shellWord(`/a\:/b'c`, "/bin/zsh"); got != `'/a\:/b'"'"'c'` {
+		t.Errorf("zsh: %s", got)
+	}
+	if args := (&Manager{Shell: "/usr/bin/fish"}).loginCommand([]string{"omp"}, `/x\`, ""); args[3] != `PATH='/x\\' 'omp'; exec '/usr/bin/fish' -l` {
+		t.Errorf("fish command %q", args)
 	}
 }
 

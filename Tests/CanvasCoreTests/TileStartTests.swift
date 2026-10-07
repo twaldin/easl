@@ -28,13 +28,17 @@ final class TileStartTests {
         try? FileManager.default.removeItem(at: dir)
     }
 
+    /// Writes the startup file `name` (a path under `home`).
     func rc(_ name: String, _ body: String) throws {
-        try (body + "\n").write(toFile: home + "/" + name, atomically: true, encoding: .utf8)
+        let url = URL(fileURLWithPath: home + "/" + name)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try (body + "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 
-    func loginShell(_ shell: String, timeout: Duration = .seconds(30)) -> LoginShell {
-        LoginShell(shell: shell, home: home, inherited: ["HOME": home, "USER": NSUserName(), "LOGNAME": NSUserName(), "SHELL": shell,
-                                                         "TMPDIR": NSTemporaryDirectory(), "PATH": Self.launchdPath], timeout: timeout)
+    /// The user's shell as the app asks it, its environment launchd's with `extra`.
+    func loginShell(_ shell: String, timeout: Duration = .seconds(30), extra: [String: String] = [:]) -> LoginShell {
+        let inherited = ["HOME": home, "USER": NSUserName(), "LOGNAME": NSUserName(), "SHELL": shell, "TMPDIR": NSTemporaryDirectory(), "PATH": Self.launchdPath]
+        return LoginShell(shell: shell, home: home, inherited: inherited.merging(extra) { $1 }, timeout: timeout)
     }
 
     /// Runs a tile's session command `argv` from launchd's environment, without a terminal (the
@@ -61,7 +65,8 @@ final class TileStartTests {
         #expect(before.contains("command not found") && !before.contains("stub omp"), "the login shell's own PATH lacks the rc's: \(before)")
 
         let login = loginShell(shell)
-        let path = try #require(await offPool { login.interactivePath(from: Self.launchdPath) })
+        let home = self.home
+        let path = try #require(await offPool { login.interactivePath(from: Self.launchdPath, in: home) })
         #expect(path.split(separator: ":").first.map(String.init) == tools, "the rc's directory first: \(path)")
         let start = LoginSession.tileStart(shell: shell, command: command, path: LoginSession.commandPath(path, bin: "/easl/bin"))
         let after = try await spawn(start, shell: shell)
@@ -75,21 +80,24 @@ final class TileStartTests {
         let shell = "/bin/zsh"
         let relaunch = try #require(AgentResume.relaunch(kind: "omp", command: ["omp", "--model", "x"], session: "/sessions/s1.jsonl", model: nil, thinking: nil, args: []))
         let login = loginShell(shell)
-        let path = await offPool { login.interactivePath(from: Self.launchdPath) }
+        let home = self.home
+        let path = await offPool { login.interactivePath(from: Self.launchdPath, in: home) }
         let output = try await spawn(LoginSession.tileStart(shell: shell, command: ShellWords.quote(relaunch.argv), path: path), shell: shell)
         #expect(output.contains("stub omp --model x --resume=/sessions/s1.jsonl\n"), "\(output)")
     }
 
-    /// An rc file that hangs or fails doesn't hold the start up: the shell is ended at the
-    /// deadline, and the command starts as before, with the login shell's own PATH.
-    @Test(arguments: ["sleep 60", "exit 3"])
+    /// An rc file that hangs (even after closing its output) or fails doesn't hold the start up:
+    /// the shell is ended at the deadline, and the command starts as before, with the login
+    /// shell's own PATH.
+    @Test(arguments: ["sleep 60", "exec >/dev/null; sleep 60", "exit 3"])
     func aHangingOrFailingRcStillSpawnsWithTheLoginShellsPath(rc body: String) async throws {
         let shell = "/bin/zsh"
         try rc(".zshrc", body + "\nexport PATH=\"\(tools):$PATH\"")
         let deadline: Duration = .seconds(1)
         let login = loginShell(shell, timeout: deadline)
+        let home = self.home
         let asked = ContinuousClock.now
-        let path = await offPool { login.interactivePath(from: Self.launchdPath) }
+        let path = await offPool { login.interactivePath(from: Self.launchdPath, in: home) }
         // Bound as LoginShellTests': room for a loaded runner, and still well short of the 60 s.
         #expect(path == nil)
         #expect(asked.duration(to: .now) < deadline + .seconds(9))
@@ -101,13 +109,35 @@ final class TileStartTests {
         #expect(output.contains("spawned\n") && output.contains("/usr/bin") && !output.contains(tools), "\(output)")
     }
 
-    /// Editing a startup file asks the shell again; until then the answer is cached.
-    @Test func aChangedRcIsAskedAgain() async throws {
+    /// The shell is asked in the tile's directory (startup files may add `$PWD/…`), and what it
+    /// prints after the PATH (a `.zlogout` here) isn't part of it.
+    @Test func thePathIsAskedInTheTilesDirectoryAndFramed() async throws {
+        try rc(".zshrc", "export PATH=\"$PWD/venv:\(tools):$PATH\"")
+        try rc(".zlogout", "printf junk")
+        let project = dir.path + "/project"
+        try FileManager.default.createDirectory(atPath: project, withIntermediateDirectories: true)
         let login = loginShell("/bin/zsh")
-        let first = await offPool { login.interactivePath(from: Self.launchdPath) }
-        #expect(first?.hasPrefix(tools + ":") == true)
-        try rc(".zshrc", "export PATH=\"\(tools)/more:\(tools):$PATH\"")
-        let second = await offPool { login.interactivePath(from: Self.launchdPath) }
+        let path = try #require(await offPool { login.interactivePath(from: Self.launchdPath, in: project) })
+        // zsh's $PWD is the physical directory: macOS's temp directories are under /private.
+        let entries = path.split(separator: ":").map(String.init)
+        #expect(entries.first?.hasSuffix("/project/venv") == true && entries.dropFirst().first == tools && !path.contains("junk"), "\(path)")
+    }
+
+    /// Editing a startup file asks the shell again, also one in the ZDOTDIR `~/.zshenv` moved
+    /// to under `XDG_CONFIG_HOME` (kept for the shell, as tiles keep it); until then the answer
+    /// is cached.
+    @Test func aChangedRcIsAskedAgain() async throws {
+        let config = dir.path + "/config"
+        try rc(".zshenv", "export ZDOTDIR=\"$XDG_CONFIG_HOME/zsh\"")
+        try FileManager.default.removeItem(atPath: home + "/.zshrc")
+        try rc("../config/zsh/.zshrc", "export PATH=\"\(tools):$PATH\"")
+        let login = loginShell("/bin/zsh", extra: ["XDG_CONFIG_HOME": config])
+        let home = self.home
+        let first = await offPool { login.interactivePath(from: Self.launchdPath, in: home) }
+        #expect(first?.hasPrefix(tools + ":") == true, "\(first ?? "nil")")
+        #expect(await offPool { login.interactivePath(from: Self.launchdPath, in: home) } == first)
+        try rc("../config/zsh/.zshrc", "export PATH=\"\(tools)/more:\(tools):$PATH\"")
+        let second = await offPool { login.interactivePath(from: Self.launchdPath, in: home) }
         #expect(second?.hasPrefix("\(tools)/more:\(tools):") == true, "\(second ?? "nil")")
     }
 
@@ -115,5 +145,14 @@ final class TileStartTests {
         #expect(LoginSession.commandPath("/a:/easl/bin:/b", bin: "/easl/bin") == "/easl/bin:/a:/b")
         #expect(LoginSession.commandPath("/a:/b", bin: nil) == "/a:/b")
         #expect(LoginSession.tileStart(shell: "/bin/zsh", command: nil, path: "/a") == ["/bin/zsh", "-l"], "a plain shell reads the user's files itself")
+    }
+
+    /// fish reads `\\` and `\'` inside single quotes: a PATH entry ending in a backslash would end
+    /// the word there.
+    @Test func thePathWordIsQuotedForFish() {
+        #expect(LoginSession.tileStart(shell: "/usr/local/bin/fish", command: "'omp'", path: #"/a\:/b'c"#)
+            == ["/usr/local/bin/fish", "-l", "-c", #"PATH='/a\\:/b\'c' 'omp'; exec '/usr/local/bin/fish' -l"#])
+        #expect(LoginSession.tileStart(shell: "/bin/zsh", command: "'omp'", path: #"/a\:/b'c"#)
+            == ["/bin/zsh", "-l", "-c", #"PATH='/a\:/b'"'"'c' 'omp'; exec '/bin/zsh' -l"#])
     }
 }
