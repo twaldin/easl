@@ -83,6 +83,18 @@ struct LinkTests {
         #expect(WebLink.match(in: text, at: 29) == nil, "the comma after it")
     }
 
+    /// A question tile's text links what `WebLink.matches` finds in it: an address with a host and
+    /// port (a home server's), never the question mark or full stop after it, several in a row.
+    @Test func aQuestionsTextLinksItsWebAddresses() {
+        func links(_ text: String) -> [String] { WebLink.matches(in: text).map { (text as NSString).substring(with: $0.range) } }
+        #expect(links("can ask tiles open http://twaldin-home:5199/home?studio") == ["http://twaldin-home:5199/home?studio"])
+        #expect(links("Does http://127.0.0.1:8123/x?y load, or is it at http://twaldin-home:5199/home?") == ["http://127.0.0.1:8123/x?y", "http://twaldin-home:5199/home"])
+        #expect(links("Compare https://example.com/a. and https://example.org/b, then (http://localhost:3000/c)!")
+            == ["https://example.com/a", "https://example.org/b", "http://localhost:3000/c"])
+        #expect(links("Ship it today, or wait for the freeze on Friday?").isEmpty)
+        #expect(WebLink.matches(in: "Is http://twaldin-home:5199/home?studio up?").first?.url.port == 5199)
+    }
+
     /// A URL in a single-quoted string ends at the quote: the code after it (`run`) is no part of
     /// the link, so a ⌘-click there still goes to its definition.
     @Test func aQuotedURLLeavesTheCodeAfterItToNavigation() throws {

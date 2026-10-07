@@ -7,8 +7,9 @@ import CanvasCore
 /// (`Board.answerQuestion`, which hands the answer to an asking terminal). Once closed it
 /// collapses to the outcome: the answer and who gave it when, or that it was cancelled or
 /// expired (dimmed); Return in it then archives it. Its text scales with the chrome text size,
-/// like the title bar's. VoiceOver reads the whole question (`accessibleText`) and presses its
-/// painted controls (`QuestionControlElement`).
+/// like the title bar's. The question's text selects with a drag and copies (⌘C, Copy), and its
+/// web links open beside the tile on a click (`PaintedText`, `TextPress`). VoiceOver reads the
+/// whole question (`accessibleText`) and presses its painted controls (`QuestionControlElement`).
 @MainActor
 final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
     private var object: CanvasObject
@@ -20,6 +21,11 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
     private let page = QuestionPage()
     private let note = NSTextField()
     private var painter: QuestionPainter?
+    /// The question's text selected by a drag, for ⌘C and the context menu's Copy; kept while
+    /// the tile has the keyboard.
+    private var selection: NSRange?
+    /// A press on the question's text until its release: a click on a link, or a drag selecting.
+    private var press: TextPress?
     /// The painted controls for accessibility, the same element for a control across layouts
     /// (VoiceOver stays on an option a pick lays the page out again around).
     fileprivate private(set) var controlElements: [QuestionControlElement] = []
@@ -85,11 +91,13 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
         } else if window?.firstResponder === note.currentEditor() {
             window?.makeFirstResponder(self)
         }
+        // The pointing hand follows the controls and the links in the text as they move.
+        window?.invalidateCursorRects(for: page)
         page.needsDisplay = true
     }
 
     fileprivate func paint(in rect: NSRect) {
-        painter?.draw(in: rect, noteDrawn: false)
+        painter?.draw(in: rect, noteDrawn: false, selection: selection)
     }
 
     // MARK: Acting
@@ -139,8 +147,8 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
         return view as? CanvasView
     }
 
-    /// Context links open beside the tile: code with `Board.openForNavigation`, web pages with
-    /// `Board.openLink`; an object is gone to where it is.
+    /// Context links, and the web links in the question's text, open beside the tile: code with
+    /// `Board.openForNavigation`, web pages with `Board.openLink`; an object is gone to where it is.
     private func open(_ context: QuestionSpec.Context) {
         switch context {
         case .object(let id):
@@ -159,10 +167,39 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
         }
     }
 
-    fileprivate func click(at point: NSPoint) -> Bool {
-        guard let hit = painter?.hit(point) else { return false }
-        perform(hit)
-        return true
+    /// A press on the page: on the question's text it selects or follows a link once it is
+    /// released or dragged (`TextPress`); on a control it acts at once. Anywhere on an open
+    /// question it gives the tile the keyboard, for its number keys and Return.
+    fileprivate func pressed(_ event: NSEvent, at point: NSPoint) {
+        if let text = painter?.question, text.rect.contains(point) {
+            if takesKeyboardFocus { window?.makeFirstResponder(self) }
+            let offset = text.offset(at: point)
+            var press = TextPress(at: event.locationInWindow, offset: offset, on: text.link(at: point),
+                                  extending: event.modifierFlags.contains(.shift) ? selection : nil)
+            // A plain press clears the selection; a ⇧-press extends it at once.
+            select(press.move(to: event.locationInWindow, offset: offset, in: text.string))
+            self.press = press
+            return
+        }
+        if let hit = painter?.hit(point) {
+            perform(hit)
+        } else if takesKeyboardFocus {
+            window?.makeFirstResponder(self)
+        }
+    }
+
+    fileprivate func dragged(_ event: NSEvent, at point: NSPoint) {
+        guard var press, let text = painter?.question else { return }
+        let range = press.move(to: event.locationInWindow, offset: text.offset(at: point), in: text.string)
+        self.press = press
+        if let range { select(range) }
+    }
+
+    /// A click on a link (no drag) follows it.
+    fileprivate func released() {
+        guard let press else { return }
+        self.press = nil
+        if let link = press.follows { perform(.link(link)) }
     }
 
     /// What a control does, clicked or pressed through accessibility.
@@ -172,16 +209,53 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
             window?.makeFirstResponder(self)
             pick(id)
         case .context(let context): open(context)
+        case .link(let link): open(.url(link.url.absoluteString))
         case .answer: confirm()
         case .dismiss: dismiss()
         case .archive: archive()
         }
     }
 
+    // MARK: Selecting
+
+    /// `range` of the question's text selected (nil or empty: nothing, which a press on the text
+    /// starts with). A selection takes the keyboard, so ⌘C reaches it, a closed question's too.
+    private func select(_ range: NSRange?) {
+        let range = range.flatMap { $0.length > 0 ? $0 : nil }
+        if range != nil, window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        guard range != selection else { return }
+        selection = range
+        page.needsDisplay = true
+    }
+
+    fileprivate var selectedText: String? {
+        guard let selection, let text = painter?.question, NSMaxRange(selection) <= (text.string as NSString).length else { return nil }
+        return (text.string as NSString).substring(with: selection)
+    }
+
+    /// ⌘C, and Copy in the context menu: the selected text (private on a remote board's
+    /// question, as its other copies are).
+    @objc func copy(_ sender: Any?) {
+        guard let text = selectedText else { return NSSound.beep() }
+        NSPasteboard.general.clear(privately: board.isRemote)
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// The selection lasts while the tile has the keyboard: once ⌘C would go elsewhere, it goes.
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned {
+            press = nil
+            select(nil)
+        }
+        return resigned
+    }
+
     // MARK: Keyboard
 
-    /// Open or closed, Return gives it the keyboard (`enterKeyboard`); a click on its body or going
-    /// to it (⌘J, Go to) only while open (`takesKeyboardFocus`).
+    /// Open or closed, Return gives it the keyboard (`enterKeyboard`), and so does selecting its
+    /// text (for ⌘C); a click on its body or going to it (⌘J, Go to) only while open
+    /// (`takesKeyboardFocus`).
     override var acceptsFirstResponder: Bool { true }
 
     /// Open: 1–9 pick the options in order, Return answers, Tab goes to the note. Closed: Return
@@ -247,7 +321,8 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
     func outline(for target: MentionTarget) -> NSRect? { bounds }
 
     /// A click on its body, or going to it, gives an open question the keyboard; a closed one
-    /// takes it only by Return (its Return archives, so no arrival should hand it a Return).
+    /// takes it only by Return or a selection in its text (its Return archives, so no arrival
+    /// should hand it a Return).
     var takesKeyboardFocus: Bool { spec.status == .open }
 
     /// The keyboard to the question: open, for its number keys, note and Return (answers);
@@ -265,9 +340,15 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
 
     func update(_ object: CanvasObject) {
         let closing = spec.status == .open && QuestionSpec.status(of: object.props) != .open
+        let asked = spec.question
         self.object = object
         spec = QuestionSpec(object.props)
         if let picked, spec.option(picked) == nil || spec.status != .open { self.picked = nil }
+        // Reworded: the selection's offsets were into the old text.
+        if spec.question != asked {
+            press = nil
+            select(nil)
+        }
         // Closed while it had the keyboard (answered here, or cancelled or expired meanwhile): the
         // canvas takes the keyboard back, so a Return meant to answer never archives instead.
         if closing { leave() }
@@ -286,18 +367,41 @@ private final class QuestionPage: NSView {
         tile?.paint(in: bounds)
     }
 
-    /// A click on an option or button acts even while the window isn't key, as a note's links do.
+    /// A click on an option, a button or a link acts even while the window isn't key, as a note's
+    /// links do; a drag on the question's text selects it then too.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
-        // Anywhere else on an open question: the keyboard to it, for its number keys and Return.
-        if tile?.click(at: convert(event.locationInWindow, from: nil)) != true, let tile, tile.takesKeyboardFocus {
-            window?.makeFirstResponder(tile)
+        tile?.pressed(event, at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        tile?.dragged(event, at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        tile?.released()
+    }
+
+    /// The tile's menu, led by Copy while the question's text is selected.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let tile, tile.selectedText != nil else { return super.menu(for: event) }
+        var view = superview
+        var menu: NSMenu?
+        while let current = view, menu == nil {
+            menu = current.menu(for: event)
+            view = current.superview
         }
+        let items = menu ?? NSMenu()
+        if items.numberOfItems > 0 { items.insertItem(.separator(), at: 0) }
+        let copy = NSMenuItem(title: "Copy", action: #selector(QuestionTile.copy(_:)), keyEquivalent: "")
+        copy.target = tile
+        items.insertItem(copy, at: 0)
+        return items
     }
 
     override func resetCursorRects() {
-        // Buttons and links show they act.
+        // Buttons and links (context chips, web links in the text) show they act.
         for rect in tile?.clickableRects ?? [] { addCursorRect(rect, cursor: .pointingHand) }
     }
 
@@ -312,14 +416,20 @@ private final class QuestionPage: NSView {
     }
 }
 
-extension QuestionTile {
+extension QuestionTile: NSMenuItemValidation {
     fileprivate var clickableRects: [NSRect] { painter?.clickable ?? [] }
     fileprivate var noteTop: CGFloat { painter?.noteRect?.minY ?? .greatestFiniteMagnitude }
+
+    /// Copy (⌘C) only with question text selected.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        item.action == #selector(copy(_:)) ? selectedText != nil : true
+    }
 }
 
-/// A question's painted control (an option, a context link, Answer, Dismiss, Archive) for
-/// VoiceOver and Full Keyboard Access: over its rect on the page, saying what it says there, and
-/// pressed as it is clicked (`QuestionTile.perform`). An option is a radio button, on when picked.
+/// A question's painted control (an option, a context link, a web link in its text, Answer,
+/// Dismiss, Archive) for VoiceOver and Full Keyboard Access: over its rect on the page, saying
+/// what it says there, and pressed as it is clicked (`QuestionTile.perform`). An option is a radio
+/// button, on when picked.
 @MainActor
 private final class QuestionControlElement: NSAccessibilityElement {
     private weak var page: QuestionPage?
@@ -335,7 +445,7 @@ private final class QuestionControlElement: NSAccessibilityElement {
         onMain { element in
             switch element.control.hit {
             case .option: .radioButton
-            case .context: .link
+            case .context, .link: .link
             case .answer, .dismiss, .archive: .button
             }
         }
@@ -377,7 +487,7 @@ private final class QuestionControlElement: NSAccessibilityElement {
 @MainActor
 struct QuestionPainter {
     enum Hit: Equatable {
-        case option(String), context(QuestionSpec.Context), answer, dismiss, archive
+        case option(String), context(QuestionSpec.Context), link(WebLink.Match), answer, dismiss, archive
     }
 
     /// Something on the page that acts: where it is, what it does, and what it says, for
@@ -391,6 +501,11 @@ struct QuestionPainter {
         var enabled = true
         /// An option that is picked.
         var picked = false
+        /// Where it takes a click when that isn't all of `rect`: a web link in the question's
+        /// text, a rect per line it runs over (`rect` holds them all).
+        var areas: [NSRect] = []
+
+        var clickable: [NSRect] { areas.isEmpty ? [rect] : areas }
     }
 
     static let questionFont = NSFont.systemFont(ofSize: 15, weight: .semibold)
@@ -411,8 +526,11 @@ struct QuestionPainter {
     private(set) var controls: [Control] = []
     private(set) var noteRect: NSRect?
     private(set) var height: CGFloat = 0
+    /// The question's text, which selects and holds web links, and its index in `items`.
+    private(set) var question: PaintedText?
+    private var questionItem: Int?
 
-    var clickable: [NSRect] { controls.filter(\.enabled).map(\.rect) }
+    var clickable: [NSRect] { controls.filter(\.enabled).flatMap(\.clickable) }
 
     init(spec: QuestionSpec, object: CanvasObject, board: Board, width: CGFloat, scale: Double, picked: String?, noting: Bool, note: String = "") {
         self.spec = spec
@@ -444,6 +562,23 @@ struct QuestionPainter {
         let rect = NSRect(x: x, y: y, width: width, height: size.height)
         items.append((rect, { text.draw(with: rect, options: [.usesLineFragmentOrigin, .usesFontLeading]) }))
         return rect.maxY
+    }
+
+    /// Adds the question's text at `y`, its web links (`WebLink.matches`) in link color and each a
+    /// control (`PaintedText`); returns the y below it.
+    private mutating func placeQuestion(_ base: NSFont, _ color: NSColor, x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
+        let links = WebLink.matches(in: spec.question)
+        let string = NSMutableAttributedString(attributedString: text(spec.question, base, color))
+        for link in links { string.addAttribute(.foregroundColor, value: NSColor.linkColor, range: link.range) }
+        let question = PaintedText(string, links: links, in: NSRect(x: x, y: y, width: width, height: Self.measure(string, width: width).height))
+        self.question = question
+        questionItem = items.count
+        items.append((question.rect, { question.draw() }))
+        for link in question.links {
+            controls.append(Control(rect: link.areas.reduce(NSRect.null) { $0.union($1) }, hit: .link(link.match),
+                                    label: (spec.question as NSString).substring(with: link.match.range), areas: link.areas))
+        }
+        return question.rect.maxY
     }
 
     /// A terminal as people name it: its `name`, else what its header shows.
@@ -480,7 +615,7 @@ struct QuestionPainter {
             var meta = "Asked by \(asker(board: board))"
             if let expires = spec.expiresAt { meta += " · expires \(Self.when(expires))" }
             y = place(text(meta, Self.metaFont, secondary, truncating: true), x: inset, y: y, width: inner) + points(4)
-            y = place(text(spec.question, Self.questionFont, .labelColor), x: inset, y: y, width: inner) + points(10)
+            y = placeQuestion(Self.questionFont, .labelColor, x: inset, y: y, width: inner) + points(10)
             for (index, option) in spec.options.enumerated() {
                 y = placeOption(option, index: index, x: inset, y: y, width: inner) + points(6)
             }
@@ -498,7 +633,7 @@ struct QuestionPainter {
             y = field.maxY + points(10)
             y = placeFooter(x: inset, y: y, width: inner)
         } else {
-            y = place(text(spec.question, Self.labelFont, secondary), x: inset, y: y, width: inner) + points(8)
+            y = placeQuestion(Self.labelFont, secondary, x: inset, y: y, width: inner) + points(8)
             y = placeOutcome(object: object, board: board, x: inset, y: y, width: inner)
         }
         height = y + inset
@@ -684,12 +819,13 @@ struct QuestionPainter {
     }
 
     func hit(_ point: NSPoint) -> Hit? {
-        controls.last { $0.enabled && $0.rect.contains(point) }?.hit
+        controls.last { $0.enabled && $0.clickable.contains { $0.contains(point) } }?.hit
     }
 
     /// Draws the page; a cancelled or expired question dimmed. `noteDrawn`: the note field is
-    /// drawn here (renders), not by its own view.
-    func draw(in bounds: NSRect, noteDrawn: Bool) {
+    /// drawn here (renders), not by its own view. `selection`: the question's text selected
+    /// (live only), highlighted as a text view highlights it.
+    func draw(in bounds: NSRect, noteDrawn: Bool, selection: NSRange? = nil) {
         let dimmed = spec.status == .cancelled || spec.status == .expired
         let context = NSGraphicsContext.current?.cgContext
         if dimmed {
@@ -697,9 +833,13 @@ struct QuestionPainter {
             context?.setAlpha(0.5)
             context?.beginTransparencyLayer(auxiliaryInfo: nil)
         }
-        for item in items where item.rect.intersects(bounds) {
+        for (index, item) in items.enumerated() where item.rect.intersects(bounds) {
             if !noteDrawn, item.rect == noteRect { continue }
-            item.draw()
+            if index == questionItem, let question {
+                question.draw(selected: selection)
+            } else {
+                item.draw()
+            }
         }
         if noteDrawn, let noteRect, noteText.isEmpty {
             NSColor.separatorColor.setStroke()
