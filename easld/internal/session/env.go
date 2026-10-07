@@ -22,6 +22,20 @@ type Owner struct {
 // skills, Ghostty's shell integration.
 func Resources(home string) string { return home + "/.local/share/easl" }
 
+// Request is the spawn of owned terminal `tile`'s session on board `board`, rooted at `root` on
+// this machine: `command` in the login shell, in `cwd` (else the root), with its variables (Env)
+// over easld's own environment less its cmux variables (cmuxPrefix), and its labels.
+func (o Owner) Request(board, tile, root, cwd string, command []string) SpawnRequest {
+	if cwd == "" {
+		cwd = root
+	}
+	return SpawnRequest{Tile: tile, Command: command, Cwd: cwd, Env: o.Env(board, tile, root), Labels: o.Labels(board, tile), Unset: []string{cmuxPrefix}}
+}
+
+// cmuxPrefix names a terminal's cmux variables (CMUX_SOCKET_PATH, its surface and workspace, the
+// socket's password). easld started in an easl tile has that tile's: no owned session gets them.
+const cmuxPrefix = "CMUX_"
+
 // Env is the variables of terminal `tile`'s session on board `board`, rooted at `root` on this
 // machine: HostedTerminal.spawnParams' (with LoginSession.tileShellIntegration of no inherited
 // environment, as there; Spawn puts this PATH before easld's own), with easld's socket and the

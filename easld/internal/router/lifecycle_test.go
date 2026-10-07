@@ -25,7 +25,8 @@ func owning(t *testing.T) (f *fixture, state string) {
 	if err := os.MkdirAll(filepath.Join(state, "logs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	f.router.Sessions = &session.Manager{Zmx: zmx, Dir: state, Shell: "/bin/sh", Home: dir, Env: []string{"PATH=/usr/bin:/bin"}}
+	// easld started in an easl tile: that tile's cmux variables are in its environment.
+	f.router.Sessions = &session.Manager{Zmx: zmx, Dir: state, Shell: "/bin/sh", Home: dir, Env: []string{"PATH=/usr/bin:/bin", "CMUX_SOCKET_PATH=/old/cmux.sock", "CMUX_SOCKET_PASSWORD=secret"}}
 	f.router.Owns = &session.Owner{Socket: "/home/u/.local/state/easl/easl.sock", Home: "/home/u/.local/state/easl", Resources: session.Resources("/home/u")}
 	f.router.reg.AgentReports = filepath.Join(dir, "agent-reports")
 	return f, state
@@ -84,8 +85,13 @@ func TestAnOwnedTerminalsSessionStartsWithItsVariablesAndLabels(t *testing.T) {
 			t.Errorf("%s=%q, want %q", key, got.Env[key], want)
 		}
 	}
-	if got.Env["EASL_SOCKET"] != "/home/u/.local/state/easl/easl.sock" || got.Env["EASL_BOARD_ROOT"] != f.board.Root() || got.Env["CMUX_SOCKET_PATH"] != "" {
+	if got.Env["EASL_SOCKET"] != "/home/u/.local/state/easl/easl.sock" || got.Env["EASL_BOARD_ROOT"] != f.board.Root() {
 		t.Errorf("env %v", got.Env)
+	}
+	for key := range got.Env {
+		if strings.HasPrefix(key, "CMUX_") {
+			t.Errorf("the session inherited easld's %s", key)
+		}
 	}
 	if want := []string{"/bin/sh", "-l", "-c", `'omp' '--model' 'it'"'"'s'; exec '/bin/sh' -l`}; !reflect.DeepEqual(got.Args, want) {
 		t.Errorf("command %q, want %q", got.Args, want)
@@ -127,14 +133,20 @@ func TestAFailedBatchStartsNoSession(t *testing.T) {
 }
 
 // Deleting an owned terminal, alone or in a batch, ends its session, zmx's log of it and the
-// reports spooled for it; a batch that fails after deleting one leaves it running.
+// reports spooled for it; a batch that fails after deleting one leaves it running. A session
+// already gone (exited, or its daemon died) leaves its log, which the delete takes too.
 func TestADeleteEndsTheSessionItsLogAndItsSpool(t *testing.T) {
 	f, state := owning(t)
 	tile := idOf(f.result("object.create", terminal(map[string]any{})))
 	kept := idOf(f.result("object.create", terminal(map[string]any{})))
+	exited := idOf(f.result("object.create", terminal(map[string]any{})))
+	if err := os.Remove(filepath.Join(state, session.Prefix+exited)); err != nil {
+		t.Fatal(err)
+	}
 	log := filepath.Join(state, "logs", session.Prefix+tile+".log")
+	exitedLog := filepath.Join(state, "logs", session.Prefix+exited+".log")
 	spool := filepath.Join(f.router.reg.AgentReports, tile)
-	for _, path := range []string{log, filepath.Join(spool, "1-1-r.json")} {
+	for _, path := range []string{log, exitedLog, filepath.Join(spool, "1-1-r.json")} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -150,12 +162,18 @@ func TestADeleteEndsTheSessionItsLogAndItsSpool(t *testing.T) {
 		t.Fatalf("batch: %v", reply)
 	}
 	f.result("object.delete", map[string]any{"id": tile})
+	f.result("object.delete", map[string]any{"id": exited})
 	if got := sessions(t, state); !reflect.DeepEqual(got, []string{kept}) {
 		t.Fatalf("sessions %v, want only %s, whose delete was put back", got, kept)
 	}
-	for _, path := range []string{log, spool} {
+	for _, path := range []string{log, exitedLog, spool} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Errorf("%s is still there: %v", path, err)
+		}
+	}
+	for _, e := range f.result("board.history", map[string]any{"kinds": []any{"restart"}})["entries"].([]any) {
+		if e := e.(map[string]any); e["type"] == "terminal" {
+			t.Errorf("a session already gone is no failure: %v", e["summary"])
 		}
 	}
 	f.result("object.batch", map[string]any{"ops": []any{map[string]any{"method": "object.delete", "params": map[string]any{"id": kept}}}})

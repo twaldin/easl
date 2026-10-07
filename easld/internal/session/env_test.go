@@ -5,6 +5,8 @@ import (
 	"maps"
 	"os"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -38,5 +40,31 @@ func TestOwnedEnvMatchesTheSharedFixture(t *testing.T) {
 	}
 	if got := Label("/Users/tim/Library/Application Support/Easl é"); got != "_Users_tim_Library_Application_Support_Easl___" {
 		t.Errorf("label %q: every byte outside [A-Za-z0-9._-] is _", got)
+	}
+
+	// easld started in an easl tile has that tile's variables: the session gets the fixture's
+	// over them, easl's bin before easld's PATH, and none of the tile's cmux variables (its
+	// socket, surface, workspace and password), which session.spawn's sessions keep.
+	inherited := []string{"PATH=/usr/bin:/bin", "HOME=/home/tim", "EASL_SOCKET=/old/easl.sock", "EASL_TILE_ID=obj_old",
+		"CMUX_SOCKET_PATH=/old/cmux.sock", "CMUX_SURFACE_ID=obj_old", "CMUX_WORKSPACE_ID=brd_old", "CMUX_SOCKET_PASSWORD=secret"}
+	request := owner.Request(fixture.Board, fixture.Tile, fixture.Owned.Root, "", []string{"omp"})
+	if request.Tile != fixture.Tile || request.Cwd != fixture.Owned.Root || !reflect.DeepEqual(request.Command, []string{"omp"}) || !reflect.DeepEqual(request.Labels, fixture.Owned.Labels) {
+		t.Errorf("request %+v", request)
+	}
+	session := map[string]string{}
+	for _, kv := range environ(inherited, request.Env, request.Unset) {
+		key, value, _ := strings.Cut(kv, "=")
+		session[key] = value
+	}
+	want["PATH"] += ":/usr/bin:/bin"
+	want["HOME"] = "/home/tim"
+	if !reflect.DeepEqual(session, want) {
+		t.Errorf("session's environment\n got %v\nwant %v", session, want)
+	}
+	if kept := environ(inherited, map[string]string{}, nil); !slices.Contains(kept, "CMUX_SOCKET_PATH=/old/cmux.sock") {
+		t.Errorf("session.spawn's environment lost what it inherited: %v", kept)
+	}
+	if request := owner.Request(fixture.Board, fixture.Tile, fixture.Owned.Root, "/srv/x", nil); request.Cwd != "/srv/x" || request.Command != nil {
+		t.Errorf("a given cwd: %+v", request)
 	}
 }

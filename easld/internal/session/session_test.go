@@ -247,6 +247,43 @@ func TestKillEndsTheSessionAndItsLog(t *testing.T) {
 	}
 }
 
+// End (an owned terminal's delete) also deletes the log of a session already gone, which Kill
+// leaves; another home's live session, and its log, it leaves alone.
+func TestEndTakesTheLogOfASessionAlreadyGone(t *testing.T) {
+	m, state := fixture(t)
+	gone := filepath.Join(state, "logs", "canvas-obj_g.log")
+	foreign := filepath.Join(state, "logs", "canvas-obj_h.log")
+	for _, f := range []string{gone, foreign} {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if killed, err := m.Kill("obj_g", "mac-1"); err != nil || killed {
+		t.Fatalf("kill: %v %v", killed, err)
+	}
+	if _, err := os.Stat(gone); err != nil {
+		t.Fatalf("Kill took the log of a session that isn't there: %v", err)
+	}
+	if ended, err := m.End("obj_g", "mac-1"); err != nil || ended {
+		t.Fatalf("end: %v %v", ended, err)
+	}
+	if _, err := os.Stat(gone); !os.IsNotExist(err) {
+		t.Errorf("the gone session's log is still there: %v", err)
+	}
+	if _, _, err := m.Spawn(SpawnRequest{Tile: "obj_h", Labels: map[string]string{HomeLabel: "mac-2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.End("obj_h", "mac-1"); code(err) != "conflict" {
+		t.Errorf("end of another home's session: %v", err)
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Errorf("another home's log was touched: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(state, "canvas-obj_h")); err != nil {
+		t.Errorf("another home's session was ended: %v", err)
+	}
+}
+
 func TestSpawnChecksItsParams(t *testing.T) {
 	m, _ := fixture(t)
 	for name, req := range map[string]SpawnRequest{
