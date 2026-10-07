@@ -75,8 +75,26 @@ def rusage(pid):
     return {"cpu_s": (user + system) / 1e9, "wakeups": wakeups}
 
 
+def birth_frame(display_index):
+    """`EASL_DEV_FRAME` for a 1492×926 window on yabai display `display_index` (10 pt in from its
+    left, 50 pt down from its top), in AppKit's screen coordinates (origin at the primary display's
+    bottom left; yabai's frames are top-down): AppKit opens a window on the Space of the display
+    holding its frame, so a window born on a headless virtual screen never shows on the user's
+    display before the launcher's guard moves it (docs/testing.md)."""
+    displays = json.loads(sh(YABAI, "-m", "query", "--displays"))
+    primary = next((d["frame"] for d in displays if d["frame"]["x"] == 0 and d["frame"]["y"] == 0), None)
+    frame = next((d["frame"] for d in displays if d["index"] == display_index), None)
+    if primary is None or frame is None:
+        raise SystemExit(f"--birth-display {display_index}: yabai lists displays {[d['index'] for d in displays]}; "
+                         "no launch on a display that isn't there")
+    sx, sw, sh_ = frame["x"], frame["w"], frame["h"]
+    sy = primary["h"] - (frame["y"] + frame["h"])
+    w, h = min(1492, sw - 20), min(926, sh_ - 60)
+    return f"{int(sx + 10)} {int(sy + sh_ - 50 - h)} {int(w)} {int(h)}"
+
+
 class Instance:
-    def __init__(self, label, app, tmp, board, display, headless=False):
+    def __init__(self, label, app, tmp, board, display, headless=False, birth_display=None):
         self.label, self.app, self.board = label, app, board
         # Created here and owned by this run: the only directory `stop` deletes.
         self.scratch = tempfile.mkdtemp(prefix="easl-perf-loop-", dir=tmp)
@@ -92,6 +110,8 @@ class Instance:
         # Headless: the window stays on the parking Space, which nobody views (no virtual screen).
         if headless:
             self.env["EASL_DEV_SPACE"] = park
+        if birth_display is not None:
+            self.env["EASL_DEV_FRAME"] = birth_frame(birth_display)
         self.headless = headless
         self.variant = 0
         self.pid = None
@@ -120,7 +140,8 @@ class Instance:
         self.quiet(timeout=120)
         for _ in range(50):
             windows = json.loads(sh(YABAI, "-m", "query", "--windows"))
-            self.window = next((w["id"] for w in windows if w["pid"] == self.pid), None)
+            # The board window (titled, a standard window), not a helper window of the pid.
+            self.window = next((w["id"] for w in windows if w["pid"] == self.pid and w.get("title") and w.get("subrole") == "AXStandardWindow"), None)
             if self.window:
                 break
             time.sleep(0.2)
@@ -492,6 +513,9 @@ def main():
     ap.add_argument("--display", default=os.environ.get("EASL_DEV_DISPLAY", "CanvasTest"))
     ap.add_argument("--headless", action="store_true",
                     help="no virtual screen: the window stays on the parking Space (EASL_DEV_PARK_SPACE, default 9), which nobody views")
+    ap.add_argument("--birth-display", type=int, default=None,
+                    help="yabai display index a new window opens on (EASL_DEV_FRAME), e.g. a headless virtual screen, so it never shows "
+                         "on the user's display before EASL_DEV_LAUNCHER's guard moves it to the parking Space")
     ap.add_argument("--summarize", action="store_true", help="only print the table for --out's rows")
     args = ap.parse_args()
     apps = [a.split("=", 1) for a in args.app]
@@ -506,7 +530,7 @@ def main():
             order = apps if run % 2 == 0 else list(reversed(apps))
             for label, app in order:
                 print(f"run {run + 1}/{args.runs} {label}", flush=True)
-                inst = Instance(label, app, args.tmp, args.board, args.display, headless=args.headless)
+                inst = Instance(label, app, args.tmp, args.board, args.display, headless=args.headless, birth_display=args.birth_display)
                 try:
                     inst.start()
                     for name in scenarios:
