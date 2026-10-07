@@ -324,6 +324,7 @@ Command Line Tools ship no Instruments, so the spike measured with `footprint`, 
 | 3 idle omp + 1 shell, window minimized after being shown once (interrupt wakeups/s, from `proc_pid_rusage`) | ~50–56/s (Ghostty-focused surfaces' timers) | 2–5/s |
 | Same, window shown, nothing focused (`top` idlew/s, CPU) | 24/s, 0.9% | 0.2/s, 0.0% |
 | Shell printing 50 lines/s, window minimized (interrupt wakeups/s, CPU) | 88/s, 2.6 ms/s | 28/s, 1.7 ms/s |
+| 8 working agent-like terminals (a spinner title + status line every 80 ms each, ~100 title changes/s), headless, 60 s: main-thread busy per second (DevPerf), medians of 3 interleaved runs of frozen release bundles, every after-run below every before-run (`scripts/perf-loop.py --scenarios agent-titles`, 2026-10-07) | 47.4 ms/s (a process-table walk per title change: `KERN_PROCARGS2` with the environment, `proc_listpids`; 15 omp tiles saturated the main thread on a real board) | 26.5 ms/s (the kept `ForegroundJob`, re-checked with 2–3 `proc_pidinfo`s) |
 
 Code tiles (a replica of a large dogfood board, 205 objects with 62 code tiles; every code tile visited at 100% and back to fit, then a fixed pan/zoom sequence with three ⌘9↔⌘0 transitions): the TextKit 2 tile left the app at 559 MB footprint (+267 MB over the fresh board, ~4.3 MB per code tile) and spent 5.19 s CPU on the sequence; drawing only visible rows from a compact model (no NSScrollView, nothing in the window while not live) leaves it at 319 MB (+19 MB, ~0.3 MB per tile) and 2.93 s CPU.
 
