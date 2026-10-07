@@ -351,7 +351,10 @@ def run(source):
     """The sanitized board's JSON text, or SystemExit naming (by length and path only) what leaked."""
     clean = sanitize(source)
     out = json.dumps(clean, ensure_ascii=False)
-    found = leaks(source, out)
+    # The check reads the output's strings, not its JSON text: there a `\n` escape before a word
+    # spells one letter run with it (`nexercitation`), which no vocabulary masks, and an input
+    # word inside it then counts as leaked (a work board, 2026-10-07).
+    found = leaks(source, "\n".join(strings(clean)))
     if found:
         # Never print what leaked: this runs on the board's own machine and its output travels.
         places = [(len(s), where(clean, s)[:3]) for s in found]

@@ -69,6 +69,16 @@ class SanitizeTests(unittest.TestCase):
         self.assertEqual(sanitizer.leaks(source, json.dumps({"x": "preACQUISITIONpost"})), {"Acquisition"})
         self.assertEqual(sanitizer.leaks(source, json.dumps({"x": "lorem ipsum"})), set())
 
+    def test_a_lorem_fragment_after_a_newline_is_not_a_leak(self):
+        # An input word that is part of a lorem word ("citation" in "exercitation") must not be
+        # flagged by the output's own filler: the JSON escape of a line break before that word
+        # (`\nexercitation`) is one letter run only in the JSON text, which `run` no longer reads.
+        source = board(obj("obj_01A", "note", {"markdown": "citation needed\nand a second line of text"}))
+        clean, _ = sanitizer.run(source)
+        filler = "line one\nexercitation ullamco"
+        self.assertEqual(sanitizer.leaks(source, "\n".join(sanitizer.strings({"markdown": filler}))), set())
+        self.assertEqual(sanitizer.leaks(source, json.dumps({"markdown": filler})), {"citation"}, "the JSON text still spells one run")
+
     def test_input_words_inside_schema_keys_are_not_leaks(self):
         source = board(obj("obj_01A", "note", {"markdown": "Update created members", "title": "Updated"}))
         clean, text = sanitizer.run(source)
