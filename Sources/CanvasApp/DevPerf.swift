@@ -49,6 +49,13 @@ enum DevPerf {
     private static var span: Span?
     private static var observer: CFRunLoopObserver?
     private static var wokeAt: CFTimeInterval?
+    /// The main thread's CPU time (ms) when its current stretch began: `begin` is called inside
+    /// a stretch, so a span's first `beforeWaiting` measures from here, not from 0 or an earlier
+    /// span's wake.
+    private static var wokeCpu = 0.0
+
+    /// The main thread's CPU time so far, in milliseconds (the observer runs on it).
+    private static var threadCpu: Double { Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)) / 1e6 }
 
     // MARK: Probes
 
@@ -95,6 +102,7 @@ enum DevPerf {
         let span = Span(label: label, phase: phase)
         self.span = span
         wokeAt = CACurrentMediaTime()
+        wokeCpu = threadCpu
         guard let view = window?.contentView else { return }
         let link = view.displayLink(target: Ticker.shared, selector: #selector(Ticker.tick(_:)))
         link.add(to: .main, forMode: .common)
@@ -161,7 +169,7 @@ enum DevPerf {
 
     private static func runLoop(_ activity: CFRunLoopActivity) {
         let now = CACurrentMediaTime()
-        let cpu = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)) / 1e6
+        let cpu = threadCpu
         if activity == .afterWaiting {
             wokeAt = now
             wokeCpu = cpu
