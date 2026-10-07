@@ -1,0 +1,51 @@
+run 1/3 base
+  start base: easl pid 78553, EASL_SOCKET=/Users/twaldin/dev/easl-lanes/pr33/tmp/easl-perf-loop-6d0a8_u1/home/easl.sock
+  visible-serial: cpu 5.35 s, wall 22.76 s, longest 62.2 ms, routings 2
+  visible-batch: cpu 4.48 s, wall 22.06 s, longest 64.0 ms, routings 2
+  poll-idle: cpu 1.11 s, wall - s, longest 10.2 ms, routings 0
+  pan-zoom: cpu 4.28 s, wall 34.0 s, longest 108.2 ms, routings 0
+run 1/3 p2
+  start p2: easl pid 91922, EASL_SOCKET=/Users/twaldin/dev/easl-lanes/pr33/tmp/easl-perf-loop-a55v4hw5/home/easl.sock
+  visible-serial: cpu 3.21 s, wall 20.09 s, longest 46.6 ms, routings 2
+  visible-batch: cpu 2.38 s, wall 19.32 s, longest 45.0 ms, routings 2
+  poll-idle: cpu 1.33 s, wall - s, longest 10.4 ms, routings 0
+  pan-zoom: cpu 4.15 s, wall 33.9 s, longest 99.1 ms, routings 0
+run 2/3 p2
+  start p2: easl pid 97235, EASL_SOCKET=/Users/twaldin/dev/easl-lanes/pr33/tmp/easl-perf-loop-hu1nmc3v/home/easl.sock
+  visible-serial: cpu 3.17 s, wall 19.98 s, longest 29.6 ms, routings 2
+  visible-batch: cpu 2.5 s, wall 19.51 s, longest 60.5 ms, routings 2
+  poll-idle: cpu 1.31 s, wall - s, longest 15.1 ms, routings 0
+  pan-zoom: cpu 4.17 s, wall 34.0 s, longest 101.2 ms, routings 0
+run 2/3 base
+  start base: easl pid 2194, EASL_SOCKET=/Users/twaldin/dev/easl-lanes/pr33/tmp/easl-perf-loop-6sqwxdvr/home/easl.sock
+  visible-serial: cpu 5.44 s, wall 22.84 s, longest 57.5 ms, routings 2
+  visible-batch: cpu 4.56 s, wall 22.45 s, longest 285.8 ms, routings 2
+  poll-idle: cpu 1.3 s, wall - s, longest 11.3 ms, routings 0
+  pan-zoom: cpu 4.29 s, wall 34.0 s, longest 90.6 ms, routings 0
+run 3/3 base
+  start base: easl pid 14615, EASL_SOCKET=/Users/twaldin/dev/easl-lanes/pr33/tmp/easl-perf-loop-toa8k8_a/home/easl.sock
+  base: window 91853 on Space 10, moving it to 6
+  visible-serial: cpu 5.43 s, wall 22.78 s, longest 55.2 ms, routings 2
+  visible-batch: cpu 4.53 s, wall 22.27 s, longest 60.3 ms, routings 2
+  poll-idle: cpu 1.2 s, wall - s, longest 10.5 ms, routings 0
+  pan-zoom: cpu 4.14 s, wall 34.3 s, longest 95.1 ms, routings 0
+run 3/3 p2
+  start p2: easl pid 26945, EASL_SOCKET=/Users/twaldin/dev/easl-lanes/pr33/tmp/easl-perf-loop-is7s8aue/home/easl.sock
+  visible-serial: cpu 2.59 s, wall 20.11 s, longest 36.9 ms, routings 2
+  visible-batch: cpu 2.19 s, wall 19.49 s, longest 46.0 ms, routings 2
+  poll-idle: cpu 1.07 s, wall - s, longest 11.3 ms, routings 0
+  pan-zoom: cpu 4.24 s, wall 34.2 s, longest 103.4 ms, routings 0
+
+medians over runs (range); targets: burst CPU < 3 s, longest main stretch < 100 ms, <= 2 board routings per burst; idle poll stretch < 16 ms; hidden within 2x of visible; agent-titles A/B only
+app        scenario                 cpu s       wall s       longest ms   routings  update p50  poll p50  verdict
+-----------------------------------------------------------------------------------------------------------------
+base       visible-serial     5.4 5.35–5.44  22.8 22.76–22.84    57.5 55.2–62.2          2        13.2      15.9  FAIL (cpu)
+base       visible-batch      4.5 4.48–4.56  22.3 22.06–22.45    64.0 60.3–285.8          2        50.0       6.9  FAIL (cpu)
+base       poll-idle          1.2 1.11–1.3  60.0  60–60    10.5 10.2–11.3          0        None      16.4  PASS
+base       pan-zoom           4.3 4.14–4.29  34.0 34–34.3    95.1 90.6–108.2          0        None      None  PASS
+                           html page loads 18, reuses 42
+p2         visible-serial     3.2 2.59–3.21  20.1 19.98–20.11    36.9 29.6–46.6          2         1.9      13.2  FAIL (cpu)
+p2         visible-batch      2.4 2.19–2.5  19.5 19.32–19.51    46.0  45–60.5          2        32.6      12.0  PASS
+p2         poll-idle          1.3 1.07–1.33  60.0  60–60    11.3 10.4–15.1          0        None      15.6  PASS
+p2         pan-zoom           4.2 4.15–4.24  34.0 33.9–34.2   101.2 99.1–103.4          0        None      None  FAIL (stretch)
+                           html page loads 18, reuses 42
