@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/twaldin/easl/easld/internal/session"
 	"github.com/twaldin/easl/easld/internal/session/zmxtest"
@@ -45,7 +46,7 @@ func TestAnOwnedTerminalRestartsWithoutAClient(t *testing.T) {
 	if data, _ := os.ReadFile(path); strings.Contains(string(data), "mark=the old session") {
 		t.Error("the old session wasn't ended")
 	}
-	if want := []string{"/bin/sh", "-l", "-c", `'omp' '--model=anthropic/claude-opus-4-5' '--thinking=high' '--resume=s1'; exec '/bin/sh' -l`}; !reflect.DeepEqual(relaunched.Args, want) {
+	if want := []string{"/bin/sh", "-l", "-c", `'omp' '--model=anthropic/claude-opus-4-5' '--thinking=high' '--resume=s1'; exec '/bin/sh' -l`}; !reflect.DeepEqual(unpathed(t, relaunched.Args), want) {
 		t.Errorf("relaunch %q, want %q", relaunched.Args, want)
 	}
 	if want := "canvas.board=" + f.board.ID() + " canvas.home=" + session.Label(f.router.Owns.Home) + " canvas.tile=" + term; relaunched.Labels != want || relaunched.Env["EASL_TILE_ID"] != term {
@@ -75,11 +76,44 @@ func TestAnOwnedTerminalRestartsWithoutAClient(t *testing.T) {
 	if want := []any{"omp", "--model=anthropic/claude-opus-4-5", "--thinking=high", "--plan", "p.md"}; !reflect.DeepEqual(got["command"], want) {
 		t.Errorf("fresh: %v", got["command"])
 	}
-	if relaunched, err := zmxtest.Read(state, session.Prefix+term); err != nil || !strings.HasPrefix(relaunched.Args[3], `'omp' '--model=anthropic/claude-opus-4-5' '--thinking=high' '--plan' 'p.md'; exec`) {
+	if relaunched, err := zmxtest.Read(state, session.Prefix+term); err != nil || len(relaunched.Args) != 4 || !strings.HasPrefix(unpathed(t, relaunched.Args)[3], `'omp' '--model=anthropic/claude-opus-4-5' '--thinking=high' '--plan' 'p.md'; exec`) {
 		t.Errorf("fresh relaunch %q (%v)", relaunched.Args, err)
 	}
 	if agent := f.agentProps(term).(map[string]any); agent["sessionId"] != nil {
 		t.Errorf("a fresh start keeps the old session: %v", agent)
+	}
+}
+
+// The killed agent's release, sent as it exits after the restart recorded the relaunch, leaves
+// the relaunch's record (Board.relaunchedAgents): the session it resumes, its model and thinking
+// level, its command. Once the relaunched agent has reported (its session or a lifecycle), a
+// release is its own and clears the tile as ever.
+func TestTheKilledAgentsLateReleaseLeavesTheRelaunch(t *testing.T) {
+	for _, first := range []string{"agent.report_session", "agent.report"} {
+		f, _ := owning(t)
+		term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+		f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "protocol": 1.0, "draft": false})
+		f.result("agent.report_session", map[string]any{"tile": term, "kind": "omp", "sessionId": "s1", "sessionPath": "/s1.jsonl", "model": "anthropic/claude-opus-4-5", "thinking": "high"})
+		f.result("agent.restart", map[string]any{"target": "worker", "mode": "resume", "force": true})
+		relaunched := f.agentProps(term)
+
+		f.result("agent.release", map[string]any{"tile": term, "kind": "omp"})
+		if got := f.agentProps(term); !reflect.DeepEqual(got, relaunched) || got.(map[string]any)["sessionPath"] != "/s1.jsonl" {
+			t.Errorf("%s: the killed agent's release left %v, want %v", first, got, relaunched)
+		}
+		if command := f.result("object.get", map[string]any{"id": term})["object"].(map[string]any)["props"].(map[string]any)["command"]; !reflect.DeepEqual(command, []any{"omp", "--model=anthropic/claude-opus-4-5", "--thinking=high"}) {
+			t.Errorf("%s: command %v", first, command)
+		}
+
+		if first == "agent.report_session" {
+			f.result(first, map[string]any{"tile": term, "kind": "omp", "sessionId": "s1"})
+		} else {
+			f.result(first, map[string]any{"tile": term, "kind": "omp", "state": "idle", "protocol": 1.0, "draft": false})
+		}
+		f.result("agent.release", map[string]any{"tile": term, "kind": "omp"})
+		if got := f.agentProps(term); got != nil {
+			t.Errorf("after %s, the relaunched agent's release left %v", first, got)
+		}
 	}
 }
 
@@ -128,6 +162,42 @@ func TestAnOwnedRestartThatCantGoThroughSaysWhy(t *testing.T) {
 	hosted := f.agentTerminal("", map[string]any{"name": "away", "host": "deckbox", "command": []any{"omp"}})
 	if code, message := errorOf(f.call("agent.restart", map[string]any{"target": hosted, "mode": "fresh", "force": true})); code != "unavailable" || message != noApp(f.board.ID()) {
 		t.Errorf("hosted: %s %s", code, message)
+	}
+}
+
+// A zmx whose listing stalls once the session is ended holds the restart (and every start and
+// end queued behind it) no longer than its wait: the listing is cut off at the deadline, nothing
+// is relaunched, the board's history says why, and the terminal is no longer held.
+func TestAStalledListingEndsAnOwnedRestartAtItsDeadline(t *testing.T) {
+	f, state := owning(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "protocol": 1.0, "draft": false})
+	// Once a session is killed, every listing hangs (exec: the process the deadline kills).
+	stalling := filepath.Join(t.TempDir(), "zmx")
+	script := "#!/bin/sh\ncase \"$1\" in\nkill) : > \"$ZMX_DIR/.stalled\" ;;\nlist) [ -e \"$ZMX_DIR/.stalled\" ] && exec sleep 30 ;;\nesac\nexec '" + f.router.Sessions.Zmx + "' \"$@\"\n"
+	if err := os.WriteFile(stalling, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.router.Sessions.Zmx = stalling
+	t.Cleanup(func() { unlistedWithin = 3 * time.Second })
+	unlistedWithin = 300 * time.Millisecond
+
+	start := time.Now()
+	code, message := errorOf(f.call("agent.restart", map[string]any{"target": "worker", "mode": "fresh", "force": true}))
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("the restart took %s: the stalled listing wasn't cut off at the deadline", took)
+	}
+	if code != "unavailable" || message != "terminal "+term+": zmx didn't confirm within 300ms that its session ended: nothing was relaunched" {
+		t.Errorf("%s %s", code, message)
+	}
+	if _, err := os.Stat(filepath.Join(state, session.Prefix+term)); !os.IsNotExist(err) {
+		t.Errorf("a session of the terminal: %v", err)
+	}
+	if said := terminalHistory(f); len(said) != 1 || !strings.Contains(said[0], "easld couldn't relaunch it: zmx didn't confirm within 300ms") {
+		t.Errorf("history %q", said)
+	}
+	if len(f.router.restarts) != 0 {
+		t.Errorf("still held: %v", f.router.restarts)
 	}
 }
 

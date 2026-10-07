@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/api"
@@ -75,9 +76,10 @@ func (r *Router) restartOwned(b *board.Board, terminal model.Object, mode string
 }
 
 // relaunch is restartOwned's job, off the registry's lock (TerminalHost.restart): the kill,
-// then, once zmx no longer lists the session (at most 3 s), the relaunch. A failure before the
-// kill leaves the session as it was; one after it leaves the terminal without a session, logged
-// in its board's history as a failed start is.
+// then, once zmx no longer lists the session (within unlistedWithin, each listing given what is
+// left of it: the job holds every queued start and end meanwhile), the relaunch. A failure
+// before the kill leaves the session as it was; one after it leaves the terminal without a
+// session, logged in its board's history as a failed start is.
 func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, agent any, force bool) error {
 	// Checked again at the kill: a turn, prompt or draft that came since would be lost too.
 	r.reg.Mu.Lock()
@@ -89,14 +91,23 @@ func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, 
 	if _, err := r.Sessions.End(tile, r.Owns.Labels(b.ID(), tile)); err != nil {
 		return asFailure(err)
 	}
-	for waited := 0; ; waited++ {
-		if list, err := r.Sessions.List(); err == nil && !listed(list, tile) {
+	deadline := time.Now().Add(unlistedWithin)
+	for {
+		left := time.Until(deadline)
+		if left <= 0 {
+			why := fmt.Sprintf("zmx didn't confirm within %s that its session ended: nothing was relaunched", unlistedWithin)
+			r.reg.Mu.Lock()
+			terminal, ok := b.Objects()[tile]
+			r.reg.Mu.Unlock()
+			if ok {
+				r.sessionFailed(b, terminal, "easld couldn't relaunch it: "+why)
+			}
+			return fail(api.CodeUnavailable, "terminal %s: %s", tile, why)
+		}
+		if list, err := r.Sessions.ListWithin(left); err == nil && !listed(list, tile) {
 			break
 		}
-		if waited == 30 {
-			return fail(api.CodeUnavailable, "zmx still lists terminal %s's session 3 s after ending it", tile)
-		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(min(100*time.Millisecond, time.Until(deadline)))
 	}
 	r.reg.Mu.Lock()
 	terminal, ok := b.Objects()[tile]
@@ -125,6 +136,10 @@ func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, 
 	}
 	return nil
 }
+
+// unlistedWithin is how long a restart waits for zmx to stop listing the session it ended
+// (TerminalHost.restart's 3 s).
+var unlistedWithin = 3 * time.Second
 
 // restartable is why agent.restart can no longer restart `tile` on b as it kills its session:
 // it was closed, a prompt is being typed into it, or (unless forced) a restart would lose

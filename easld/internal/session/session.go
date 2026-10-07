@@ -345,11 +345,15 @@ func commandPath(path, first string) string {
 }
 
 // List is every `canvas-…` session zmx has.
-func (m *Manager) List() ([]Session, error) {
+func (m *Manager) List() ([]Session, error) { return m.ListWithin(m.timeout()) }
+
+// ListWithin is List, with zmx given at most `timeout` (Timeout bounds List): for a caller
+// whose own deadline is nearer.
+func (m *Manager) ListWithin(timeout time.Duration) ([]Session, error) {
 	if err := m.ready(); err != nil {
 		return nil, err
 	}
-	out, err := m.run("", m.Env, "list")
+	out, err := m.runWithin(timeout, "", m.Env, "list")
 	if err != nil {
 		return nil, failure("unavailable", "zmx list failed: %s", describe(err, out))
 	}
@@ -481,12 +485,21 @@ func (m *Manager) logDir() string {
 }
 
 // run runs zmx with `env`, its directory always Dir, whatever `env` says (a spawn's `env` must
-// not point zmx elsewhere).
+// not point zmx elsewhere), for at most Timeout.
 func (m *Manager) run(dir string, env []string, args ...string) ([]byte, error) {
-	timeout := m.Timeout
-	if timeout <= 0 {
-		timeout = 15 * time.Second
+	return m.runWithin(m.timeout(), dir, env, args...)
+}
+
+// timeout is Timeout, else 15 s (also of no manager: List of one says zmx isn't installed).
+func (m *Manager) timeout() time.Duration {
+	if m == nil || m.Timeout <= 0 {
+		return 15 * time.Second
 	}
+	return m.Timeout
+}
+
+// runWithin is run, for at most `timeout`.
+func (m *Manager) runWithin(timeout time.Duration, dir string, env []string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, m.Zmx, args...)
