@@ -43,9 +43,9 @@ type Registry struct {
 	Bounced func(*Board, Bounce)
 	// Terminals handles the terminals created and ended on any open board (Board.OnTerminals).
 	Terminals func(b *Board, created, ended []model.Object)
-	// Opened observes each board as it opens, its spooled reports replayed (the router's
-	// restore of owned terminals' sessions).
-	Opened func(*Board)
+	// Opened observes each board as it opens from `root` (standardized), its spooled reports
+	// replayed (the router's restore of owned terminals' sessions).
+	Opened func(b *Board, root string)
 	// AgentReports is where integrations spool reports they couldn't deliver; "" replays nothing.
 	AgentReports string
 	// Texts measures text the app lays out (arrow captions, for routing) on every board opened
@@ -131,7 +131,7 @@ func (r *Registry) Open(root string) (*Board, error) {
 	// Questions that expired while the board was closed expire now.
 	b.ScheduleQuestionExpiry()
 	if r.Opened != nil {
-		r.Opened(b)
+		r.Opened(b, root)
 	}
 	return b, nil
 }

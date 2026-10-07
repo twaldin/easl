@@ -20,11 +20,13 @@ type lifecycle struct {
 	mu   sync.Mutex
 	cond *sync.Cond
 	jobs []sessionJob
-	// queued counts the jobs ever queued, done those finished; a worker runs while they differ.
+	// queued counts the jobs ever queued, done those finished; a worker runs while they differ,
+	// unless held (Restore, until StartSessions).
 	queued, done uint64
-	// orphans are the sessions the last sweep found orphaned, with their pids (only sweeps,
-	// which run one at a time, touch it).
-	orphans map[string]int
+	held         bool
+	// orphans are the sessions the last sweep found orphaned, unended those whose end failed
+	// (logged once), with their pids (only sweeps, which run one at a time, touch them).
+	orphans, unended map[string]int
 }
 
 // sessionJob is one step of an owned terminal's lifecycle: a start, an end, a board's reconcile,
@@ -80,7 +82,30 @@ func (r *Router) queueSession(job sessionJob) {
 	}
 	l.jobs = append(l.jobs, job)
 	l.queued++
-	if l.queued-l.done == 1 {
+	if l.queued-l.done == 1 && !l.held {
+		go r.runSessions()
+	}
+}
+
+// holdSessions keeps the jobs queued from now on from running until StartSessions.
+func (r *Router) holdSessions() {
+	r.lifecycle.mu.Lock()
+	defer r.lifecycle.mu.Unlock()
+	r.lifecycle.held = true
+}
+
+// StartSessions runs the session jobs Restore queued, and those queued since: call it once
+// easld serves, so that what the agents they start report as they start (agent.report_session)
+// reaches it.
+func (r *Router) StartSessions() {
+	l := &r.lifecycle
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.held {
+		return
+	}
+	l.held = false
+	if l.queued > l.done {
 		go r.runSessions()
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -20,29 +21,42 @@ import (
 func restorable(t *testing.T) (f *fixture, state string) {
 	f, state = owning(t)
 	f.router.Reopens = filepath.Join(t.TempDir(), "open-boards.json")
-	if err := store.WriteRoots(f.router.Reopens, []string{f.board.Root()}); err != nil {
+	if err := store.WriteReopened(f.router.Reopens, []store.Reopened{{Root: f.board.Root(), Board: f.board.ID()}}); err != nil {
 		t.Fatal(err)
 	}
 	return f, state
 }
 
-// restart is easld started again over f's state (its board files, its sessions, its spool, its
-// reopen list): no board open but those Restore reopens, whose sessions it has started by the
-// time restart returns.
-func restart(t *testing.T, f *fixture) (*fixture, []error) {
+// restored is easld started again over f's state (its board files, its sessions, its spool, its
+// reopen list): no board open but those Restore reopens. The sessions Restore queued start once
+// serve runs (easld serving), which returns when they have.
+func restored(t *testing.T, f *fixture) (again *fixture, errs []error, serve func()) {
 	t.Helper()
 	old := f.router
 	old.reg.Flush()
 	reg := board.NewRegistry(old.reg.Store.Dir, time.Hour, old.reg.AgentReports)
 	r := New(reg)
 	r.Sessions, r.Owns, r.Reopens = old.Sessions, old.Owns, old.Reopens
-	errs := r.Restore()
+	errs = r.Restore()
 	reg.Mu.Lock()
-	queued := r.queuedSessions()
 	b, _ := reg.Board(f.board.ID())
 	reg.Mu.Unlock()
-	r.waitSessions(queued)
-	return &fixture{t: t, router: r, board: b, conn: &conn{}}, errs
+	serve = func() {
+		r.StartSessions()
+		reg.Mu.Lock()
+		queued := r.queuedSessions()
+		reg.Mu.Unlock()
+		r.waitSessions(queued)
+	}
+	return &fixture{t: t, router: r, board: b, conn: &conn{}}, errs, serve
+}
+
+// restart is restored, serving.
+func restart(t *testing.T, f *fixture) (*fixture, []error) {
+	t.Helper()
+	again, errs, serve := restored(t, f)
+	serve()
+	return again, errs
 }
 
 // terminalHistory is what the board's history says of its terminals' sessions.
@@ -125,10 +139,20 @@ func TestRestoreStartsTheMissingSessionsAndNothingElse(t *testing.T) {
 	f.result("object.create", terminal(map[string]any{"host": "deckbox"}))
 	before := len(sessions(t, state))
 
-	again, errs := restart(t, f)
+	again, errs, serve := restored(t, f)
 	if len(errs) != 0 || again.board == nil {
 		t.Fatalf("restore: %v, board %v", errs, again.board)
 	}
+	// Every board is loaded, but nothing starts until easld serves (its agents report to it).
+	time.Sleep(200 * time.Millisecond)
+	l := &again.router.lifecycle
+	l.mu.Lock()
+	queued, done := l.queued, l.done
+	l.mu.Unlock()
+	if got := sessions(t, state); len(got) != before || queued == 0 || done != 0 {
+		t.Fatalf("before easld served: sessions %v, %d of %d session jobs run", got, done, queued)
+	}
+	serve()
 	if got := sessions(t, state); len(got) != len(cases) || len(got) != before+4 {
 		t.Errorf("sessions %v after the restore, want one per owned terminal", got)
 	}
@@ -177,24 +201,44 @@ func TestRestoreStartsTheMissingSessionsAndNothingElse(t *testing.T) {
 	}
 }
 
-// A board easld owns is listed to reopen once, when it opens; a root gone by easld's next start
-// is dropped from the list (its board isn't reopened), a board file easld can't read is kept on
-// it. Without --own-terminals nothing is listed.
+// A board easld owns is listed to reopen once, when it opens, by its id and the root it was
+// opened from, which reopens it: a bare repository's worktree (`proj/.bare`, `proj/work`) leads
+// back to the repository's board where the board's own root (`proj`, no worktree's) would open
+// another. At easld's next start a root gone is dropped from the list (its board isn't
+// reopened), a root that opens another board now is listed with that one, and a board file
+// easld can't read is kept on it. Without --own-terminals nothing is listed.
 func TestTheBoardsToReopenAreThoseOpenedWhileOwning(t *testing.T) {
 	f, _ := restorable(t)
 	dir := t.TempDir()
-	other, gone, unreadable := filepath.Join(dir, "other"), filepath.Join(dir, "gone"), filepath.Join(dir, "unreadable")
-	for _, root := range []string{other, gone, unreadable} {
+	other, gone, unreadable, src, proj := filepath.Join(dir, "other"), filepath.Join(dir, "gone"), filepath.Join(dir, "unreadable"), filepath.Join(dir, "src"), filepath.Join(dir, "proj")
+	for _, root := range []string{other, gone, unreadable, src, proj} {
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	f.result("board.open", map[string]any{"root": other})
-	f.result("board.open", map[string]any{"root": other})
-	f.result("board.open", map[string]any{"root": gone})
-	roots, err := store.ReadRoots(f.router.Reopens)
-	if err != nil || !reflect.DeepEqual(roots, []string{f.board.Root(), store.Standardized(other), store.Standardized(gone)}) {
-		t.Fatalf("listed %q (%v)", roots, err)
+	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, src, "init", "-q", "-b", "main")
+	git(t, src, "add", ".")
+	git(t, src, "commit", "-q", "-m", "init")
+	git(t, dir, "clone", "-q", "--bare", src, filepath.Join(proj, ".bare"))
+	work := filepath.Join(proj, "work")
+	git(t, filepath.Join(proj, ".bare"), "worktree", "add", "-q", work)
+
+	id := func(root string) string {
+		return f.result("board.open", map[string]any{"root": root})["board"].(string)
+	}
+	otherID, goneID, bareID := id(other), id(gone), id(work)
+	id(other)
+	if bare, _ := f.router.reg.Board(bareID); bare == nil || bare.Root() != store.Standardized(proj) || store.PathID(bare.Root()) == bareID {
+		t.Fatalf("the bare repository's board: %v", bare)
+	}
+	listed, err := store.ReadReopened(f.router.Reopens)
+	at := func(root, board string) store.Reopened { return store.Reopened{Root: root, Board: board} }
+	want := []store.Reopened{at(f.board.Root(), f.board.ID()), at(store.Standardized(other), otherID), at(store.Standardized(gone), goneID), at(store.Standardized(work), bareID)}
+	if err != nil || !reflect.DeepEqual(listed, want) {
+		t.Fatalf("listed %v (%v), want %v", listed, err, want)
 	}
 	if err := os.RemoveAll(gone); err != nil {
 		t.Fatal(err)
@@ -203,19 +247,27 @@ func TestTheBoardsToReopenAreThoseOpenedWhileOwning(t *testing.T) {
 	if err := os.WriteFile(f.router.reg.Store.Path(store.PathID(store.Standardized(unreadable))), []byte(newer), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.WriteRoots(f.router.Reopens, append(roots, store.Standardized(unreadable))); err != nil {
+	listed[1].Board = "brd_before"
+	listed = append(listed, store.Reopened{Root: store.Standardized(unreadable), Board: store.PathID(store.Standardized(unreadable))})
+	if err := store.WriteReopened(f.router.Reopens, listed); err != nil {
 		t.Fatal(err)
 	}
 	again, errs := restart(t, f)
-	if len(errs) != 2 || !strings.Contains(errs[0].Error(), "is gone") || !strings.Contains(errs[1].Error(), "newer") {
+	if len(errs) != 3 || !strings.Contains(errs[0].Error(), "opens board "+otherID+" now, not brd_before") ||
+		!strings.Contains(errs[1].Error(), "is gone") || !strings.Contains(errs[2].Error(), "newer") {
 		t.Errorf("errors %v", errs)
 	}
-	if open := again.router.reg.SortedBoards(); len(open) != 2 {
-		t.Errorf("%d boards open, want %s's and %s's", len(open), f.board.Root(), other)
+	var open []string
+	for _, b := range again.router.reg.SortedBoards() {
+		open = append(open, b.ID())
 	}
-	roots, _ = store.ReadRoots(f.router.Reopens)
-	if want := []string{f.board.Root(), store.Standardized(other), store.Standardized(unreadable)}; !reflect.DeepEqual(roots, want) {
-		t.Errorf("listed %q after the restore, want %q", roots, want)
+	if !reflect.DeepEqual(open, sortedStrings(f.board.ID(), otherID, bareID)) {
+		t.Errorf("open after the restart: %v, want %s's, %s's and the bare repository's", open, f.board.Root(), other)
+	}
+	listed, _ = store.ReadReopened(f.router.Reopens)
+	want = []store.Reopened{want[0], want[1], want[3], at(store.Standardized(unreadable), store.PathID(store.Standardized(unreadable)))}
+	if !reflect.DeepEqual(listed, want) {
+		t.Errorf("listed %v after the restore, want %v", listed, want)
 	}
 
 	plain := newFixture(t)
@@ -224,6 +276,11 @@ func TestTheBoardsToReopenAreThoseOpenedWhileOwning(t *testing.T) {
 	if _, err := os.Stat(plain.router.Reopens); !os.IsNotExist(err) {
 		t.Errorf("an easld not owning its terminals listed a board: %v", err)
 	}
+}
+
+func sortedStrings(list ...string) []string {
+	sort.Strings(list)
+	return list
 }
 
 // A session of easld's home whose open board has no owned terminal for it (easld was down when
@@ -297,5 +354,78 @@ func TestSessionsLeftWithoutTheirTerminalEndAfterAGrace(t *testing.T) {
 	said := terminalHistory(f)
 	if len(said) != 3 || !strings.Contains(said[0], "easld ended session "+session.Prefix) || !strings.Contains(strings.Join(said, "\n"), "easld ended session canvas-obj_again: no terminal on this board has it any more") {
 		t.Errorf("history %q", said)
+	}
+}
+
+// The sweeps found an orphan run by one process; by the time it is ended another runs under its
+// name (session.spawn and session.kill don't wait for sweeps). That one isn't the orphan: it,
+// its log and the reports spooled for its tile stay, and the history says nothing.
+func TestAnOrphanStartedAgainAsItIsEndedSurvives(t *testing.T) {
+	f, state := owning(t)
+	labels := f.router.Owns.Labels(f.board.ID(), "obj_raced")
+	content := "labels=canvas.board=" + f.board.ID() + " canvas.home=" + labels[session.HomeLabel] + " canvas.tile=obj_raced\npid=3\n"
+	path := filepath.Join(state, session.Prefix+"obj_raced")
+	log := filepath.Join(state, "logs", session.Prefix+"obj_raced.log")
+	spooled := filepath.Join(f.router.reg.AgentReports, "obj_raced", "1-1-r.json")
+	for file, data := range map[string]string{path: content, log: "x", spooled: "{}"} {
+		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	found := session.Session{Name: session.Prefix + "obj_raced", Tile: "obj_raced", PID: 2, Labels: labels}
+	f.router.reap(f.board, found, true)
+	if data, _ := os.ReadFile(path); string(data) != content {
+		t.Errorf("the session started again was ended: %q", data)
+	}
+	for _, file := range []string{log, spooled} {
+		if _, err := os.Stat(file); err != nil {
+			t.Errorf("%s was taken: %v", file, err)
+		}
+	}
+	if said := terminalHistory(f); len(said) != 0 {
+		t.Errorf("history %q", said)
+	}
+	found.PID = 3
+	f.router.reap(f.board, found, true)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("the orphan itself is still there: %v", err)
+	}
+}
+
+// An orphan zmx won't end is tried again at every sweep, but the board's history says so once
+// for that process, and again for another one.
+func TestAnOrphanThatWontEndIsLoggedOnce(t *testing.T) {
+	f, state := owning(t)
+	refusing := strings.Replace(zmxtest.Script, `rm "$state/$2"; echo "killed session $2"`, `echo "error: refused"; exit 1`, 1)
+	if refusing == zmxtest.Script {
+		t.Fatal("the fake zmx's kill changed: refuse it another way")
+	}
+	zmx := filepath.Join(t.TempDir(), "zmx")
+	if err := os.WriteFile(zmx, []byte(refusing), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.router.Sessions.Zmx = zmx
+	labels := f.router.Owns.Labels(f.board.ID(), "obj_stuck")
+	content := "labels=canvas.board=" + f.board.ID() + " canvas.home=" + labels[session.HomeLabel] + " canvas.tile=obj_stuck\n"
+	if err := os.WriteFile(filepath.Join(state, session.Prefix+"obj_stuck"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stuck := session.Session{Name: session.Prefix + "obj_stuck", Tile: "obj_stuck", PID: 4242, Labels: labels}
+	for range 3 {
+		f.router.reap(f.board, stuck, true)
+	}
+	if said := terminalHistory(f); len(said) != 1 || !strings.Contains(said[0], "easld couldn't end session canvas-obj_stuck") {
+		t.Errorf("history %q", said)
+	}
+	if err := os.WriteFile(filepath.Join(state, session.Prefix+"obj_stuck"), []byte(content+"pid=7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stuck.PID = 7
+	f.router.reap(f.board, stuck, true)
+	if said := terminalHistory(f); len(said) != 2 {
+		t.Errorf("another process that won't end: history %q", said)
 	}
 }

@@ -12,66 +12,74 @@ import (
 	"github.com/twaldin/easl/easld/internal/store"
 )
 
-// Restore reopens the boards easld owned when it stopped (Reopens), oldest first, replaying what
-// their agents spooled meanwhile (Registry.Open), and has each reconciled (opened): after a
-// reboot their terminals' sessions start again, resuming their agents; after an easld restart,
-// with its sessions still running, nothing starts. A root that is no longer a directory is
-// dropped from the list; a board file easld can't read is kept on it, and so are its sessions.
-// It returns what went wrong; the sessions start once it has returned (the lifecycle's queue).
+// Restore reopens the boards easld owned when it stopped (Reopens), in the order they first
+// opened, each from the root it was opened from, replaying what their agents spooled meanwhile
+// (Registry.Open), and has each reconciled (opened): after a reboot their terminals' sessions
+// start again, resuming their agents; after an easld restart, with its sessions still running,
+// nothing starts. Those sessions wait for StartSessions, once easld serves: an agent reports
+// its session to easld as it starts, and one easld isn't there to take would be lost. A root
+// that is no longer a directory is dropped from the list, and so is a board its root no longer
+// opens (the root opens the board it does now); a board file easld can't read is kept on it,
+// and so are its sessions. Call it before easld serves; it returns what went wrong.
 func (r *Router) Restore() []error {
 	if r.Owns == nil || r.Reopens == "" {
 		return nil
 	}
+	r.holdSessions()
 	r.reg.Mu.Lock()
 	defer r.reg.Mu.Unlock()
-	roots, err := store.ReadRoots(r.Reopens)
+	listed, err := store.ReadReopened(r.Reopens)
 	if err != nil {
 		return []error{fmt.Errorf("can't read the boards to reopen (%s): %w", r.Reopens, err)}
 	}
 	var errs []error
-	var kept []string
-	for _, root := range roots {
-		if !store.IsDirectory(root) {
-			errs = append(errs, fmt.Errorf("board root %s is gone; its board is no longer reopened", root))
+	var kept []store.Reopened
+	for _, e := range listed {
+		if !store.IsDirectory(e.Root) {
+			errs = append(errs, fmt.Errorf("board root %s is gone; board %s is no longer reopened", e.Root, e.Board))
 			continue
 		}
-		b, err := r.reg.Open(root)
+		b, err := r.reg.Open(e.Root)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("can't reopen the board at %s: %w", root, err))
-			kept = append(kept, root)
+			errs = append(errs, fmt.Errorf("can't reopen board %s at %s: %w", e.Board, e.Root, err))
+			kept = append(kept, e)
 			continue
 		}
-		kept = append(kept, b.Root())
+		if b.ID() != e.Board {
+			errs = append(errs, fmt.Errorf("%s opens board %s now, not %s; %s is no longer reopened", e.Root, b.ID(), e.Board, e.Board))
+		}
+		kept = append(kept, store.Reopened{Root: e.Root, Board: b.ID()})
 	}
-	if kept = unique(kept); !slices.Equal(kept, roots) {
-		if err := store.WriteRoots(r.Reopens, kept); err != nil {
+	if kept = uniqueBoards(kept); !slices.Equal(kept, listed) {
+		if err := store.WriteReopened(r.Reopens, kept); err != nil {
 			errs = append(errs, fmt.Errorf("can't record the boards to reopen (%s): %w", r.Reopens, err))
 		}
 	}
 	return errs
 }
 
-func unique(list []string) []string {
-	var out []string
-	for _, s := range list {
-		if !slices.Contains(out, s) {
-			out = append(out, s)
+// uniqueBoards is list with each board once, where it first is.
+func uniqueBoards(list []store.Reopened) []store.Reopened {
+	var out []store.Reopened
+	for _, e := range list {
+		if !slices.ContainsFunc(out, func(o store.Reopened) bool { return o.Board == e.Board }) {
+			out = append(out, e)
 		}
 	}
 	return out
 }
 
 // opened is the registry's Opened, under its lock. A board opened on an easld that owns its
-// terminals is recorded to reopen at its next start (Restore), and its owned terminals' sessions
-// are reconciled: each without a session of its own gets one, resuming its recorded agent
-// (ownedSpawn); one that runs is left alone, and so is one that doesn't answer (its daemon may
-// only be busy). A session of the tile's name that is another home's or board's is not taken
-// over: the board's history says so.
-func (r *Router) opened(b *board.Board) {
+// terminals is recorded to reopen at its next start (Restore), with the root it was opened from,
+// and its owned terminals' sessions are reconciled: each without a session of its own gets one,
+// resuming its recorded agent (ownedSpawn); one that runs is left alone, and so is one that
+// doesn't answer (its daemon may only be busy). A session of the tile's name that is another
+// home's or board's is not taken over: the board's history says so.
+func (r *Router) opened(b *board.Board, root string) {
 	if r.Owns == nil {
 		return
 	}
-	r.remember(b)
+	r.remember(b, root)
 	type owned struct {
 		o      model.Object
 		spawn  session.SpawnRequest
@@ -101,18 +109,18 @@ func (r *Router) opened(b *board.Board) {
 	})
 }
 
-// remember adds b's root to the boards easld reopens at start; a failure is logged in its
-// history (the board won't come back after a reboot).
-func (r *Router) remember(b *board.Board) {
+// remember adds b, opened from root, to the boards easld reopens at start, unless it is there;
+// a failure is logged in its history (the board won't come back after a reboot).
+func (r *Router) remember(b *board.Board, root string) {
 	if r.Reopens == "" {
 		return
 	}
-	roots, err := store.ReadRoots(r.Reopens)
+	listed, err := store.ReadReopened(r.Reopens)
 	if err == nil {
-		if slices.Contains(roots, b.Root()) {
+		if slices.ContainsFunc(listed, func(e store.Reopened) bool { return e.Board == b.ID() }) {
 			return
 		}
-		err = store.WriteRoots(r.Reopens, append(roots, b.Root()))
+		err = store.WriteReopened(r.Reopens, append(listed, store.Reopened{Root: root, Board: b.ID()}))
 	}
 	if err != nil {
 		b.Activity.Record(board.KindRestart, board.SystemActor, b.Revision(), "", "", "easld couldn't record this board to reopen it when it starts again: "+err.Error(), "")
@@ -134,10 +142,11 @@ func ownedTerminals(b *board.Board) []model.Object {
 // SweepOrphans ends the sessions of easld's home whose board is open but has no owned terminal
 // for them any more (easld was down when it was deleted, zmx refused to end it), once the sweep
 // before found them so too (the same session: the same process). Run a grace apart, a session is
-// ended only after a grace as an orphan. Another home's session is never ended, nor one labelled
-// with a board that isn't open, nor one that doesn't answer. Each one ended is logged in its
-// board's history; its spooled reports go with it unless a terminal of that id is on an open
-// board. It returns once the sweep is done.
+// ended only after a grace as an orphan, and only while it is still that process
+// (Manager.EndIf: `session.spawn` and `session.kill` don't wait for the sweep). Another home's
+// session is never ended, nor one labelled with a board that isn't open, nor one that doesn't
+// answer or has no pid. Each one ended is logged in its board's history; its spooled reports go
+// with it unless a terminal of that id is on an open board. It returns once the sweep is done.
 func (r *Router) SweepOrphans() {
 	if r.Owns == nil {
 		return
@@ -177,7 +186,7 @@ func (r *Router) sweep(boards map[string]*board.Board, owned map[string]map[stri
 	for _, s := range list {
 		id := s.Labels["canvas.board"]
 		b, open := boards[id]
-		if s.Unreachable || s.Labels[session.HomeLabel] != home || s.Labels["canvas.tile"] != s.Tile || !open || owned[id][s.Tile] {
+		if s.Unreachable || s.PID <= 0 || s.Labels[session.HomeLabel] != home || s.Labels["canvas.tile"] != s.Tile || !open || owned[id][s.Tile] {
 			continue
 		}
 		found[s.Name] = s.PID
@@ -187,12 +196,32 @@ func (r *Router) sweep(boards map[string]*board.Board, owned map[string]map[stri
 		r.reap(b, s, !onBoard[s.Tile])
 	}
 	r.lifecycle.orphans = found
+	for name, pid := range r.lifecycle.unended {
+		if found[name] != pid {
+			delete(r.lifecycle.unended, name)
+		}
+	}
 }
 
-// reap ends orphan session s of board b (and with `spool`, the reports spooled for its tile) and
-// logs it in b's history.
+// reap ends orphan session s of board b, while it is still the process the sweeps found (and
+// with `spool`, the reports spooled for its tile), and logs it in b's history. One started
+// again under its name since, or gone, is no longer that orphan: it, its log and its spool are
+// left as they are. An end that fails is tried again at each sweep, logged only the first time
+// for that process.
 func (r *Router) reap(b *board.Board, s session.Session, spool bool) {
-	_, err := r.Sessions.End(s.Tile, r.Owns.Labels(b.ID(), s.Tile))
+	ended, err := r.Sessions.EndIf(s.Tile, r.Owns.Labels(b.ID(), s.Tile), s.PID)
+	failedBefore := r.lifecycle.unended[s.Name] == s.PID
+	if err == nil {
+		delete(r.lifecycle.unended, s.Name)
+	} else {
+		if r.lifecycle.unended == nil {
+			r.lifecycle.unended = map[string]int{}
+		}
+		r.lifecycle.unended[s.Name] = s.PID
+	}
+	if (err == nil && !ended) || (err != nil && failedBefore) {
+		return
+	}
 	what := "easld ended session " + s.Name + ": no terminal on this board has it any more"
 	if err != nil {
 		what = "easld couldn't end session " + s.Name + ", which no terminal on this board has any more: " + err.Error()
