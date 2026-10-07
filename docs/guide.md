@@ -29,7 +29,7 @@ Which agents report their state and get your mentions:
 - **Claude Code and Codex:** no setup, only inside easl. easl's wrappers come first on a terminal tile's PATH and load the hooks and the easl skill per session; nothing is written to your global agent config. `EASL_AGENT_HOOKS=0` turns this off.
 - **opencode:** no setup, through a plugin easl adds per session.
 - **Gemini CLI:** no setup before 0.60. Gemini 0.60 and later runs as a plain terminal, without a state dot.
-- **omp:** the easl extension (one symlink, [Install](../README.md#install) step 4). omp's `browser` tool also drives browser tiles.
+- **omp:** the easl extension (one symlink, [Install](../README.md#install) step 5). omp's `browser` tool also drives browser tiles.
 - **aider and any other CLI:** green when they send a terminal notification saying they're waiting; no working or needs-you state. Hyper-V pastes your mentions into them.
 
 ## See what it changed

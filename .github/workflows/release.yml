@@ -19,6 +19,8 @@ name: Release
 #   EASL_NOTARY_APPLE_ID     the Apple ID's email
 #   EASL_NOTARY_PASSWORD     an app-specific password for it
 #   EASL_NOTARY_TEAM_ID      the team id
+# and, for the Homebrew tap (docs/releasing.md "Homebrew"):
+#   HOMEBREW_TAP_DEPLOY_KEY  the private half of twaldin/homebrew-tap's write deploy key
 on:
   push:
     tags: ["v*"]
@@ -135,6 +137,41 @@ jobs:
           generate=()
           if [ "$(gh release list --exclude-drafts --limit 1 --json tagName --jq length)" != 0 ]; then generate=(--generate-notes); fi
           gh release create "$GITHUB_REF_NAME" "$ZIP" gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "easl $EASL_VERSION" --notes-file "$RUNNER_TEMP/notes.md" "${generate[@]}"
+      - name: Update the Homebrew tap
+        if: env.PUBLISH == 'true'
+        # twaldin/homebrew-tap's cask follows the release's zip, whoever published it, once it's
+        # notarized: Homebrew quarantines what a cask downloads, and doesn't support casks that fail
+        # Gatekeeper (docs/releasing.md "Homebrew").
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          if [ -z "$TAP_KEY" ]; then echo "::warning::No HOMEBREW_TAP_DEPLOY_KEY secret: the Homebrew tap stays at its last version."; exit 0; fi
+          check="$RUNNER_TEMP/tap-check"
+          mkdir -p "$check"
+          gh release download "$GITHUB_REF_NAME" --pattern "$ZIP" --dir "$check"
+          ditto -x -k "$check/$ZIP" "$check/app"
+          assessment="$(spctl --assess --type execute -vv "$check/app/easl.app" 2>&1 || true)"
+          echo "$assessment"
+          if ! printf '%s\n' "$assessment" | grep -q 'source=Notarized Developer ID'; then
+            echo "::warning::$ZIP isn't notarized: the Homebrew tap stays at its last version."
+            exit 0
+          fi
+          sha="$(shasum -a 256 "$check/$ZIP" | cut -d ' ' -f 1)"
+          key="$RUNNER_TEMP/tap-key"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$TAP_KEY" > "$key"
+          chmod 600 "$key"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone --depth 1 git@github.com:twaldin/homebrew-tap.git "$RUNNER_TEMP/tap"
+          mkdir -p "$RUNNER_TEMP/tap/Casks"
+          scripts/homebrew-cask.sh "$EASL_VERSION" "$sha" > "$RUNNER_TEMP/tap/Casks/easl.rb"
+          cd "$RUNNER_TEMP/tap"
+          git add Casks/easl.rb
+          if git diff --cached --quiet; then echo "The tap already has easl $EASL_VERSION ($sha)."; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -qm "easl $EASL_VERSION"
+          git push origin HEAD
+          echo "twaldin/tap/easl is now $EASL_VERSION ($sha)."
       - name: Remove the signing keychain
         if: always() && env.SIGNED == 'true'
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
