@@ -63,21 +63,83 @@ def cpu_seconds(pid):
 
 
 def rusage(pid):
-    """The process's CPU time (s) and interrupt wakeups so far, from `proc_pid_rusage`
-    (RUSAGE_INFO_V4: `ri_user_time` + `ri_system_time` in Mach absolute time units, converted with
-    `mach_timebase_info` (41.67 ns each on Apple silicon; reading them as ns reported 1/42 of the
-    CPU), `ri_interrupt_wkups`; docs/testing.md, "Performance probes"); None when the process is gone."""
+    """The process's CPU time (s), interrupt wakeups, instructions and cycles so far, from
+    `proc_pid_rusage` (RUSAGE_INFO_V4: `ri_user_time` + `ri_system_time` in Mach absolute time
+    units, converted with `mach_timebase_info` (41.67 ns each on Apple silicon; reading them as ns
+    reported 1/42 of the CPU), `ri_interrupt_wkups`, `ri_instructions`, `ri_cycles`; docs/testing.md,
+    "Performance probes"); None when the process is gone. Instructions are the load-tolerant cost:
+    the same work retires the same count whatever else runs (6 spinning processes moved a fixed
+    loop's CPU time 5 % and its instructions 0.05 %), while CPU time, cycles and every wall-clock
+    stretch move with contention, frequency and the core the scheduler picks."""
     import ctypes
     import struct
     libc = ctypes.CDLL(None)
     buffer = ctypes.create_string_buffer(16 + 8 * 40)
     if libc.proc_pid_rusage(pid, 4, buffer) != 0:
         return None
-    user, system, _, wakeups = struct.unpack_from("<4Q", buffer.raw, 16)
+    fields = struct.unpack_from("<40Q", buffer.raw, 16)
     timebase = ctypes.create_string_buffer(8)
     libc.mach_timebase_info(timebase)
     numer, denom = struct.unpack_from("<2I", timebase.raw, 0)
-    return {"cpu_s": (user + system) * numer / denom / 1e9, "wakeups": wakeups}
+    return {"cpu_s": (fields[0] + fields[1]) * numer / denom / 1e9, "wakeups": fields[3], "instructions": fields[29], "cycles": fields[30]}
+
+
+def machine_load():
+    """What else the Mac is doing right now: CPU idle (%), free memory (%), swap-ins and the
+    processes above 10 % CPU, from `top -l 2` (its second sample; the first is since boot) and
+    `memory_pressure`. Rows record it at each scenario's start and end so a run outside the
+    acceptance band (`LOAD_BAND`) is marked `loaded` instead of trusted."""
+    out = sh("/usr/bin/top", "-l", "2", "-s", "1", "-n", "12", "-o", "cpu", "-stats", "pid,cpu,command", check=False)
+    sample = out.split("Processes:")[-1]
+    idle = re.search(r"CPU usage: .*?([\d.]+)% idle", sample)
+    busy = []
+    for line in sample.splitlines():
+        m = re.match(r"\s*(\d+)\s+([\d.]+)\s+(\S.*?)\s*$", line)
+        if m and float(m.group(2)) >= 10 and m.group(3) != "top":
+            busy.append({"pid": int(m.group(1)), "cpu": float(m.group(2)), "command": m.group(3)[:24]})
+    pressure = sh("/usr/bin/memory_pressure", check=False)
+    free = re.search(r"System-wide memory free percentage: (\d+)%", pressure)
+    return {"idle": float(idle.group(1)) if idle else None, "free": int(free.group(1)) if free else None, "busy": busy[:6]}
+
+
+# The acceptance band for a trusted row (machine-ok's gate): CPU idle at least this at both ends
+# of the scenario; below it the row is `loaded` (reported, and a run to repeat).
+LOAD_BAND = {"idle": 30.0}
+
+
+def loaded(before, after):
+    return any(sample.get("idle") is None or sample["idle"] < LOAD_BAND["idle"] for sample in (before, after))
+
+
+def cost(r0, r1, events=None):
+    """The process's instructions and cycles over a scenario (billions), and per event handled
+    when the scenario knows how many (an agent's writes, title changes): the A/B figure that
+    survives other load on the Mac."""
+    if not r0 or not r1:
+        return {}
+    instructions, cycles = r1["instructions"] - r0["instructions"], r1["cycles"] - r0["cycles"]
+    out = {"instructions_G": round(instructions / 1e9, 3), "cycles_G": round(cycles / 1e9, 3)}
+    if events:
+        out["instructions_per_event_k"] = round(instructions / events / 1e3, 1)
+    return out
+
+
+def birth_frame(display_index):
+    """`EASL_DEV_FRAME` for a 1492×926 window on yabai display `display_index` (10 pt in from its
+    left, 50 pt down from its top), in AppKit's screen coordinates (origin at the primary display's
+    bottom left; yabai's frames are top-down): AppKit opens a window on the Space of the display
+    holding its frame, so a window born on a headless virtual screen never shows on the user's
+    display before the launcher's guard moves it (docs/testing.md)."""
+    displays = json.loads(sh(YABAI, "-m", "query", "--displays"))
+    primary = next((d["frame"] for d in displays if d["frame"]["x"] == 0 and d["frame"]["y"] == 0), None)
+    frame = next((d["frame"] for d in displays if d["index"] == display_index), None)
+    if primary is None or frame is None:
+        raise SystemExit(f"--birth-display {display_index}: yabai lists displays {[d['index'] for d in displays]}; "
+                         "no launch on a display that isn't there")
+    sx, sw, sh_ = frame["x"], frame["w"], frame["h"]
+    sy = primary["h"] - (frame["y"] + frame["h"])
+    w, h = min(1492, sw - 20), min(926, sh_ - 60)
+    return f"{int(sx + 10)} {int(sy + sh_ - 50 - h)} {int(w)} {int(h)}"
 
 
 class Instance:
@@ -345,9 +407,11 @@ def agent_titles(inst, terminals=8, seconds=60):
     time.sleep(8)  # sessions start, surfaces attach, the first titles arrive
     inst.metrics(reset=True)
     inst.span_begin()
+    load_before = machine_load()
     r0, started = rusage(inst.pid), time.time()
     time.sleep(seconds)
     r1, elapsed = rusage(inst.pid), time.time() - started
+    load_after = machine_load()
     span = inst.span_end()
     metrics = inst.metrics()
     for tile in ids:
@@ -360,9 +424,12 @@ def agent_titles(inst, terminals=8, seconds=60):
             break
         inst.pan(dx, dy)
         time.sleep(0.5)
+    # Title changes handled: one per tile per 80 ms (the agent's cadence), the events the cost is per.
+    events = round(terminals * elapsed / 0.08)
     row = {"cpu_s": round(r1["cpu_s"] - r0["cpu_s"], 2), "wakeups_s": round((r1["wakeups"] - r0["wakeups"]) / elapsed, 1),
            "main_ms_s": round(span.get("main_busy_ms", 0) / elapsed, 1), "settled_s": round(elapsed, 1), **span,
-           "load": {"wall_s": round(elapsed, 1), "terminals": terminals, "terminals_in_view": shown}}
+           "load": {"wall_s": round(elapsed, 1), "terminals": terminals, "terminals_in_view": shown, "events": events},
+           **cost(r0, r1, events), "machine": {"before": load_before, "after": load_after}, "loaded": loaded(load_before, load_after)}
     if metrics:
         row["metrics"] = metrics
     return row
@@ -401,6 +468,8 @@ def run_scenario(inst, name):
         return {"app": inst.label, "scenario": name, "visible": shown, "space_moved": inst.space_moved, **row}
     inst.metrics(reset=True)
     inst.span_begin()
+    load_before = machine_load()
+    r0 = rusage(inst.pid)
     c0 = cpu_seconds(inst.pid)
     started = time.time()
     if name == "poll-idle":
@@ -415,10 +484,16 @@ def run_scenario(inst, name):
     inst.quiet(timeout=180)
     settled = time.time() - started
     c2 = cpu_seconds(inst.pid)
+    r1 = rusage(inst.pid)
+    load_after = machine_load()
+    # The writes a burst applied (html and shape updates, one create: the same in serial and batch);
+    # poll-idle and pan-zoom have no event count worth a per-event figure.
+    writes = load["html"] + load["shapes"] + 1 if "html" in load and "shapes" in load else None
     span = inst.span_end()
     metrics = inst.metrics()
     row = {"app": inst.label, "scenario": name, "visible": shown, "cpu_s": round(c2 - c0, 2), "cpu_during_s": round(c1 - c0, 2),
-           "settled_s": round(settled, 1), **span, "load": load}
+           "settled_s": round(settled, 1), **span, "load": load, **cost(r0, r1, writes),
+           "machine": {"before": load_before, "after": load_after}, "loaded": loaded(load_before, load_after)}
     if metrics:
         row["metrics"] = metrics
         total = lambda counter: ((metrics.get("counters") or {}).get(counter) or {}).get("total", {}).get("n", 0)
@@ -470,8 +545,10 @@ def summarize(rows, apps, scenarios):
             poll = [r["load"].get("poll", {}).get("p50") for r in mine]
             wakeups = [r.get("wakeups_s") for r in mine]
             main_ms = [r.get("main_ms_s") for r in mine]
+            instructions = [r.get("instructions_G") for r in mine]
+            per_event = [r.get("instructions_per_event_k") for r in mine]
             table[(app, name)] = dict(cpu=med(cpu), wall=med(wall), longest=med(longest), routes=med(routes), update=med(upd), poll=med(poll),
-                                      wakeups=med(wakeups), main=med(main_ms))
+                                      wakeups=med(wakeups), main=med(main_ms), instructions=med(instructions), per_event=med(per_event))
             t = table[(app, name)]
             verdict = gate(name, t)
             print(f"{app:10} {name:15} {t['cpu']!s:>6} {rng(cpu):>7} {t['wall']!s:>5} {rng(wall):>6} {t['longest']!s:>7} {rng(longest):>8} "
@@ -480,6 +557,11 @@ def summarize(rows, apps, scenarios):
                 print(f"{'':10} {'':15} html page loads {med([r.get('html_loads') for r in mine])}, reuses {med([r.get('html_reuses') for r in mine])}")
             if name == "agent-titles":
                 print(f"{'':10} {'':15} wakeups/s {t['wakeups']} ({rng(wakeups)}), main thread ms/s {t['main']} ({rng(main_ms)})")
+            if t["instructions"] is not None:
+                marks = sum(1 for r in mine if r.get("loaded"))
+                print(f"{'':10} {'':15} instructions {t['instructions']} G ({rng(instructions)})"
+                      + (f", per event {t['per_event']} k ({rng(per_event)})" if t["per_event"] is not None else "")
+                      + (f"; {marks} of {len(mine)} rows loaded (CPU idle < {LOAD_BAND['idle']:g}% at a sample)" if marks else ""))
         hidden, visible = table.get((app, "hidden-serial")), table.get((app, "visible-serial"))
         if hidden and visible:
             ratio_wall = hidden["wall"] / visible["wall"] if hidden["wall"] and visible["wall"] else None
