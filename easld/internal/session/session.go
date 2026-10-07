@@ -76,6 +76,9 @@ type Manager struct {
 
 	// mu serializes spawn and kill, so two spawns of one tile can't both create its session.
 	mu sync.Mutex
+	// beforeLock, when set (tests), runs each time Spawn is about to take mu for its lookup:
+	// where a concurrent kill can land.
+	beforeLock func()
 }
 
 // New is a manager for the zmx at `zmx` ("" when there is none) with easld's environment, its
@@ -209,29 +212,38 @@ func (m *Manager) Spawn(req SpawnRequest) (session string, created bool, err err
 		return "", false, failure("invalid_params", "cwd %s is not a directory on %s", cwd, host)
 	}
 	name := Prefix + req.Tile
-	// The command's PATH is asked before the lock (it can take PathTimeout, and kills wait on
-	// the lock), and only for a session that isn't there yet.
 	env := environ(m.Env, req.Env, req.Unset)
-	path := ""
-	if len(req.Command) > 0 {
-		if existing, err := m.find(name); err == nil && existing == nil {
-			path = m.interactivePath(env, cwd)
+	// The command's PATH is asked outside the lock (it can take PathTimeout, and kills wait on
+	// the lock), once the locked lookup found no session to create it over; the lookup then
+	// runs again, since another spawn may have started it meanwhile. A session is never created
+	// unasked: one ended (session.kill) between a lookup and the create is asked for here.
+	path, probed := "", len(req.Command) == 0
+	for {
+		if m.beforeLock != nil {
+			m.beforeLock()
 		}
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	existing, err := m.find(name)
-	if err != nil {
-		return "", false, err
-	}
-	if existing != nil {
-		if !existing.Unreachable {
-			if err := owned(existing, req.Labels); err != nil {
-				return "", false, err
+		m.mu.Lock()
+		existing, err := m.find(name)
+		if err != nil {
+			m.mu.Unlock()
+			return "", false, err
+		}
+		if existing != nil {
+			m.mu.Unlock()
+			if !existing.Unreachable {
+				if err := owned(existing, req.Labels); err != nil {
+					return "", false, err
+				}
 			}
+			return name, false, nil
 		}
-		return name, false, nil
+		if probed {
+			break
+		}
+		m.mu.Unlock()
+		path, probed = m.interactivePath(env, cwd), true
 	}
+	defer m.mu.Unlock()
 	// `zmx attach` with no terminal on stdin creates the session (its daemon detaches from
 	// easld, staying in its cgroup) and returns at once.
 	args := []string{"attach"}

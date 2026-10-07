@@ -94,6 +94,57 @@ func TestSpawnStartsTheSessionOnce(t *testing.T) {
 	}
 }
 
+// A restart's kill landing as a spawn of the same tile looks for the session (session.kill,
+// dispatched outside the board lock) doesn't leave the new session without its command's PATH:
+// the spawn that finds no session asks for it, whatever it saw before.
+func TestASessionEndedAsItIsSpawnedStillGetsThePath(t *testing.T) {
+	m, state := fixture(t)
+	labels := map[string]string{"canvas.board": "brd_1", "canvas.tile": "obj_r", HomeLabel: "mac-1"}
+	if _, created, err := m.Spawn(SpawnRequest{Tile: "obj_r", Labels: labels}); err != nil || !created {
+		t.Fatalf("first spawn: %v %v", created, err)
+	}
+	lookups := 0
+	m.beforeLock = func() {
+		if lookups++; lookups == 1 {
+			if ended, err := m.End("obj_r", labels); err != nil || !ended {
+				t.Fatalf("end: %v %v", ended, err)
+			}
+		}
+	}
+	_, created, err := m.Spawn(SpawnRequest{Tile: "obj_r", Command: []string{"omp"}, Labels: labels, Env: map[string]string{"PATH": "/share/easl/bin"}})
+	if err != nil || !created {
+		t.Fatalf("spawn after the kill: %v %v", created, err)
+	}
+	if args := record(t, state, "canvas-obj_r")["arg"]; len(args) != 4 || !strings.HasPrefix(args[3], "PATH='/share/easl/bin:") {
+		t.Errorf("command %q, want the probed PATH before 'omp'", args)
+	}
+	if lookups != 2 {
+		t.Errorf("%d lookups, want 2: one before the probe, one after", lookups)
+	}
+}
+
+// Another spawn starting the session while this one asks for the PATH wins: this one finds it
+// on its second lookup and leaves it as it is.
+func TestASessionStartedWhileThePathIsAskedIsLeftAlone(t *testing.T) {
+	m, state := fixture(t)
+	labels := map[string]string{"canvas.board": "brd_1", "canvas.tile": "obj_s", HomeLabel: "mac-1"}
+	other := &Manager{Zmx: m.Zmx, Dir: m.Dir, Shell: m.Shell, Home: m.Home, Env: m.Env}
+	lookups := 0
+	m.beforeLock = func() {
+		if lookups++; lookups == 2 {
+			if _, created, err := other.Spawn(SpawnRequest{Tile: "obj_s", Command: []string{"first"}, Labels: labels}); err != nil || !created {
+				t.Fatalf("other spawn: %v %v", created, err)
+			}
+		}
+	}
+	if _, created, err := m.Spawn(SpawnRequest{Tile: "obj_s", Command: []string{"second"}, Labels: labels}); err != nil || created {
+		t.Fatalf("spawn: created %v err %v, want the other's session left alone", created, err)
+	}
+	if args := record(t, state, "canvas-obj_s")["arg"]; len(args) != 4 || !strings.Contains(args[3], "'first'") {
+		t.Errorf("command %q, want the other spawn's", args)
+	}
+}
+
 // Without a command the session is the login shell, in the user's home.
 func TestSpawnWithoutCommandIsTheLoginShell(t *testing.T) {
 	m, state := fixture(t)
