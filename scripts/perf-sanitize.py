@@ -291,6 +291,24 @@ def strings(value):
             yield from strings(v)
 
 
+def spelled(value):
+    """What the output says, one item per line for the leak check: every string and key as it
+    is, and every other scalar (numbers, booleans, null) as JSON spells it, so a number that
+    spells an input string is still caught. Not the JSON text itself: there a line-break escape
+    before a word spells one letter run with it (`\\nexercitation`), which no vocabulary masks."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for v in value:
+            yield from spelled(v)
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield k
+            yield from spelled(v)
+    else:
+        yield json.dumps(value)
+
+
 def vocabulary():
     """What the output may carry without coming from the input: lorem, the synthetic page's
     markup, schema keys, the closed enum lists, palette names, the fixed date and type names."""
@@ -331,7 +349,8 @@ def leaks(source, text):
 
 
 def where(value, needle, path="$"):
-    """JSON paths of the output strings (values or keys) holding `needle`; schema keys only."""
+    """JSON paths of the output items (strings, keys, other scalars as JSON spells them) holding
+    `needle`; schema keys only."""
     if isinstance(value, str):
         return [path] if needle.lower() in value.lower() else []
     if isinstance(value, list):
@@ -344,17 +363,15 @@ def where(value, needle, path="$"):
                 found.append(f"{path}.{name} (key)")
             found += where(v, needle, f"{path}.{name}")
         return found
-    return []
+    return [path] if needle.lower() in json.dumps(value).lower() else []
 
 
 def run(source):
     """The sanitized board's JSON text, or SystemExit naming (by length and path only) what leaked."""
     clean = sanitize(source)
     out = json.dumps(clean, ensure_ascii=False)
-    # The check reads the output's strings, not its JSON text: there a `\n` escape before a word
-    # spells one letter run with it (`nexercitation`), which no vocabulary masks, and an input
-    # word inside it then counts as leaked (a work board, 2026-10-07).
-    found = leaks(source, "\n".join(strings(clean)))
+    # The check reads what the output says (`spelled`), not its JSON text (a work board, 2026-10-07).
+    found = leaks(source, "\n".join(spelled(clean)))
     if found:
         # Never print what leaked: this runs on the board's own machine and its output travels.
         places = [(len(s), where(clean, s)[:3]) for s in found]
