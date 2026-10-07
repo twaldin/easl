@@ -271,10 +271,11 @@ def pan_zoom(inst):
 
 
 # An agent-like program for a terminal tile: omp's working title (a braille spinner, every 80 ms,
-# deduplicated so each is a change) and a status line, from one process with no children.
+# deduplicated so each is a change) and a status line, from one process with no children. It
+# ends by itself after 10 minutes, so a run that dies leaves no session spinning.
 AGENT = ("import sys, time\n"
          "frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'\n"
-         "for i in range(10 ** 9):\n"
+         "for i in range(7500):\n"
          "    sys.stdout.write(f'\\033]0;π {frames[i % 10]} task {sys.argv[1]}\\007\\r{frames[i % 10]} step {i}')\n"
          "    sys.stdout.flush()\n"
          "    time.sleep(0.08)\n")
@@ -286,19 +287,31 @@ def agent_titles(inst, terminals=8, seconds=60):
     `seconds` once they are up: CPU, interrupt wakeups and DevPerf's main thread time, all per
     second. The tiles are deleted (ending their sessions) and the view panned back before the
     row's own quiet. Nothing of the burst machinery applies."""
-    rect, _ = inst.viewport()
+    start, _ = inst.viewport()
     program = os.path.join(inst.root, "agent.py")
     with open(program, "w") as f:
         f.write(AGENT)
-    x0 = rect["x"] + 20000
+    columns, lines = min(terminals, 4), (terminals + 3) // 4
+    # At the view's own vertical centre, so only sideways (⌘-wheel) pans are ever needed.
+    x0, y0 = start["x"] + 20000, start["y"] + start["h"] / 2 - (lines * 220 - 20) / 2
     ids = []
     for i in range(terminals):
-        frame = {"x": x0 + 20 + (i % 4) * 340, "y": rect["y"] + 20 + (i // 4) * 220, "w": 320, "h": 200}
+        frame = {"x": x0 + (i % 4) * 340, "y": y0 + (i // 4) * 220, "w": 320, "h": 200}
         made = inst.cli("object.create", {"type": "terminal", "frame": frame, "props": {
             "cwd": inst.root, "command": ["python3", "-u", program, str(i)], "title": f"agent {i}"}})
         ids.append(made["object"]["id"])
-    dx, dy = 20000, 0
-    inst.pan(dx, dy)
+    # Centre the view on the terminals (a wheel pan is approximate: correct it up to three times).
+    centre = (x0 + (columns * 340 - 20) / 2, y0 + (lines * 220 - 20) / 2)
+    for _ in range(3):
+        rect, _ = inst.viewport()
+        dx, dy = centre[0] - (rect["x"] + rect["w"] / 2), centre[1] - (rect["y"] + rect["h"] / 2)
+        if abs(dx) < 100 and abs(dy) < 100:
+            break
+        inst.pan(dx, dy)
+        time.sleep(0.5)
+    rect, _ = inst.viewport()
+    shown = sum(1 for i in range(terminals) if rect["x"] <= x0 + (i % 4) * 340 and x0 + (i % 4) * 340 + 320 <= rect["x"] + rect["w"]
+                and rect["y"] <= y0 + (i // 4) * 220 and y0 + (i // 4) * 220 + 200 <= rect["y"] + rect["h"])
     time.sleep(8)  # sessions start, surfaces attach, the first titles arrive
     inst.metrics(reset=True)
     inst.span_begin()
@@ -310,10 +323,16 @@ def agent_titles(inst, terminals=8, seconds=60):
     for tile in ids:
         inst.cli("object.delete", {"id": tile})
     time.sleep(2)
-    inst.pan(-dx, -dy)
+    for _ in range(3):
+        rect, _ = inst.viewport()
+        dx, dy = start["x"] - rect["x"], start["y"] - rect["y"]
+        if abs(dx) < 100 and abs(dy) < 100:
+            break
+        inst.pan(dx, dy)
+        time.sleep(0.5)
     row = {"cpu_s": round(r1["cpu_s"] - r0["cpu_s"], 2), "wakeups_s": round((r1["wakeups"] - r0["wakeups"]) / elapsed, 1),
            "main_ms_s": round(span.get("main_busy_ms", 0) / elapsed, 1), "settled_s": round(elapsed, 1), **span,
-           "load": {"wall_s": round(elapsed, 1), "terminals": terminals}}
+           "load": {"wall_s": round(elapsed, 1), "terminals": terminals, "terminals_in_view": shown}}
     if metrics:
         row["metrics"] = metrics
     return row
