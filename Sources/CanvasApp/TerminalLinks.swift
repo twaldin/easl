@@ -125,17 +125,43 @@ final class CanvasTerminalView: TerminalView {
     }
 
     /// How long the key waited in the event queue for the main thread (`event.timestamp` is the
-    /// press, on the uptime clock) and how long handing it to Ghostty took: `easl metrics` "keys".
-    /// A main-thread stall holds every key typed during it and releases them together, late and
-    /// in order; a long wait here is the board's doing, upstream of the terminal, zmx and the
-    /// program. A wait over `Metrics.hitchStretch` is logged with the stretch that caused it.
+    /// press, on the uptime clock) and how long handing it to Ghostty's key handler took: summed
+    /// in `KeyLatency` here (six numbers, no lock, no allocation) and handed to `Metrics` once a
+    /// second (`keyLatencyFlush`), for `easl metrics` "keys". A main-thread stall holds every key
+    /// typed during it and releases them together, late and in order; a long wait here is the
+    /// board's doing, upstream of the terminal, zmx and the program. `key.handle` ends at the
+    /// hand-over: Ghostty queues the PTY write for its IO thread, which this doesn't see, and a
+    /// consumed binding or a composing IME key writes nothing at all.
     override func keyDown(with event: NSEvent) {
         let waited = (ProcessInfo.processInfo.systemUptime - event.timestamp) * 1000
         let start = Metrics.now()
         super.keyDown(with: event)
-        Metrics.shared.record("key.wait", ms: waited)
-        Metrics.shared.record("key.handle", ms: (Metrics.now() - start) * 1000)
-        if waited >= Metrics.hitchStretch { NSLog("easl: a key waited %.0f ms for the main thread", waited) }
+        let handled = (Metrics.now() - start) * 1000
+        Self.keyLatency.add(waitMs: waited, handleMs: handled)
+        Self.scheduleKeyLatencyFlush()
+    }
+
+    private static var keyLatency = KeyLatency()
+    private static var keyLatencyFlush: DispatchSourceTimer?
+
+    /// Hands the second's batch to Metrics, and logs once when any key in it waited 50 ms or more.
+    private static func scheduleKeyLatencyFlush() {
+        guard keyLatencyFlush == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 1)
+        timer.setEventHandler {
+            MainActor.assumeIsolated {
+                keyLatencyFlush = nil
+                let batch = keyLatency.flush()
+                Metrics.shared.record("key.wait", batchMs: batch.waitMs, maxMs: batch.waitMaxMs, count: batch.keys)
+                Metrics.shared.record("key.handle", batchMs: batch.handleMs, maxMs: batch.handleMaxMs, count: batch.keys)
+                if batch.late > 0 {
+                    NSLog("easl: %d of %d keys waited %.0f ms or more for the main thread (longest %.0f ms)", batch.late, batch.keys, KeyLatency.lateMs, batch.waitMaxMs)
+                }
+            }
+        }
+        timer.resume()
+        keyLatencyFlush = timer
     }
 
     override func flagsChanged(with event: NSEvent) {

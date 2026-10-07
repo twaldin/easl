@@ -121,6 +121,16 @@ public final class Metrics: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Adds a batch summed elsewhere (`KeyLatency`): `count` occurrences, their total and longest.
+    public func record(_ name: String, batchMs ms: Double, maxMs: Double, count: Int) {
+        guard count > 0 else { return }
+        let tally = Tally(n: count, ms: ms, maxMs: maxMs)
+        let now = Self.now()
+        lock.lock()
+        series[name, default: Series()].add(tally, at: now)
+        lock.unlock()
+    }
+
     /// Sets a level (live tiles of a kind, subscribers).
     public func gauge(_ name: String, _ value: Double) {
         lock.lock()
