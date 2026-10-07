@@ -424,6 +424,7 @@ final class TerminalTile: NSView, TileContent {
     }
 
     fileprivate func titleChanged(_ title: String) {
+        DevPerf.count("terminal.title")
         oscTitle = title
         if !isRemote { board.terminalTitled(objectID, title: title) }
         // A new command: the header's status was the previous one's.

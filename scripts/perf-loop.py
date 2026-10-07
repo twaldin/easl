@@ -405,14 +405,14 @@ def agent_titles(inst, terminals=8, seconds=60):
     shown = sum(1 for i in range(terminals) if rect["x"] <= x0 + (i % 4) * 340 and x0 + (i % 4) * 340 + 320 <= rect["x"] + rect["w"]
                 and rect["y"] <= y0 + (i // 4) * 220 and y0 + (i // 4) * 220 + 200 <= rect["y"] + rect["h"])
     time.sleep(8)  # sessions start, surfaces attach, the first titles arrive
+    load_before = machine_load()  # outside the span: its `top` is ~2 s of other work
     inst.metrics(reset=True)
     inst.span_begin()
-    load_before = machine_load()
     r0, started = rusage(inst.pid), time.time()
     time.sleep(seconds)
     r1, elapsed = rusage(inst.pid), time.time() - started
-    load_after = machine_load()
     span = inst.span_end()
+    load_after = machine_load()
     metrics = inst.metrics()
     for tile in ids:
         inst.cli("object.delete", {"id": tile})
@@ -424,8 +424,10 @@ def agent_titles(inst, terminals=8, seconds=60):
             break
         inst.pan(dx, dy)
         time.sleep(0.5)
-    # Title changes handled: one per tile per 80 ms (the agent's cadence), the events the cost is per.
-    events = round(terminals * elapsed / 0.08)
+    # Title changes the app handled in the span (DevPerf counts `terminal.title`): the events the
+    # cost is per. The producers' nominal cadence (one per tile per 80 ms) is no count: under load
+    # they emit fewer.
+    events = span.get("title_changes")
     row = {"cpu_s": round(r1["cpu_s"] - r0["cpu_s"], 2), "wakeups_s": round((r1["wakeups"] - r0["wakeups"]) / elapsed, 1),
            "main_ms_s": round(span.get("main_busy_ms", 0) / elapsed, 1), "settled_s": round(elapsed, 1), **span,
            "load": {"wall_s": round(elapsed, 1), "terminals": terminals, "terminals_in_view": shown, "events": events},
@@ -445,6 +447,15 @@ def parse_devperf(lines):
             out["main_busy_ms"] = out.get("main_busy_ms", 0) + int(m.group(1))
             out["hitches"] = out.get("hitches", 0) + int(m.group(2))
             out["longest_ms"] = max(out.get("longest_ms", 0.0), float(m.group(3)))
+        # The same stretches by the main thread's CPU time (bundles with DevPerf's `main cpu`):
+        # what they needed, whatever else the Mac ran.
+        m = re.search(r"main cpu (\d+) ms \(longest ([\d.]+) ms\)", line)
+        if m:
+            out["main_cpu_ms"] = out.get("main_cpu_ms", 0) + int(m.group(1))
+            out["longest_cpu_ms"] = max(out.get("longest_cpu_ms", 0.0), float(m.group(2)))
+        m = re.search(r"terminal\.title=(\d+)", line)
+        if m:
+            out["title_changes"] = out.get("title_changes", 0) + int(m.group(1))
         m = re.search(r"route\.board=(\d+)/([\d.]+)/([\d.]+)", line)
         if m:
             out["routings"] = out.get("routings", 0) + int(m.group(1))
@@ -466,9 +477,9 @@ def run_scenario(inst, name):
         row = agent_titles(inst)
         inst.quiet(timeout=180)
         return {"app": inst.label, "scenario": name, "visible": shown, "space_moved": inst.space_moved, **row}
+    load_before = machine_load()  # outside the span: its `top` is ~2 s of other work
     inst.metrics(reset=True)
     inst.span_begin()
-    load_before = machine_load()
     r0 = rusage(inst.pid)
     c0 = cpu_seconds(inst.pid)
     started = time.time()
@@ -485,11 +496,11 @@ def run_scenario(inst, name):
     settled = time.time() - started
     c2 = cpu_seconds(inst.pid)
     r1 = rusage(inst.pid)
-    load_after = machine_load()
     # The writes a burst applied (html and shape updates, one create: the same in serial and batch);
     # poll-idle and pan-zoom have no event count worth a per-event figure.
     writes = load["html"] + load["shapes"] + 1 if "html" in load and "shapes" in load else None
     span = inst.span_end()
+    load_after = machine_load()
     metrics = inst.metrics()
     row = {"app": inst.label, "scenario": name, "visible": shown, "cpu_s": round(c2 - c0, 2), "cpu_during_s": round(c1 - c0, 2),
            "settled_s": round(settled, 1), **span, "load": load, **cost(r0, r1, writes),
@@ -557,6 +568,9 @@ def summarize(rows, apps, scenarios):
                 print(f"{'':10} {'':15} html page loads {med([r.get('html_loads') for r in mine])}, reuses {med([r.get('html_reuses') for r in mine])}")
             if name == "agent-titles":
                 print(f"{'':10} {'':15} wakeups/s {t['wakeups']} ({rng(wakeups)}), main thread ms/s {t['main']} ({rng(main_ms)})")
+            longest_cpu = [r.get("longest_cpu_ms") for r in mine]
+            if any(v is not None for v in longest_cpu):
+                print(f"{'':10} {'':15} longest stretch by main-thread cpu {med(longest_cpu)} ms ({rng(longest_cpu)}), main cpu ms {med([r.get('main_cpu_ms') for r in mine])}")
             if t["instructions"] is not None:
                 marks = sum(1 for r in mine if r.get("loaded"))
                 print(f"{'':10} {'':15} instructions {t['instructions']} G ({rng(instructions)})"

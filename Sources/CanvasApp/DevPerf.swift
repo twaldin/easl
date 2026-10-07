@@ -25,6 +25,10 @@ enum DevPerf {
         var longestFrame = 0.0
         var lastFrame: CFTimeInterval?
         var busy = 0.0, hitches = 0, longestBusy = 0.0
+        /// The main thread's CPU time over its busy stretches, and the most one stretch took:
+        /// what the stretch needed, whatever else the Mac ran (a stretch's wall time grows
+        /// with preemption; its CPU time doesn't).
+        var cpu = 0.0, longestCpu = 0.0
         var counts: [String: Int] = [:]
         var timings: [String: (count: Int, total: Double, max: Double)] = [:]
 
@@ -115,9 +119,9 @@ enum DevPerf {
             let timings = phase.timings.sorted { $0.key < $1.key }.map {
                 String(format: "%@=%d/%.1f/%.1f", $0.key, $0.value.count, $0.value.total, $0.value.max)
             }.joined(separator: " ")
-            NSLog("DevPerf: %@ %@ %.0f ms: frames %d missed %d (vsync %.1f ms, longest frame %.1f ms), main busy %.0f ms, hitches %d (longest %.1f ms); counts: %@; timings (n/total/max ms): %@",
+            NSLog("DevPerf: %@ %@ %.0f ms: frames %d missed %d (vsync %.1f ms, longest frame %.1f ms), main busy %.0f ms, hitches %d (longest %.1f ms), main cpu %.0f ms (longest %.1f ms); counts: %@; timings (n/total/max ms): %@",
                   span.label, phase.name, ms, phase.frames, phase.missed, period, phase.longestFrame,
-                  phase.busy, phase.hitches, phase.longestBusy, counts, timings)
+                  phase.busy, phase.hitches, phase.longestBusy, phase.cpu, phase.longestCpu, counts, timings)
         }
     }
 
@@ -157,8 +161,10 @@ enum DevPerf {
 
     private static func runLoop(_ activity: CFRunLoopActivity) {
         let now = CACurrentMediaTime()
+        let cpu = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)) / 1e6
         if activity == .afterWaiting {
             wokeAt = now
+            wokeCpu = cpu
             return
         }
         guard let woke = wokeAt, let span else { return }
@@ -168,6 +174,9 @@ enum DevPerf {
         span.phases[index].busy += ms
         span.phases[index].longestBusy = max(span.phases[index].longestBusy, ms)
         if ms > span.period * 1000 { span.phases[index].hitches += 1 }
+        let used = cpu - wokeCpu
+        span.phases[index].cpu += used
+        span.phases[index].longestCpu = max(span.phases[index].longestCpu, used)
     }
 
     @MainActor private final class Ticker: NSObject {
