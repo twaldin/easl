@@ -108,10 +108,13 @@ public final class Metrics: @unchecked Sendable {
     private var stallPending: (turn: Double, file: String?, stretch: Stretch?)?
     private var stallsSampled = 0
     private var stallNewest: String?
+    /// Where a long stretch's line goes: `app.log` (NSLog), or a test's list.
+    private let log: @Sendable (String) -> Void
 
-    init() {
+    init(log: @escaping @Sendable (String) -> Void = { NSLog("%@", $0) }) {
         launched = Self.now()
         since = launched
+        self.log = log
     }
 
     /// Seconds on a monotonic clock.
@@ -176,13 +179,13 @@ public final class Metrics: @unchecked Sendable {
         let id = signposter.makeSignpostID()
         let state = signposter.beginInterval(signpost, id: id, "\(label, privacy: .public) \(text, privacy: .public)")
         let main = Thread.isMainThread
-        if main { MainMonitor.push() }
+        if main { MainMonitor.installed?.push() }
         let start = Self.now()
         defer {
             let ms = (Self.now() - start) * 1000
             signposter.endInterval(signpost, state)
             record(label, ms: ms, bytes: bytes)
-            if main { MainMonitor.pop(text.isEmpty ? label : "\(label) \(text)", ms: ms) }
+            if main { MainMonitor.installed?.pop(text.isEmpty ? label : "\(label) \(text)", ms: ms) }
         }
         return try body()
     }
@@ -208,30 +211,39 @@ public final class Metrics: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard stalls == nil else { return }
-        stalls = StallSampler(directory: directory, turnStart: { [turn] in turn.withLock { $0 } }, sampling: { [weak self] start in
-            guard let self else { return }
-            lock.lock()
-            stallPending = (start, nil, nil)
-            lock.unlock()
-        }, sampled: { [weak self] start, file in
-            guard let self else { return }
-            lock.lock()
-            stallsSampled += 1
-            stallNewest = file
-            var finished: Stretch?
-            if let pending = stallPending, pending.turn == start {
-                if var stretch = pending.stretch {
-                    stretch.cause = "\(file); \(stretch.cause)"
-                    if longest?.at == stretch.at { longest = stretch }
-                    finished = stretch
-                    stallPending = nil
-                } else {
-                    stallPending?.file = file
-                }
+        let sampler = StallSampler(directory: directory, metrics: self)
+        sampler.start()
+        stalls = sampler
+    }
+
+    /// The main thread's turn in progress, as the stall watchdog reads it.
+    var stallTurn: Double? { turn.withLock { $0 } }
+
+    /// The watchdog is sampling the turn that started at `start`.
+    func stallSampling(_ start: Double) {
+        lock.lock()
+        stallPending = (start, nil, nil)
+        lock.unlock()
+    }
+
+    /// The watchdog's sample of the turn that started at `start` is in `file`.
+    func stallSampled(_ start: Double, file: String) {
+        lock.lock()
+        stallsSampled += 1
+        stallNewest = file
+        var finished: Stretch?
+        if let pending = stallPending, pending.turn == start {
+            if var stretch = pending.stretch {
+                stretch.cause = "\(file); \(stretch.cause)"
+                if longest?.at == stretch.at { longest = stretch }
+                finished = stretch
+                stallPending = nil
+            } else {
+                stallPending?.file = file
             }
-            lock.unlock()
-            if let finished { NSLog("easl: main thread busy %.0f ms: %@", finished.ms, finished.cause) }
-        })
+        }
+        lock.unlock()
+        if let finished { log(String(format: "easl: main thread busy %.0f ms: %@", finished.ms, finished.cause)) }
     }
 
     fileprivate func mainTurn(started: Double?) {
@@ -257,7 +269,7 @@ public final class Metrics: @unchecked Sendable {
         }
         if longer { longest = Stretch(ms: ms, cause: text, at: now) }
         lock.unlock()
-        if ms >= Self.logStretch { NSLog("easl: main thread busy %.0f ms: %@", ms, text) }
+        if ms >= Self.logStretch { log(String(format: "easl: main thread busy %.0f ms: %@", ms, text)) }
     }
 
     fileprivate func mainBusy(_ ms: Double, turns: Int) {
@@ -368,44 +380,51 @@ public final class GaugeHold: Sendable {
 
 /// The main run loop's turns, timed by an observer: a turn runs from waking (or the end of the
 /// previous turn) until the loop next checks timers or goes to sleep. Main-thread spans inside a
-/// turn are kept so a long turn can say what it did. Main thread only.
-private enum MainMonitor {
-    nonisolated(unsafe) static var metrics: Metrics?
-    nonisolated(unsafe) static var observer: CFRunLoopObserver?
-    nonisolated(unsafe) static var turns = RunLoopTurns(at: 0)
-    nonisolated(unsafe) static var depth = 0
+/// turn are kept so a long turn can say what it did. Main thread only: `monitorMainThread`
+/// installs one on the main run loop; a test drives its own with chosen times.
+final class MainMonitor {
+    nonisolated(unsafe) fileprivate static var installed: MainMonitor?
+    nonisolated(unsafe) private static var observer: CFRunLoopObserver?
+    private let metrics: Metrics
+    private var turns: RunLoopTurns
+    private var depth = 0
     /// Spans that ended in this turn: (nesting depth, label, ms), in end order.
-    nonisolated(unsafe) static var spans: [(depth: Int, label: String, ms: Double)] = []
+    private var spans: [(depth: Int, label: String, ms: Double)] = []
 
-    static func install(_ metrics: Metrics) {
-        guard observer == nil else { return }
+    init(_ metrics: Metrics, at now: Double) {
         self.metrics = metrics
+        turns = RunLoopTurns(at: now, reset: metrics.resetAt)
+    }
+
+    fileprivate static func install(_ metrics: Metrics) {
+        guard observer == nil else { return }
+        let monitor = MainMonitor(metrics, at: Metrics.now())
         let activities = CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeTimers.rawValue | CFRunLoopActivity.beforeWaiting.rawValue
         let observer = CFRunLoopObserverCreateWithHandler(nil, activities, true, 0) { _, activity in
-            MainMonitor.loop(activity)
+            monitor.loop(sleeping: activity == .beforeWaiting, at: Metrics.now())
         }
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         self.observer = observer
-        turns = RunLoopTurns(at: Metrics.now(), reset: metrics.resetAt)
+        installed = monitor
     }
 
-    static func push() { depth += 1 }
+    /// A span begins on the main thread.
+    func push() { depth += 1 }
 
-    static func pop(_ label: String, ms: Double) {
+    /// The innermost open span ends: `label`, `ms` long.
+    func pop(_ label: String, ms: Double) {
         depth -= 1
-        guard metrics != nil else { return }
         // Keep the turn's record small: only spans that could matter to a long stretch.
         if ms >= 1 || depth == 0 { spans.append((depth, label, ms)) }
         if spans.count > 64 { spans.removeFirst(spans.count - 64) }
     }
 
-    static func loop(_ activity: CFRunLoopActivity) {
-        guard let metrics else { return }
-        let now = Metrics.now()
+    /// A run-loop activity at `now`: the loop goes to sleep (`sleeping`), or wakes or checks timers.
+    func loop(sleeping: Bool, at now: Double) {
         // Spans that ended before a reset are not the new window's (open ones keep their depth).
         if turns.rebase(reset: metrics.resetAt) { spans.removeAll(keepingCapacity: true) }
         let started = turns.turnStart
-        let step = turns.activity(sleeping: activity == .beforeWaiting, at: now)
+        let step = turns.activity(sleeping: sleeping, at: now)
         metrics.mainTurn(started: turns.turnStart)
         if let ms = step.turn, ms >= Metrics.hitchStretch { metrics.mainStretch(ms, turn: started ?? 0, cause: cause()) }
         spans.removeAll(keepingCapacity: true)
@@ -413,7 +432,7 @@ private enum MainMonitor {
     }
 
     /// The turn's top-level spans, longest first, each with its longest nested span.
-    static func cause() -> String {
+    private func cause() -> String {
         var parts: [(ms: Double, text: String)] = []
         var children: [(depth: Int, label: String, ms: Double)] = []
         for span in spans {

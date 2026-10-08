@@ -57,17 +57,23 @@ public struct StallSampling: Sendable, Equatable {
 final class StallSampler: @unchecked Sendable {
     private let queue = DispatchQueue(label: "easl.metrics.stalls", qos: .utility)
     private let directory: URL
-    private let turnStart: () -> Double?
-    private let sampling: (_ turnStart: Double) -> Void
-    private let sampled: (_ turnStart: Double, _ file: String) -> Void
+    private weak var metrics: Metrics?
+    private let now: () -> Double
+    private let sample: (_ file: URL) -> Bool
     private var timer: DispatchSourceTimer?
     private var policy = StallSampling()
 
-    init(directory: URL, turnStart: @escaping () -> Double?, sampling: @escaping (Double) -> Void, sampled: @escaping (Double, String) -> Void) {
+    /// `now` and `sample` are the clock and the child (`StallSampler.sample(into:)`): a test
+    /// stands in for both and calls `tick` itself.
+    init(directory: URL, metrics: Metrics, now: @escaping () -> Double = Metrics.now, sample: @escaping (_ file: URL) -> Bool = StallSampler.sample(into:)) {
         self.directory = directory
-        self.turnStart = turnStart
-        self.sampled = sampled
-        self.sampling = sampling
+        self.metrics = metrics
+        self.now = now
+        self.sample = sample
+    }
+
+    /// Starts the watchdog.
+    func start() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(250))
         timer.setEventHandler { [weak self] in self?.tick() }
@@ -77,12 +83,23 @@ final class StallSampler: @unchecked Sendable {
 
     deinit { timer?.cancel() }
 
-    private func tick() {
-        let start = turnStart()
-        guard policy.shouldSample(turnStart: start, now: Metrics.now()), let start else { return }
+    /// One wakeup of the watchdog.
+    func tick() {
+        guard let metrics else { return }
+        let start = metrics.stallTurn
+        guard policy.shouldSample(turnStart: start, now: now()), let start else { return }
         let name = StallSampling.fileName(at: Date())
         let file = directory.appendingPathComponent(name)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        metrics.stallSampling(start)
+        guard sample(file), let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else { return }
+        metrics.stallSampled(start, file: "stalls/\(name)")
+        prune()
+    }
+
+    /// Runs `/usr/bin/sample` on this process for a second into `file`, with a clean
+    /// environment, waiting at most 15 s: true when it finished successfully.
+    static func sample(into file: URL) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
         process.arguments = [String(getpid()), "1", "-mayDie", "-file", file.path]
@@ -92,19 +109,15 @@ final class StallSampler: @unchecked Sendable {
         process.qualityOfService = .utility
         let done = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in done.signal() }
-        sampling(start)
-        do { try process.run() } catch { return }
+        do { try process.run() } catch { return false }
         if done.wait(timeout: .now() + 15) == .timedOut {
             // `terminate()` is only SIGTERM: a wedged child could ignore it and outlive the
             // bounded wait. Kill this exact child and give its termination callback a bound too.
             kill(process.processIdentifier, SIGKILL)
             _ = done.wait(timeout: .now() + 1)
-            return
+            return false
         }
-        guard process.terminationStatus == 0,
-              let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else { return }
-        sampled(start, "stalls/\(name)")
-        prune()
+        return process.terminationStatus == 0
     }
 
     private func prune() {
