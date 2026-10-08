@@ -480,7 +480,9 @@ final class AgentControlTests {
         #expect(try await call("agent.restart", ["target": "worker", "mode": "fresh", "force": .bool(true)])["ok"] == .bool(true))
         router.firstReportGrace = 30
         let waiting = try LineClient(path: dir.appendingPathComponent("s").path)
-        waiting.send(#"{"id":"w","method":"agent.wait","params":{"target":"worker","timeoutMs":1000}}"#)
+        // Test the notification, not a request deadline racing this test's main-actor resumption.
+        // LineClient.next still bounds a missing reply.
+        waiting.send(#"{"id":"w","method":"agent.wait","params":{"target":"worker"}}"#)
         waiting.send(#"{"id":"ping","method":"system.ping","params":{}}"#)
         let first = try await waiting.next()
         #expect(first["id"] == "ping", "the killed agent's answer must not satisfy the wait")
