@@ -132,14 +132,24 @@ final class AgentMessageTests {
         let reviewer = terminal("reviewer")
         try omp(reviewer, .idle, seq: 1)
         let script = try connect()
-        _ = try await call(script, "agent.prompt", ["target": .string(reviewer), "text": .string("one")])
+        let sent = try await call(script, "agent.prompt", ["target": .string(reviewer), "text": .string("one")])
+        let id = try #require(sent["result"]?["message"]?.string)
         var first: LineClient? = try connect()
         #expect(try await call(first!, "agent.inbox", ["tile": .string(reviewer)])["result"]?["messages"]?.array?.count == 1)
         first = nil
-        try await Task.sleep(for: .milliseconds(200))
         let next = try connect()
-        let again = try await call(next, "agent.inbox", ["tile": .string(reviewer)])
-        #expect(again["result"]?["messages"]?.array?.first?["text"] == .string("one"), "\(again)")
+        // Dropping the client doesn't prove its reader thread has let it go or the server has
+        // processed EOF. Poll the real inbox until the old connection no longer holds the message.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(3))
+        var again = try await call(next, "agent.inbox", ["tile": .string(reviewer)])
+        while again["result"]?["messages"] == .array([]), clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+            again = try await call(next, "agent.inbox", ["tile": .string(reviewer)])
+        }
+        #expect(again["result"]?["messages"]?.array?.count == 1, "\(again)")
+        #expect(again["result"]?["messages"]?.array?.first?["id"] == .string(id)
+                && again["result"]?["messages"]?.array?.first?["text"] == .string("one"), "\(again)")
     }
 
     @Test func addressesAreNameAtBoardWithAliasesAndTheCallersBoardFirst() async throws {
