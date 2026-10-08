@@ -47,11 +47,13 @@ public struct StallSampling: Sendable, Equatable {
     }
 }
 
-/// The runtime: a 1 s watchdog on a utility queue (one wakeup a second, with leeway) reads the
-/// main thread's current turn start that `Metrics` publishes, and when the policy says so runs
+/// The runtime: a 1 s watchdog on a utility queue (one wakeup a second, with leeway) claims the
+/// main thread's turn in progress from `Metrics` when the policy says to sample it, runs
 /// `/usr/bin/sample <pid> 1 -mayDie -file <dir>/<UTC>.txt` with a clean environment, waits for it
-/// at most 15 s (a stuck child is killed), prunes the directory, and tells `Metrics` which turn
-/// was sampled into which file so the stretch's cause can name it when the turn ends.
+/// at most 15 s (a stuck child is killed), prunes the directory, and hands `Metrics` the file for
+/// that turn so the stretch's cause can name it. The claim comes before any file or process work,
+/// under the lock the main thread ends its turns with: a turn that ended as the watchdog woke is
+/// never sampled, and a claimed turn's end always finds its sample.
 /// Off under `EASL_DEV_PERF=1` (a sampler suspends the task's threads briefly; measured runs
 /// must not see that).
 final class StallSampler: @unchecked Sendable {
@@ -61,7 +63,6 @@ final class StallSampler: @unchecked Sendable {
     private let now: () -> Double
     private let sample: (_ file: URL) -> Bool
     private var timer: DispatchSourceTimer?
-    private var policy = StallSampling()
 
     /// `now` and `sample` are the clock and the child (`StallSampler.sample(into:)`): a test
     /// stands in for both and calls `tick` itself.
@@ -85,15 +86,12 @@ final class StallSampler: @unchecked Sendable {
 
     /// One wakeup of the watchdog.
     func tick() {
-        guard let metrics else { return }
-        let start = metrics.stallTurn
-        guard policy.shouldSample(turnStart: start, now: now()), let start else { return }
+        guard let metrics, let turn = metrics.claimStall(at: now()) else { return }
         let name = StallSampling.fileName(at: Date())
         let file = directory.appendingPathComponent(name)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        metrics.stallSampling(start)
         guard sample(file), let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else { return }
-        metrics.stallSampled(start, file: "stalls/\(name)")
+        metrics.stallSampled(turn, file: "stalls/\(name)")
         prune()
     }
 
