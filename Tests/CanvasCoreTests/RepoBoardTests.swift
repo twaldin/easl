@@ -477,6 +477,53 @@ struct RepoBoardTests {
         #expect(board.objects[arrow]?.props["to"]?["node"] == .string("lib/b.txt#helper"))
     }
 
+    /// A diagram's persisted graph names its nodes by file and symbol, including an external
+    /// file: only the paths beneath the destination board root should become relative.
+    func diagramProps(_ path: String, external: String) -> JSONValue {
+        let node = path + "#run", other = external + "#helper"
+        return .object(["kind": .string("calls"), "path": .string(path), "symbol": .string("run"),
+                        "expanded": .array([.string(node), .string(other)]),
+                        "graph": .object(["aim": .object(["kind": .string("calls"), "path": .string(path)]), "root": .string(node),
+                                          "nodes": .array([.object(["id": .string(node), "path": .string(path)]),
+                                                           .object(["id": .string(other), "path": .string(external)])]),
+                                          "edges": .array([.object(["from": .string(node), "to": .string(other)])])])])
+    }
+
+    /// A linked checkout nested beneath the main checkout, or a symlink spelling of a source
+    /// file: the adopted graph and bound arrow keep the ids the destination board builds next.
+    @Test(arguments: [false, true])
+    func anAdoptedDiagramKeepsItsIdentitiesRelativeToItsDestinationRoot(aliased: Bool) async throws {
+        let repo = try await TempRepo()
+        try await repo.write("src/a.txt", "a\n")
+        try await repo.commit("init")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let source: URL, path: String, expected: String
+        if aliased {
+            source = repo.root
+            let alias = dir.appendingPathComponent("repo-alias")
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: repo.root)
+            path = alias.appendingPathComponent("src/./a.txt").path
+            expected = "src/a.txt"
+        } else {
+            source = repo.url(".worktrees/topic")
+            try await repo.git("worktree", "add", "-q", "-b", "topic", source.path)
+            path = "src/a.txt"
+            expected = ".worktrees/topic/src/a.txt"
+        }
+        let external = dir.appendingPathComponent("external/b.txt").path
+        let old = Board(id: BoardStore.pathID(source), root: source)
+        let diagram = old.create(type: .diagram, props: diagramProps(path, external: external))
+        let arrow = old.create(type: .arrow, props: .object(["from": .object(["object": .string(diagram.id), "node": .string(path + "#run")]),
+                                                            "to": .object(["object": .string(diagram.id), "node": .string(external + "#helper")])]))
+        BoardStore(directory: boards).save(old)
+        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: source)
+        #expect(real(board.root.path) == real(repo.root.path))
+        #expect(board.repo?.merged == [old.id])
+        #expect(board.objects[diagram.id]?.props == diagramProps(expected, external: external))
+        #expect(board.objects[arrow.id]?.props["from"]?["node"] == .string(expected + "#run"))
+        #expect(board.objects[arrow.id]?.props["to"]?["node"] == .string(external + "#helper"))
+    }
+
     @Test func aTerminalRecordsTheWorktreeAndBranchItStartsIn() async throws {
         let (repo, worktree) = try await fixture()
         let registry = BoardRegistry(store: BoardStore(directory: boards, debounce: 60))

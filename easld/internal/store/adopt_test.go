@@ -252,3 +252,69 @@ func TestTwoRepositoriesConflictingFolderBoardsAreReportedOnce(t *testing.T) {
 		t.Errorf("the last run left %v unresolved, want %v", last, want)
 	}
 }
+
+// adoptedDiagramProps is a graph with a node of path and an external file's node, both
+// expanded and connected by an edge. An adoption must map all their identities together.
+func adoptedDiagramProps(path, external string) map[string]any {
+	node, other := path+"#run", external+"#helper"
+	return map[string]any{"kind": "calls", "path": path, "symbol": "run", "expanded": []any{node, other},
+		"graph": map[string]any{"aim": map[string]any{"kind": "calls", "path": path}, "root": node,
+			"nodes": []any{map[string]any{"id": node, "path": path}, map[string]any{"id": other, "path": external}},
+			"edges": []any{map[string]any{"from": node, "to": other}}}}
+}
+
+// Diagram paths and ids are relative to the destination board root, also when the source is
+// a nested linked checkout or a symlink spelling of a file. External files stay absolute.
+func TestAnAdoptedDiagramKeepsItsIdentitiesRelativeToItsDestinationRoot(t *testing.T) {
+	for _, aliased := range []bool{false, true} {
+		name := "nested linked checkout"
+		if aliased {
+			name = "symlink alias"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			repo, boards := filepath.Join(dir, "repo"), filepath.Join(dir, "boards")
+			commonDir := repository(t, repo)
+			source, path, expected := repo, "sub/a.go", "sub/a.go"
+			if aliased {
+				alias := filepath.Join(dir, "repo-alias")
+				if err := os.Symlink(repo, alias); err != nil {
+					t.Fatal(err)
+				}
+				path = alias + "/sub/./a.go"
+			} else {
+				source = filepath.Join(repo, ".worktrees", "topic")
+				cmd := exec.Command("git", "worktree", "add", "-q", "-b", "topic", source)
+				cmd.Dir = repo
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git worktree add: %v\n%s", err, out)
+				}
+				expected = ".worktrees/topic/sub/a.go"
+			}
+			external := filepath.Join(dir, "external", "b.go")
+			stored(t, boards, &Snapshot{ID: PathID(source), Root: Standardized(source), Revision: 1, Objects: []model.Object{
+				adoptedObject("obj_diagram", model.Diagram, 0, adoptedDiagramProps(path, external)),
+				adoptedObject("obj_arrow", model.Arrow, 300, map[string]any{"from": map[string]any{"object": "obj_diagram", "node": path + "#run"},
+					"to": map[string]any{"object": "obj_diagram", "node": external + "#helper"}}),
+			}})
+			s := New(boards, time.Hour, nil)
+			s.Loading(RepoID(commonDir), commonDir, adoptedAt)
+			got := readStored(t, s, RepoID(commonDir))
+			if realPath(got.Root) != realPath(repo) {
+				t.Fatalf("board root %s, want %s", got.Root, repo)
+			}
+			objects := map[string]model.Object{}
+			for _, o := range got.Objects {
+				objects[o.ID] = o
+			}
+			if want := adoptedDiagramProps(expected, external); !reflect.DeepEqual(objects["obj_diagram"].Props, want) {
+				t.Errorf("diagram %v\nwant %v", objects["obj_diagram"].Props, want)
+			}
+			wantArrow := map[string]any{"from": map[string]any{"object": "obj_diagram", "node": expected + "#run"},
+				"to": map[string]any{"object": "obj_diagram", "node": external + "#helper"}}
+			if !reflect.DeepEqual(objects["obj_arrow"].Props, wantArrow) {
+				t.Errorf("arrow %v, want %v", objects["obj_arrow"].Props, wantArrow)
+			}
+		})
+	}
+}

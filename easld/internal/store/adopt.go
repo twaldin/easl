@@ -306,7 +306,7 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 			continue
 		}
 
-		r := rerooter{oldRoot: Standardized(snap.Root), top: p.top, live: true, anchor: anchor, mainCheckout: isMainCheckout(p)}
+		r := rerooter{oldRoot: Standardized(snap.Root), top: p.top, live: true, anchor: anchor, destinationRoot: Standardized(target.Root)}
 		format := 1
 		if snap.Format != nil {
 			format = *snap.Format
@@ -658,10 +658,9 @@ type rerooter struct {
 	oldRoot, top string
 	live         bool
 	anchor       string
-	// mainCheckout: the board's worktree is the repository's main checkout, where the
-	// repository board is rooted.
-	mainCheckout bool
-	unanchored   []string
+	// destinationRoot is the board that will build the diagram next, not this worktree's top.
+	destinationRoot string
+	unanchored      []string
 }
 
 // absolute is `path` as written on the old board, absolute.
@@ -873,13 +872,17 @@ func (r *rerooter) place() string {
 	return ""
 }
 
-// moved is Rerooter.moved: a path as the repository board writes what code tiles compute (a
-// diagram's file and its nodes, CallGraphBuilder): relative to the new root when it lies in the
-// main checkout, whatever the anchor and absolute or not on the old board, else absolute.
+// moved is Rerooter.moved: as Board.RelativePath and the destination board's next diagram
+// build write it, relative to that board's root when beneath it as written or through symlinks,
+// including nested linked worktrees; standardized and absolute otherwise.
 func (r *rerooter) moved(path string) string {
-	abs := r.absolute(path)
-	if r.mainCheckout && strings.HasPrefix(abs, r.top+"/") {
-		return abs[len(r.top)+1:]
+	abs := Standardized(r.absolute(path))
+	if strings.HasPrefix(abs, r.destinationRoot+"/") {
+		return abs[len(r.destinationRoot)+1:]
+	}
+	real, realRoot := realPath(abs), realPath(r.destinationRoot)
+	if strings.HasPrefix(real, realRoot+"/") {
+		return real[len(realRoot)+1:]
 	}
 	return abs
 }

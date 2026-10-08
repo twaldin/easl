@@ -315,7 +315,7 @@ public enum RepoBoardMigration {
             }
 
             var rerooter = Rerooter(oldRoot: URL(fileURLWithPath: snapshot.root).standardizedFileURL.path, top: legacy.top, live: legacy.live, anchor: anchor,
-                                    mainCheckout: isMainCheckout(legacy))
+                                    destinationRoot: URL(fileURLWithPath: target.root))
             var objects = snapshot.objects.map { object -> CanvasObject in
                 var object = object
                 if (snapshot.format ?? 1) < 2, RenderMath.isTile(object.type) { object.frame.h += RenderMath.tileTitleHeight }
@@ -541,9 +541,8 @@ struct Rerooter {
     let top: String
     let live: Bool
     let anchor: Anchor
-    /// The legacy board's worktree is the repository's main checkout, where the repository
-    /// board is rooted.
-    var mainCheckout = false
+    /// The board that will build the diagram next, not necessarily this legacy worktree's top.
+    let destinationRoot: URL
     var unanchored: [String] = []
 
     /// `path` as written on the legacy board, absolute.
@@ -561,12 +560,11 @@ struct Rerooter {
     /// were relative to, beyond the top.
     var place: String { oldRoot.hasPrefix(top + "/") ? String(oldRoot.dropFirst(top.count + 1)) : "" }
 
-    /// A path as the repository board writes what code tiles compute (a diagram's file and its
-    /// nodes, `CallGraphBuilder`): relative to the new root when it lies in the main checkout,
-    /// whatever the anchor and absolute or not on the legacy board, else absolute.
+    /// A path as the destination board's next diagram build writes it (`CallGraphBuilder`):
+    /// relative to that board's root when beneath it, including nested linked worktrees and
+    /// symlink aliases; standardized and absolute otherwise.
     func moved(_ path: String) -> String {
-        let absolute = absolute(path)
-        return mainCheckout && absolute.hasPrefix(top + "/") ? String(absolute.dropFirst(top.count + 1)) : absolute
+        Board.relativePath(absolute(path), root: destinationRoot)
     }
 
     /// A diagram node's id, `<path>#<symbol>` (`CallGraphBuilder`), with its path moved as the
