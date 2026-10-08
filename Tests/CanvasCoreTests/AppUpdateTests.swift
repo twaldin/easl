@@ -254,16 +254,60 @@ struct UpdateStagingTests {
     }
 
     @Test func aLaunchDeletesOnlyLeftoversAnHourOld() {
-        let now = Date()
+        let now = Date(timeIntervalSince1970: 10_000)
         let id = "0f8b5d3a-6a8e-4c2b-9d1e-2b7c4e5f6a7b"
+        let old = now.addingTimeInterval(-2 * 60 * 60)
+        let fresh = now.addingTimeInterval(-30)
         let files = [
-            Housekeeping.File(name: ".easl-update-0.2.3-\(id).app", modified: now.addingTimeInterval(-30)),
-            Housekeeping.File(name: ".easl-previous-0.2.3-\(id).app", modified: now.addingTimeInterval(-2 * 60 * 60)),
-            Housekeeping.File(name: ".easl-previous-0.2.2-\(id).app", modified: now.addingTimeInterval(-3 * 60 * 60)),
-            Housekeeping.File(name: "easl.app", modified: now.addingTimeInterval(-9 * 60 * 60)),
+            Housekeeping.File(name: ".easl-update-0.2.3-\(id).app", modified: fresh),
+            Housekeeping.File(name: ".easl-previous-0.2.3-\(id).app", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.2-\(id).app", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.2-\(id).app.protection", modified: old),
+            Housekeeping.File(name: "easl.app", modified: old),
+            // An old protection cannot age a fresh bundle; a fresh one protects its old bundle.
+            Housekeeping.File(name: ".easl-previous-0.2.4-\(id).app", modified: fresh),
+            Housekeeping.File(name: ".easl-previous-0.2.4-\(id).app.protection", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.5-\(id).app", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.5-\(id).app.protection", modified: fresh),
+            // Repeated protection names must keep the newest date for both the backup and protection.
+            Housekeeping.File(name: ".easl-previous-0.2.5-\(id).app.protection", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.6-\(id).app.protection", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.7-\(id).app.protection", modified: fresh),
+            // An unreadable date is treated as young, never as an absent protection.
+            Housekeeping.File(name: ".easl-previous-0.2.8-\(id).app", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.8-\(id).app.protection", modified: .distantFuture),
+            Housekeeping.File(name: ".easl-update-0.2.9-\(id).app", modified: .distantFuture),
+            Housekeeping.File(name: ".easl-previous-not-a-transaction.app.protection", modified: old),
+            Housekeeping.File(name: ".easl-previous-x-\(id).app.protection", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.3-not-a-uuid.app.protection", modified: old),
+            Housekeeping.File(name: ".easl-update-0.2.3-\(id).app.protection", modified: old),
         ]
-        // A fresh copy may be another home's update under way; the running bundle is never one.
-        #expect(AppUpdate.staleLeftovers(files, running: ".easl-previous-0.2.2-\(id).app", now: now) == [".easl-previous-0.2.3-\(id).app"])
+        // A fresh copy may be another home's update under way; never remove the running rollback or its protection.
+        #expect(AppUpdate.staleLeftovers(files, running: ".easl-previous-0.2.2-\(id).app", now: now) == [
+            ".easl-previous-0.2.3-\(id).app",
+            ".easl-previous-0.2.4-\(id).app.protection",
+            ".easl-previous-0.2.6-\(id).app.protection",
+        ])
+    }
+
+    @Test func launchCleanupLeavesAnUndeletableLeftoverButRemovesTheOthers() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        let now = Date()
+        let old = now.addingTimeInterval(-2 * 60 * 60)
+        let id = "0f8b5d3a-6a8e-4c2b-9d1e-2b7c4e5f6a7b"
+        let protected = root.appendingPathComponent(".easl-previous-0.2.3-\(id).app.protection")
+        let removable = root.appendingPathComponent(".easl-update-0.2.3-\(id).app")
+        for entry in [protected, removable] {
+            try files.createDirectory(at: entry, withIntermediateDirectories: true)
+            try files.setAttributes([.modificationDate: old], ofItemAtPath: entry.path)
+        }
+        try files.setAttributes([.immutable: true], ofItemAtPath: protected.path)
+        defer { try? files.setAttributes([.immutable: false], ofItemAtPath: protected.path) }
+        #expect(AppUpdate.removeStaleLeftovers(beside: root, running: "easl.app", now: now) == [removable.lastPathComponent])
+        #expect(files.fileExists(atPath: protected.path))
+        #expect(!files.fileExists(atPath: removable.path))
+        #expect(AppUpdate.removeStaleLeftovers(beside: root.appendingPathComponent("absent"), running: "easl.app", now: now).isEmpty)
     }
 
     @Test func anotherInstanceRunningFromTheSameBundleIsFound() throws {
@@ -321,6 +365,15 @@ enum TestBundle {
 }
 
 extension TestBundle {
+    /// Models a bundle that can be renamed through its writable parent, but whose timestamps
+    /// cannot be changed. The ACL belongs only to this owned fixture; no privilege escalation.
+    static func denyTimestampChanges(_ app: URL) async throws {
+        let denied = try await RemoteHost.run("/bin/chmod", ["+a", "user:\(NSUserName()) deny writeattr", app.path], timeout: 10)
+        try #require(denied.status == 0, "\(denied.errors)")
+        let touch = try await RemoteHost.run("/usr/bin/touch", [app.path], timeout: 10)
+        #expect(touch.status != 0, "the fixture must refuse the native helper's old timestamp write")
+    }
+
     /// Runs the helper for a process that has already exited, relaunching by writing `"$app"`
     /// to `relaunched`; its outcome.
     static func runHelper(app: URL, staging: AppUpdate.Staging, relaunched: URL, afterBackup: String = "") async throws -> AppUpdate.Outcome? {
@@ -364,14 +417,16 @@ struct UpdateHelperTests {
     @Test func theHelperRenamesTheNewAppInAndLeavesNoHiddenCopy() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
-        // A rename keeps the app's old date; the helper dates the backup now.
+        // The installed bundle's metadata is not writable, though its parent permits renames.
         try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)], ofItemAtPath: app.path)
+        let oldDate = try FileManager.default.attributesOfItem(atPath: app.path)[.modificationDate] as? Date
+        try await TestBundle.denyTimestampChanges(app)
         try TestBundle.make(staging.incoming(beside: app), version: "0.2.3", executable: Data("new".utf8))
         #expect(try await runHelper() == .installed)
         #expect(AppUpdate.bundleVersion(of: app) == "0.2.3")
         #expect(AppUpdate.bundleVersion(of: staging.previous) == "0.2.2")
         let backupDate = try FileManager.default.attributesOfItem(atPath: staging.previous.path)[.modificationDate] as? Date
-        #expect(backupDate.map { -$0.timeIntervalSinceNow < AppUpdate.leftoverAge } == true)
+        #expect(backupDate == oldDate, "replacement must not need to change the installed bundle's timestamp")
         #expect(try FileManager.default.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
     }
@@ -379,6 +434,9 @@ struct UpdateHelperTests {
     @Test func aFailedSecondRenamePutsTheOriginalBackByteForByte() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         try TestBundle.make(app, version: "0.2.2", executable: Data((0..<4096).map { _ in UInt8.random(in: 0...255) }))
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)], ofItemAtPath: app.path)
+        let oldDate = try FileManager.default.attributesOfItem(atPath: app.path)[.modificationDate] as? Date
+        try await TestBundle.denyTimestampChanges(app)
         let original = try TestBundle.snapshot(app)
         let incoming = staging.incoming(beside: app)
         try TestBundle.make(incoming, version: "0.2.3")
@@ -391,26 +449,55 @@ struct UpdateHelperTests {
             return
         }
         #expect(try TestBundle.snapshot(app) == original)
+        #expect(try FileManager.default.attributesOfItem(atPath: app.path)[.modificationDate] as? Date == oldDate)
         #expect(!FileManager.default.fileExists(atPath: staging.backup(beside: app).path))
+        #expect(!FileManager.default.fileExists(atPath: staging.protection(beside: app).path))
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
     }
 
-    @Test func theBackupIsFreshTheMomentItTakesItsName() async throws {
+    @Test func cleanupAtTheFirstRenameKeepsRollbackThenTheHelperInstalls() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        let oldDate = Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)
         try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
-        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)], ofItemAtPath: app.path)
+        try files.setAttributes([.modificationDate: oldDate], ofItemAtPath: app.path)
+        try await TestBundle.denyTimestampChanges(app)
         try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
-        // Right after the first rename, what a launch's cleanup would list: the backup's date.
-        let seen = root.appendingPathComponent("seen")
-        let outcome = try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched,
-                                                     afterBackup: "/usr/bin/stat -f %m \"$backup\" > \(RemoteHost.quote(seen.path))")
-        #expect(outcome == .installed)
-        let stamp = try String(contentsOf: seen, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-        let dated = try #require(TimeInterval(stamp).map { Date(timeIntervalSince1970: $0) })
-        let backup = staging.backup(beside: app).lastPathComponent
-        #expect(AppUpdate.isLeftover(backup))
-        #expect(AppUpdate.staleLeftovers([Housekeeping.File(name: backup, modified: dated)], running: "easl.app", now: Date()).isEmpty,
-                "a launch's cleanup must not take the rollback bundle")
+
+        // Stop the actual shell at its first rename, clean beside it, then let it finish.
+        // Both sides have finite bounds; on any test error the gate is released before unwind.
+        let paused = root.appendingPathComponent("paused")
+        let resume = root.appendingPathComponent("resume")
+        let q = RemoteHost.quote
+        let gate = """
+        : > \(q(paused.path))
+        count=0
+        while [ ! -e \(q(resume.path)) ] && [ "$count" -lt 200 ]; do
+          /bin/sleep 0.05
+          count=$((count + 1))
+        done
+        [ -e \(q(resume.path)) ] || exit 1
+        """
+        async let outcome = TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched, afterBackup: gate)
+        do {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while !files.fileExists(atPath: paused.path), ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(files.fileExists(atPath: paused.path), "the helper must reach its real first rename")
+            #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: app.lastPathComponent).isEmpty)
+            #expect(AppUpdate.bundleVersion(of: staging.backup(beside: app)) == "0.2.2", "cleanup must not take the helper's rollback")
+        } catch {
+            try? Data().write(to: resume)
+            _ = try await outcome
+            throw error
+        }
+        try Data().write(to: resume)
+        let installed = try await outcome
+        #expect(installed == .installed)
+        #expect(AppUpdate.bundleVersion(of: app) == "0.2.3")
+        #expect(AppUpdate.bundleVersion(of: staging.previous) == "0.2.2")
+        #expect(!files.fileExists(atPath: staging.protection(beside: app).path))
     }
 
     @Test func aBackupInTheWayReplacesNothing() async throws {
@@ -426,6 +513,95 @@ struct UpdateHelperTests {
         }
         #expect(try TestBundle.snapshot(app) == original)
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+        #expect(!FileManager.default.fileExists(atPath: staging.protection(beside: app).path))
+    }
+
+    @Test func aProtectionInTheWayReplacesNothingAndIsNotReused() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        let original = try TestBundle.snapshot(app)
+        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
+        let protection = staging.protection(beside: app)
+        try files.createDirectory(at: protection, withIntermediateDirectories: false)
+        let sentinel = protection.appendingPathComponent("not-ours")
+        try Data("keep".utf8).write(to: sentinel)
+        let outcome = try await runHelper()
+        guard case .unchanged? = outcome else {
+            Issue.record("expected nothing replaced, got \(String(describing: outcome))")
+            return
+        }
+        #expect(try TestBundle.snapshot(app) == original)
+        #expect(try String(contentsOf: sentinel, encoding: .utf8) == "keep")
+        #expect(!files.fileExists(atPath: staging.backup(beside: app).path))
+        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+    }
+
+    @Test func aFailedFirstRenameLeavesTheInstalledBundleWholeAndRemovesItsProtection() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        let original = try TestBundle.snapshot(app)
+        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
+        try files.setAttributes([.immutable: true], ofItemAtPath: app.path)
+        defer { try? files.setAttributes([.immutable: false], ofItemAtPath: app.path) }
+        let outcome = try await runHelper()
+        guard case .unchanged? = outcome else {
+            Issue.record("expected nothing replaced, got \(String(describing: outcome))")
+            return
+        }
+        #expect(try TestBundle.snapshot(app) == original)
+        #expect(!files.fileExists(atPath: staging.backup(beside: app).path))
+        #expect(!files.fileExists(atPath: staging.protection(beside: app).path))
+        #expect(AppUpdate.bundleVersion(of: staging.incoming(beside: app)) == "0.2.3")
+        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+    }
+
+    @Test func aStrandedRollbackKeepsItsProtectionAndIsNeverCleanedWhileRunning() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        try files.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)], ofItemAtPath: app.path)
+        let original = try TestBundle.snapshot(app)
+        try await TestBundle.denyTimestampChanges(app)
+        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
+        let outcome = try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched, afterBackup: "/bin/mkdir \"$app\"")
+        let backup = staging.backup(beside: app)
+        #expect(outcome == .stranded(backup.path))
+        #expect(try TestBundle.snapshot(backup) == original)
+        #expect(try String(contentsOf: relaunched, encoding: .utf8) == backup.path)
+        #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: app.lastPathComponent).isEmpty)
+        #expect(files.fileExists(atPath: staging.protection(beside: app).path))
+        let expired = Date().addingTimeInterval(AppUpdate.leftoverAge + 1)
+        #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: backup.lastPathComponent, now: expired)
+                == [staging.incoming(beside: app).lastPathComponent])
+        #expect(try TestBundle.snapshot(backup) == original)
+        #expect(files.fileExists(atPath: staging.protection(beside: app).path))
+    }
+
+    @Test func anInstalledUpdateKeepsRollbackProtectionIfMovingItToStagingFails() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        try files.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)], ofItemAtPath: app.path)
+        let original = try TestBundle.snapshot(app)
+        try await TestBundle.denyTimestampChanges(app)
+        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
+        // A file at the archive destination refuses moving a directory there.
+        let outcome = try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched,
+                                                     afterBackup: "printf blocked > \"$previous\"")
+        let backup = staging.backup(beside: app)
+        let protection = staging.protection(beside: app)
+        #expect(outcome == .installed)
+        #expect(AppUpdate.bundleVersion(of: app) == "0.2.3")
+        #expect(try TestBundle.snapshot(backup) == original)
+        #expect(try String(contentsOf: staging.previous, encoding: .utf8) == "blocked")
+        #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: app.lastPathComponent).isEmpty)
+        #expect(files.fileExists(atPath: protection.path))
+        let expired = Date().addingTimeInterval(AppUpdate.leftoverAge + 1)
+        #expect(Set(AppUpdate.removeStaleLeftovers(beside: applications, running: app.lastPathComponent, now: expired))
+                == Set([backup.lastPathComponent, protection.lastPathComponent]))
+        #expect(try files.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
     }
 
     @Test func aUsersRelaunchOpensANewInstanceInFrontWithTheOldEnvironment() {

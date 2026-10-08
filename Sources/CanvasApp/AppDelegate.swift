@@ -52,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DevInput.install()
         // app.metrics: main-thread stretches (and the app.log line naming a long one's cause).
         Metrics.shared.monitorMainThread()
+        // A main thread stuck for a second gets `sample`d into <home>/stalls/ (docs/design.md,
+        // Metrics); never during a measured run, which would see the sampler's own cost.
+        if !DevPerf.enabled { Metrics.shared.sampleStalls(into: AppPaths.support.appendingPathComponent("stalls", isDirectory: true)) }
         // easl's own leftovers: dead sessions' zmx logs, read Ghostty configs, old renders.
         Housekeeping.pruneAtLaunch()
         if let url = AppPaths.asset(DrawingStyle.fontAsset) { DrawingStyle.registerFonts(url) }

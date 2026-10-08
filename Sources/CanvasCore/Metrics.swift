@@ -99,10 +99,26 @@ public final class Metrics: @unchecked Sendable {
     private let signposter = OSSignposter(subsystem: "net.waldin.easl", category: "perf")
     private let launched: Double
     private let process = ProcessSampler()
+    /// The main thread's turn in progress: its start on `now()`'s clock, which names it (a reset
+    /// doesn't move it); nil while the loop sleeps. Set at every run-loop activity under `lock`,
+    /// where the stall watchdog claims turns, so it never claims one that has already ended.
+    private var turnStart: Double?
+    private var stallSampler: StallSampler?
+    private var stallPolicy = StallSampling()
+    /// The one sample in flight, from the watchdog's claim until its file arrives or it fails:
+    /// its turn, its file once `sample` has finished, and once the turn has ended first, that
+    /// turn's line (all of it) and when it ended. A late file gets a tagged line and names the
+    /// window's `longest` if that turn still is it.
+    private var stallPending: (turn: Double, file: String?, ended: Stretch?)?
+    private var stallsSampled = 0
+    private var stallNewest: String?
+    /// Where a long stretch's line goes: `app.log` (NSLog), or a test's list.
+    private let log: @Sendable (String) -> Void
 
-    init() {
+    init(log: @escaping @Sendable (String) -> Void = { NSLog("%@", $0) }) {
         launched = Self.now()
         since = launched
+        self.log = log
     }
 
     /// Seconds on a monotonic clock.
@@ -167,13 +183,13 @@ public final class Metrics: @unchecked Sendable {
         let id = signposter.makeSignpostID()
         let state = signposter.beginInterval(signpost, id: id, "\(label, privacy: .public) \(text, privacy: .public)")
         let main = Thread.isMainThread
-        if main { MainMonitor.push() }
+        if main { MainMonitor.installed?.push() }
         let start = Self.now()
         defer {
             let ms = (Self.now() - start) * 1000
             signposter.endInterval(signpost, state)
             record(label, ms: ms, bytes: bytes)
-            if main { MainMonitor.pop(text.isEmpty ? label : "\(label) \(text)", ms: ms) }
+            if main { MainMonitor.installed?.pop(text.isEmpty ? label : "\(label) \(text)", ms: ms) }
         }
         return try body()
     }
@@ -191,22 +207,105 @@ public final class Metrics: @unchecked Sendable {
         MainMonitor.install(self)
     }
 
-    fileprivate func mainStretch(_ ms: Double, cause: @autoclosure () -> String) {
-        let now = Self.now()
-        let tally = Tally(n: 1, ms: ms, maxMs: ms)
+    /// Samples the process (`/usr/bin/sample`, into `directory`) while the main thread has been in
+    /// one turn for `StallSampling.threshold` seconds, at most every `StallSampling.minInterval`;
+    /// the stretch's cause then names the file. Not for measured runs: `sample` suspends the
+    /// task's threads briefly while it walks their stacks.
+    public func sampleStalls(into directory: URL) {
         lock.lock()
-        if ms >= Self.hitchStretch { series["main.stretch50", default: Series()].add(tally, at: now) }
-        if ms >= Self.logStretch { series["main.stretch250", default: Series()].add(tally, at: now) }
-        let longer = ms > (longest?.ms ?? 0)
-        lock.unlock()
-        guard longer || ms >= Self.logStretch else { return }
-        let text = cause()
-        if longer {
-            lock.lock()
-            longest = Stretch(ms: ms, cause: text, at: now)
-            lock.unlock()
+        defer { lock.unlock() }
+        guard stallSampler == nil else { return }
+        let sampler = StallSampler(directory: directory, metrics: self)
+        sampler.start()
+        stallSampler = sampler
+    }
+
+    /// The stall watchdog, awake at `now`: the main thread's turn in progress, when the policy
+    /// samples it now, becomes the sample in flight. Nil once that turn has ended: it isn't
+    /// sampled, and the policy doesn't count it.
+    func claimStall(at now: Double) -> Double? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard stallPolicy.shouldSample(turnStart: turnStart, now: now), let turnStart else { return nil }
+        stallPending = (turnStart, nil, nil)
+        return turnStart
+    }
+
+    /// The sample of the turn that started at `turn` is in `file`.
+    func stallSampled(_ turn: Double, file: String) {
+        var line: Stretch?
+        lock.lock()
+        stallsSampled += 1
+        stallNewest = file
+        if let pending = stallPending, pending.turn == turn {
+            if var ended = pending.ended {
+                ended.cause = "\(file); \(ended.cause)"
+                line = ended
+                if let stretch = longest, stretch.at == ended.at { longest?.cause = "\(file); \(stretch.cause)" }
+                stallPending = nil
+            } else {
+                stallPending?.file = file
+            }
         }
-        if ms >= Self.logStretch { NSLog("easl: main thread busy %.0f ms: %@", ms, text) }
+        lock.unlock()
+        if let line { log(Self.busyLine(line.ms, line.cause)) }
+    }
+
+    /// The sample of the turn that started at `turn` left no file: the claim is released (a turn
+    /// that already ended has had its line, untagged).
+    func stallFailed(_ turn: Double) {
+        lock.lock()
+        if stallPending?.turn == turn { stallPending = nil }
+        lock.unlock()
+    }
+
+    /// A main run-loop activity at `now`: the turn that started at `ended.start` is over and
+    /// `next` begins (nil: the loop sleeps). `ended.ms` is the part of the turn the window counts,
+    /// from the last reset if one came during it, and `cause` what it ran. A turn a reset cut has
+    /// no cause of its own in the new window (its spans were dropped at its end, the first activity
+    /// after the reset: "untagged work"); `wholeCause` is then what it ran, for its sample's line.
+    ///
+    /// Publishing `next` and settling the ended turn's sample are one critical section on the
+    /// lock the watchdog claims with, so no claim lands between them: the ended turn's claim,
+    /// if any, is still its own, and the next turn can't be claimed before it is published. The
+    /// caller formats `cause` beforehand for a turn of `hitchStretch` or more; a shorter one's is
+    /// formatted here only if the watchdog claimed it (the observer timed its end before the
+    /// claim and published it after), which is rare. Lines are formatted and logged after.
+    fileprivate func mainTurn(ended: (start: Double, ms: Double)?, next: Double?, at now: Double,
+                              cause: @autoclosure () -> String, wholeCause: String?) {
+        var line: (ms: Double, cause: String)?
+        lock.lock()
+        turnStart = next
+        if let ended, ended.ms >= Self.hitchStretch || stallPending?.turn == ended.start {
+            let ms = ended.ms
+            let text = cause()
+            let tally = Tally(n: 1, ms: ms, maxMs: ms)
+            var tag = ""
+            if ms >= Self.hitchStretch { series["main.stretch50", default: Series()].add(tally, at: now) }
+            if ms >= Self.logStretch {
+                series["main.stretch250", default: Series()].add(tally, at: now)
+                line = (ms: ms, cause: text)
+            }
+            if stallPending?.turn == ended.start {
+                // The sampled turn's line is all of it, though a reset may have cut what the
+                // window counts.
+                let whole = Stretch(ms: (now - ended.start) * 1000, cause: wholeCause ?? text, at: now)
+                if let file = stallPending?.file {
+                    tag = "\(file); "
+                    stallPending = nil
+                } else {
+                    stallPending?.ended = whole
+                }
+                line = (ms: whole.ms, cause: tag + whole.cause)
+            }
+            if ms >= Self.hitchStretch && ms > (longest?.ms ?? 0) { longest = Stretch(ms: ms, cause: tag + text, at: now) }
+        }
+        lock.unlock()
+        if let line { log(Self.busyLine(line.ms, line.cause)) }
+    }
+
+    private static func busyLine(_ ms: Double, _ cause: String) -> String {
+        String(format: "easl: main thread busy %.0f ms: %@", ms, cause)
     }
 
     fileprivate func mainBusy(_ ms: Double, turns: Int) {
@@ -269,6 +368,8 @@ public final class Metrics: @unchecked Sendable {
         let offenders = self.offenders
         let longest = self.longest
         let since = self.since
+        let stallsSampled = self.stallsSampled
+        let stallNewest = self.stallNewest
         lock.unlock()
         var counters: [String: JSONValue] = [:]
         for (name, s) in series {
@@ -293,6 +394,9 @@ public final class Metrics: @unchecked Sendable {
         if let longest {
             result["longest"] = .object(["ms": .number(longest.ms.rounded()), "cause": .string(longest.cause), "agoS": .number((now - longest.at).rounded())])
         }
+        var stalls: [String: JSONValue] = ["sampled": .number(Double(stallsSampled))]
+        if let stallNewest { stalls["newest"] = .string(stallNewest) }
+        result["stalls"] = .object(stalls)
         return .object(result)
     }
 }
@@ -312,50 +416,69 @@ public final class GaugeHold: Sendable {
 
 /// The main run loop's turns, timed by an observer: a turn runs from waking (or the end of the
 /// previous turn) until the loop next checks timers or goes to sleep. Main-thread spans inside a
-/// turn are kept so a long turn can say what it did. Main thread only.
-private enum MainMonitor {
-    nonisolated(unsafe) static var metrics: Metrics?
-    nonisolated(unsafe) static var observer: CFRunLoopObserver?
-    nonisolated(unsafe) static var turns = RunLoopTurns(at: 0)
-    nonisolated(unsafe) static var depth = 0
+/// turn are kept so a long turn can say what it did. Main thread only: `monitorMainThread`
+/// installs one on the main run loop; a test drives its own with chosen times.
+final class MainMonitor {
+    nonisolated(unsafe) fileprivate static var installed: MainMonitor?
+    nonisolated(unsafe) private static var observer: CFRunLoopObserver?
+    private let metrics: Metrics
+    private var turns: RunLoopTurns
+    private var depth = 0
     /// Spans that ended in this turn: (nesting depth, label, ms), in end order.
-    nonisolated(unsafe) static var spans: [(depth: Int, label: String, ms: Double)] = []
+    private var spans: [(depth: Int, label: String, ms: Double)] = []
 
-    static func install(_ metrics: Metrics) {
-        guard observer == nil else { return }
+    init(_ metrics: Metrics, at now: Double) {
         self.metrics = metrics
+        turns = RunLoopTurns(at: now, reset: metrics.resetAt)
+    }
+
+    fileprivate static func install(_ metrics: Metrics) {
+        guard observer == nil else { return }
+        let monitor = MainMonitor(metrics, at: Metrics.now())
         let activities = CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeTimers.rawValue | CFRunLoopActivity.beforeWaiting.rawValue
         let observer = CFRunLoopObserverCreateWithHandler(nil, activities, true, 0) { _, activity in
-            MainMonitor.loop(activity)
+            monitor.loop(sleeping: activity == .beforeWaiting, at: Metrics.now())
         }
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         self.observer = observer
-        turns = RunLoopTurns(at: Metrics.now(), reset: metrics.resetAt)
+        installed = monitor
     }
 
-    static func push() { depth += 1 }
+    /// A span begins on the main thread.
+    func push() { depth += 1 }
 
-    static func pop(_ label: String, ms: Double) {
+    /// The innermost open span ends: `label`, `ms` long.
+    func pop(_ label: String, ms: Double) {
         depth -= 1
-        guard metrics != nil else { return }
         // Keep the turn's record small: only spans that could matter to a long stretch.
         if ms >= 1 || depth == 0 { spans.append((depth, label, ms)) }
         if spans.count > 64 { spans.removeFirst(spans.count - 64) }
     }
 
-    static func loop(_ activity: CFRunLoopActivity) {
-        guard let metrics else { return }
-        let now = Metrics.now()
-        // Spans that ended before a reset are not the new window's (open ones keep their depth).
-        if turns.rebase(reset: metrics.resetAt) { spans.removeAll(keepingCapacity: true) }
-        let step = turns.activity(sleeping: activity == .beforeWaiting, at: now)
-        if let ms = step.turn, ms >= Metrics.hitchStretch { metrics.mainStretch(ms, cause: cause()) }
+    /// A run-loop activity at `now`: the loop goes to sleep (`sleeping`), or wakes or checks timers.
+    func loop(sleeping: Bool, at now: Double) {
+        let started = turns.turnStart
+        // A reset is applied here, at the first activity after it, which ends the turn it came
+        // in: none of that turn's spans are the new window's (open ones keep their depth), so its
+        // cause there is "untagged work". A sampled turn's own line still names them.
+        var wholeCause: String?
+        if turns.rebase(reset: metrics.resetAt) {
+            wholeCause = cause()
+            spans.removeAll(keepingCapacity: true)
+        }
+        let step = turns.activity(sleeping: sleeping, at: now)
+        var ended: (start: Double, ms: Double)?
+        if let started, let ms = step.turn { ended = (start: started, ms: ms) }
+        // Formatted here, off the metrics lock, for a turn that could be counted, logged or kept;
+        // a shorter turn's only under the lock, if the stall watchdog claimed it.
+        let text: String? = (step.turn ?? 0) >= Metrics.hitchStretch ? cause() : nil
+        metrics.mainTurn(ended: ended, next: turns.turnStart, at: now, cause: text ?? cause(), wholeCause: wholeCause)
         spans.removeAll(keepingCapacity: true)
         if let busy = step.flush { metrics.mainBusy(busy.ms, turns: busy.turns) }
     }
 
     /// The turn's top-level spans, longest first, each with its longest nested span.
-    static func cause() -> String {
+    private func cause() -> String {
         var parts: [(ms: Double, text: String)] = []
         var children: [(depth: Int, label: String, ms: Double)] = []
         for span in spans {
@@ -376,8 +499,10 @@ private enum MainMonitor {
 
 /// Run-loop turn timing (times in seconds, results in ms): each observed activity ends the turn
 /// in progress, and busy time is handed over about once a second. A metrics reset rebases it, so
-/// busy time and a turn that began before the reset don't count toward the new window.
+/// busy time and the part of a turn before the reset don't count toward the new window.
 public struct RunLoopTurns: Sendable {
+    /// When the turn in progress began (nil while the loop sleeps). A reset doesn't move it: it
+    /// names the turn, which a stall sample is correlated by.
     public private(set) var turnStart: Double?
     private var busy = 0.0
     private var turns = 0
@@ -396,16 +521,15 @@ public struct RunLoopTurns: Sendable {
         busy = 0
         turns = 0
         flushed = reset
-        if let start = turnStart, start < reset { turnStart = reset }
         return true
     }
 
-    /// One run-loop activity at `now`: the length of the turn it ended (ms), and the busy time
-    /// and turn count due to be recorded, once a second.
+    /// One run-loop activity at `now`: the length of the turn it ended since the last reset (ms),
+    /// and the busy time and turn count due to be recorded, once a second.
     public mutating func activity(sleeping: Bool, at now: Double) -> (turn: Double?, flush: (ms: Double, turns: Int)?) {
         var turn: Double?
         if let start = turnStart {
-            let ms = (now - start) * 1000
+            let ms = (now - max(start, reset)) * 1000
             busy += ms
             turns += 1
             turn = ms

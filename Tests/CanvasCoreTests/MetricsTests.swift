@@ -10,6 +10,7 @@ struct MetricsTests {
         // The reset lands 300 ms into the next turn, which ends 50 ms later.
         let rebased = turns.rebase(reset: 100.7)
         #expect(rebased)
+        #expect(turns.turnStart == 100.4, "the turn keeps its start: its stall sample is correlated by it")
         let step = turns.activity(sleeping: true, at: 100.75)
         #expect(abs((step.turn ?? 0) - 50) < 0.001, "the turn counts from the reset")
         #expect(step.flush == nil)

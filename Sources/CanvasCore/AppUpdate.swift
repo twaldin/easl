@@ -22,6 +22,8 @@ public enum AppUpdate {
     static let incomingPrefix = ".easl-update-"
     /// The installed app, renamed aside by the helper, `<prefix><version>.app`.
     static let backupPrefix = ".easl-previous-"
+    /// An empty sibling directory dating a rollback bundle's transaction, not the bundle itself.
+    private static let protectionSuffix = ".protection"
 
     /// Where to read `latest.json`: `override` (`EASL_UPDATE_URL`, for testing against a local
     /// server) when set, else `defaultSource`. Nil when the override isn't an http(s) URL.
@@ -159,6 +161,12 @@ public enum AppUpdate {
             installed.deletingLastPathComponent().appendingPathComponent("\(AppUpdate.backupPrefix)\(version)-\(transaction).app", isDirectory: true)
         }
 
+        /// A fresh, exclusively created directory beside the rollback bundle. Its date protects
+        /// that bundle from launch cleanup without writing the installed app's metadata.
+        public func protection(beside installed: URL) -> URL {
+            installed.deletingLastPathComponent().appendingPathComponent(backup(beside: installed).lastPathComponent + AppUpdate.protectionSuffix, isDirectory: true)
+        }
+
         /// Empties the folder for a new download. Before deleting or creating anything it checks
         /// that the folder, symlinks resolved, is a direct child of `updates`, and again once
         /// it's made. Blocking: call it off the main thread.
@@ -192,15 +200,55 @@ public enum AppUpdate {
         return false
     }
 
+    /// A rollback protection directory: `.easl-previous-<version>-<uuid>.app.protection`.
+    private static func isProtection(_ name: String) -> Bool {
+        name.hasPrefix(backupPrefix) && name.hasSuffix(protectionSuffix) && isLeftover(String(name.dropLast(protectionSuffix.count)))
+    }
+
     /// How old a leftover must be before a launch deletes it: an update renames its copies within
     /// seconds, so one this old belongs to no update still running (another home's instance of
     /// the same bundle may be mid-update).
     public static let leftoverAge: TimeInterval = 60 * 60
 
-    /// The leftovers in the installed app's folder a launch deletes: older than `leftoverAge`,
-    /// and never `running`, the name of the bundle easl runs from.
+    /// The leftovers and protection directories a launch deletes: at least `leftoverAge` old,
+    /// and never `running` or its protection. A backup's newer protection date takes precedence
+    /// over its bundle date, which a rename preserves; an old protection never ages a fresh bundle.
+    /// Repeated protection names use the newest date.
     public static func staleLeftovers(_ files: [Housekeeping.File], running: String, now: Date) -> [String] {
-        files.filter { isLeftover($0.name) && $0.name != running && now.timeIntervalSince($0.modified) >= leftoverAge }.map(\.name)
+        let protections = Dictionary(files.filter { isProtection($0.name) }.map { ($0.name, $0.modified) }, uniquingKeysWith: max)
+        return files.compactMap { file in
+            guard file.name != running, file.name != running + protectionSuffix else { return nil }
+            if isLeftover(file.name) {
+                let modified = max(file.modified, protections[file.name + protectionSuffix] ?? file.modified)
+                return now.timeIntervalSince(modified) >= leftoverAge ? file.name : nil
+            }
+            guard let modified = protections[file.name] else { return nil }
+            return now.timeIntervalSince(modified) >= leftoverAge ? file.name : nil
+        }
+    }
+
+    /// Lists the entries in `folder`, applies `staleLeftovers`, and returns the names actually
+    /// removed. Launch cleanup is deliberately best-effort: an unreadable directory is skipped;
+    /// an unreadable date is treated as young, keeping that entry and, for a protection, its backup.
+    /// Failed removals are logged and skipped without failing launch or stopping other removals.
+    /// Blocking: call it off the main thread.
+    public static func removeStaleLeftovers(beside folder: URL, running: String, now: Date = Date()) -> [String] {
+        let files = FileManager.default
+        guard let urls = try? files.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+        let entries = urls.map { url in
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantFuture
+            return Housekeeping.File(name: url.lastPathComponent, modified: modified)
+        }
+        return staleLeftovers(entries, running: running, now: now).filter { name in
+            let url = folder.appendingPathComponent(name)
+            do {
+                try files.removeItem(at: url)
+                return true
+            } catch {
+                NSLog("easl: couldn't remove %@, left by an update: %@", url.path, error.localizedDescription)
+                return false
+            }
+        }
     }
 
     /// An easl process: its pid and the bundle it runs from.
@@ -373,11 +421,13 @@ public enum AppUpdate {
     /// `staging.incoming(beside:)` (the verified copy) to `app`; if the second rename fails, the
     /// backup goes straight back. A rename never copies, so a failure leaves each bundle whole;
     /// `mv` would move into a folder already at the destination, so each destination must be
-    /// free first. `app` is dated now before it takes the backup's name (a rename keeps the
-    /// date, and a launch deletes leftovers an hour old), and a failed touch replaces nothing.
-    /// After a success the backup goes to `staging.previous` (a failure there is harmless: the
-    /// next launch deletes it). It writes the outcome to `staging.result` (`Outcome`) and runs
-    /// `relaunch`, a shell command that opens `"$app"`: the new version, or the old one.
+    /// free first. Before the first rename it exclusively creates `staging.protection(beside:)`,
+    /// a fresh empty directory whose date protects the rollback bundle from hour-old cleanup,
+    /// without writing the installed app's timestamps. A failure to create it replaces nothing.
+    /// After a success the backup goes to `staging.previous`; its protection stays if that move
+    /// fails, or rollback strands the backup. Otherwise the empty protection is removed.
+    /// It writes the outcome to `staging.result` (`Outcome`) and runs `relaunch`, a shell command
+    /// that opens `"$app"`: the new version, or the old one.
     /// `relaunch` is `relaunchCommand` in the app; tests pass their own, and `afterBackup`, a
     /// command run right after the first rename.
     public static func helperScript(pid: Int32, app: URL, staging: Staging, relaunch: String, afterBackup: String = "") -> String {
@@ -387,20 +437,26 @@ public enum AppUpdate {
         app=\(q(app.path))
         new=\(q(staging.incoming(beside: app).path))
         backup=\(q(staging.backup(beside: app).path))
+        protection=\(q(staging.protection(beside: app).path))
         previous=\(q(staging.previous.path))
         result=\(q(staging.result.path))
         vacant() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
         unchanged() { printf 'unchanged: %s\\n' "$1" > "$result"; }
         replace() {
           vacant "$backup" || { unchanged "$backup is in the way"; return; }
-          err=$(/usr/bin/touch "$app" 2>&1) || { unchanged "$err"; return; }
-          err=$(/bin/mv "$app" "$backup" 2>&1) || { unchanged "$err"; return; }
+          err=$(/bin/mkdir "$protection" 2>&1) || { unchanged "$err"; return; }
+          err=$(/bin/mv "$app" "$backup" 2>&1) || { unchanged "$err"; /bin/rmdir "$protection"; return; }
           \(afterBackup)
           if vacant "$app" && err=$(/bin/mv "$new" "$app" 2>&1); then
             echo installed > "$result"
-            /bin/mv "$backup" "$previous" || echo "easl: $backup stays until the next launch"
+            if /bin/mv "$backup" "$previous"; then
+              /bin/rmdir "$protection"
+            else
+              echo "easl: $backup stays until the next launch"
+            fi
           elif vacant "$app" && /bin/mv "$backup" "$app"; then
             printf 'restored: %s\\n' "${err:-something else took $app}" > "$result"
+            /bin/rmdir "$protection"
           else
             printf 'stranded: %s\\n' "$backup" > "$result"
             app=$backup

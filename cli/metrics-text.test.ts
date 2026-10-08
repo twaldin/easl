@@ -15,10 +15,19 @@ test("draws show as a per-second rate over the 60 s window with the launch total
   expect(metricsText(m)).toContain("draws    59.5/s over 60 s (total 20000); terminals live 15");
 });
 
-test("no draws line before any terminal drew, and no keys line before any key", () => {
-  const text = metricsText(base());
+test("no draws line before any terminal drew, no keys line before any key, no stalls line before a sample", () => {
+  const m = base();
+  m.stalls = { sampled: 0 };
+  const text = metricsText(m);
   expect(text).not.toContain("draws");
   expect(text).not.toContain("keys ");
+  expect(text).not.toContain("stalls");
+});
+
+test("stalls name the count sampled since launch and the newest file", () => {
+  const m = base();
+  m.stalls = { sampled: 3, newest: "stalls/2026-10-08T051210Z.txt" };
+  expect(metricsText(m)).toContain("stalls   3 sampled since launch, newest stalls/2026-10-08T051210Z.txt");
 });
 
 test("keys report the 60 s window's mean and max wait and the launch total's max", () => {
