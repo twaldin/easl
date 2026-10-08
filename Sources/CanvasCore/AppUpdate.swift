@@ -164,7 +164,7 @@ public enum AppUpdate {
         /// A fresh, exclusively created directory beside the rollback bundle. Its date protects
         /// that bundle from launch cleanup without writing the installed app's metadata.
         public func protection(beside installed: URL) -> URL {
-            URL(fileURLWithPath: backup(beside: installed).path + AppUpdate.protectionSuffix, isDirectory: true)
+            installed.deletingLastPathComponent().appendingPathComponent(backup(beside: installed).lastPathComponent + AppUpdate.protectionSuffix, isDirectory: true)
         }
 
         /// Empties the folder for a new download. Before deleting or creating anything it checks
@@ -200,6 +200,7 @@ public enum AppUpdate {
         return false
     }
 
+    /// A rollback protection directory: `.easl-previous-<version>-<uuid>.app.protection`.
     private static func isProtection(_ name: String) -> Bool {
         name.hasPrefix(backupPrefix) && name.hasSuffix(protectionSuffix) && isLeftover(String(name.dropLast(protectionSuffix.count)))
     }
@@ -209,13 +210,12 @@ public enum AppUpdate {
     /// the same bundle may be mid-update).
     public static let leftoverAge: TimeInterval = 60 * 60
 
-    /// The leftovers and protection directories a launch deletes: older than `leftoverAge`,
-    /// and never `running` or its protection. A backup's newer transaction date takes precedence
-    /// over its bundle date, which a rename preserves; a stale marker never ages a fresh bundle.
+    /// The leftovers and protection directories a launch deletes: at least `leftoverAge` old,
+    /// and never `running` or its protection. A backup's newer protection date takes precedence
+    /// over its bundle date, which a rename preserves; an old protection never ages a fresh bundle.
+    /// `files` is a directory listing, with unique names.
     public static func staleLeftovers(_ files: [Housekeeping.File], running: String, now: Date) -> [String] {
-        let protections = files.reduce(into: [String: Date]()) { dates, file in
-            if isProtection(file.name) { dates[file.name] = max(dates[file.name] ?? file.modified, file.modified) }
-        }
+        let protections = Dictionary(uniqueKeysWithValues: files.filter { isProtection($0.name) }.map { ($0.name, $0.modified) })
         return files.compactMap { file in
             guard file.name != running, file.name != running + protectionSuffix else { return nil }
             if isLeftover(file.name) {
@@ -223,6 +223,26 @@ public enum AppUpdate {
                 return now.timeIntervalSince(modified) >= leftoverAge ? file.name : nil
             }
             return isProtection(file.name) && now.timeIntervalSince(file.modified) >= leftoverAge ? file.name : nil
+        }
+    }
+
+    /// Lists the entries in `folder`, applies `staleLeftovers`, and returns the names actually
+    /// removed. Launch cleanup is deliberately best-effort: an unreadable directory or date,
+    /// or a failed removal, is skipped rather than failing launch or stopping other removals.
+    /// Blocking: call it off the main thread.
+    public static func removeStaleLeftovers(beside folder: URL, running: String, now: Date = Date()) -> [String] {
+        let files = FileManager.default
+        guard let urls = try? files.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+        let entries = urls.compactMap { url in
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).map { Housekeeping.File(name: url.lastPathComponent, modified: $0) }
+        }
+        return staleLeftovers(entries, running: running, now: now).filter { name in
+            do {
+                try files.removeItem(at: folder.appendingPathComponent(name))
+                return true
+            } catch {
+                return false
+            }
         }
     }
 

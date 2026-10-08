@@ -261,9 +261,9 @@ final class Updater {
     }
 
     /// At launch, off the main thread: logs what the helper did (and says so when it failed),
-    /// deletes `updates/`'s folders, except one easl now runs from, and the hidden copies and
-    /// transaction protection directories a stopped update left beside this app over an hour
-    /// ago (`AppUpdate.staleLeftovers`: a newer transaction may be another home's update), never
+    /// deletes `updates/`'s folders, except one easl now runs from, and asks CanvasCore to remove
+    /// stale hidden copies and protection directories beside this app. Cleanup is deliberately
+    /// best-effort; `AppUpdate.removeStaleLeftovers` tolerates filesystem errors and never removes
     /// this app or its protection.
     private func cleanUp() {
         let updates = AppPaths.updates
@@ -287,12 +287,8 @@ final class Updater {
                 try? files.removeItem(at: folder)
             }
             let beside = running.deletingLastPathComponent()
-            let entries = ((try? files.contentsOfDirectory(at: beside, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []).compactMap { url in
-                (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).map { Housekeeping.File(name: url.lastPathComponent, modified: $0) }
-            }
-            for name in AppUpdate.staleLeftovers(entries, running: running.lastPathComponent, now: Date()) {
-                NSLog("easl: removing %@, left by an update", beside.appendingPathComponent(name).path)
-                try? files.removeItem(at: beside.appendingPathComponent(name))
+            for name in AppUpdate.removeStaleLeftovers(beside: beside, running: running.lastPathComponent) {
+                NSLog("easl: removed %@, left by an update", beside.appendingPathComponent(name).path)
             }
             guard !failures.isEmpty else { return }
             let message = failures.joined(separator: "\n\n")

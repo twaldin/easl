@@ -254,16 +254,54 @@ struct UpdateStagingTests {
     }
 
     @Test func aLaunchDeletesOnlyLeftoversAnHourOld() {
-        let now = Date()
+        let now = Date(timeIntervalSince1970: 10_000)
         let id = "0f8b5d3a-6a8e-4c2b-9d1e-2b7c4e5f6a7b"
+        let old = now.addingTimeInterval(-2 * 60 * 60)
+        let fresh = now.addingTimeInterval(-30)
         let files = [
-            Housekeeping.File(name: ".easl-update-0.2.3-\(id).app", modified: now.addingTimeInterval(-30)),
-            Housekeeping.File(name: ".easl-previous-0.2.3-\(id).app", modified: now.addingTimeInterval(-2 * 60 * 60)),
-            Housekeeping.File(name: ".easl-previous-0.2.2-\(id).app", modified: now.addingTimeInterval(-3 * 60 * 60)),
-            Housekeeping.File(name: "easl.app", modified: now.addingTimeInterval(-9 * 60 * 60)),
+            Housekeeping.File(name: ".easl-update-0.2.3-\(id).app", modified: fresh),
+            Housekeeping.File(name: ".easl-previous-0.2.3-\(id).app", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.2-\(id).app", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.2-\(id).app.protection", modified: old),
+            Housekeeping.File(name: "easl.app", modified: old),
+            // An old protection cannot age a fresh bundle; a fresh one protects its old bundle.
+            Housekeeping.File(name: ".easl-previous-0.2.4-\(id).app", modified: fresh),
+            Housekeeping.File(name: ".easl-previous-0.2.4-\(id).app.protection", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.5-\(id).app", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.5-\(id).app.protection", modified: fresh),
+            Housekeeping.File(name: ".easl-previous-0.2.6-\(id).app.protection", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.7-\(id).app.protection", modified: fresh),
+            Housekeeping.File(name: ".easl-previous-not-a-transaction.app.protection", modified: old),
+            Housekeeping.File(name: ".easl-previous-x-\(id).app.protection", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.3-not-a-uuid.app.protection", modified: old),
+            Housekeeping.File(name: ".easl-update-0.2.3-\(id).app.protection", modified: old),
         ]
-        // A fresh copy may be another home's update under way; the running bundle is never one.
-        #expect(AppUpdate.staleLeftovers(files, running: ".easl-previous-0.2.2-\(id).app", now: now) == [".easl-previous-0.2.3-\(id).app"])
+        // A fresh copy may be another home's update under way; never remove the running rollback or its protection.
+        #expect(AppUpdate.staleLeftovers(files, running: ".easl-previous-0.2.2-\(id).app", now: now) == [
+            ".easl-previous-0.2.3-\(id).app",
+            ".easl-previous-0.2.4-\(id).app.protection",
+            ".easl-previous-0.2.6-\(id).app.protection",
+        ])
+    }
+
+    @Test func launchCleanupLeavesAnUndeletableLeftoverButRemovesTheOthers() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        let now = Date()
+        let old = now.addingTimeInterval(-2 * 60 * 60)
+        let id = "0f8b5d3a-6a8e-4c2b-9d1e-2b7c4e5f6a7b"
+        let protected = root.appendingPathComponent(".easl-previous-0.2.3-\(id).app.protection")
+        let removable = root.appendingPathComponent(".easl-update-0.2.3-\(id).app")
+        for entry in [protected, removable] {
+            try files.createDirectory(at: entry, withIntermediateDirectories: true)
+            try files.setAttributes([.modificationDate: old], ofItemAtPath: entry.path)
+        }
+        try files.setAttributes([.immutable: true], ofItemAtPath: protected.path)
+        defer { try? files.setAttributes([.immutable: false], ofItemAtPath: protected.path) }
+        #expect(AppUpdate.removeStaleLeftovers(beside: root, running: "easl.app", now: now) == [removable.lastPathComponent])
+        #expect(files.fileExists(atPath: protected.path))
+        #expect(!files.fileExists(atPath: removable.path))
+        #expect(AppUpdate.removeStaleLeftovers(beside: root.appendingPathComponent("absent"), running: "easl.app", now: now).isEmpty)
     }
 
     @Test func anotherInstanceRunningFromTheSameBundleIsFound() throws {
@@ -328,19 +366,6 @@ extension TestBundle {
         try #require(denied.status == 0, "\(denied.errors)")
         let touch = try await RemoteHost.run("/usr/bin/touch", [app.path], timeout: 10)
         #expect(touch.status != 0, "the fixture must refuse the native helper's old timestamp write")
-    }
-
-    /// The launch cleaner's filesystem seam: list real sibling dates, apply its public policy,
-    /// and actually remove the selected entries.
-    static func cleanLeftovers(in folder: URL, running: String, now: Date = Date()) throws -> [String] {
-        let files = FileManager.default
-        let entries = try files.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]).map { url in
-            let modified = try #require(url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
-            return Housekeeping.File(name: url.lastPathComponent, modified: modified)
-        }
-        let stale = AppUpdate.staleLeftovers(entries, running: running, now: now)
-        for name in stale { try files.removeItem(at: folder.appendingPathComponent(name)) }
-        return stale
     }
 
     /// Runs the helper for a process that has already exited, relaunching by writing `"$app"`
@@ -424,7 +449,7 @@ struct UpdateHelperTests {
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
     }
 
-    @Test func cleanupDuringReplacementKeepsEveryTransactionsRollbackWithoutTouchingTheOldApp() async throws {
+    @Test func cleanupAtTheFirstRenameKeepsRollbackThenTheHelperInstalls() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let files = FileManager.default
         let oldDate = Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)
@@ -432,24 +457,6 @@ struct UpdateHelperTests {
         try files.setAttributes([.modificationDate: oldDate], ofItemAtPath: app.path)
         try await TestBundle.denyTimestampChanges(app)
         try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
-
-        // Another home's live transaction, an abandoned one, and a fresh legacy backup with
-        // an old marker: only that abandoned transaction and the old incoming copy may go.
-        let live = try AppUpdate.Staging(updates: root.appendingPathComponent("live/updates"), version: staging.version)
-        let abandoned = try AppUpdate.Staging(updates: root.appendingPathComponent("abandoned/updates"), version: staging.version)
-        let fresh = try AppUpdate.Staging(updates: root.appendingPathComponent("fresh/updates"), version: staging.version)
-        for transaction in [live, abandoned, fresh] {
-            try TestBundle.make(transaction.backup(beside: app), version: "0.2.2")
-            try files.createDirectory(at: transaction.protection(beside: app), withIntermediateDirectories: false)
-        }
-        for old in [live.backup(beside: app), abandoned.backup(beside: app), abandoned.protection(beside: app), fresh.protection(beside: app)] {
-            try files.setAttributes([.modificationDate: oldDate], ofItemAtPath: old.path)
-        }
-        try TestBundle.make(abandoned.incoming(beside: app), version: "0.2.3")
-        try files.setAttributes([.modificationDate: oldDate], ofItemAtPath: abandoned.incoming(beside: app).path)
-        let unrelated = applications.appendingPathComponent(".easl-previous-not-a-transaction.app.protection")
-        try files.createDirectory(at: unrelated, withIntermediateDirectories: false)
-        try files.setAttributes([.modificationDate: oldDate], ofItemAtPath: unrelated.path)
 
         // Stop the actual shell at its first rename, clean beside it, then let it finish.
         // Both sides have finite bounds; on any test error the gate is released before unwind.
@@ -472,13 +479,8 @@ struct UpdateHelperTests {
                 try await Task.sleep(for: .milliseconds(20))
             }
             try #require(files.fileExists(atPath: paused.path), "the helper must reach its real first rename")
-            let removed = try TestBundle.cleanLeftovers(in: applications, running: app.lastPathComponent)
-            #expect(Set(removed) == Set([abandoned.backup(beside: app).lastPathComponent, abandoned.protection(beside: app).lastPathComponent,
-                                         abandoned.incoming(beside: app).lastPathComponent, fresh.protection(beside: app).lastPathComponent]))
+            #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: app.lastPathComponent).isEmpty)
             #expect(AppUpdate.bundleVersion(of: staging.backup(beside: app)) == "0.2.2", "cleanup must not take the helper's rollback")
-            #expect(AppUpdate.bundleVersion(of: live.backup(beside: app)) == "0.2.2", "an unrelated transaction's marker protects only its own bundle")
-            #expect(AppUpdate.bundleVersion(of: fresh.backup(beside: app)) == "0.2.2", "a stale marker never makes a fresh bundle stale")
-            #expect(files.fileExists(atPath: unrelated.path), "malformed marker names are not updater-owned")
         } catch {
             try? Data().write(to: resume)
             _ = try await outcome
@@ -490,17 +492,6 @@ struct UpdateHelperTests {
         #expect(AppUpdate.bundleVersion(of: app) == "0.2.3")
         #expect(AppUpdate.bundleVersion(of: staging.previous) == "0.2.2")
         #expect(!files.fileExists(atPath: staging.protection(beside: app).path))
-
-        // After an hour, stopped transactions are collectible, but never a running rollback
-        // or its marker. This performs the same real deletion, with a deterministic clock.
-        let expired = Date().addingTimeInterval(AppUpdate.leftoverAge + 1)
-        #expect(try TestBundle.cleanLeftovers(in: applications, running: live.backup(beside: app).lastPathComponent, now: expired)
-                == [fresh.backup(beside: app).lastPathComponent])
-        #expect(AppUpdate.bundleVersion(of: live.backup(beside: app)) == "0.2.2")
-        #expect(files.fileExists(atPath: live.protection(beside: app).path))
-        #expect(Set(try TestBundle.cleanLeftovers(in: applications, running: app.lastPathComponent, now: expired))
-                == Set([live.backup(beside: app).lastPathComponent, live.protection(beside: app).lastPathComponent]))
-        #expect(try files.contentsOfDirectory(atPath: applications.path).sorted() == [unrelated.lastPathComponent, app.lastPathComponent].sorted())
     }
 
     @Test func aBackupInTheWayReplacesNothing() async throws {
@@ -573,10 +564,10 @@ struct UpdateHelperTests {
         #expect(outcome == .stranded(backup.path))
         #expect(try TestBundle.snapshot(backup) == original)
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == backup.path)
-        #expect(try TestBundle.cleanLeftovers(in: applications, running: app.lastPathComponent).isEmpty)
+        #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: app.lastPathComponent).isEmpty)
         #expect(files.fileExists(atPath: staging.protection(beside: app).path))
         let expired = Date().addingTimeInterval(AppUpdate.leftoverAge + 1)
-        #expect(try TestBundle.cleanLeftovers(in: applications, running: backup.lastPathComponent, now: expired)
+        #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: backup.lastPathComponent, now: expired)
                 == [staging.incoming(beside: app).lastPathComponent])
         #expect(try TestBundle.snapshot(backup) == original)
         #expect(files.fileExists(atPath: staging.protection(beside: app).path))
@@ -599,10 +590,10 @@ struct UpdateHelperTests {
         #expect(AppUpdate.bundleVersion(of: app) == "0.2.3")
         #expect(try TestBundle.snapshot(backup) == original)
         #expect(try String(contentsOf: staging.previous, encoding: .utf8) == "blocked")
-        #expect(try TestBundle.cleanLeftovers(in: applications, running: app.lastPathComponent).isEmpty)
+        #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: app.lastPathComponent).isEmpty)
         #expect(files.fileExists(atPath: protection.path))
         let expired = Date().addingTimeInterval(AppUpdate.leftoverAge + 1)
-        #expect(Set(try TestBundle.cleanLeftovers(in: applications, running: app.lastPathComponent, now: expired))
+        #expect(Set(AppUpdate.removeStaleLeftovers(beside: applications, running: app.lastPathComponent, now: expired))
                 == Set([backup.lastPathComponent, protection.lastPathComponent]))
         #expect(try files.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
     }
