@@ -684,12 +684,16 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 		}
 		label = s
 	}
+	id, err := messageID(p)
+	if err != nil {
+		return nil, err
+	}
 	if _, restarting := r.restarts[terminal.ID]; restarting {
 		return nil, restartingFailure(terminal.ID)
 	}
 	composer := boolParam(p, "composer")
 	if !composer && board.TakesMessages(terminal) {
-		return r.queueMessage(text, terminal, b, mentions, caller, label, when)
+		return r.queueMessage(text, terminal, b, mentions, caller, label, when, id)
 	}
 	if when == "next-turn" && stateOf(terminal) == "working" {
 		return nil, fail(api.CodeConflict, "%s is in its turn and its integration takes no messages, so typed text would join that turn; agent.wait for it and send again, or send with when: \"now\"", terminal.ID)
