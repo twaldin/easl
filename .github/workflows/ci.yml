@@ -27,6 +27,8 @@ jobs:
         run: cd clients/python && python3 -m unittest
       - name: TS client tests
         run: bun test clients/ts
+      - name: CLI text
+        run: bun test cli/metrics-text.test.ts
       - name: Agent hook tests
         run: bun test extensions/agent-hooks
       - name: Script tests

@@ -307,6 +307,24 @@ export default function canvas(pi: ExtensionAPI): void {
     Object.defineProperty(ui, "select", { ...current, value: Object.assign(select, { [OMP_SELECT]: base }) });
   }
 
+  // A hangup (the terminal's session killed: its host rebooting, easld or zmx stopped) or a
+  // SIGTERM (the system shutting down) makes omp tear the session down as /exit does, and its
+  // session_shutdown says nothing of why. The tile's agent hasn't been ended by its user then: its
+  // terminal resumes it when its session starts again, from what easl recorded (props.agent),
+  // which a release would clear. So the tile's agent session notes these signals, and a shutdown
+  // after one sends no release. omp's own listeners run first (its teardown awaits the draft save
+  // before session_shutdown) and keep its exit as it was: this one only takes note.
+  let hungUp = false;
+  const hangUp = () => {
+    hungUp = true;
+  };
+  function heedSignals(heed: boolean): void {
+    for (const signal of ["SIGHUP", "SIGTERM"] as const) {
+      process.off(signal, hangUp);
+      if (heed) process.on(signal, hangUp);
+    }
+  }
+
   pi.on("session_start", (_event, ctx) => {
     reporting = ctx.hasUI;
     active = !ctx.isIdle();
@@ -315,6 +333,7 @@ export default function canvas(pi: ExtensionAPI): void {
     blockers.clear();
     staged = [];
     if (reporting) watchApprovals(ctx.ui);
+    heedSignals(reporting);
     if (reporting) launch.session ??= ctx.sessionManager.getSessionId();
     watchSession(ctx);
     void reportSession(ctx);
@@ -344,13 +363,16 @@ export default function canvas(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", () => {
+    heedSignals(false);
     // A debounced idle still pending would land after the release (and replay after it).
     stopWatchingSession();
     clearTimeout(idleTimer);
-    if (reporting) void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
-    // Nothing reports for the released tile again (an easl coming back) until a session starts.
+    // Hung up or terminated, the tile keeps its agent for the session that resumes it (`hungUp`).
+    if (reporting && !hungUp) void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
+    // Nothing reports for the tile again (an easl coming back) until a session starts.
     reporting = false;
-    // Ends the long poll; what this session never recorded bounces with the release.
+    // Ends the long poll; what this session never recorded bounces with a release, else stays
+    // queued for the resumed session.
     inbox.close();
   });
 

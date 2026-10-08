@@ -1,6 +1,7 @@
 package session
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -76,17 +77,52 @@ var grammars = map[string]grammar{
 		selector:         "--session"},
 }
 
-// ResumeArgv is the command resuming session `session` of an agent of `kind` (AgentResume.argv);
-// nil for an agent that can't be resumed. `command` is the tile's own (`props.command`): its
-// options are kept when its program is that agent (by name, any directory), less what would
-// pick or start another conversation (its own session selectors, its prompt).
-func ResumeArgv(kind, session string, command []string) []string {
+// ResumeArgv is the command resuming the session `agent` recorded (`props.agent`,
+// AgentResume.argv): RebootSession of its `kind`; nil for an agent that can't be resumed or
+// recorded no session. `command` is the tile's own (`props.command`): its options are kept when
+// its program is that agent (by name, any directory), less what would pick or start another
+// conversation (its own session selectors, its prompt).
+func ResumeArgv(agent map[string]any, command []string) []string {
+	kind, _ := agent["kind"].(string)
 	g, ok := grammars[kind]
-	if !ok {
+	session := RebootSession(agent)
+	if !ok || session == "" {
 		return nil
 	}
 	program, kept := g.options(command, nil)
 	return g.resumed(program, kept, session)
+}
+
+// RebootSession is the session a new session of the terminal resumes (ResumeArgv,
+// AgentResume.rebootSession): ResumedSession, with omp's session file only while it is there (an
+// empty path is none; sessionFileExists: omp's /move renames it without a new report, and omp
+// 18.8 refuses a path with no file), else its session id, which omp finds in any project.
+func RebootSession(agent map[string]any) string {
+	session := ResumedSession(agent)
+	if id, _ := agent["sessionId"].(string); id != "" && session != id && (session == "" || !sessionFileExists(session)) {
+		return id
+	}
+	return session
+}
+
+// sessionFileExists says whether an agent's session file is on this machine (tests replace it).
+var sessionFileExists = func(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// ResumedSession is the session a recorded agent (`props.agent`) is resumed with, by a reboot
+// and by agent.restart (AgentResume.session): omp's session file when it reported one (its
+// `--resume` takes a path), else the session id; "" for none.
+func ResumedSession(agent map[string]any) string {
+	session, isPath := "", false
+	if agent["kind"] == "omp" {
+		session, isPath = agent["sessionPath"].(string)
+	}
+	if !isPath {
+		session, _ = agent["sessionId"].(string)
+	}
+	return session
 }
 
 // resumed is the command running `program` with the kept arguments, resuming session `session`.
@@ -228,9 +264,9 @@ func (g grammar) options(command []string, dropping set) (string, []string) {
 }
 
 // InitialArgv is what a new session of terminal `props` runs before its login shell
-// (TerminalTile.initialArgv): the recorded agent session resumed with the options of the tile's
-// own `command` (`props.agent`'s `kind` and `sessionId`, which agent.release clears), else the
-// tile's `command`; nil for neither.
+// (AgentResume.initialArgv): the agent session it recorded (`props.agent`, which agent.release
+// clears) resumed with the options of the tile's own `command` (ResumeArgv), else the tile's
+// `command`; nil for neither.
 func InitialArgv(props map[string]any) []string {
 	var command []string
 	if list, ok := props["command"].([]any); ok {
@@ -241,12 +277,8 @@ func InitialArgv(props map[string]any) []string {
 		}
 	}
 	if agent, ok := props["agent"].(map[string]any); ok {
-		kind, hasKind := agent["kind"].(string)
-		session, hasSession := agent["sessionId"].(string)
-		if hasKind && hasSession {
-			if argv := ResumeArgv(kind, session, command); argv != nil {
-				return argv
-			}
+		if argv := ResumeArgv(agent, command); argv != nil {
+			return argv
 		}
 	}
 	return command

@@ -424,8 +424,9 @@ extension Board {
 }
 
 /// How a terminal whose session is gone (after a reboot) resumes the agent it recorded
-/// (`props.agent`: `kind` and `sessionId`, from `agent.report_session`): with the options of the
-/// tile's own `command` when that runs the same agent, so a restart keeps the user's flags
+/// (`props.agent`, from `agent.report_session`: its `kind`, and `session(of:)`: omp's session
+/// file, any other agent's session id) with the options of the tile's own `command` when that
+/// runs the same agent, so a restart keeps the user's flags
 /// (Codex's `-c` trust override, Claude's `--model` or `--dangerously-skip-permissions`, omp's
 /// `-e`). What would pick or start another conversation is left out: the command's own session
 /// selectors (`--resume`, `--continue`, Codex's `resume <id>`) and its prompt (positional words,
@@ -449,8 +450,8 @@ public enum AgentResume {
         /// Positional words are kept (opencode's `[project]`); otherwise they are a prompt or a
         /// subcommand (Codex's `resume <id>`) and left out.
         var keepsPositionals = false
-        /// The resumed command from the kept arguments.
-        var resume: (_ program: String, _ kept: [String], _ sessionId: String) -> [String]
+        /// The resumed command from the kept arguments and the session.
+        var resume: (_ program: String, _ kept: [String], _ session: String) -> [String]
     }
 
     static func grammar(_ kind: String) -> Grammar? {
@@ -503,13 +504,43 @@ public enum AgentResume {
         }
     }
 
-    /// The command resuming session `sessionId` of an agent of `kind`; nil for an agent that can't
-    /// be resumed. `command` is the tile's own (`props.command`): its options are kept when its
-    /// program is that agent (by name, any directory).
-    public static func argv(kind: String, sessionId: String, command: [String] = []) -> [String]? {
-        guard let grammar = grammar(kind) else { return nil }
+    /// What a new session of terminal `object` runs before dropping to a login shell (easld's
+    /// `session.InitialArgv` too): after a reboot, the agent session it recorded resumed with the
+    /// options of its own `command` (`argv`); otherwise its `command`; nil for neither. A hosted
+    /// terminal's session file is on its host, where the Mac can't look: its recorded path is
+    /// kept, as agent.restart keeps it, so one omp's /move renamed there resumes by that stale
+    /// path (only the host could choose, and `session.spawn` carries one command).
+    public static func initialArgv(_ object: CanvasObject,
+                                   exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> [String]? {
+        let command = object.props["command"]?.array?.compactMap(\.string) ?? []
+        let resume = HostedTerminal.host(of: object) == nil
+            ? argv(agent: object.props["agent"], command: command, exists: exists)
+            : argv(agent: object.props["agent"], command: command, exists: { _ in true })
+        return resume ?? (command.isEmpty ? nil : command)
+    }
+
+    /// The command resuming the session `agent` recorded (`props.agent`: `rebootSession(of:)` of
+    /// its `kind`); nil for an agent that can't be resumed or recorded no session. `command` is the
+    /// tile's own (`props.command`): its options are kept when its program is that agent (by name,
+    /// any directory).
+    public static func argv(agent: JSONValue?, command: [String] = [],
+                            exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> [String]? {
+        guard let kind = agent?["kind"]?.string, let grammar = grammar(kind),
+              let session = rebootSession(of: agent, exists: exists) else { return nil }
         let (program, kept) = options(of: command, grammar)
-        return grammar.resume(program, kept, sessionId)
+        return grammar.resume(program, kept, session)
+    }
+
+    /// The session a new session of the terminal resumes (`argv`, easld's
+    /// `session.RebootSession`): `session(of:)`'s, with omp's session file only while `exists`
+    /// finds it (an empty path is none: omp's /move renames the file without a new report, and omp
+    /// 18.8 refuses a path with no file), else the session id, which omp finds in any project. A
+    /// hosted tile's file is on its host, so the Mac resumes it by id. Nil for none.
+    static func rebootSession(of agent: JSONValue?, exists: (String) -> Bool) -> String? {
+        let id = agent?["sessionId"]?.string ?? ""
+        var session = (agent?["kind"]?.string == "omp" ? agent?["sessionPath"]?.string : nil) ?? id
+        if !id.isEmpty, session != id, session.isEmpty || !exists(session) { session = id }
+        return session.isEmpty ? nil : session
     }
 
     /// The program `command` runs the agent as (its own path when it is that agent, else the
