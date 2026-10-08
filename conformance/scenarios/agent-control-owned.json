@@ -1,5 +1,5 @@
 {
-  "description": "Agent control on an easld that owns its terminals (--own-terminals; recorded against easld with a zmx that runs no session, as owned-terminals is: the app's restart relaunches through its own tiles): agent.list says whether each owned terminal's session runs (live), and agent.restart goes through with no client attached. easld ends the session, the messages queued for the killed agent bounce, and the relaunch starts resumed with the recorded model and thinking level (or fresh, with args); the tile runs the relaunch's command from then on, its agent loses the killed process's draft and pid, and its lifecycle is unknown until the new agent reports; the killed agent's late release leaves that record, and only a release after the relaunched agent reported clears it. The refusals are a client's restart's; a hosted terminal's restart is its Mac's.",
+  "description": "Agent control on an easld that owns its terminals (--own-terminals; recorded against easld with a zmx that runs no session, as owned-terminals is: the app's restart relaunches through its own tiles): agent.list says whether each owned terminal's session runs (live), and agent.restart goes through with no client attached. easld ends the session, the messages queued for the killed agent bounce, and the relaunch starts resumed with the recorded model and thinking level (or fresh, with args); the tile runs the relaunch's command from then on, its agent loses the killed process's draft and pid, and its lifecycle is unknown until the new agent reports, but for a done the user hasn't seen, which stays until the relaunched agent starts a turn; the killed agent's late release leaves that record, and only a release after the relaunched agent reported clears it. The refusals are a client's restart's; a hosted terminal's restart is its Mac's.",
   "steps": [
     { "call": "object.create", "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "worker" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } }, "save": "t" },
     { "call": "object.create", "params": { "board": "{{board}}", "type": "terminal", "props": { "host": "deckbox", "command": ["/bin/cat"], "name": "away" }, "frame": { "x": 50700, "y": 50000, "w": 600, "h": 400 } }, "save": "h" },
@@ -22,6 +22,11 @@
     { "call": "agent.report", "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "protocol": 1, "draft": false }, "note": "the relaunched agent reports in" },
     { "call": "agent.release", "params": { "tile": "{{t.object.id}}", "kind": "omp" }, "note": "its own release" },
     { "call": "object.get", "params": { "id": "{{t.object.id}}" }, "note": "a plain shell again" },
-    { "call": "agent.list", "params": {}, "keep": { "result.agents": { "board": "{{board}}" } } }
+    { "call": "agent.list", "params": {}, "keep": { "result.agents": { "board": "{{board}}" } } },
+    { "call": "agent.report", "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "working", "protocol": 1, "draft": false }, "note": "an agent again, in a turn" },
+    { "call": "agent.report", "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "protocol": 1, "draft": false, "message": "Tests pass." }, "note": "its answer, unseen: done" },
+    { "call": "agent.restart", "params": { "target": "worker", "mode": "fresh" }, "note": "an unseen answer stays through the restart" },
+    { "call": "agent.report", "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "protocol": 1, "draft": false }, "note": "the relaunched agent reports in: no turn, still done and unseen, its message kept" },
+    { "call": "agent.report", "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "working", "protocol": 1, "draft": false }, "note": "its first turn ends it" }
   ]
 }
