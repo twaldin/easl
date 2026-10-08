@@ -12,7 +12,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { AgentMessage } from "../../clients/ts/src/index";
 import canvas from "../omp/easl";
-import { card, renderCard } from "./messages";
+import { card, MESSAGE_ID, renderCard } from "./messages";
 import { spoolDirectory } from "./report";
 
 const TILE = "obj_bob";
@@ -71,6 +71,10 @@ function fakeEasl() {
     failingSession: undefined as ((params: Params) => boolean) | undefined,
     /** The markdown of the board's note keyed `rules` (object.find), if it has one. */
     rules: undefined as string | undefined,
+    /** How long agent.prompt takes to answer: the app reads a terminal on another machine over ssh before it queues. */
+    promptMs: 0,
+    /** agent.prompt's refusal of a call with `message`, after promptMs, queueing nothing (a server from before message ids refuses the param). */
+    refusesMessage: undefined as { code: string; message: string } | undefined,
     send(queued: AgentMessage): void {
       easl.queue.push(queued);
       const waiter = waiters.findIndex((w) => open.has(w.connection));
@@ -121,6 +125,14 @@ function fakeEasl() {
     if (method === "object.find") {
       if (easl.rules !== undefined) return void answer(socket, id, { object: { type: "note", props: { markdown: easl.rules } } });
       return void socket.write(`${JSON.stringify({ id, ok: false, error: { code: "not_found", message: "no object holds key rules" } })}\n`);
+    }
+    if (method === "agent.prompt") {
+      // On the fake clock (beforeEach): it moves only while a test waits (`until`).
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setTimeout(resolve, easl.promptMs);
+      await promise;
+      if (easl.refusesMessage && params.message !== undefined) return void socket.write(`${JSON.stringify({ id, ok: false, error: easl.refusesMessage })}\n`);
+      return void answer(socket, id, { agent: { address: params.target }, delivery: "message", message: params.message });
     }
     if (method !== "agent.inbox") return void answer(socket, id, {});
     const acked: string[] = params.ack ?? [];
@@ -220,6 +232,15 @@ function fakeOmp(easl: { socketPath: string }, entries: Params[] = [], sessionId
     async emit(event: string, payload: Params = {}): Promise<void> {
       for (const handler of handlers.get(event) ?? []) await handler({ type: event, ...payload }, omp.ctx);
     },
+    /** A tool's result through every `tool_result` handler in turn, each seeing what the last one left (omp's ExtensionRunner.emitToolResult). */
+    async toolResult(event: Params): Promise<Params> {
+      const current: Params = { type: "tool_result", ...event };
+      for (const handler of handlers.get("tool_result") ?? []) {
+        const result = (await handler(current, omp.ctx)) as Params | undefined;
+        for (const key of ["content", "details", "isError"]) if (result?.[key] !== undefined) current[key] = result[key];
+      }
+      return current;
+    },
     /** omp records a card it was handed (its `message_end`). */
     record(card: Params): Promise<void> {
       return omp.emit("message_end", { message: { role: "custom", ...card, timestamp: Date.now() } });
@@ -308,6 +329,75 @@ test("an ack easl doesn't answer closes the inbox connection: what it held is of
   expect(easl.acks[0].connection).not.toBe(connection);
   expect(omp.delivered[1].message.details.id).toBe(second.id);
   expect(easl.queue).toEqual([second]);
+});
+
+/** omp's failed `write agent://<target>`: the native "Unknown agent" error, `details` as a handler before ours left them. */
+function unknownAgent(target: string, details?: Params): Params {
+  return {
+    toolName: "write",
+    toolCallId: "toolu_01",
+    input: { path: `agent://${target}`, content: "Your deckbox run is done." },
+    content: [{ type: "text", text: `Unknown agent: ${target}` }],
+    details,
+    isError: true,
+  };
+}
+
+test("a write to an agent easl takes 8 s to queue for is delivered, not failed for another handler to send again", async () => {
+  // twaldin/easl: meta's and shepherd's writes to hone@hone (a terminal on deckbox) came twice.
+  // easl read hone's terminal over ssh for 2.6 to 10 s before it queued; at 1.5 s this handler
+  // said "No easl delivery" and omp-inbox sent the text again, with a new message id.
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  easl.promptMs = 8_000;
+  let result: Params | undefined;
+  void omp.toolResult(unknownAgent("hone@hone")).then((done) => (result = done));
+  await until(() => result !== undefined, 15_000);
+  expect(result).toMatchObject({ isError: false, content: [{ text: expect.stringContaining("Delivered to hone@hone") }] });
+  const prompts = easl.calls.filter((call) => call.method === "agent.prompt");
+  expect(prompts.map((call) => call.params)).toEqual([{ target: "hone@hone", text: "Your deckbox run is done.", caller: TILE, message: expect.stringMatching(MESSAGE_ID) }]);
+});
+
+test("every attempt at one write sends one message id: a failure leaves it for the next handler, and an id left before is sent", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  // easl answers past the wait: the message may be queued, so its id goes on with the error.
+  easl.promptMs = 25_000;
+  let failed: Params | undefined;
+  void omp.toolResult(unknownAgent("hone@hone")).then((done) => (failed = done));
+  await until(() => failed !== undefined, 30_000);
+  const [first] = easl.calls.filter((call) => call.method === "agent.prompt");
+  expect(failed).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("No easl delivery to hone@hone either: timeout") }] });
+  expect(failed?.details).toEqual({ easl: { message: first.params.message } });
+
+  // A handler before this one tried first (omp-inbox, loaded first) and left its id: sent with it.
+  easl.promptMs = 0;
+  let retried: Params | undefined;
+  void omp.toolResult(unknownAgent("hone@hone", { easl: { message: "msg_omp_inbox_0001" } })).then((done) => (retried = done));
+  await until(() => retried !== undefined);
+  expect(retried?.isError).toBe(false);
+  expect(easl.calls.filter((call) => call.method === "agent.prompt").map((call) => call.params.message)).toEqual([first.params.message, "msg_omp_inbox_0001"]);
+});
+
+test("a server older than message ids gets the write without one; no other refusal is sent again", async () => {
+  // deckbox's easld, or a remote host's app, from before agent.prompt took `message`.
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  easl.refusesMessage = { code: "invalid_params", message: "unknown param message; agent.prompt takes target (required), text (required), mentions, caller, from, when, force, composer, answer" };
+  let sent: Params | undefined;
+  void omp.toolResult(unknownAgent("hone@hone")).then((done) => (sent = done));
+  await until(() => sent !== undefined);
+  expect(sent).toMatchObject({ isError: false, content: [{ text: expect.stringContaining("Delivered to hone@hone") }] });
+  const write = { target: "hone@hone", text: "Your deckbox run is done.", caller: TILE };
+  expect(easl.calls.filter((call) => call.method === "agent.prompt").map((call) => call.params)).toEqual([{ ...write, message: expect.stringMatching(MESSAGE_ID) }, write]);
+
+  // Any other refusal, even of the same kind, is the error: the attempt it answers may have been queued.
+  easl.refusesMessage = { code: "invalid_params", message: "message is the id the message gets, the same on every attempt to send it: msg_ and 8 to 64 letters, digits, _ or -" };
+  let refused: Params | undefined;
+  void omp.toolResult(unknownAgent("hone@hone")).then((done) => (refused = done));
+  await until(() => refused !== undefined);
+  expect(refused).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("No easl delivery to hone@hone either: invalid_params: message is the id") }] });
+  expect(easl.calls.filter((call) => call.method === "agent.prompt")).toHaveLength(3);
 });
 
 test("a burst whose follow-up fetch fails delivers what already came", async () => {

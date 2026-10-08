@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 1
-    static let schemaHash = "ad2c87867a5f8838"
+    static let schemaHash = "aec44d44f596707b"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "system.ping": ([], []),
@@ -39,7 +39,7 @@ enum ApiParams {
         "agent.report_session": (["tile", "kind", "sessionId", "sessionPath", "model", "thinking"], ["tile", "kind"]),
         "agent.release": (["tile", "kind", "source"], ["tile", "kind"]),
         "agent.list": ([], []),
-        "agent.prompt": (["target", "text", "mentions", "caller", "from", "when", "force", "composer", "answer"], ["target", "text"]),
+        "agent.prompt": (["target", "text", "mentions", "caller", "from", "when", "message", "force", "composer", "answer"], ["target", "text"]),
         "agent.wait": (["target", "caller", "until", "timeoutMs"], ["target"]),
         "agent.read": (["target", "caller", "lines", "since", "block", "final"], ["target"]),
         "agent.inbox": (["tile", "ack", "started", "waitMs"], ["tile"]),

@@ -15,7 +15,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { type AgentMessage, CanvasClient, CanvasError } from "../../clients/ts/src/index";
 import { numberedDiffChanges } from "../agent-hooks/follow";
-import { COALESCE_MS, card, EASL_MESSAGE, GUIDANCE_BLOCK, guided, PROTOCOL, peerAddress, plan, recordedIds, renderCard, sender, senderKey, WakeBudget } from "../agent-hooks/messages";
+import { COALESCE_MS, card, EASL_MESSAGE, GUIDANCE_BLOCK, guided, PROTOCOL, peerAddress, plan, recordedIds, renderCard, sender, senderKey, WakeBudget, writeMessageId } from "../agent-hooks/messages";
 import { release, report, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
@@ -27,6 +27,13 @@ const INBOX_RETRY_MS = 2_000;
 // A message handed to omp that it hasn't recorded this long after, with nothing running or
 // queued, never went in (omp couldn't start its turn).
 const RECORD_MS = 5_000;
+// How long `write agent://` waits for easl to queue its message (agent.prompt). A terminal on
+// another machine has its text read over ssh first, which took 2.6 to 10 s to deckbox; omp gives
+// a tool_result handler 30 s.
+const PEER_PROMPT_TIMEOUT_MS = 20_000;
+// How a server from before agent.prompt took `message` refuses it: before it queues anything,
+// so sending again without it can't make a second message.
+const NO_MESSAGE_IDS = "unknown param message;";
 // The session entries that list the messages omp recorded (`{ ids }`), for a restarted omp.
 const RECORDED_ENTRY = "easl.messages";
 // How often the editor, model and thinking level are looked at (agent.report `draft`,
@@ -634,6 +641,10 @@ export default function canvas(pi: ExtensionAPI): void {
   // omp's own `write agent://<name>` reaches only agents in this process. One it doesn't know is
   // resolved through easl (a terminal's name, `name@board`, or tile id) and sent as a message;
   // the result then says delivered, receipts included, so omp's card doesn't show a failure.
+  // Every attempt at one write sends the same message id (`writeMessageId`), and easl queues an
+  // id once: a prompt that timed out may still have been queued. A failure leaves the id in the
+  // result's `details.easl.message` for a handler after this one that sends it another way. A
+  // server older than message ids (NO_MESSAGE_IDS) gets the message without one.
   pi.on("tool_result", async (event) => {
     if (event.toolName !== "write" || !event.isError) return;
     const target = peerAddress(String(event.input?.path ?? ""));
@@ -641,8 +652,15 @@ export default function canvas(pi: ExtensionAPI): void {
     if (!target || !text) return;
     const native = event.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
     if (!native.includes("Unknown agent")) return;
+    const id = writeMessageId(event.details);
+    // Its own connection, with time for a terminal on another machine (PEER_PROMPT_TIMEOUT_MS).
+    const messenger = new CanvasClient({ timeoutMs: PEER_PROMPT_TIMEOUT_MS, reconnectTimeoutMs: 0 });
     try {
-      const sent = await client.api.agent.prompt({ target, text, caller: tile });
+      const params = { target, text, caller: tile };
+      const sent = await messenger.api.agent.prompt({ ...params, message: id }).catch((error: unknown) => {
+        if (error instanceof CanvasError && error.code === "invalid_params" && error.message.startsWith(NO_MESSAGE_IDS)) return messenger.api.agent.prompt(params);
+        throw error;
+      });
       const address = sent.agent.address;
       const message = (event.details as Details | undefined)?.message;
       const details = Array.isArray(message?.receipts)
@@ -655,7 +673,10 @@ export default function canvas(pi: ExtensionAPI): void {
       return { isError: false, details, content: [{ type: "text", text: `Delivered to ${address}, an agent on an easl board. ${how}` }] };
     } catch (error) {
       const reason = error instanceof CanvasError ? `${error.code}: ${error.message}` : String(error);
-      return { content: [{ type: "text", text: `${native}\nNo easl delivery to ${target} either: ${reason}` }] };
+      const details = { ...(event.details as Details | undefined), easl: { ...(event.details as Details | undefined)?.easl, message: id } };
+      return { details, content: [{ type: "text", text: `${native}\nNo easl delivery to ${target} either: ${reason}` }] };
+    } finally {
+      messenger.close();
     }
   });
 

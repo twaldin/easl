@@ -211,8 +211,13 @@ public final class ApiRouter {
     private var promptMarks: [ObjectID: TerminalTail.Tail] = [:]
     private var waiters: [Waiter] = []
     /// Which connection holds each message `agent.inbox` handed out and its integration hasn't
-    /// acked yet: offered again once that connection closes.
-    private var messageHolds: [String: SocketServer.Connection] = [:]
+    /// acked yet: offered again once that connection closes. By terminal and id: a sender's own id
+    /// (`agent.prompt` `message`) may name a message to each of several terminals.
+    private var messageHolds: [MessageHold: SocketServer.Connection] = [:]
+    private struct MessageHold: Hashable {
+        let tile: ObjectID
+        let message: String
+    }
     /// `agent.inbox` long polls waiting for a message to their terminal.
     private var inboxWaiters: [InboxWaiter] = []
 
@@ -661,13 +666,14 @@ public final class ApiRouter {
             guard let text = value.string, !text.trimmingCharacters(in: .whitespaces).isEmpty else { throw Failure("invalid_params", "from is a sender label such as \"machine-watch\"") }
             label = text
         }
+        let id = try Self.messageID(p["message"])
         // The foreground program now: a message integration killed since it last reported is
         // found here (`Board.terminalProgram`), before anything is queued for it.
         _ = terminalStatus?(board, resolved.id)
         guard let terminal = board.objects[resolved.id] else { throw Failure("not_found", "terminal \(resolved.id) was closed") }
         if board.agentExited(terminal.id) { throw Self.agentExited(terminal) }
         if PromptTarget.takesMessages(terminal) {
-            return try await queueMessage(text, to: terminal, on: board, mentions: mentions, caller: caller, label: label, when: when)
+            return try await queueMessage(text, to: terminal, on: board, mentions: mentions, caller: caller, label: label, when: when, id: id)
         }
         if when == .nextTurn, Self.state(of: terminal) == LifecycleState.working.rawValue {
             throw Failure("conflict", "\(terminal.id) is in its turn and its integration takes no messages, so typed text would join that turn; agent.wait for it and send again, or send with when: \"now\"")
@@ -682,33 +688,61 @@ public final class ApiRouter {
     /// board) the message is the agent's; with a `label` (`from`) or none, the user's. It is
     /// queued for the agent session there when the prompt arrived: one that ended while the
     /// terminal's text was read (released, died, replaced: `Board.agentSession(of:)`) gets
-    /// nothing, and the sender `unavailable`.
-    private func queueMessage(_ text: String, to terminal: CanvasObject, on board: Board, mentions: [JSONValue], caller: ObjectID?, label: String?, when: AgentMessage.When) async throws -> JSONValue {
+    /// nothing, and the sender `unavailable`. With an `id` (`message`) already queued for the
+    /// terminal it answers with that message and queues nothing: a sender whose call timed out
+    /// sends the same id again. Looked at before the terminal's text is read and again just
+    /// before queueing, so a second attempt arriving while the first still reads (a hosted
+    /// terminal's text comes over ssh) finds it either way.
+    private func queueMessage(_ text: String, to terminal: CanvasObject, on board: Board, mentions: [JSONValue], caller: ObjectID?, label: String?, when: AgentMessage.When, id: String?) async throws -> JSONValue {
+        if let queued = Self.queued(id, for: terminal.id, on: board) { return try messageResult(queued, to: terminal, on: board, duplicate: true) }
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         let attached = try board.messageMentions(try mentions.map { try HandoffMention(json: $0).target(on: board) })
         let sender = caller.flatMap { caller in registry.boards.values.contains { $0.objects[caller]?.type == .terminal } ? caller : nil }
         let session = board.agentSession(of: terminal.id)
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
+        if let queued = Self.queued(id, for: terminal.id, on: board) { return try messageResult(queued, to: current, on: board, duplicate: true) }
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         if board.agentExited(terminal.id) { throw Self.agentExited(current) }
         guard PromptTarget.takesMessages(current), board.agentSession(of: terminal.id) == session else {
             throw Failure("unavailable", "\(terminal.id)'s agent session ended while the message was being sent (its agent was released, exited, "
                 + "or another session took the terminal), so nothing was queued; agent.list shows what runs there now")
         }
-        let message = AgentMessage(text: text, from: sender, label: label, when: when, mentions: attached)
+        let message = AgentMessage(id: id ?? IDs.make("msg"), text: text, from: sender, label: label, when: when, mentions: attached)
         try board.queueMessage(message, to: terminal.id)
         promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
         serveInbox(terminal.id, on: board)
+        return try messageResult(message, to: current, on: board, duplicate: false)
+    }
+
+    /// agent.prompt's result for `message`, queued for `terminal`: now, or by an earlier attempt
+    /// with its id (`duplicate`).
+    private func messageResult(_ message: AgentMessage, to terminal: CanvasObject, on board: Board, duplicate: Bool) throws -> JSONValue {
         var result: [String: JSONValue] = [
-            "agent": agentEntry(current, on: board),
+            "agent": agentEntry(terminal, on: board),
             "submittedAt": .string(message.queuedAt.formatted(.iso8601)),
             "waitable": .bool(true),
             "delivery": .string("message"),
             "message": .string(message.id),
         ]
-        if !attached.isEmpty { result["mentions"] = try JSONValue.encode(attached) }
+        if !message.mentions.isEmpty { result["mentions"] = try JSONValue.encode(message.mentions) }
+        if duplicate { result["duplicate"] = .bool(true) }
         return .object(result)
+    }
+
+    /// agent.prompt's `message`: an id of the sender's own, the same on every attempt at one message.
+    static func messageID(_ value: JSONValue?) throws -> String? {
+        guard let value, value != .null else { return nil }
+        guard let id = value.string, id.wholeMatch(of: /msg_[A-Za-z0-9_-]{8,64}/) != nil else {
+            throw Failure("invalid_params", "message is the id the message gets, the same on every attempt to send it: msg_ and 8 to 64 letters, digits, _ or -")
+        }
+        return id
+    }
+
+    /// The message with `id` queued for `terminal`, if any.
+    private static func queued(_ id: String?, for terminal: ObjectID, on board: Board) -> AgentMessage? {
+        guard let id else { return nil }
+        return board.messages[terminal]?.first { $0.id == id }
     }
 
     /// `agent.inbox`: a terminal's integration acks what it delivered, then takes what waits
@@ -723,7 +757,7 @@ public final class ApiRouter {
         messageHolds = messageHolds.filter { $0.value.isOpen }
         let ack = p["ack"]?.array?.compactMap(\.string) ?? []
         if !ack.isEmpty {
-            for message in ack { messageHolds.removeValue(forKey: message) }
+            for message in ack { messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message)) }
             if !board.ackMessages(ack, of: tile).isEmpty { messagesDelivered(to: tile, on: board, started: p["started"]?.bool == true) }
         }
         let offered = offer(tile, on: board, to: connection)
@@ -744,8 +778,8 @@ public final class ApiRouter {
     /// agent.restart kills and relaunches it (`restarting`).
     private func offer(_ tile: ObjectID, on board: Board, to connection: SocketServer.Connection) -> [AgentMessage] {
         guard !restarting.contains(tile) else { return [] }
-        let free = (board.messages[tile] ?? []).filter { messageHolds[$0.id]?.isOpen != true }
-        for message in free { messageHolds[message.id] = connection }
+        let free = (board.messages[tile] ?? []).filter { messageHolds[MessageHold(tile: tile, message: $0.id)]?.isOpen != true }
+        for message in free { messageHolds[MessageHold(tile: tile, message: message.id)] = connection }
         return free
     }
 
@@ -805,7 +839,7 @@ public final class ApiRouter {
         let receiver = board.objects[bounce.tile].map { AgentAddress.address(of: $0, on: board, among: boards) }
             ?? bounce.name.map { "\($0)@\(AgentAddress.boardName(board.root))" } ?? bounce.tile
         for message in bounce.messages {
-            messageHolds.removeValue(forKey: message.id)
+            messageHolds.removeValue(forKey: MessageHold(tile: bounce.tile, message: message.id))
             let notice = "undelivered to \(receiver): \(message.gist)"
             let home = message.from.flatMap { registry.board(containing: $0) }
             if let sender = message.from, let home, let tile = home.objects[sender], PromptTarget.takesMessages(tile),

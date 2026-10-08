@@ -24,6 +24,20 @@ export function peerAddress(path: string): string | undefined {
   return match[2] === undefined ? name : `${name}@${decodeURIComponent(match[2])}`;
 }
 
+/** agent.prompt `message`: an id of the sender's own, the same on every attempt at one message. */
+export const MESSAGE_ID = /^msg_[A-Za-z0-9_-]{8,64}$/;
+
+/**
+ * The id every attempt at one `write agent://` sends its message with. omp runs a tool's
+ * `tool_result` handlers in turn, each seeing the result the last one left: one that tried and
+ * failed leaves the id it sent in `details.easl.message` (its prompt may have timed out and still
+ * been queued), and the next sends that id again, which easl queues once. None left: a new one.
+ */
+export function writeMessageId(details: unknown): string {
+  const given = (details as { easl?: { message?: unknown } } | undefined)?.easl?.message;
+  return typeof given === "string" && MESSAGE_ID.test(given) ? given : `msg_${crypto.randomUUID().replaceAll("-", "")}`;
+}
+
 /** Who sent `message`, for the wake bound: its terminal, else the script's label. */
 export function senderKey(message: AgentMessage): string {
   return message.from.tile ?? `script:${message.from.name}`;

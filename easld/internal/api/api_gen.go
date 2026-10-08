@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "ad2c87867a5f8838"
+const SchemaHash = "aec44d44f596707b"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -161,7 +161,7 @@ var Methods = map[string]ParamSpec{
 		Required: nil,
 	},
 	"agent.prompt": {
-		Accepted: []string{"target", "text", "mentions", "caller", "from", "when", "force", "composer", "answer"},
+		Accepted: []string{"target", "text", "mentions", "caller", "from", "when", "message", "force", "composer", "answer"},
 		Required: []string{"target", "text"},
 	},
 	"agent.wait": {
@@ -236,6 +236,9 @@ var Methods = map[string]ParamSpec{
 
 // Id: Prefixed id, e.g. obj_01H…, men_…
 type Id = string
+
+// MessageId: A message's id: `msg_` and 8 to 64 letters, digits, `_` or `-`; easl's own (`msg_` and a ULID) or the one its sender gave (agent.prompt `message`)
+type MessageId = string
 
 type Frame struct {
 	X float64 `json:"x"`
@@ -868,7 +871,7 @@ type Agent struct {
 // AgentMessage: An out-of-band message queued for a terminal whose integration takes messages (agent.report `protocol` ≥ 1)
 type AgentMessage struct {
 	// `msg_…`; ack it (agent.inbox `ack`) once the agent has it
-	ID Id `json:"id"`
+	ID MessageId `json:"id"`
 	// as the sender wrote it
 	Text string        `json:"text"`
 	From MessageSender `json:"from"`
