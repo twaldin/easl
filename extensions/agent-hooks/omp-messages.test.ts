@@ -72,6 +72,8 @@ function fakeEasl() {
     rules: undefined as string | undefined,
     /** How long agent.prompt takes to answer: the app reads a terminal on another machine over ssh before it queues. */
     promptMs: 0,
+    /** agent.prompt's refusal of a call with `message`, after promptMs, queueing nothing (a server from before message ids refuses the param). */
+    refusesMessage: undefined as { code: string; message: string } | undefined,
     send(queued: AgentMessage): void {
       easl.queue.push(queued);
       const waiter = waiters.findIndex((w) => open.has(w.connection));
@@ -124,6 +126,7 @@ function fakeEasl() {
       const { promise, resolve } = Promise.withResolvers<void>();
       setTimeout(resolve, easl.promptMs);
       await promise;
+      if (easl.refusesMessage && params.message !== undefined) return void socket.write(`${JSON.stringify({ id, ok: false, error: easl.refusesMessage })}\n`);
       return void answer(socket, id, { agent: { address: params.target }, delivery: "message", message: params.message });
     }
     if (method !== "agent.inbox") return void answer(socket, id, {});
@@ -369,6 +372,27 @@ test("every attempt at one write sends one message id: a failure leaves it for t
   await until(() => retried !== undefined);
   expect(retried?.isError).toBe(false);
   expect(easl.calls.filter((call) => call.method === "agent.prompt").map((call) => call.params.message)).toEqual([first.params.message, "msg_omp_inbox_0001"]);
+});
+
+test("a server older than message ids gets the write without one; no other refusal is sent again", async () => {
+  // deckbox's easld, or a remote host's app, from before agent.prompt took `message`.
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  easl.refusesMessage = { code: "invalid_params", message: "unknown param message; agent.prompt takes target (required), text (required), mentions, caller, from, when, force, composer, answer" };
+  let sent: Params | undefined;
+  void omp.toolResult(unknownAgent("hone@hone")).then((done) => (sent = done));
+  await until(() => sent !== undefined);
+  expect(sent).toMatchObject({ isError: false, content: [{ text: expect.stringContaining("Delivered to hone@hone") }] });
+  const write = { target: "hone@hone", text: "Your deckbox run is done.", caller: TILE };
+  expect(easl.calls.filter((call) => call.method === "agent.prompt").map((call) => call.params)).toEqual([{ ...write, message: expect.stringMatching(MESSAGE_ID) }, write]);
+
+  // Any other refusal, even of the same kind, is the error: the attempt it answers may have been queued.
+  easl.refusesMessage = { code: "invalid_params", message: "message is the id the message gets, the same on every attempt to send it: msg_ and 8 to 64 letters, digits, _ or -" };
+  let refused: Params | undefined;
+  void omp.toolResult(unknownAgent("hone@hone")).then((done) => (refused = done));
+  await until(() => refused !== undefined);
+  expect(refused).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("No easl delivery to hone@hone either: invalid_params: message is the id") }] });
+  expect(easl.calls.filter((call) => call.method === "agent.prompt")).toHaveLength(3);
 });
 
 test("a burst whose follow-up fetch fails delivers what already came", async () => {

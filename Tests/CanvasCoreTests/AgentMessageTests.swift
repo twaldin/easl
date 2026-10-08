@@ -246,6 +246,30 @@ final class AgentMessageTests {
         #expect(typed.isEmpty)
     }
 
+    @Test func oneIdSentToSeveralTerminalsIsAMessageToEachHeldAckedAndBouncedApart() async throws {
+        let reviewer = terminal("reviewer"), tester = terminal("tester"), lead = terminal("lead")
+        let script = try connect()
+        var integrations: [ObjectID: LineClient] = [:]
+        for tile in [reviewer, tester, lead] {
+            try omp(tile, .idle, seq: 1)
+            let sent = try await call(script, "agent.prompt", ["target": .string(tile), "text": "Check the cache key.", "message": "msg_write_toolu_02"])
+            #expect(sent["result"]?["message"] == "msg_write_toolu_02" && sent["result"]?["duplicate"] == nil, "\(sent)")
+            integrations[tile] = try connect()
+        }
+        // Each integration takes its own terminal's message while another terminal's of that id is held.
+        for (tile, integration) in integrations {
+            let taken = try await call(integration, "agent.inbox", ["tile": .string(tile)])
+            #expect(taken["result"]?["messages"]?.array?.map { $0["id"] } == [.string("msg_write_toolu_02")], "\(tile): \(taken)")
+        }
+        // Another terminal's ack, or its bounce, lets go of no other terminal's message.
+        let other = try connect(), ack: [String: JSONValue] = ["tile": .string(reviewer), "ack": .array([.string("msg_write_toolu_02")])]
+        #expect(try await call(try #require(integrations[reviewer]), "agent.inbox", ack)["result"]?["messages"] == .array([]))
+        #expect(try await call(other, "agent.inbox", ["tile": .string(tester)])["result"]?["messages"] == .array([]), "offered again once reviewer acked its own")
+        try board.releaseAgent(tile: lead)
+        #expect(try await call(other, "agent.inbox", ["tile": .string(tester)])["result"]?["messages"] == .array([]), "offered again once lead's bounced")
+        #expect(typed.isEmpty)
+    }
+
     @Test func anIdleIntegrationKilledWithoutItsReleaseTakesNothingMoreAndWhatWaitedBounces() async throws {
         let reviewer = terminal("reviewer"), lead = terminal("lead")
         try omp(reviewer, .idle, seq: 1)

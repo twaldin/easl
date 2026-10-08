@@ -211,8 +211,13 @@ public final class ApiRouter {
     private var promptMarks: [ObjectID: TerminalTail.Tail] = [:]
     private var waiters: [Waiter] = []
     /// Which connection holds each message `agent.inbox` handed out and its integration hasn't
-    /// acked yet: offered again once that connection closes.
-    private var messageHolds: [String: SocketServer.Connection] = [:]
+    /// acked yet: offered again once that connection closes. By terminal and id: a sender's own id
+    /// (`agent.prompt` `message`) may name a message to each of several terminals.
+    private var messageHolds: [MessageHold: SocketServer.Connection] = [:]
+    private struct MessageHold: Hashable {
+        let tile: ObjectID
+        let message: String
+    }
     /// `agent.inbox` long polls waiting for a message to their terminal.
     private var inboxWaiters: [InboxWaiter] = []
 
@@ -750,7 +755,7 @@ public final class ApiRouter {
         messageHolds = messageHolds.filter { $0.value.isOpen }
         let ack = p["ack"]?.array?.compactMap(\.string) ?? []
         if !ack.isEmpty {
-            for message in ack { messageHolds.removeValue(forKey: message) }
+            for message in ack { messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message)) }
             if !board.ackMessages(ack, of: tile).isEmpty { messagesDelivered(to: tile, on: board, started: p["started"]?.bool == true) }
         }
         let offered = offer(tile, on: board, to: connection)
@@ -771,8 +776,8 @@ public final class ApiRouter {
     /// agent.restart kills and relaunches it (`restarting`).
     private func offer(_ tile: ObjectID, on board: Board, to connection: SocketServer.Connection) -> [AgentMessage] {
         guard !restarting.contains(tile) else { return [] }
-        let free = (board.messages[tile] ?? []).filter { messageHolds[$0.id]?.isOpen != true }
-        for message in free { messageHolds[message.id] = connection }
+        let free = (board.messages[tile] ?? []).filter { messageHolds[MessageHold(tile: tile, message: $0.id)]?.isOpen != true }
+        for message in free { messageHolds[MessageHold(tile: tile, message: message.id)] = connection }
         return free
     }
 
@@ -832,7 +837,7 @@ public final class ApiRouter {
         let receiver = board.objects[bounce.tile].map { AgentAddress.address(of: $0, on: board, among: boards) }
             ?? bounce.name.map { "\($0)@\(AgentAddress.boardName(board.root))" } ?? bounce.tile
         for message in bounce.messages {
-            messageHolds.removeValue(forKey: message.id)
+            messageHolds.removeValue(forKey: MessageHold(tile: bounce.tile, message: message.id))
             let notice = "undelivered to \(receiver): \(message.gist)"
             let home = message.from.flatMap { registry.board(containing: $0) }
             if let sender = message.from, let home, let tile = home.objects[sender], PromptTarget.takesMessages(tile),

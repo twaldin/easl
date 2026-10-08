@@ -20,6 +20,12 @@ type inboxWaiter struct {
 	timer *time.Timer
 }
 
+// messageHold names a message agent.inbox handed out: by terminal and id, since a sender's own
+// id (agent.prompt `message`) may name a message to each of several terminals.
+type messageHold struct {
+	tile, message string
+}
+
 // queueMessage is an out-of-band agent.prompt: queued for terminal, whose integration takes it
 // with agent.inbox; nothing is typed, so none of typing's refusals apply. From a terminal
 // (caller, honoured when it is a terminal on an open board) the message is the agent's; with a
@@ -119,14 +125,14 @@ func (r *Router) inbox(id any, p map[string]any, c Conn) (any, error) {
 	if waitMs < 0 || waitMs > 60_000 {
 		return nil, invalid("waitMs is from 0 to 60000")
 	}
-	for message, holder := range r.messageHolds {
+	for hold, holder := range r.messageHolds {
 		if !holder.IsOpen() {
-			delete(r.messageHolds, message)
+			delete(r.messageHolds, hold)
 		}
 	}
 	if ack := strings_(p["ack"]); len(ack) > 0 {
 		for _, message := range ack {
-			delete(r.messageHolds, message)
+			delete(r.messageHolds, messageHold{tile, message})
 		}
 		if len(b.AckMessages(ack, tile)) > 0 {
 			r.messagesDelivered(tile, b, boolParam(p, "started"))
@@ -160,11 +166,11 @@ func (r *Router) offer(tile string, b *board.Board, c Conn) []board.Message {
 	}
 	var free []board.Message
 	for _, m := range b.Messages(tile) {
-		if holder, held := r.messageHolds[m.ID]; held && holder.IsOpen() {
+		if holder, held := r.messageHolds[messageHold{tile, m.ID}]; held && holder.IsOpen() {
 			continue
 		}
 		free = append(free, m)
-		r.messageHolds[m.ID] = c
+		r.messageHolds[messageHold{tile, m.ID}] = c
 	}
 	return free
 }
@@ -237,7 +243,7 @@ func (r *Router) bounce(b *board.Board, bounce board.Bounce) {
 		receiver = bounce.Name + "@" + board.BoardName(b.Root())
 	}
 	for _, m := range bounce.Messages {
-		delete(r.messageHolds, m.ID)
+		delete(r.messageHolds, messageHold{bounce.Tile, m.ID})
 		notice := "undelivered to " + receiver + ": " + board.Gist(m)
 		home, sent := r.reg.Containing(m.From)
 		if m.From != "" && sent {

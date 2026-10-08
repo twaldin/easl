@@ -31,6 +31,9 @@ const RECORD_MS = 5_000;
 // another machine has its text read over ssh first, which took 2.6 to 10 s to deckbox; omp gives
 // a tool_result handler 30 s.
 const PEER_PROMPT_TIMEOUT_MS = 20_000;
+// How a server from before agent.prompt took `message` refuses it: before it queues anything,
+// so sending again without it can't make a second message.
+const NO_MESSAGE_IDS = "unknown param message;";
 // The session entries that list the messages omp recorded (`{ ids }`), for a restarted omp.
 const RECORDED_ENTRY = "easl.messages";
 // How often the editor, model and thinking level are looked at (agent.report `draft`,
@@ -618,7 +621,8 @@ export default function canvas(pi: ExtensionAPI): void {
   // the result then says delivered, receipts included, so omp's card doesn't show a failure.
   // Every attempt at one write sends the same message id (`writeMessageId`), and easl queues an
   // id once: a prompt that timed out may still have been queued. A failure leaves the id in the
-  // result's `details.easl.message` for a handler after this one that sends it another way.
+  // result's `details.easl.message` for a handler after this one that sends it another way. A
+  // server older than message ids (NO_MESSAGE_IDS) gets the message without one.
   pi.on("tool_result", async (event) => {
     if (event.toolName !== "write" || !event.isError) return;
     const target = peerAddress(String(event.input?.path ?? ""));
@@ -630,7 +634,11 @@ export default function canvas(pi: ExtensionAPI): void {
     // Its own connection, with time for a terminal on another machine (PEER_PROMPT_TIMEOUT_MS).
     const messenger = new CanvasClient({ timeoutMs: PEER_PROMPT_TIMEOUT_MS, reconnectTimeoutMs: 0 });
     try {
-      const sent = await messenger.api.agent.prompt({ target, text, caller: tile, message: id });
+      const params = { target, text, caller: tile };
+      const sent = await messenger.api.agent.prompt({ ...params, message: id }).catch((error: unknown) => {
+        if (error instanceof CanvasError && error.code === "invalid_params" && error.message.startsWith(NO_MESSAGE_IDS)) return messenger.api.agent.prompt(params);
+        throw error;
+      });
       const address = sent.agent.address;
       const message = (event.details as Details | undefined)?.message;
       const details = Array.isArray(message?.receipts)

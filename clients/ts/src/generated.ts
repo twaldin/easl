@@ -5,6 +5,9 @@ export const SCHEMA_VERSION = 1;
 /** Prefixed id, e.g. obj_01H…, men_… */
 export type Id = string;
 
+/** A message's id: `msg_` and 8 to 64 letters, digits, `_` or `-`; easl's own (`msg_` and a ULID) or the one its sender gave (agent.prompt `message`) */
+export type MessageId = string;
+
 export type Frame = {
   x: number;
   y: number;
@@ -656,7 +659,7 @@ export type Agent = {
 /** An out-of-band message queued for a terminal whose integration takes messages (agent.report `protocol` ≥ 1) */
 export type AgentMessage = {
   /** `msg_…`; ack it (agent.inbox `ack`) once the agent has it */
-  id: Id;
+  id: MessageId;
   /** as the sender wrote it */
   text: string;
   from: MessageSender;
@@ -1432,7 +1435,7 @@ export type AgentPromptParams = {
   /** now: a steer into the running turn, or a new turn when idle; next-turn: never into a running turn, delivered once it has ended */
   when?: "now" | "next-turn";
   /** out-of-band only: the id the message gets (`msg_` and 8 to 64 letters, digits, `_` or `-`), the same on every attempt to send it. A prompt whose `message` is already queued for the target answers with that message (`duplicate: true`) and queues nothing, also when the first attempt is still being sent, so a sender whose call timed out can send again without the target getting it twice (a terminal on another machine has its text read over ssh before the message is queued, which can outlast a short timeout). The receiving integration drops an id it already delivered. Typing ignores it */
-  message?: string;
+  message?: MessageId;
   /** typing only: send even though the target is `blocked` or runs another foreground program than its agent (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval */
   force?: boolean;
   /** the user's own prompt from a composer that isn't in this app (a remote board's viewer, docs/design.md "Client mode"): sent exactly as this app's composer sends it, typed into the terminal, also into one whose integration takes messages; `mentions` wait for that prompt's own drain, numbered from 1, never the tray and never a hand-off. Takes no `caller`, `from` or `when` */
@@ -1448,7 +1451,7 @@ export type AgentPromptResult = {
   /** message: queued for the target's integration (`message` is its id); typed: pasted or typed into the terminal */
   delivery: "message" | "typed";
   /** with delivery `message`: the queued message's id */
-  message?: Id;
+  message?: MessageId;
   /** the agent reports a lifecycle (an integration, or by notification), so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: "prompt"` */
   waitable: boolean;
   /** present with `mentions`: what waits for the target's prompt (an object already waiting there is not attached twice) */
@@ -1500,7 +1503,7 @@ export type AgentInboxParams = {
   /** the integration's own terminal (EASL_TILE_ID) */
   tile: Id;
   /** messages this integration has handed to its agent */
-  ack?: Id[];
+  ack?: MessageId[];
   /** with `ack`: their delivery started a new turn (the agent was idle), rather than joining the running one */
   started?: boolean;
   /** wait this long for a message when none waits */
