@@ -255,6 +255,93 @@ struct RepoBoardTests {
         #expect(board.objects[note.id]?.frame == note.frame, "placed as it was: it is the main checkout's board")
     }
 
+    /// A plain folder's board (keyed by its path) with a note and a code tile, saved; a launch
+    /// migrates the store, leaving it alone as a board outside git.
+    func folderBoard() throws -> (folder: URL, board: Board) {
+        let folder = dir.appendingPathComponent("tiktok")
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("src"), withIntermediateDirectories: true)
+        let store = BoardStore(directory: boards)
+        let board = store.load(root: folder)
+        board.create(type: .note, props: .object(["markdown": .string("made before git init")]), frame: Frame(x: 40, y: 60, w: 300, h: 200))
+        board.create(type: .code, props: .object(["path": .string("src/a.txt")]), frame: Frame(x: 400, y: -80, w: 500, h: 300))
+        store.save(board)
+        #expect(board.id == BoardStore.pathID(folder))
+        #expect(try #require(store.migrateToRepoBoards()).nonGit == [board.id])
+        return (folder, board)
+    }
+
+    /// `git init` and a first commit in `folder`; its repository's common git directory.
+    func makeRepository(_ folder: URL) async throws -> String {
+        try "a\n".write(to: folder.appendingPathComponent("src/a.txt"), atomically: true, encoding: .utf8)
+        for arguments in [["init", "-q", "--template=", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "init"]] {
+            try await TempRepo.run(arguments, in: folder)
+        }
+        return try #require(GitWorktree.containing(folder.path)).commonDir
+    }
+
+    /// `board` is `old`'s folder's repository board holding `old`, as it was: same objects, ids
+    /// and frames, the code tile's path unchanged; `old`'s file is backed up and the ledger
+    /// records the merge.
+    func expectAdopted(_ old: Board, by board: Board, commonDir: String) throws {
+        #expect(board.id == BoardStore.repoID(commonDir: commonDir))
+        #expect(board.objects.count == old.objects.count)
+        for object in old.snapshot.objects {
+            #expect(board.objects[object.id]?.frame == object.frame, "\(object.type) placed as it was")
+        }
+        #expect(board.objects.values.first { $0.type == .code }?.props["path"] == .string("src/a.txt"))
+        #expect(board.repo?.merged == [old.id])
+        #expect(try stored(board.id).objects.map(\.id).sorted() == old.snapshot.objects.map(\.id).sorted(), "written to the repository board's file")
+        #expect(!FileManager.default.fileExists(atPath: boards.appendingPathComponent("\(old.id).json").path))
+        #expect(FileManager.default.fileExists(atPath: boards.appendingPathComponent("pre-repo-migration/\(old.id).json").path))
+        let ledger = try RepoBoardMigration.decoder.decode(RepoBoardMigration.Ledger.self, from: Data(contentsOf: RepoBoardMigration.ledgerURL(boards)))
+        let run = try #require(ledger.runs.last?.repos.first)
+        #expect(run.board == board.id && run.legacy.map(\.board) == [old.id] && run.legacy.map(\.status) == ["merged"] && run.legacy.map(\.anchor) == ["main"])
+    }
+
+    /// easl#79: `~/dev/tiktok` had a board, then `git init`; relaunched, easl opened an empty
+    /// repository board instead of it.
+    @Test func aFoldersBoardIsKeptWhenTheFolderBecomesARepository() async throws {
+        let (folder, old) = try folderBoard()
+        let commonDir = try await makeRepository(folder)
+
+        let store = BoardStore(directory: boards)
+        #expect(store.migrateToRepoBoards() == nil, "the store migrated at an earlier launch")
+        let board = BoardRegistry(store: store).open(root: folder)
+        try expectAdopted(old, by: board, commonDir: commonDir)
+
+        // The next launch finds nothing more to merge.
+        let runs = try RepoBoardMigration.decoder.decode(RepoBoardMigration.Ledger.self, from: Data(contentsOf: RepoBoardMigration.ledgerURL(boards))).runs.count
+        let again = BoardRegistry(store: BoardStore(directory: boards)).open(root: folder)
+        #expect(again.objects.count == old.objects.count && again.repo?.merged == [old.id])
+        #expect(try RepoBoardMigration.decoder.decode(RepoBoardMigration.Ledger.self, from: Data(contentsOf: RepoBoardMigration.ledgerURL(boards))).runs.count == runs)
+    }
+
+    /// easl 0.2.3 saved the empty repository board it opened in place of the folder's board.
+    @Test func aFoldersBoardMergesIntoTheEmptyRepositoryBoardALaunchSavedInstead() async throws {
+        let (folder, old) = try folderBoard()
+        let commonDir = try await makeRepository(folder)
+        let empty = Board(id: BoardStore.repoID(commonDir: commonDir), root: folder)
+        empty.repo = RepoRecord(commonDir: commonDir)
+        BoardStore(directory: boards).save(empty)
+
+        let store = BoardStore(directory: boards)
+        #expect(store.migrateToRepoBoards() == nil)
+        try expectAdopted(old, by: BoardRegistry(store: store).open(root: folder), commonDir: commonDir)
+    }
+
+    /// The folder's board is open when the folder becomes a repository and is opened again: it
+    /// stays as it is (its next save would bring its file back), and the next launch merges it.
+    @Test func aFoldersBoardOpenWhenItsRepositoryBoardLoadsWaitsForTheNextLaunch() async throws {
+        let (folder, old) = try folderBoard()
+        let registry = BoardRegistry(store: BoardStore(directory: boards, debounce: 60))
+        #expect(registry.open(root: folder).id == old.id)
+        let commonDir = try await makeRepository(folder)
+        #expect(registry.open(root: folder).objects.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: boards.appendingPathComponent("\(old.id).json").path))
+
+        try expectAdopted(old, by: BoardRegistry(store: BoardStore(directory: boards)).open(root: folder), commonDir: commonDir)
+    }
+
     @Test func aTerminalRecordsTheWorktreeAndBranchItStartsIn() async throws {
         let (repo, worktree) = try await fixture()
         let registry = BoardRegistry(store: BoardStore(directory: boards, debounce: 60))

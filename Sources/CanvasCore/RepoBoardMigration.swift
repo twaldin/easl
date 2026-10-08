@@ -94,9 +94,10 @@ public enum RepoBoardMigration {
 
     /// Migrates the store at `directory`. `knownRoots` name repositories beyond those of the
     /// stored boards' roots (the saved tabs), for legacy boards whose worktree is gone. With
-    /// `only`, merges just that repository's legacy boards (it is being loaded). A dry run
-    /// writes nothing.
-    public static func run(directory: URL, knownRoots: [URL] = [], only: String? = nil, dryRun: Bool = false, now: Date = Date()) -> Report {
+    /// `only`, merges just that repository's legacy boards (it is being loaded). Legacy boards in
+    /// `skipping` (open in the app, which would save them back) are left as if not stored. A dry
+    /// run writes nothing.
+    public static func run(directory: URL, knownRoots: [URL] = [], only: String? = nil, skipping: Set<BoardID> = [], dryRun: Bool = false, now: Date = Date()) -> Report {
         let files = ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         var repoBoards: [String: (url: URL, snapshot: BoardSnapshot)] = [:]
@@ -106,10 +107,13 @@ public enum RepoBoardMigration {
             guard let data = try? Data(contentsOf: file), let snapshot = try? decoder.decode(BoardSnapshot.self, from: data) else { continue }
             if let repo = snapshot.repo {
                 repoBoards[repo.commonDir] = (file, snapshot)
+            } else if skipping.contains(snapshot.id) {
+                continue
             } else if snapshot.id == BoardStore.pathID(URL(fileURLWithPath: snapshot.root)),
                       !BoardStore.isDirectory(snapshot.root) || GitWorktree.containing(URL(fileURLWithPath: snapshot.root).standardizedFileURL.path) == nil {
-                // A path id in git (a repository with no commit yet, where git named no branch)
-                // is a legacy board of the directory; elsewhere a board outside git.
+                // A path id in git (a repository with no commit yet, where git named no branch,
+                // or a directory that became a repository after its board was made) is a legacy
+                // board of the directory; elsewhere a board outside git.
                 nonGit.append(snapshot.id)
             } else {
                 legacy.append((file, snapshot))
@@ -155,7 +159,8 @@ public enum RepoBoardMigration {
         case branch(String)
         case detached(top: String)
         case unknown
-        /// Keyed by its directory's path: opened before its repository had a commit.
+        /// Keyed by its directory's path: opened before its repository had a commit, or before
+        /// the directory was in a repository at all.
         case path
     }
 

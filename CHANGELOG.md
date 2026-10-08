@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- **A folder's board survives `git init`.** A board made for a folder before it was a git repository (`~/dev/tiktok`, then `git init` and a commit) was replaced by a new, empty board when easl reopened the folder: the folder now opens its repository's board, and the step that folds older boards into repository boards ran once per Mac and never looked again. When a repository's board loads, easl now takes in the boards of folders inside that repository that were made before they were in git. On an empty repository board (including the empty one easl 0.2.3 saved in its place) the objects stay where they were, with the same ids and frames; on one you have added to since, they arrive as a region beside your work. The old file moves to `boards/pre-repo-migration/`, and the repository board lists it in `repo.merged`, so agents still using the old board id reach the repository board. A folder board that is open when its repository board loads waits for the next launch. easld does the same.
+
 ## 0.2.3
 
 - **easl updates itself.** A minute after launch and then daily, easl reads easl.sh/latest.json; when a newer version is out, an **Update** button appears at the top right of every board window, and easl › Check for Updates… checks now (and says when easl is up to date). Update shows "Update to X? easl quits and reopens; your terminals keep running." with Release Notes beside it, then downloads the release into easl's support folder, checks its size and SHA-256 against latest.json, its signature, Team ID and notarization, and its version, quits easl like ⌘Q, swaps the app where it is and reopens it. Any failure leaves the running easl as it was and says why; if the swap itself fails, the old version is put back and the next launch says why. A Homebrew install updates the same way (`brew outdated` lists easl until `brew upgrade --cask easl`). Testing: `EASL_UPDATE_URL` reads another latest.json, and `scripts/dev.sh` passes it through; development instances never check by themselves.
