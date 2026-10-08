@@ -317,12 +317,14 @@ public enum RepoBoardMigration {
                 continue
             }
 
+            // A folder's live HEAD belongs to the worktree record, not its objects' anchors.
+            let rerootBranch = legacy.identity == .path ? nil : branch
             var rerooter = Rerooter(oldRoot: URL(fileURLWithPath: snapshot.root).standardizedFileURL.path, top: legacy.top, live: legacy.live, anchor: anchor,
                                     destinationRoot: URL(fileURLWithPath: target.root))
             var objects = snapshot.objects.map { object -> CanvasObject in
                 var object = object
                 if (snapshot.format ?? 1) < 2, RenderMath.isTile(object.type) { object.frame.h += RenderMath.tileTitleHeight }
-                return rerooter.reroot(object, branch: branch)
+                return rerooter.reroot(object, branch: rerootBranch)
             }
             let tray = (snapshot.tray ?? []).map { rerooter.reroot($0) }
             let messages = (snapshot.messages ?? [:]).mapValues { $0.map { rerooter.reroot($0) } }

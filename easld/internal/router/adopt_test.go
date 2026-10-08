@@ -80,8 +80,10 @@ func TestAnAdoptedPathWorktreeOpensAndListsItsRegionAcrossRestarts(t *testing.T)
 			oldID := f.result("board.open", map[string]any{"root": worktree})["board"].(string)
 			codeFrame := map[string]any{"x": 20.0, "y": 40.0, "w": 400.0, "h": 300.0}
 			noteFrame := map[string]any{"x": 500.0, "y": 40.0, "w": 200.0, "h": 100.0}
+			terminalFrame := map[string]any{"x": 500.0, "y": 200.0, "w": 300.0, "h": 200.0}
 			code := idOf(f.result("object.create", map[string]any{"board": oldID, "type": "code", "props": map[string]any{"path": "src/a.go"}, "frame": codeFrame}))
 			note := idOf(f.result("object.create", map[string]any{"board": oldID, "type": "note", "props": map[string]any{"markdown": "src/a.go:1"}, "frame": noteFrame}))
+			terminal := idOf(f.result("object.create", map[string]any{"board": oldID, "type": "terminal", "props": map[string]any{"cwd": worktree}, "frame": terminalFrame}))
 			git(t, repo, "init", "-q", "-b", "main")
 			git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
 			git(t, repo, "worktree", "add", "-q", "-b", "topic", worktree)
@@ -99,7 +101,7 @@ func TestAnAdoptedPathWorktreeOpensAndListsItsRegionAcrossRestarts(t *testing.T)
 				opened := f.result("board.open", map[string]any{"root": worktree})
 				repoID := opened["board"].(string)
 				b := f.router.reg.Boards()[repoID]
-				if len(b.Objects()) != 3 || !slices.Equal(b.Repo.Merged, []string{oldID}) {
+				if len(b.Objects()) != 4 || !slices.Equal(b.Repo.Merged, []string{oldID}) {
 					t.Fatalf("objects %v, merged %v", b.Objects(), b.Repo.Merged)
 				}
 				for _, o := range b.Objects() {
@@ -142,6 +144,14 @@ func TestAnAdoptedPathWorktreeOpensAndListsItsRegionAcrossRestarts(t *testing.T)
 				if !reflect.DeepEqual(objects[code]["frame"], codeFrame) || !reflect.DeepEqual(objects[note]["frame"], noteFrame) ||
 					codeProps["path"] != filepath.Join(worktree, "src", "a.go") || codeProps["ref"] != nil || noteProps["root"] != worktree || noteProps["ref"] != nil {
 					t.Fatalf("changed frames/anchors: %v %v", objects[code], objects[note])
+				}
+				terminalProps := objects[terminal]["props"].(map[string]any)
+				if !reflect.DeepEqual(objects[terminal]["frame"], terminalFrame) || terminalProps["cwd"] != worktree ||
+					terminalProps["worktree"] != store.Normalized(worktree) || terminalProps["branch"] != nil {
+					t.Fatalf("changed folder terminal frame/affinity: %v", objects[terminal])
+				}
+				if part := f.result("board.get", map[string]any{"board": repoID, "branch": "topic"})["objects"].([]any); len(part) != 0 {
+					t.Fatalf("live HEAD incorrectly branch-anchored folder objects: %v", part)
 				}
 				current, err := os.ReadFile(filepath.Join(f.router.reg.Store.Dir, store.BackupFolder, store.LedgerFile))
 				if err != nil {
