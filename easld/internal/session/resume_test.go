@@ -16,8 +16,8 @@ func TestResumeArgvMatchesTheSharedFixture(t *testing.T) {
 	}
 	var fixture struct {
 		Cases []struct {
-			Note, Kind, SessionID string
-			Command, Argv         []string
+			Note, Kind, SessionID, SessionPath string
+			Command, Argv                      []string
 		}
 	}
 	if err := json.Unmarshal(data, &fixture); err != nil {
@@ -27,7 +27,11 @@ func TestResumeArgvMatchesTheSharedFixture(t *testing.T) {
 		t.Fatal("no cases")
 	}
 	for _, c := range fixture.Cases {
-		if got := ResumeArgv(c.Kind, c.SessionID, c.Command); !reflect.DeepEqual(got, c.Argv) {
+		agent := map[string]any{"kind": c.Kind, "sessionId": c.SessionID}
+		if c.SessionPath != "" {
+			agent["sessionPath"] = c.SessionPath
+		}
+		if got := ResumeArgv(agent, c.Command); !reflect.DeepEqual(got, c.Argv) {
 			t.Errorf("%s %s %q (%s): got %q, want %q", c.Kind, c.SessionID, c.Command, c.Note, got, c.Argv)
 		}
 	}
@@ -70,6 +74,7 @@ func TestInitialArgvResumesTheRecordedAgentElseRunsTheCommand(t *testing.T) {
 		want  []string
 	}{
 		"resumed":     {map[string]any{"command": command, "agent": map[string]any{"kind": "omp", "sessionId": "s1"}}, []string{"omp", "--model", "opus", "--resume=s1"}},
+		"its file":    {map[string]any{"command": command, "agent": map[string]any{"kind": "omp", "sessionId": "s1", "sessionPath": "/s/s1.jsonl"}}, []string{"omp", "--model", "opus", "--resume=/s/s1.jsonl"}},
 		"released":    {map[string]any{"command": command}, []string{"omp", "--model", "opus"}},
 		"no session":  {map[string]any{"command": command, "agent": map[string]any{"kind": "omp"}}, []string{"omp", "--model", "opus"}},
 		"unknown":     {map[string]any{"command": []any{"aider"}, "agent": map[string]any{"kind": "aider", "sessionId": "x"}}, []string{"aider"}},

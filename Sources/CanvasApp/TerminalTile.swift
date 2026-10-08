@@ -194,8 +194,7 @@ final class TerminalTile: NSView, TileContent {
     /// claude, codex, gemini, opencode); otherwise the tile's initial `command`. As argv.
     static func initialArgv(_ object: CanvasObject) -> [String]? {
         let argv = object.props["command"]?.array?.compactMap(\.string) ?? []
-        if let kind = object.props["agent"]?["kind"]?.string, let sessionId = object.props["agent"]?["sessionId"]?.string,
-           let resume = AgentResume.argv(kind: kind, sessionId: sessionId, command: argv) {
+        if let resume = AgentResume.argv(agent: object.props["agent"], command: argv) {
             return resume
         }
         return argv.isEmpty ? nil : argv

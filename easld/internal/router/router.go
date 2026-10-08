@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"strconv"
@@ -84,6 +85,9 @@ type Router struct {
 	// Reopens is the file listing the boards easld reopens at start when it owns their
 	// terminals (Restore): each board opened is added. "": none.
 	Reopens string
+	// Log takes easld's notes on the sessions it starts for owned terminals (startNote: an agent
+	// resumed, or the command run and why), a line each; nil: none.
+	Log io.Writer
 	// lifecycle runs owned terminals' sessions off the lock.
 	lifecycle lifecycle
 }

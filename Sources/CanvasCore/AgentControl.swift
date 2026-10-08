@@ -73,8 +73,9 @@ extension AgentResume {
         return Relaunch(argv: session.map { grammar.resume(program, words, $0) } ?? fresh, command: fresh)
     }
 
-    /// The session agent.restart resumes from what the agent recorded (`props.agent`): omp's
-    /// session file when it reported one (`--resume` takes a path), else the session id.
+    /// The session a recorded agent (`props.agent`) is resumed with, by a reboot (`argv`) and by
+    /// agent.restart: omp's session file when it reported one (`--resume` takes a path), else the
+    /// session id.
     static func session(of agent: JSONValue?) -> String? {
         let path = agent?["kind"]?.string == "omp" ? agent?["sessionPath"]?.string : nil
         return (path ?? agent?["sessionId"]?.string).flatMap { $0.isEmpty ? nil : $0 }

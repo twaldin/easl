@@ -424,8 +424,9 @@ extension Board {
 }
 
 /// How a terminal whose session is gone (after a reboot) resumes the agent it recorded
-/// (`props.agent`: `kind` and `sessionId`, from `agent.report_session`): with the options of the
-/// tile's own `command` when that runs the same agent, so a restart keeps the user's flags
+/// (`props.agent`, from `agent.report_session`: its `kind`, and `session(of:)`: omp's session
+/// file, any other agent's session id) with the options of the tile's own `command` when that
+/// runs the same agent, so a restart keeps the user's flags
 /// (Codex's `-c` trust override, Claude's `--model` or `--dangerously-skip-permissions`, omp's
 /// `-e`). What would pick or start another conversation is left out: the command's own session
 /// selectors (`--resume`, `--continue`, Codex's `resume <id>`) and its prompt (positional words,
@@ -449,8 +450,8 @@ public enum AgentResume {
         /// Positional words are kept (opencode's `[project]`); otherwise they are a prompt or a
         /// subcommand (Codex's `resume <id>`) and left out.
         var keepsPositionals = false
-        /// The resumed command from the kept arguments.
-        var resume: (_ program: String, _ kept: [String], _ sessionId: String) -> [String]
+        /// The resumed command from the kept arguments and the session.
+        var resume: (_ program: String, _ kept: [String], _ session: String) -> [String]
     }
 
     static func grammar(_ kind: String) -> Grammar? {
@@ -503,13 +504,14 @@ public enum AgentResume {
         }
     }
 
-    /// The command resuming session `sessionId` of an agent of `kind`; nil for an agent that can't
-    /// be resumed. `command` is the tile's own (`props.command`): its options are kept when its
-    /// program is that agent (by name, any directory).
-    public static func argv(kind: String, sessionId: String, command: [String] = []) -> [String]? {
-        guard let grammar = grammar(kind) else { return nil }
+    /// The command resuming the session `agent` recorded (`props.agent`: `session(of:)` of its
+    /// `kind`); nil for an agent that can't be resumed or recorded no session. `command` is the
+    /// tile's own (`props.command`): its options are kept when its program is that agent (by name,
+    /// any directory).
+    public static func argv(agent: JSONValue?, command: [String] = []) -> [String]? {
+        guard let kind = agent?["kind"]?.string, let grammar = grammar(kind), let session = session(of: agent) else { return nil }
         let (program, kept) = options(of: command, grammar)
-        return grammar.resume(program, kept, sessionId)
+        return grammar.resume(program, kept, session)
     }
 
     /// The program `command` runs the agent as (its own path when it is that agent, else the

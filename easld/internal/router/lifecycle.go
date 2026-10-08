@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -153,10 +154,40 @@ func (r *Router) runSessions() {
 	}
 }
 
-// startSession starts owned terminal `o`'s session; what fails is logged in its board's history.
+// startSession starts owned terminal `o`'s session (`spawn`, ownedSpawn's) and notes in easld's
+// log what it runs (startNote); what fails is logged in its board's history.
 func (r *Router) startSession(b *board.Board, o model.Object, spawn session.SpawnRequest) {
-	if _, _, err := r.Sessions.Spawn(spawn); err != nil {
+	_, created, err := r.Sessions.Spawn(spawn)
+	if err != nil {
 		r.sessionFailed(b, o, "easld couldn't start its session: "+err.Error())
+		return
+	}
+	if created && r.Log != nil {
+		fmt.Fprintf(r.Log, "easld: terminal %s of board %s %s\n", o.ID, b.ID(), startNote(o.Props))
+	}
+}
+
+// startNote is what a new session of terminal `props` runs (session.InitialArgv), and why: the
+// agent session it recorded, resumed, else its command (none: a login shell). Session ids and
+// paths only: a command's words may hold a secret (omp's `--api-key`).
+func startNote(props map[string]any) string {
+	agent := asMap(props["agent"])
+	kind, _ := agent["kind"].(string)
+	command := strings_(props["command"])
+	if session.ResumeArgv(agent, command) != nil {
+		return "resumes its " + kind + " session " + session.ResumedSession(agent)
+	}
+	runs := "runs its command"
+	if len(command) == 0 {
+		runs = "runs a login shell"
+	}
+	switch {
+	case kind == "":
+		return runs + ": no recorded agent"
+	case session.ResumedSession(agent) == "":
+		return runs + ": its " + kind + " agent recorded no session"
+	default:
+		return runs + ": a " + kind + " agent isn't resumed"
 	}
 }
 

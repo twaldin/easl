@@ -22,7 +22,7 @@ func (r *Router) restartOwned(b *board.Board, terminal model.Object, mode string
 	kind, _ := agent["kind"].(string)
 	resumed := ""
 	if mode == "resume" {
-		resumed = resumedSession(agent)
+		resumed = session.ResumedSession(agent)
 	}
 	agentModel, _ := agent["model"].(string)
 	thinking, _ := agent["thinking"].(string)

@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- **omp tiles resume their session after a reboot.** Killing a terminal's session (a reboot, or zmx stopped and easld restarted) hangs up its omp, and omp ends its session then just as on `/exit`. easl's omp extension took that as the user leaving and released the tile, which erased the session easl had recorded, so the tile came back running its command: a fresh omp with none of the conversation. The extension now releases only when no hangup or SIGTERM came first, so the tile comes back as `omp --resume=<its session file>`; `/exit` still releases, and a tile you ended stays ended. Claude Code tiles keep their session the same way when Claude says it ended for `other` reasons (a hangup or SIGTERM; its `/exit` says `prompt_input_exit`). Codex and Gemini CLI give one reason for every end, so easl can't tell and releases their tiles whenever they end, as before. easld and the Mac's tiles now both resume omp by its session file, as `agent.restart` does, and easld's log says, for each session it starts, whether it resumes the tile's agent or runs its command, and why.
+
 ## 0.2.3
 
 - **easl updates itself.** A minute after launch and then daily, easl reads easl.sh/latest.json; when a newer version is out, an **Update** button appears at the top right of every board window, and easl › Check for Updates… checks now (and says when easl is up to date). Update shows "Update to X? easl quits and reopens; your terminals keep running." with Release Notes beside it, then downloads the release into easl's support folder, checks its size and SHA-256 against latest.json, its signature, Team ID and notarization, and its version, quits easl like ⌘Q, swaps the app where it is and reopens it. Any failure leaves the running easl as it was and says why; if the swap itself fails, the old version is put back and the next launch says why. A Homebrew install updates the same way (`brew outdated` lists easl until `brew upgrade --cask easl`). Testing: `EASL_UPDATE_URL` reads another latest.json, and `scripts/dev.sh` passes it through; development instances never check by themselves.
