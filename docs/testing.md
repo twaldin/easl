@@ -28,6 +28,8 @@ machine-ok-queue run -- bun scripts/rotate-lead.ts --target <tile> --file <hando
 
 `--text <handoff>` replaces `--file`. `--easl <executable>` selects the CLI (default `easl` on PATH); `EASL_SOCKET` still selects its server. `--timeoutMs <ms>` bounds the whole operation (default 30 minutes), with startup and delivery each limited to 120 seconds of the time left.
 
+Run the controller from a separate terminal or a known broker-owned process outside the target's zmx process tree: `agent.restart` kills that session and everything it started, so merely backgrounding a command inside the target's shell does not make it survive.
+
 The controller waits for the old agent's natural `idle` or `done` boundary, records its native identity, and calls `agent.restart --mode fresh` without force or retries. Every server restart guard still applies, including pending prompts or messages, drafts (known or unknown), focus, working or blocked agents, concurrent restarts and pastes, and the checks immediately before the kill.
 
 Startup is proved by a different native session and PID, a live local session, kind `omp`, protocol ≥ 1, no draft, and the same reported model and thinking selector. A retained `done` with `seen: false` is accepted; the controller never clears that unread answer or waits only for `idle`. It rechecks identity before handing off to the pinned tile id. `tell` runs as an external script labelled `lead-rotation`, without inherited caller/board identity, and carries one stable message id.
