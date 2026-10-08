@@ -388,3 +388,57 @@ func TestBranchlessRegionFallbackKeepsDetachedAndHistoricalWorktrees(t *testing.
 		t.Fatalf("deleted worktree lost history: %v", archived)
 	}
 }
+
+func TestAdoptionPreservesMalformedUnresolvedLedgerEntriesAcrossLoads(t *testing.T) {
+	dir := t.TempDir()
+	repo, boards := filepath.Join(dir, "repo"), filepath.Join(dir, "boards")
+	commonDir := repository(t, repo)
+	oldID := PathID(repo)
+	note := adoptedObject("obj_kept", model.Note, 10, map[string]any{"markdown": "kept"})
+	stored(t, boards, &Snapshot{ID: oldID, Root: Standardized(repo), Revision: 1, Objects: []model.Object{note}})
+	malformed := []any{"unexpected ledger entry", nil, float64(42), false, []any{"nested"}, map[string]any{}, map[string]any{"board": float64(7)}}
+	carried := map[string]any{"board": "brd_other", "root": "/not-existing", "objects": float64(1)}
+	resolved := map[string]any{"board": oldID, "root": Standardized(repo), "objects": float64(1)}
+	first := map[string]any{"ranAt": "2026-10-01T12:00:00Z", "dryRun": false, "repos": []any{}, "nonGit": []any{},
+		"unresolved": append(append([]any{}, malformed...), carried, resolved), "kept": "first run"}
+	original := map[string]any{"runs": []any{first}, "kept": "ledger root"}
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(boards, BackupFolder, LedgerFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var firstLedger []byte
+	for range 3 {
+		s := New(boards, time.Hour, nil)
+		s.Loading(RepoID(commonDir), commonDir, adoptedAt)
+		got := readStored(t, s, RepoID(commonDir))
+		if len(got.Objects) != 1 || got.Objects[0].ID != note.ID || got.Objects[0].Frame != note.Frame || got.Repo == nil || !slices.Equal(got.Repo.Merged, []string{oldID}) {
+			t.Fatalf("the folder's board was not adopted intact: %+v", got)
+		}
+		current, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ledger map[string]any
+		if err := json.Unmarshal(current, &ledger); err != nil {
+			t.Fatal(err)
+		}
+		runs := ledger["runs"].([]any)
+		if len(runs) != 2 || ledger["kept"] != "ledger root" || !reflect.DeepEqual(runs[0], first) {
+			t.Fatalf("the prior ledger changed: %s", current)
+		}
+		if want := append(append([]any{}, malformed...), carried); !reflect.DeepEqual(runs[1].(map[string]any)["unresolved"], want) {
+			t.Fatalf("malformed/unrelated entries were not preserved: %s", current)
+		}
+		if firstLedger != nil && !slices.Equal(firstLedger, current) {
+			t.Fatal("another load appended a migration run")
+		}
+		firstLedger = current
+	}
+}

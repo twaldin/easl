@@ -961,7 +961,11 @@ func appendToLedger(run *MigrationRun, dir string) {
 		earlier, _ = last["unresolved"].([]any)
 	}
 	board := func(u any) string {
-		id, _ := u.(map[string]any)["board"].(string)
+		record, ok := u.(map[string]any)
+		if !ok {
+			return ""
+		}
+		id, _ := record["board"].(string)
 		return id
 	}
 	seen := map[string]bool{}
