@@ -41,6 +41,16 @@ type Store struct {
 
 	writeMu sync.Mutex
 	written map[string]uint64 // per board, the number of the snapshot on disk
+
+	// pathBoards are the stored boards of directories outside git (path-keyed), id → root, read
+	// when a repository's board first loads (Loading); nil until read. Used under lock.
+	pathBoards map[string]string
+	// legacyStored: the store held a legacy per-branch board (no `repo`, an id other than its
+	// root's PathID) when pathBoards was read. Used under lock.
+	legacyStored bool
+	// loaded is every board Loading was told of: never merged away while it may be open (its
+	// next save would bring its file back). Used under lock.
+	loaded map[string]bool
 }
 
 type pendingSave struct {
@@ -60,7 +70,7 @@ func New(dir string, debounce time.Duration, lock sync.Locker) *Store {
 			}
 		}
 	}
-	s := &Store{Dir: dir, debounce: debounce, lock: lock, pending: map[string]*pendingSave{}, written: map[string]uint64{}}
+	s := &Store{Dir: dir, debounce: debounce, lock: lock, pending: map[string]*pendingSave{}, written: map[string]uint64{}, loaded: map[string]bool{}}
 	s.idle = sync.NewCond(&s.mu)
 	return s
 }

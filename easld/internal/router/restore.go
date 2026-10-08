@@ -46,10 +46,14 @@ func (r *Router) Restore() []error {
 			}
 			continue
 		}
-		if _, err := r.reg.Open(root); err != nil {
+		b, err := r.reg.Open(root)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("can't reopen board %s at %s: %w", e.Board, root, err))
+			kept = append(kept, store.Reopened{Root: root, Board: e.Board})
+			continue
 		}
-		kept = append(kept, store.Reopened{Root: root, Board: e.Board})
+		// The board root opens: e.Board, or the repository board that took it in (adopter).
+		kept = append(kept, store.Reopened{Root: root, Board: b.ID()})
 	}
 	if kept = uniqueBoards(kept); !slices.Equal(kept, listed) {
 		if err := store.WriteReopened(r.Reopens, kept); err != nil {
@@ -67,9 +71,10 @@ var errNowhere = errors.New("no directory opens it any more")
 // repository's main checkout); a live worktree of its repository (listing them reads every one
 // the repository names, which can wait on a mount: only when nothing before opens the board).
 // Worktrees come and go (one merged and removed, its path reused by another repository) while
-// the board stays, and a directory that opens another board never stands for this one. With
-// another directory than `opener` it also says why; "" when none opens it (errNowhere), or
-// when its board file can't be read to tell (it stays listed).
+// the board stays, and a directory that opens another board never stands for this one, but for
+// a folder's board whose folder is in a repository now (adopter). With another directory than
+// `opener`, or another board, it also says why; "" when none opens it (errNowhere), or when its
+// board file can't be read to tell (it stays listed).
 func (r *Router) rootOf(id, opener string) (string, error) {
 	opens := func(dir string) bool {
 		if dir == "" || !store.IsDirectory(dir) {
@@ -98,7 +103,36 @@ func (r *Router) rootOf(id, opener string) (string, error) {
 			}
 		}
 	}
+	if dir, ok := r.adopter(id, opener, snap); ok {
+		into, _ := store.Identify(dir)
+		return dir, fmt.Errorf("board %s reopened as board %s from %s: its folder is in that repository now, whose board takes it in", id, into, dir)
+	}
 	return "", fmt.Errorf("board %s is no longer reopened: %w (%s is gone or opens another board)", id, errNowhere, opener)
+}
+
+// adopter is the directory whose repository's board takes in folder board id as it loads
+// (store.Loading: a board made for a folder before the folder was in git), or took it in
+// already: the folder as its board file has it, in git now; else, its file gone, `opener` when
+// the board it opens lists id in `repo.merged`.
+func (r *Router) adopter(id, opener string, snap *store.Snapshot) (string, bool) {
+	if snap != nil {
+		if snap.Repo == nil && snap.ID == store.PathID(snap.Root) && store.IsDirectory(snap.Root) && store.Containing(snap.Root) != nil {
+			return store.Standardized(snap.Root), true
+		}
+		return "", false
+	}
+	if opener == "" || !store.IsDirectory(opener) {
+		return "", false
+	}
+	into, w := store.Identify(opener)
+	if w == nil {
+		return "", false
+	}
+	repo, err := r.reg.Store.Read(into)
+	if err != nil || repo == nil || repo.Repo == nil || !slices.Contains(repo.Repo.Merged, id) {
+		return "", false
+	}
+	return opener, true
 }
 
 // worktreesOf lists a repository's worktrees for rootOf (store.Worktrees; tests count calls).

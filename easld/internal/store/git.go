@@ -44,29 +44,34 @@ func Normalized(path string) string {
 }
 
 func resolved(path string) string {
-	out, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		// Resolve what exists; the rest is kept as written.
-		dir, rest := path, ""
-		for {
-			parent := filepath.Dir(dir)
-			rest = filepath.Join(filepath.Base(dir), rest)
-			if parent == dir {
-				return path
-			}
-			dir = parent
-			if r, err := filepath.EvalSymlinks(dir); err == nil {
-				out = filepath.Join(r, rest)
-				break
-			}
-		}
-	}
+	out := realPath(path)
 	if strings.HasPrefix(out, "/private/") {
 		if stripped := strings.TrimPrefix(out, "/private"); exists(stripped) {
 			return stripped
 		}
 	}
 	return out
+}
+
+// realPath is GitDiffEngine.realPath: path with its symlinks resolved, also when its end doesn't
+// exist (what exists is resolved, the rest kept as written); `/private` stays.
+func realPath(path string) string {
+	out, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return out
+	}
+	dir, rest := path, ""
+	for {
+		parent := filepath.Dir(dir)
+		rest = filepath.Join(filepath.Base(dir), rest)
+		if parent == dir {
+			return path
+		}
+		dir = parent
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(r, rest)
+		}
+	}
 }
 
 func exists(path string) bool {
