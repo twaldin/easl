@@ -264,6 +264,7 @@ extension ApiRouter {
         restarting.insert(tile)
         defer {
             restarting.remove(tile)
+            board.agentRestartEnded(tile)
             serveInbox(tile, on: board)
         }
         try await restartTerminal(board, tile, launch.argv, {
@@ -271,6 +272,10 @@ extension ApiRouter {
             guard let current = board.objects[tile] else { throw Failure("not_found", "terminal \(tile) was closed") }
             if self.pasting[tile] != nil { throw Self.pastingFailure(tile) }
             if !force { try self.refuseRestart(current, on: board) }
+            // From the kill until the relaunch is recorded, the killed agent's release waits for
+            // that record, which replaces it, so the tile keeps showing its lifecycle (an unseen
+            // `done` stays: `Board.restartedAgent`).
+            board.agentRestartBegan(tile)
         }, {
             // Closed while its session was killed: its delete ended the agent session and
             // bounced the queue; there is nothing to relaunch into.

@@ -185,8 +185,8 @@ public final class BoardStore {
     }
 
     /// Writes a human-readable snapshot (for committing to the repo). The selection tray,
-    /// attention markers, agents' last answers and their undelivered messages are personal,
-    /// transient state, so they are left out.
+    /// attention markers, agents' last answers, their undelivered messages and pending relaunches
+    /// are personal, transient state, so they are left out.
     public static func export(_ board: Board, to url: URL) throws {
         var snapshot = board.snapshot
         snapshot.tray = nil
@@ -196,6 +196,7 @@ public final class BoardStore {
         snapshot.lifecycleSeq = nil
         snapshot.repo = nil
         snapshot.messages = nil
+        snapshot.relaunchedAgents = nil
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]

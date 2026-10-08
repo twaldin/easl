@@ -38,6 +38,9 @@ type Snapshot struct {
 	// Messages are the peer messages each terminal's integration hasn't acked yet
 	// (Board.messages); nil when absent.
 	Messages map[string][]Message
+	// RelaunchedAgents are the terminals whose relaunched agent (agent.restart) hasn't reported
+	// yet (Board.relaunchedAgents); nil when absent.
+	RelaunchedAgents []string
 	// Unknown holds the file's top-level keys easld doesn't know (written by a newer app), so a
 	// board easld rewrites keeps them.
 	Unknown map[string]any
@@ -47,7 +50,7 @@ type Snapshot struct {
 var snapshotKeys = map[string]bool{
 	"format": true, "id": true, "root": true, "revision": true, "objects": true, "tray": true, "attention": true,
 	"promptTarget": true, "finalAnswers": true, "turnErrors": true, "lifecycleSeq": true, "repo": true, "aliases": true,
-	"messages": true,
+	"messages": true, "relaunchedAgents": true,
 }
 
 // Message is an out-of-band agent.prompt queued for a terminal (AgentMessage), saved with the
@@ -233,6 +236,13 @@ func (s *Snapshot) JSON() map[string]any {
 		}
 		m["messages"] = queues
 	}
+	if s.RelaunchedAgents != nil {
+		tiles := make([]any, len(s.RelaunchedAgents))
+		for i, tile := range s.RelaunchedAgents {
+			tiles[i] = tile
+		}
+		m["relaunchedAgents"] = tiles
+	}
 	return m
 }
 
@@ -404,6 +414,20 @@ func DecodeSnapshot(data []byte) (*Snapshot, error) {
 				}
 				s.Messages[tile] = append(s.Messages[tile], message)
 			}
+		}
+	}
+	if v, present := m["relaunchedAgents"]; present && v != nil {
+		items, ok := v.([]any)
+		if !ok {
+			return nil, decodeError("relaunchedAgents is not an array")
+		}
+		s.RelaunchedAgents = []string{}
+		for i, x := range items {
+			tile, ok := x.(string)
+			if !ok {
+				return nil, decodeError("relaunchedAgents[%d] is not a string", i)
+			}
+			s.RelaunchedAgents = append(s.RelaunchedAgents, tile)
 		}
 	}
 	return s, nil

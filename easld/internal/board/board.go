@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -108,9 +109,15 @@ type Board struct {
 	lifecycleSeq     map[string]int
 	pendingApprovals map[string][]approval
 	// relaunchedAgents are the terminals agent.restart relaunched (RestartedAgent) that no agent
-	// has reported in since (Board.relaunchedAgents); in memory. A release meanwhile is the killed
-	// agent's, sent as it exits after its session is gone, and leaves the relaunch's record.
+	// has reported in since (Board.relaunchedAgents); saved with the board. A release meanwhile is
+	// the killed agent's, sent as it exits after its session is gone, and leaves the relaunch's
+	// record; agent.wait waits for the relaunched agent's first report (AwaitsRelaunchedAgent).
 	relaunchedAgents map[string]bool
+	// restartingAgents are the terminals agent.restart is killing and relaunching
+	// (AgentRestartBegan) that it hasn't recorded the relaunch of yet, each with whether its agent
+	// released meanwhile (Board.restartingAgents); in memory. That release waits: the relaunch's
+	// record replaces it, a restart ending without one applies it (AgentRestartEnded).
+	restartingAgents map[string]bool
 	revHighWater     map[string]int
 	pinnedRevision   *int
 
@@ -166,7 +173,7 @@ func New(id, root string) *Board {
 		finalAnswers: map[string]string{}, turnErrors: map[string]string{}, changedAt: map[string]int{},
 		keyHolders: map[string]map[string]bool{}, seenSinceWorking: map[string]bool{}, lifecycleSeq: map[string]int{},
 		aliases: map[string]string{}, messages: map[string][]Message{},
-		pendingApprovals: map[string][]approval{}, relaunchedAgents: map[string]bool{}, revHighWater: map[string]int{}, history: newHistory(),
+		pendingApprovals: map[string][]approval{}, relaunchedAgents: map[string]bool{}, restartingAgents: map[string]bool{}, revHighWater: map[string]int{}, history: newHistory(),
 		Activity: NewActivityLog(DefaultActivityCapacity, nil), replayActor: UserActor, cascades: map[string]cascade{}, cascadeRev: -1,
 		workingDirectories: map[string]string{}, promptTarget: store.PromptTargetState{FocusOrder: []string{}},
 	}
@@ -261,6 +268,11 @@ func FromSnapshot(s *store.Snapshot) *Board {
 	for tile, waiting := range s.Messages {
 		if o, ok := b.objects[tile]; ok && o.Type == model.Terminal && len(waiting) > 0 {
 			b.messages[tile] = append([]Message{}, waiting...)
+		}
+	}
+	for _, tile := range s.RelaunchedAgents {
+		if o, ok := b.objects[tile]; ok && o.Type == model.Terminal {
+			b.relaunchedAgents[tile] = true
 		}
 	}
 	if s.Repo != nil {
@@ -358,6 +370,9 @@ func (b *Board) Snapshot() *store.Snapshot {
 		for tile, waiting := range b.messages {
 			s.Messages[tile] = append([]Message{}, waiting...)
 		}
+	}
+	if len(b.relaunchedAgents) > 0 {
+		s.RelaunchedAgents = slices.Sorted(maps.Keys(b.relaunchedAgents))
 	}
 	if b.Repo != nil {
 		r := *b.Repo

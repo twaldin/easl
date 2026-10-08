@@ -411,6 +411,11 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 		target.FinalAnswers = mergedMap(target.FinalAnswers, snap.FinalAnswers)
 		target.TurnErrors = mergedMap(target.TurnErrors, snap.TurnErrors)
 		target.LifecycleSeq = mergedMap(target.LifecycleSeq, snap.LifecycleSeq)
+		if len(snap.RelaunchedAgents) > 0 {
+			target.RelaunchedAgents = append(target.RelaunchedAgents, snap.RelaunchedAgents...)
+			slices.Sort(target.RelaunchedAgents)
+			target.RelaunchedAgents = slices.Compact(target.RelaunchedAgents)
+		}
 		// Renamed terminals' old names and their unacknowledged messages come along: a message
 		// the board drops is neither delivered nor bounced.
 		target.Aliases = mergedMap(target.Aliases, snap.Aliases)

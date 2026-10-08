@@ -435,6 +435,35 @@ struct RepoBoardTests {
         #expect(path == "app/src/a.txt")
     }
 
+    @Test func anAdoptedBoardKeepsBothBoardsPendingRelaunchesAcrossReopen() async throws {
+        let (repo, worktree) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let common = try #require(GitWorktree.containing(worktree.path)).commonDir
+        let target = Board(id: BoardStore.repoID(commonDir: common), root: repo.root)
+        target.repo = RepoRecord(commonDir: common)
+        let old = Board(id: BoardStore.pathID(worktree), root: worktree)
+        let agent: JSONValue = .object(["kind": .string("omp"), "sessionId": .string("kept")])
+        let ours = target.create(type: .terminal, props: .object(["agent": agent]))
+        let theirs = old.create(type: .terminal, props: .object(["agent": agent]))
+        target.relaunchedAgents.insert(ours.id)
+        old.relaunchedAgents.insert(theirs.id)
+        let store = BoardStore(directory: boards)
+        store.save(target)
+        store.save(old)
+        for _ in 0..<3 {
+            let registry = BoardRegistry(store: BoardStore(directory: boards))
+            let board = registry.open(root: worktree)
+            #expect(board.repo?.merged == [old.id])
+            #expect(board.snapshot.relaunchedAgents == [ours.id, theirs.id].sorted())
+            for tile in [ours.id, theirs.id] {
+                #expect(board.awaitsRelaunchedAgent(tile))
+                try board.releaseAgent(tile: tile)
+                #expect(board.objects[tile]?.props["agent"] == agent, "a killed agent's late release cannot clear an adopted pending relaunch")
+            }
+            registry.store.save(board)
+        }
+    }
+
     /// A note of `proj/app`'s board read its links in `proj/app`; on `proj`'s board it still does.
     @Test func anAdoptedSubfoldersNotesStillReadTheirFolder() async throws {
         var note: ObjectID = "", html: ObjectID = ""

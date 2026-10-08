@@ -85,7 +85,8 @@ func TestASubfoldersBoardKeepsItsMessagesAliasesNoteRootsAndDiagramPaths(t *test
 	stored(t, boards, &Snapshot{ID: RepoID(commonDir), Root: Standardized(repo), Revision: 3,
 		Objects: []model.Object{adoptedObject("obj_there", model.Terminal, 0, map[string]any{})},
 		Aliases: map[string]string{"old": "obj_there", "kept": "obj_there"}, Messages: map[string][]Message{"obj_term": {ours}},
-		Repo: &RepoRecord{CommonDir: commonDir, Worktrees: []WorktreeRecord{}}})
+		RelaunchedAgents: []string{"obj_there"},
+		Repo:             &RepoRecord{CommonDir: commonDir, Worktrees: []WorktreeRecord{}}})
 	stored(t, boards, &Snapshot{ID: PathID(sub), Root: Standardized(sub), Revision: 2, Objects: []model.Object{
 		adoptedObject("obj_term", model.Terminal, 0, map[string]any{}),
 		adoptedObject("obj_note", model.Note, 300, map[string]any{"markdown": "![x](x.png)"}),
@@ -97,11 +98,15 @@ func TestASubfoldersBoardKeepsItsMessagesAliasesNoteRootsAndDiagramPaths(t *test
 			"edges": []any{map[string]any{"from": "a.go#main", "to": "/elsewhere/b.go#g#h"}, map[string]any{"from": "a.go#main", "to": inside + "#helper"}}}}),
 		adoptedObject("obj_arrow", model.Arrow, 0, map[string]any{"from": map[string]any{"object": "obj_diagram", "node": "a.go#main"},
 			"to": map[string]any{"object": "obj_diagram", "node": inside + "#helper"}}),
-	}, Aliases: map[string]string{"old": "obj_term", "worker": "obj_term"}, Messages: map[string][]Message{"obj_term": {theirs}}})
+	}, Aliases: map[string]string{"old": "obj_term", "worker": "obj_term"}, Messages: map[string][]Message{"obj_term": {theirs}},
+		RelaunchedAgents: []string{"obj_term", "obj_term"}})
 
 	s := New(boards, time.Hour, nil)
 	s.Loading(RepoID(commonDir), commonDir, adoptedAt)
 	got := readStored(t, s, RepoID(commonDir))
+	if !slices.Equal(got.RelaunchedAgents, []string{"obj_term", "obj_there"}) {
+		t.Fatalf("adoption lost the pending relaunch union: %v", got.RelaunchedAgents)
+	}
 	if want := map[string]string{"old": "obj_there", "kept": "obj_there", "worker": "obj_term"}; !reflect.DeepEqual(got.Aliases, want) {
 		t.Errorf("aliases %v, want %v", got.Aliases, want)
 	}

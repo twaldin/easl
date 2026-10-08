@@ -60,6 +60,7 @@ func (r *Router) restartOwned(b *board.Board, terminal model.Object, mode string
 	if r.restarts[tile] == op {
 		delete(r.restarts, tile)
 	}
+	b.AgentRestartEnded(tile)
 	r.serveInbox(tile, b)
 	if failure != nil {
 		return nil, failure
@@ -85,6 +86,12 @@ func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, 
 	r.reg.Mu.Lock()
 	err := r.restartable(b, tile, force)
 	merged := mergedInto(b)
+	if err == nil {
+		// From the kill until the relaunch is recorded, the killed agent's release waits for that
+		// record, which replaces it, so the tile keeps showing its lifecycle (an unseen done
+		// stays: Board.RestartedAgent). A restart ending without it applies it (restartOwned).
+		b.AgentRestartBegan(tile)
+	}
 	r.reg.Mu.Unlock()
 	if err != nil {
 		return err

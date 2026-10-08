@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -8,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/twaldin/easl/easld/internal/board"
+	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/session"
 	"github.com/twaldin/easl/easld/internal/session/zmxtest"
 )
@@ -114,6 +117,267 @@ func TestTheKilledAgentsLateReleaseLeavesTheRelaunch(t *testing.T) {
 		if got := f.agentProps(term); got != nil {
 			t.Errorf("after %s, the relaunched agent's release left %v", first, got)
 		}
+	}
+}
+
+// An answer the user hasn't read (done, unseen: the needs-you badge) stays through an owned
+// restart, either mode, and through the relaunched agent's reports that start no turn (agent.list
+// says so too); its first turn ends it, as without a restart. agent.wait takes the kept answer for
+// the killed agent's: it waits for the relaunched agent's first report. An agent with no answer
+// waiting restarts to no lifecycle, as before.
+func TestAnUnseenAnswerStaysThroughAnOwnedRestartUntilANewTurn(t *testing.T) {
+	f, _ := owning(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	rested := f.agentTerminal("", map[string]any{"name": "rested", "command": []any{"omp"}})
+	for _, tile := range []string{term, rested} {
+		f.result("agent.report_session", map[string]any{"tile": tile, "kind": "omp", "sessionId": "s-" + tile, "model": "anthropic/claude-opus-4-5", "thinking": "high"})
+	}
+	report := func(tile, state string, message any) {
+		t.Helper()
+		params := map[string]any{"tile": tile, "kind": "omp", "state": state, "protocol": 1.0, "draft": false}
+		if message != nil {
+			params["message"] = message
+		}
+		f.result("agent.report", params)
+	}
+	lifecycle := func(tile string) any {
+		t.Helper()
+		return f.result("object.get", map[string]any{"id": tile})["object"].(map[string]any)["props"].(map[string]any)["lifecycle"]
+	}
+	listed := func(tile string) any {
+		t.Helper()
+		for _, a := range f.result("agent.list", map[string]any{})["agents"].([]any) {
+			if a := a.(map[string]any); a["tile"] == tile {
+				return a["lifecycle"]
+			}
+		}
+		return nil
+	}
+	unseen := map[string]any{"state": "done", "seen": false, "message": "Tests pass."}
+	for _, mode := range []string{"resume", "fresh"} {
+		report(term, "working", nil)
+		report(term, "idle", "Tests pass.")
+		if got := lifecycle(term); !reflect.DeepEqual(got, unseen) {
+			t.Fatalf("%s: before the restart %v", mode, got)
+		}
+		f.result("agent.restart", map[string]any{"target": "worker", "mode": mode})
+		if got := lifecycle(term); !reflect.DeepEqual(got, unseen) {
+			t.Errorf("%s: restarted to %v, want %v", mode, got, unseen)
+		}
+		if got := listed(term); !reflect.DeepEqual(got, unseen) {
+			t.Errorf("%s: agent.list says %v, want %v", mode, got, unseen)
+		}
+		// agent.wait waits for the relaunched agent; it reports in, waiting for a prompt: no
+		// turn, still unread.
+		waiting := &conn{}
+		if reply := f.on(waiting, "agent.wait", map[string]any{"target": term}); reply != nil {
+			t.Errorf("%s: agent.wait answered before the relaunched agent reported: %v", mode, reply)
+		}
+		report(term, "idle", nil)
+		if got := lifecycle(term); !reflect.DeepEqual(got, unseen) {
+			t.Errorf("%s: after the relaunched agent's idle %v, want %v", mode, got, unseen)
+		}
+		if sent := waiting.messages(); len(sent) != 1 || sent[0]["ok"] != true || !reflect.DeepEqual(sent[0]["result"].(map[string]any)["agent"].(map[string]any)["lifecycle"], unseen) {
+			t.Errorf("%s: agent.wait once the relaunched agent reported: %v", mode, sent)
+		}
+		// Its first turn replaces it.
+		report(term, "working", nil)
+		if got, _ := lifecycle(term).(map[string]any); got["state"] != "working" {
+			t.Errorf("%s: after its first turn started %v", mode, got)
+		}
+		report(term, "idle", nil)
+
+		report(rested, "idle", nil)
+		f.result("agent.restart", map[string]any{"target": "rested", "mode": mode})
+		if got := lifecycle(rested); got != nil {
+			t.Errorf("%s: an idle agent restarted to %v", mode, got)
+		}
+		report(rested, "idle", nil)
+		if got, _ := lifecycle(rested).(map[string]any); got["state"] != "idle" {
+			t.Errorf("%s: the relaunched idle agent %v", mode, got)
+		}
+	}
+}
+
+func TestARelaunchedAgentsUnknownKeepsTheUnseenAnswer(t *testing.T) {
+	f, _ := owning(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"aider"}})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "aider", "state": "working", "draft": false})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "aider", "state": "idle", "draft": false, "message": "Tests pass."})
+	f.result("agent.restart", map[string]any{"target": "worker", "mode": "fresh", "force": true})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "aider", "state": "unknown"})
+	want := map[string]any{"state": "done", "seen": false, "message": "Tests pass.", "via": "notifications"}
+	if got := f.listed(term)["lifecycle"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("startup report left %v, want %v", got, want)
+	}
+	f.result("agent.report", map[string]any{"tile": term, "kind": "aider", "state": "working"})
+	if got := f.listed(term)["lifecycle"].(map[string]any)["state"]; got != "working" {
+		t.Errorf("a new turn left %v", got)
+	}
+}
+
+func TestAWaitOnARelaunchStillWaitsAfterTheAnswerIsSeen(t *testing.T) {
+	for _, until := range []any{nil, []any{"working"}} {
+		t.Run(fmt.Sprint(until), func(t *testing.T) {
+			f, _ := owning(t)
+			term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+			f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "working", "draft": false})
+			f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "draft": false})
+			f.result("agent.restart", map[string]any{"target": "worker", "mode": "fresh"})
+			// Go has no seen UI; apply the lifecycle a look leaves through the public object API.
+			f.result("object.update", map[string]any{"id": term, "props": map[string]any{"lifecycle": map[string]any{"state": "idle", "seen": true}}})
+			f.router.FirstReportGrace = 50 * time.Millisecond
+			waiting := &conn{}
+			if got := f.on(waiting, "agent.wait", map[string]any{"target": "worker", "until": until, "timeoutMs": 1000.0}); got != nil {
+				t.Fatalf("answered before a relaunch report: %v", got)
+			}
+			deadline := time.Now().Add(1500 * time.Millisecond)
+			for len(waiting.messages()) == 0 && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			sent := waiting.messages()
+			if len(sent) != 1 {
+				t.Fatalf("wait did not answer: %v", sent)
+			}
+			if code, _ := errorOf(sent[0]); code != "unavailable" {
+				t.Errorf("silent relaunch: %v", sent[0])
+			}
+		})
+	}
+}
+
+func TestAWaitOnANotifyingRelaunchDoesNotTakeTheKilledAgentsAnswer(t *testing.T) {
+	f, _ := owning(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"aider"}})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "aider", "state": "unknown"})
+	// Go has no terminal UI; set a notifying lifecycle through the public object API.
+	f.result("object.update", map[string]any{"id": term, "props": map[string]any{"lifecycle": map[string]any{"state": "done", "seen": false, "via": "notifications"}}})
+	f.result("agent.restart", map[string]any{"target": "worker", "mode": "fresh", "force": true})
+	f.router.FirstReportGrace = 50 * time.Millisecond
+	waiting := &conn{}
+	if got := f.on(waiting, "agent.wait", map[string]any{"target": "worker", "timeoutMs": 1000.0}); got != nil {
+		t.Fatalf("answered with the killed agent's notification: %v", got)
+	}
+	time.Sleep(200 * time.Millisecond)
+	sent := waiting.messages()
+	if len(sent) != 1 {
+		t.Fatalf("first-report grace did not end the wait: %v", sent)
+	}
+	if code, _ := errorOf(sent[0]); code != "unavailable" {
+		t.Errorf("silent notifying relaunch: %v", sent[0])
+	}
+}
+
+func TestARelaunchedAgentsSessionReportWakesItsPendingWait(t *testing.T) {
+	f, _ := owning(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "working", "draft": false})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "draft": false})
+	f.result("agent.restart", map[string]any{"target": "worker", "mode": "fresh"})
+	f.router.FirstReportGrace = 30 * time.Second
+	waiting := &conn{}
+	if got := f.on(waiting, "agent.wait", map[string]any{"target": "worker", "timeoutMs": 1000.0}); got != nil {
+		t.Fatalf("answered before a relaunch report: %v", got)
+	}
+	f.result("agent.report_session", map[string]any{"tile": term, "kind": "omp", "sessionId": "s2"})
+	sent := waiting.messages()
+	if len(sent) != 1 || sent[0]["ok"] != true {
+		t.Fatalf("the first session report did not wake the wait: %v", sent)
+	}
+	agent := sent[0]["result"].(map[string]any)["agent"].(map[string]any)
+	if agent["sessionId"] != "s2" || agent["lifecycle"].(map[string]any)["state"] != "done" {
+		t.Errorf("relaunched agent: %v", agent)
+	}
+}
+
+func TestAPendingRelaunchSurvivesASaveAndReopen(t *testing.T) {
+	f, _ := owning(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "working", "draft": false})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "draft": false})
+	f.result("agent.report_session", map[string]any{"tile": term, "kind": "omp", "sessionId": "s1"})
+	f.result("agent.restart", map[string]any{"target": "worker", "mode": "resume"})
+	root := f.board.Root()
+	f.closeBoard(f.board.ID())
+	f.result("board.open", map[string]any{"root": root})
+	f.router.FirstReportGrace = 50 * time.Millisecond
+	waiting := &conn{}
+	if got := f.on(waiting, "agent.wait", map[string]any{"target": "worker", "timeoutMs": 1000.0}); got != nil {
+		t.Errorf("reopen took the killed agent's answer: %v", got)
+	} else {
+		time.Sleep(200 * time.Millisecond)
+		sent := waiting.messages()
+		if len(sent) != 1 {
+			t.Errorf("reopened wait never answered: %v", sent)
+		} else if code, _ := errorOf(sent[0]); code != "unavailable" {
+			t.Errorf("reopened silent relaunch: %v", sent[0])
+		}
+	}
+	f.result("agent.release", map[string]any{"tile": term, "kind": "omp"})
+	if got := f.agentProps(term); got == nil || got.(map[string]any)["sessionId"] != "s1" {
+		t.Errorf("the killed agent's release after reopen lost %v", got)
+	}
+	f.result("agent.report_session", map[string]any{"tile": term, "kind": "omp", "sessionId": "s1"})
+	f.result("agent.release", map[string]any{"tile": term, "kind": "omp"})
+	if got := f.agentProps(term); got != nil {
+		t.Errorf("the relaunched agent's own release kept %v", got)
+	}
+}
+
+func TestAnEarlyReleaseDuringRestartDoesNotClearTheAnswer(t *testing.T) {
+	f, state := owning(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "working", "draft": false})
+	f.result("agent.report", map[string]any{"tile": term, "kind": "omp", "state": "idle", "draft": false, "message": "Tests pass."})
+	original := f.board.OnEvent
+	nullLifecycles := 0
+	f.board.OnEvent = func(event model.Event) {
+		if event.Name == board.EventAgentLifecycle && event.Data.(map[string]any)["lifecycle"] == nil {
+			nullLifecycles++
+		}
+		original(event)
+	}
+	// Real session management waits here after its kill, before it records the relaunch, so the
+	// killed agent's release can arrive in that exact window.
+	wrapper := filepath.Join(t.TempDir(), "zmx")
+	script := "#!/bin/sh\ncase \"$1\" in\nkill) '" + f.router.Sessions.Zmx + "' \"$@\" || exit $?; : > \"$ZMX_DIR/.restart-killed\"; exit 0 ;;\nlist) if [ -e \"$ZMX_DIR/.restart-killed\" ]; then while [ ! -e \"$ZMX_DIR/.restart-released\" ]; do sleep 0.01; done; fi ;;\nesac\nexec '" + f.router.Sessions.Zmx + "' \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.router.Sessions.Zmx = wrapper
+	released := filepath.Join(state, ".restart-released")
+	defer os.WriteFile(released, nil, 0o600)
+	done := make(chan map[string]any, 1)
+	go func() {
+		done <- f.router.HandleConn(map[string]any{"id": "restart", "method": "agent.restart", "params": map[string]any{"target": "worker", "mode": "fresh"}}, &conn{}).(map[string]any)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(state, ".restart-killed")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("restart did not reach its kill")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	f.result("agent.release", map[string]any{"tile": term, "kind": "omp"})
+	if err := os.WriteFile(released, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case reply := <-done:
+		if reply["ok"] != true {
+			t.Fatalf("restart: %v", reply)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("restart did not finish after the release")
+	}
+	if nullLifecycles != 0 {
+		t.Errorf("the answer disappeared during restart: %d null lifecycle events", nullLifecycles)
+	}
+	if got := f.listed(term)["lifecycle"]; !reflect.DeepEqual(got, map[string]any{"state": "done", "seen": false, "message": "Tests pass."}) {
+		t.Errorf("restarted to %v", got)
 	}
 }
 
