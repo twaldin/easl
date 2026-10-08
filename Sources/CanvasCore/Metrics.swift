@@ -103,11 +103,12 @@ public final class Metrics: @unchecked Sendable {
     /// doesn't move it); nil while the loop sleeps. Set at every run-loop activity under `lock`,
     /// where the stall watchdog claims turns, so it never claims one that has already ended.
     private var turnStart: Double?
-    private var stalls: StallSampler?
+    private var stallSampler: StallSampler?
     private var stallPolicy = StallSampling()
-    /// The one sample in flight: its turn, its file once `sample` has finished, and once the
-    /// turn has ended first, that turn's line (all of it) and when it ended. A late file gets a
-    /// tagged line and names the window's `longest` if that turn still is it.
+    /// The one sample in flight, from the watchdog's claim until its file arrives or it fails:
+    /// its turn, its file once `sample` has finished, and once the turn has ended first, that
+    /// turn's line (all of it) and when it ended. A late file gets a tagged line and names the
+    /// window's `longest` if that turn still is it.
     private var stallPending: (turn: Double, file: String?, ended: Stretch?)?
     private var stallsSampled = 0
     private var stallNewest: String?
@@ -213,10 +214,10 @@ public final class Metrics: @unchecked Sendable {
     public func sampleStalls(into directory: URL) {
         lock.lock()
         defer { lock.unlock() }
-        guard stalls == nil else { return }
+        guard stallSampler == nil else { return }
         let sampler = StallSampler(directory: directory, metrics: self)
         sampler.start()
-        stalls = sampler
+        stallSampler = sampler
     }
 
     /// The stall watchdog, awake at `now`: the main thread's turn in progress, when the policy
@@ -232,13 +233,14 @@ public final class Metrics: @unchecked Sendable {
 
     /// The sample of the turn that started at `turn` is in `file`.
     func stallSampled(_ turn: Double, file: String) {
-        var line: String?
+        var line: Stretch?
         lock.lock()
         stallsSampled += 1
         stallNewest = file
         if let pending = stallPending, pending.turn == turn {
-            if let ended = pending.ended {
-                line = Self.busyLine(ended.ms, "\(file); \(ended.cause)")
+            if var ended = pending.ended {
+                ended.cause = "\(file); \(ended.cause)"
+                line = ended
                 if let stretch = longest, stretch.at == ended.at { longest?.cause = "\(file); \(stretch.cause)" }
                 stallPending = nil
             } else {
@@ -246,15 +248,26 @@ public final class Metrics: @unchecked Sendable {
             }
         }
         lock.unlock()
-        if let line { log(line) }
+        if let line { log(Self.busyLine(line.ms, line.cause)) }
     }
 
-    /// A main run-loop activity at `now`: the turn that started at `ended.start` is over (`ended.ms`
-    /// of it since the last reset) and `next` begins (nil: the loop sleeps). `cause` is what the
-    /// turn ran since the reset; `wholeCause`, when a reset dropped some of that, all of it.
-    fileprivate func mainTurn(ended: (start: Double, ms: Double)?, next: Double?, at now: Double,
-                              cause: @autoclosure () -> String, wholeCause: String?) {
-        var line: String?
+    /// The sample of the turn that started at `turn` left no file: the claim is released (a turn
+    /// that already ended has had its line, untagged).
+    func stallFailed(_ turn: Double) {
+        lock.lock()
+        if stallPending?.turn == turn { stallPending = nil }
+        lock.unlock()
+    }
+
+    /// A main run-loop activity at `now`: the turn that started at `ended.start` is over and
+    /// `next` begins (nil: the loop sleeps). `ended.ms` is the part of the turn the window counts,
+    /// from the last reset if one came during it. `cause` is what the turn ran, formatted by the
+    /// caller whenever it could be needed (nil: under `hitchStretch`, and no reset during it). A
+    /// turn a reset cut has no cause of its own in the new window (its spans were dropped at its
+    /// end, the first activity after the reset: "untagged work"); `wholeCause` is then what it
+    /// ran, for its sample's line. The lock is held only to update state; lines are logged after.
+    fileprivate func mainTurn(ended: (start: Double, ms: Double)?, next: Double?, at now: Double, cause: String?, wholeCause: String?) {
+        var line: (ms: Double, cause: String)?
         lock.lock()
         turnStart = next
         if let ended {
@@ -264,27 +277,27 @@ public final class Metrics: @unchecked Sendable {
             if ms >= Self.logStretch { series["main.stretch250", default: Series()].add(tally, at: now) }
             let longer = ms >= Self.hitchStretch && ms > (longest?.ms ?? 0)
             let sampled = stallPending?.turn == ended.start
-            if longer || ms >= Self.logStretch || sampled {
-                let text = cause()
+            // A sampled turn always has a cause: it ran a second, or a reset cut it.
+            if let cause, longer || ms >= Self.logStretch || sampled {
                 var tag = ""
-                if ms >= Self.logStretch { line = Self.busyLine(ms, text) }
+                if ms >= Self.logStretch { line = (ms: ms, cause: cause) }
                 if sampled {
                     // The sampled turn's line is all of it, though a reset may have cut what the
                     // window counts.
-                    let whole = Stretch(ms: (now - ended.start) * 1000, cause: wholeCause ?? text, at: now)
+                    let whole = Stretch(ms: (now - ended.start) * 1000, cause: wholeCause ?? cause, at: now)
                     if let file = stallPending?.file {
                         tag = "\(file); "
                         stallPending = nil
                     } else {
                         stallPending?.ended = whole
                     }
-                    line = Self.busyLine(whole.ms, tag + whole.cause)
+                    line = (ms: whole.ms, cause: tag + whole.cause)
                 }
-                if longer { longest = Stretch(ms: ms, cause: tag + text, at: now) }
+                if longer { longest = Stretch(ms: ms, cause: tag + cause, at: now) }
             }
         }
         lock.unlock()
-        if let line { log(line) }
+        if let line { log(Self.busyLine(line.ms, line.cause)) }
     }
 
     private static func busyLine(_ ms: Double, _ cause: String) -> String {
@@ -441,15 +454,18 @@ final class MainMonitor {
     /// A run-loop activity at `now`: the loop goes to sleep (`sleeping`), or wakes or checks timers.
     func loop(sleeping: Bool, at now: Double) {
         let started = turns.turnStart
-        // Spans that ended before a reset are not the new window's (open ones keep their depth);
-        // a sampled turn's own line still names them.
+        // A reset is applied here, at the first activity after it, which ends the turn it came
+        // in: none of that turn's spans are the new window's (open ones keep their depth), so its
+        // cause there is "untagged work". A sampled turn's own line still names them.
         var wholeCause: String?
         if turns.rebase(reset: metrics.resetAt) {
             wholeCause = cause()
             spans.removeAll(keepingCapacity: true)
         }
         let step = turns.activity(sleeping: sleeping, at: now)
-        metrics.mainTurn(ended: started.map { (start: $0, ms: step.turn ?? 0) }, next: turns.turnStart, at: now, cause: cause(), wholeCause: wholeCause)
+        // Formatted here, not under the metrics lock, whenever the turn could be logged or kept.
+        let text: String? = (step.turn ?? 0) >= Metrics.hitchStretch || wholeCause != nil ? cause() : nil
+        metrics.mainTurn(ended: started.map { (start: $0, ms: step.turn ?? 0) }, next: turns.turnStart, at: now, cause: text, wholeCause: wholeCause)
         spans.removeAll(keepingCapacity: true)
         if let busy = step.flush { metrics.mainBusy(busy.ms, turns: busy.turns) }
     }

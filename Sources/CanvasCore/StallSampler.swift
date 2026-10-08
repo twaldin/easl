@@ -7,7 +7,7 @@ import Foundation
 /// easl home, and the stretch's cause names the file. `StallSampling` is the policy, apart from
 /// the clock, the process and the file system so it can be tested as a unit: a turn is sampled
 /// once, at most one sample every five minutes, and only the newest twenty files are kept.
-public struct StallSampling: Sendable, Equatable {
+public struct StallSampling: Sendable {
     /// A turn this long (s) is a stall worth a sample.
     public static let threshold = 1.0
     /// At most one sample this often (s): a stalling app shouldn't spend its time being sampled.
@@ -32,7 +32,7 @@ public struct StallSampling: Sendable, Equatable {
     }
 
     /// Of `files` (with their modification times), the ones beyond the newest `keep`.
-    public static func stale(_ files: [(url: URL, modified: Date)], keep: Int = keep) -> [URL] {
+    public static func stale(_ files: [(url: URL, modified: Date)]) -> [URL] {
         guard files.count > keep else { return [] }
         return files.sorted { $0.modified > $1.modified }.dropFirst(keep).map(\.url)
     }
@@ -50,10 +50,11 @@ public struct StallSampling: Sendable, Equatable {
 /// The runtime: a 1 s watchdog on a utility queue (one wakeup a second, with leeway) claims the
 /// main thread's turn in progress from `Metrics` when the policy says to sample it, runs
 /// `/usr/bin/sample <pid> 1 -mayDie -file <dir>/<UTC>.txt` with a clean environment, waits for it
-/// at most 15 s (a stuck child is killed), prunes the directory, and hands `Metrics` the file for
-/// that turn so the stretch's cause can name it. The claim comes before any file or process work,
-/// under the lock the main thread ends its turns with: a turn that ended as the watchdog woke is
-/// never sampled, and a claimed turn's end always finds its sample.
+/// at most 15 s (a stuck child is killed), and hands `Metrics` the file for that turn so the
+/// stretch's cause can name it; an attempt that leaves no usable file deletes what it left and
+/// releases the claim. Every attempt ends by pruning the directory. The claim comes before any
+/// file or process work, under the lock the main thread ends its turns with: a turn that ended
+/// as the watchdog woke is never sampled, and a claimed turn's end always finds its claim.
 /// Off under `EASL_DEV_PERF=1` (a sampler suspends the task's threads briefly; measured runs
 /// must not see that).
 final class StallSampler: @unchecked Sendable {
@@ -87,12 +88,16 @@ final class StallSampler: @unchecked Sendable {
     /// One wakeup of the watchdog.
     func tick() {
         guard let metrics, let turn = metrics.claimStall(at: now()) else { return }
+        defer { prune() }
         let name = StallSampling.fileName(at: Date())
         let file = directory.appendingPathComponent(name)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        guard sample(file), let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else { return }
+        guard sample(file), let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else {
+            try? FileManager.default.removeItem(at: file)
+            metrics.stallFailed(turn)
+            return
+        }
         metrics.stallSampled(turn, file: "stalls/\(name)")
-        prune()
     }
 
     /// Runs `/usr/bin/sample` on this process for a second into `file`, with a clean
