@@ -436,13 +436,18 @@ func lifecycleUnknown(terminal model.Object) *Failure {
 		"so agent.wait can't tell when it is done; poll agent.read with since: \"prompt\" instead"}
 }
 
-// reply is the response for a satisfied waiter, nil while it must keep waiting.
+// reply is the response for a satisfied waiter, nil while it must keep waiting. A terminal with
+// no lifecycle, or still showing the answer of the agent agent.restart killed
+// (Board.ShowsKilledAgentsAnswer), gets the first-report grace.
 func (r *Router) reply(w *waiter, b *board.Board, exited bool) map[string]any {
 	terminal, ok := b.Objects()[w.tile]
 	if !ok {
 		return errorReply(w.id, &Failure{api.CodeNotFound, "terminal " + w.tile + " was closed"})
 	}
 	state := stateOf(terminal)
+	if b.ShowsKilledAgentsAnswer(terminal) {
+		state = "unknown"
+	}
 	if state == "unknown" && !w.until[state] {
 		if !exited && board.NotifyingReports(terminal) {
 			return nil

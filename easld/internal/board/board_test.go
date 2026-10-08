@@ -347,6 +347,46 @@ func TestLifecycleStalenessApprovalsAndDone(t *testing.T) {
 	}
 }
 
+// The killed agent's release can reach the board before the restart records the relaunch: the
+// unseen answer the tile had as the restart began (RestartedAgent's lifecycle) still stays, and
+// the relaunched agent's idle leaves it done. Any other lifecycle the restart began with ends.
+func TestARestartKeepsAnUnseenAnswerTheKilledAgentsReleaseCleared(t *testing.T) {
+	b := New("brd", "/r")
+	term := b.Create(model.Terminal, map[string]any{}, frame(0, 0, 1000, 620), "", "")
+	report := func(state string, message *string) {
+		t.Helper()
+		if err := b.ReportLifecycle(Report{Tile: term.ID, Kind: "omp", State: state, Message: message}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restart := func() {
+		t.Helper()
+		began := model.Clone(b.Objects()[term.ID].Props["lifecycle"])
+		if err := b.ReleaseAgent(term.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := b.RestartedAgent(term.ID, []string{"omp"}, map[string]any{"kind": "omp"}, began); err != nil {
+			t.Fatal(err)
+		}
+	}
+	answer := "Tests pass."
+	report("working", nil)
+	report("idle", &answer)
+	restart()
+	if lc, want := lifecycle(b, term.ID), map[string]any{"state": "done", "seen": false, "message": answer}; !reflect.DeepEqual(lc, want) {
+		t.Fatalf("restarted to %v, want %v", lc, want)
+	}
+	report("idle", nil)
+	if lc := lifecycle(b, term.ID); lc["state"] != "done" || lc["seen"] != false {
+		t.Fatalf("the relaunched agent's idle: %v", lc)
+	}
+	report("working", nil)
+	restart()
+	if lc := lifecycle(b, term.ID); lc != nil {
+		t.Fatalf("a restart while working kept %v", lc)
+	}
+}
+
 func TestAttentionFromEarlierTurnsClearsOnTheNextMarker(t *testing.T) {
 	b := New("brd", "/r")
 	term := b.Create(model.Terminal, map[string]any{}, frame(0, 0, 1000, 620), "", "")

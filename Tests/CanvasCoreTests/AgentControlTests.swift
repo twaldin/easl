@@ -368,6 +368,76 @@ final class AgentControlTests {
         #expect(board.objects[tile]?.props["agent"] == nil)
     }
 
+    /// An answer the user hasn't read (`done`, unseen: the needs-you badge) stays through a
+    /// restart, either mode, also when the killed agent releases the tile before the relaunch is
+    /// recorded, and through the relaunched agent's reports that start no turn; the relaunched
+    /// agent starting a turn ends it, as without a restart. agent.wait takes the kept answer for
+    /// the killed agent's, not the relaunched one's: it waits for that one's first report.
+    @Test func anUnseenAnswerStaysThroughARestartUntilANewTurn() async throws {
+        let tile = terminal(name: "worker", command: ["omp"])
+        _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s1", "model": "anthropic/claude-opus-4-5", "thinking": "high"])
+        var seq = 0
+        func report(_ state: String, _ extra: [String: JSONValue] = [:]) async throws {
+            seq += 1
+            try await self.report(tile, state, seq: seq, extra.merging(["draft": .bool(false), "protocol": .number(1)]) { _, new in new })
+        }
+        func lifecycle() -> JSONValue? { board.objects[tile]?.props["lifecycle"] }
+        func badged() -> Bool { NeedsYouItem.all(board.objects, attention: board.attention).map(\.reason) == [.done] }
+        for mode in ["resume", "fresh"] {
+            for releasedFirst in [false, true] {
+                let run = "\(mode)\(releasedFirst ? ", released before the relaunch is recorded" : "")"
+                router.restartTerminal = { [unowned self] _, tile, argv, killing, ended in
+                    try killing()
+                    if releasedFirst { try board.releaseAgent(tile: tile) }
+                    try ended()
+                    restarted.append((tile, argv))
+                }
+                try await report("working")
+                try await report("idle", ["message": "Tests pass."])
+                let unseen: JSONValue = .object(["state": "done", "seen": .bool(false), "message": "Tests pass."])
+                #expect(lifecycle() == unseen && badged())
+
+                let reply = try await call("agent.restart", ["target": "worker", "mode": .string(mode)])
+                #expect(reply["ok"] == .bool(true), "\(run): \(reply)")
+                #expect(lifecycle() == unseen && badged(), "\(run): \(String(describing: lifecycle()))")
+                #expect(try await listed()[tile]?["lifecycle"] == unseen, "\(run): agent.list")
+
+                // agent.wait waits for the relaunched agent: one that never reports fails it.
+                router.firstReportGrace = 0.2
+                let silent = try await call("agent.wait", ["target": "worker", "timeoutMs": 5000])
+                #expect(silent["error"]?["code"] == "unavailable", "\(run): \(silent)")
+
+                // The relaunched agent reports in, waiting for a prompt: no turn, still unread.
+                try await report("idle")
+                #expect(lifecycle() == unseen && badged(), "\(run): \(String(describing: lifecycle()))")
+                #expect(try await call("agent.wait", ["target": "worker"])["result"]?["agent"]?["lifecycle"] == unseen, "\(run)")
+
+                // Its first turn replaces it.
+                try await report("working")
+                #expect(lifecycle()?["state"] == "working" && !badged(), "\(run): \(String(describing: lifecycle()))")
+                try await report("idle")
+            }
+        }
+    }
+
+    /// An answer the user has read restarts to no lifecycle, and the relaunched agent's report
+    /// leaves it unbadged, as before.
+    @Test func aSeenAnswerRestartsToNoBadge() async throws {
+        let tile = terminal(name: "worker", command: ["omp"])
+        _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s1"])
+        try await report(tile, "working", seq: 1, ["draft": .bool(false)])
+        try await report(tile, "idle", seq: 2, ["draft": .bool(false)])
+        board.markSeen(tile)
+        #expect(board.objects[tile]?.props["lifecycle"] == .object(["state": "idle", "seen": .bool(true)]))
+        for (mode, seq) in [("resume", 3), ("fresh", 4)] {
+            #expect(try await call("agent.restart", ["target": "worker", "mode": .string(mode)])["ok"] == .bool(true))
+            #expect(board.objects[tile]?.props["lifecycle"] == nil, "\(mode)")
+            try await report(tile, "idle", seq: seq, ["draft": .bool(false)])
+            #expect(board.objects[tile]?.props["lifecycle"]?["state"] == "idle", "\(mode)")
+            #expect(NeedsYouItem.all(board.objects, attention: board.attention).isEmpty, "\(mode)")
+        }
+    }
+
     @Test func aTileClosedWhileItsSessionIsKilledFailsTheRestart() async throws {
         let tile = terminal(name: "worker", command: ["omp"])
         try await report(tile, "idle", seq: 1, ["draft": .bool(false)])

@@ -117,6 +117,85 @@ func TestTheKilledAgentsLateReleaseLeavesTheRelaunch(t *testing.T) {
 	}
 }
 
+// An answer the user hasn't read (done, unseen: the needs-you badge) stays through an owned
+// restart, either mode, and through the relaunched agent's reports that start no turn (agent.list
+// says so too); its first turn ends it, as without a restart. agent.wait takes the kept answer for
+// the killed agent's: it waits for the relaunched agent's first report. An agent with no answer
+// waiting restarts to no lifecycle, as before.
+func TestAnUnseenAnswerStaysThroughAnOwnedRestartUntilANewTurn(t *testing.T) {
+	f, _ := owning(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	rested := f.agentTerminal("", map[string]any{"name": "rested", "command": []any{"omp"}})
+	for _, tile := range []string{term, rested} {
+		f.result("agent.report_session", map[string]any{"tile": tile, "kind": "omp", "sessionId": "s-" + tile, "model": "anthropic/claude-opus-4-5", "thinking": "high"})
+	}
+	report := func(tile, state string, message any) {
+		t.Helper()
+		params := map[string]any{"tile": tile, "kind": "omp", "state": state, "protocol": 1.0, "draft": false}
+		if message != nil {
+			params["message"] = message
+		}
+		f.result("agent.report", params)
+	}
+	lifecycle := func(tile string) any {
+		t.Helper()
+		return f.result("object.get", map[string]any{"id": tile})["object"].(map[string]any)["props"].(map[string]any)["lifecycle"]
+	}
+	listed := func(tile string) any {
+		t.Helper()
+		for _, a := range f.result("agent.list", map[string]any{})["agents"].([]any) {
+			if a := a.(map[string]any); a["tile"] == tile {
+				return a["lifecycle"]
+			}
+		}
+		return nil
+	}
+	unseen := map[string]any{"state": "done", "seen": false, "message": "Tests pass."}
+	for _, mode := range []string{"resume", "fresh"} {
+		report(term, "working", nil)
+		report(term, "idle", "Tests pass.")
+		if got := lifecycle(term); !reflect.DeepEqual(got, unseen) {
+			t.Fatalf("%s: before the restart %v", mode, got)
+		}
+		f.result("agent.restart", map[string]any{"target": "worker", "mode": mode})
+		if got := lifecycle(term); !reflect.DeepEqual(got, unseen) {
+			t.Errorf("%s: restarted to %v, want %v", mode, got, unseen)
+		}
+		if got := listed(term); !reflect.DeepEqual(got, unseen) {
+			t.Errorf("%s: agent.list says %v, want %v", mode, got, unseen)
+		}
+		// agent.wait waits for the relaunched agent; it reports in, waiting for a prompt: no
+		// turn, still unread.
+		waiting := &conn{}
+		if reply := f.on(waiting, "agent.wait", map[string]any{"target": term}); reply != nil {
+			t.Errorf("%s: agent.wait answered before the relaunched agent reported: %v", mode, reply)
+		}
+		report(term, "idle", nil)
+		if got := lifecycle(term); !reflect.DeepEqual(got, unseen) {
+			t.Errorf("%s: after the relaunched agent's idle %v, want %v", mode, got, unseen)
+		}
+		if sent := waiting.messages(); len(sent) != 1 || sent[0]["ok"] != true || !reflect.DeepEqual(sent[0]["result"].(map[string]any)["agent"].(map[string]any)["lifecycle"], unseen) {
+			t.Errorf("%s: agent.wait once the relaunched agent reported: %v", mode, sent)
+		}
+		// Its first turn replaces it.
+		report(term, "working", nil)
+		if got, _ := lifecycle(term).(map[string]any); got["state"] != "working" {
+			t.Errorf("%s: after its first turn started %v", mode, got)
+		}
+		report(term, "idle", nil)
+
+		report(rested, "idle", nil)
+		f.result("agent.restart", map[string]any{"target": "rested", "mode": mode})
+		if got := lifecycle(rested); got != nil {
+			t.Errorf("%s: an idle agent restarted to %v", mode, got)
+		}
+		report(rested, "idle", nil)
+		if got, _ := lifecycle(rested).(map[string]any); got["state"] != "idle" {
+			t.Errorf("%s: the relaunched idle agent %v", mode, got)
+		}
+	}
+}
+
 // What stops an owned restart leaves the terminal as it was, unheld: a session of the tile's
 // name easld doesn't own isn't ended (its message stays queued), a relaunch that can't start is
 // logged in the board's history (the old session is gone by then), a hosted terminal's restart

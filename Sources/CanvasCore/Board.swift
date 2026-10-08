@@ -1169,7 +1169,13 @@ public final class Board {
         // A turn that died on an error isn't done: the user reads why in its message.
         let effective: LifecycleState = state == .idle && failed == nil && !seenSinceWorking.contains(tile) && wasWorking(terminal) ? .done : state
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
-        if let message { lifecycle["message"] = .string(message) }
+        if let message {
+            lifecycle["message"] = .string(message)
+        } else if effective == .done, terminal.props["lifecycle"]?["state"]?.string == LifecycleState.done.rawValue {
+            // An idle that starts no turn (a relaunched agent reporting in) leaves the answer
+            // waiting as it was, its message too.
+            lifecycle["message"] = terminal.props["lifecycle"]?["message"]
+        }
         if state == .unknown { lifecycle["via"] = .string(NotifyingAgent.via) }
         let before = terminal.props["agent"]
         let reported: [String: JSONValue] = ["kind": .string(kind), "protocol": (version ?? 0) > 0 ? .number(Double(version!)) : .null]
@@ -1280,19 +1286,40 @@ public final class Board {
     /// The agent in `tile` was killed and is being relaunched (agent.restart): the tile runs
     /// `command` now (what a reboot reruns), its agent is `agent` (what it was, without what only
     /// the killed process knew: its draft and pid), and its lifecycle is unknown until the new
-    /// agent reports. Waits on approvals the killed agent had end, and the composer's prompts it
-    /// never drained return their mentions to the tray, as when an agent exits. Recorded once the
-    /// old session is confirmed gone and its agent session ended (`endAgentSession`), before the
-    /// relaunch starts (ApiRouter.restart), so what the relaunched agent reports stays; a death
-    /// of the killed agent's integration seen meanwhile (`agentExited`) isn't the relaunched one's.
-    public func restartedAgent(tile: ObjectID, command: [String], agent: JSONValue) throws {
-        _ = try object(tile)
+    /// agent reports, but for a `done` the user hasn't seen (`isUnseenDone`, the needs-you badge):
+    /// that answer is still theirs to read, so the tile stays `done` through the relaunch, also
+    /// through the relaunched agent's reports that start no turn (an `idle` from `done` stays
+    /// `done`), until the user sees it or the relaunched agent starts a turn (`working`), as
+    /// without a restart. `lifecycle` is the tile's as the restart began, taken before the kill
+    /// as `agent` is: the killed agent's release as it exits may have cleared it since. Waits on
+    /// approvals the killed agent had end, and the composer's prompts it never drained return
+    /// their mentions to the tray, as when an agent exits. Recorded once the old session is
+    /// confirmed gone and its agent session ended (`endAgentSession`), before the relaunch starts
+    /// (ApiRouter.restart), so what the relaunched agent reports stays; a death of the killed
+    /// agent's integration seen meanwhile (`agentExited`) isn't the relaunched one's.
+    public func restartedAgent(tile: ObjectID, command: [String], agent: JSONValue, lifecycle began: JSONValue?) throws {
+        let terminal = try object(tile)
         pendingApprovals[tile] = nil
         exitedAgents.remove(tile)
         relaunchedAgents.insert(tile)
-        try update(tile, props: .object(["command": .array(command.map(JSONValue.string)), "lifecycle": .null, "agent": agent]), caller: tile)
+        let shown = terminal.props["lifecycle"].flatMap { $0 == .null ? nil : $0 } ?? began
+        let lifecycle = shown.flatMap { Self.isUnseenDone($0) && !seenSinceWorking.contains(tile) ? $0 : nil } ?? .null
+        try update(tile, props: .object(["command": .array(command.map(JSONValue.string)), "lifecycle": lifecycle, "agent": agent]), caller: tile)
         dropComposerPrompts(of: tile)
-        onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
+        onEvent?(.agentLifecycle(tile: tile, lifecycle: lifecycle))
+    }
+
+    /// A terminal `lifecycle` that is a `done` the user hasn't seen: the answer waiting for them
+    /// (the needs-you list's `done`).
+    static func isUnseenDone(_ lifecycle: JSONValue) -> Bool {
+        lifecycle["state"]?.string == LifecycleState.done.rawValue && lifecycle["seen"]?.bool != true
+    }
+
+    /// `terminal` shows the unseen `done` of the agent agent.restart killed (`restartedAgent`)
+    /// and its relaunched agent hasn't reported yet: what agent.wait sees as no lifecycle, so it
+    /// waits for the relaunched agent's first report rather than taking the killed one's answer.
+    func showsKilledAgentsAnswer(_ terminal: CanvasObject) -> Bool {
+        relaunchedAgents.contains(terminal.id) && !NotifyingAgent.reports(terminal) && terminal.props["lifecycle"].map(Self.isUnseenDone) == true
     }
 
     // MARK: Follow mode
