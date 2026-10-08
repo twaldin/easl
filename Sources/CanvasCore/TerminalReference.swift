@@ -505,11 +505,16 @@ public enum AgentResume {
     }
 
     /// The command resuming the session `agent` recorded (`props.agent`: `session(of:)` of its
-    /// `kind`); nil for an agent that can't be resumed or recorded no session. `command` is the
-    /// tile's own (`props.command`): its options are kept when its program is that agent (by name,
-    /// any directory).
-    public static func argv(agent: JSONValue?, command: [String] = []) -> [String]? {
-        guard let kind = agent?["kind"]?.string, let grammar = grammar(kind), let session = session(of: agent) else { return nil }
+    /// `kind`); nil for an agent that can't be resumed or recorded no session. omp's session file
+    /// counts only while `exists` finds it (omp's /move renames it without a new report, and omp
+    /// 18.8 refuses a path with no file); else its session id, which omp finds in any project. A
+    /// hosted tile's file is on its host, so the Mac resumes it by id. `command` is the tile's own
+    /// (`props.command`): its options are kept when its program is that agent (by name, any
+    /// directory).
+    public static func argv(agent: JSONValue?, command: [String] = [],
+                            exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> [String]? {
+        guard let kind = agent?["kind"]?.string, let grammar = grammar(kind), var session = session(of: agent) else { return nil }
+        if let id = agent?["sessionId"]?.string, !id.isEmpty, session != id, !exists(session) { session = id }
         let (program, kept) = options(of: command, grammar)
         return grammar.resume(program, kept, session)
     }

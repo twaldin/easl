@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -17,6 +18,7 @@ func TestResumeArgvMatchesTheSharedFixture(t *testing.T) {
 	var fixture struct {
 		Cases []struct {
 			Note, Kind, SessionID, SessionPath string
+			SessionFileGone                    bool
 			Command, Argv                      []string
 		}
 	}
@@ -26,7 +28,9 @@ func TestResumeArgvMatchesTheSharedFixture(t *testing.T) {
 	if len(fixture.Cases) == 0 {
 		t.Fatal("no cases")
 	}
+	defer func(exists func(string) bool) { sessionFileExists = exists }(sessionFileExists)
 	for _, c := range fixture.Cases {
+		sessionFileExists = func(string) bool { return !c.SessionFileGone }
 		agent := map[string]any{"kind": c.Kind, "sessionId": c.SessionID}
 		if c.SessionPath != "" {
 			agent["sessionPath"] = c.SessionPath
@@ -65,21 +69,28 @@ func TestRelaunchMatchesTheSharedFixture(t *testing.T) {
 	}
 }
 
-// A new session resumes the recorded agent session with the tile's options; a released agent
-// (no props.agent), one easl can't resume, or one without a session runs the tile's command.
+// A new session resumes the recorded agent session with the tile's options (omp's by its file
+// while that is there, else by id); a released agent (no props.agent), one easl can't resume, or
+// one without a session runs the tile's command.
 func TestInitialArgvResumesTheRecordedAgentElseRunsTheCommand(t *testing.T) {
 	command := []any{"omp", "--model", "opus", 7.0}
+	file := filepath.Join(t.TempDir(), "s1.jsonl")
+	if err := os.WriteFile(file, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(t.TempDir(), "moved.jsonl")
 	for name, c := range map[string]struct {
 		props map[string]any
 		want  []string
 	}{
-		"resumed":     {map[string]any{"command": command, "agent": map[string]any{"kind": "omp", "sessionId": "s1"}}, []string{"omp", "--model", "opus", "--resume=s1"}},
-		"its file":    {map[string]any{"command": command, "agent": map[string]any{"kind": "omp", "sessionId": "s1", "sessionPath": "/s/s1.jsonl"}}, []string{"omp", "--model", "opus", "--resume=/s/s1.jsonl"}},
-		"released":    {map[string]any{"command": command}, []string{"omp", "--model", "opus"}},
-		"no session":  {map[string]any{"command": command, "agent": map[string]any{"kind": "omp"}}, []string{"omp", "--model", "opus"}},
-		"unknown":     {map[string]any{"command": []any{"aider"}, "agent": map[string]any{"kind": "aider", "sessionId": "x"}}, []string{"aider"}},
-		"no command":  {map[string]any{"agent": map[string]any{"kind": "claude", "sessionId": "u-1"}}, []string{"claude", "--resume", "u-1"}},
-		"login shell": {map[string]any{}, nil},
+		"resumed":       {map[string]any{"command": command, "agent": map[string]any{"kind": "omp", "sessionId": "s1"}}, []string{"omp", "--model", "opus", "--resume=s1"}},
+		"its file":      {map[string]any{"command": command, "agent": map[string]any{"kind": "omp", "sessionId": "s1", "sessionPath": file}}, []string{"omp", "--model", "opus", "--resume=" + file}},
+		"its file gone": {map[string]any{"command": command, "agent": map[string]any{"kind": "omp", "sessionId": "s1", "sessionPath": gone}}, []string{"omp", "--model", "opus", "--resume=s1"}},
+		"released":      {map[string]any{"command": command}, []string{"omp", "--model", "opus"}},
+		"no session":    {map[string]any{"command": command, "agent": map[string]any{"kind": "omp"}}, []string{"omp", "--model", "opus"}},
+		"unknown":       {map[string]any{"command": []any{"aider"}, "agent": map[string]any{"kind": "aider", "sessionId": "x"}}, []string{"aider"}},
+		"no command":    {map[string]any{"agent": map[string]any{"kind": "claude", "sessionId": "u-1"}}, []string{"claude", "--resume", "u-1"}},
+		"login shell":   {map[string]any{}, nil},
 	} {
 		if got := InitialArgv(c.props); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: %q, want %q", name, got, c.want)

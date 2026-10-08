@@ -175,7 +175,7 @@ func startNote(props map[string]any) string {
 	kind, _ := agent["kind"].(string)
 	command := strings_(props["command"])
 	if session.ResumeArgv(agent, command) != nil {
-		return "resumes its " + kind + " session " + session.ResumedSession(agent)
+		return "resumes its " + kind + " session " + session.RebootSession(agent)
 	}
 	runs := "runs its command"
 	if len(command) == 0 {

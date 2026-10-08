@@ -259,6 +259,11 @@ func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The omp session's file, there when easld resumes it.
+	sessionFile := filepath.Join(dir, "s1.jsonl")
+	if err := os.WriteFile(sessionFile, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	zmx, err := zmxtest.Install(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -276,7 +281,7 @@ func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
 	c := connect(t, socket, stderr)
 	board := c.call(t, "board.open", map[string]any{"root": root})["board"].(string)
 	agent := terminal(c, board, "omp", "--model", "opus")
-	c.call(t, "agent.report_session", map[string]any{"tile": agent, "kind": "omp", "sessionId": "s1", "sessionPath": "/sessions/s1.jsonl"})
+	c.call(t, "agent.report_session", map[string]any{"tile": agent, "kind": "omp", "sessionId": "s1", "sessionPath": sessionFile})
 	released := terminal(c, board, "claude")
 	c.call(t, "agent.report_session", map[string]any{"tile": released, "kind": "claude", "sessionId": "u-1"})
 	c.call(t, "agent.release", map[string]any{"tile": released, "kind": "claude"})
@@ -326,7 +331,7 @@ func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
 	done, stderr = start(t, args...)
 	c = connect(t, socket, stderr)
 	terminal(c, board)
-	for tile, want := range map[string]string{agent: `'omp' '--model' 'opus' '--resume=/sessions/s1.jsonl'; exec`, released: `'claude'; exec`} {
+	for tile, want := range map[string]string{agent: `'omp' '--model' 'opus' '--resume=` + sessionFile + `'; exec`, released: `'claude'; exec`} {
 		got, err := zmxtest.Read(sessions, "canvas-"+tile)
 		// The command's PATH, when the interactive login shell gave one, goes first (session.Manager.loginCommand).
 		command := ""
@@ -340,7 +345,7 @@ func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
 			t.Errorf("%s after a reboot: %q (%v), want %s…; easld said %q", tile, got.Args, err, want, stderr.String())
 		}
 	}
-	for _, note := range []string{"terminal " + agent + " of board " + board + " resumes its omp session /sessions/s1.jsonl\n",
+	for _, note := range []string{"terminal " + agent + " of board " + board + " resumes its omp session " + sessionFile + "\n",
 		"terminal " + released + " of board " + board + " runs its command: no recorded agent\n"} {
 		if !strings.Contains(stderr.String(), note) {
 			t.Errorf("easld's log doesn't say %q: %q", note, stderr.String())

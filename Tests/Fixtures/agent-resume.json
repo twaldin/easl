@@ -4,6 +4,8 @@
     { "kind": "omp", "sessionId": "s1", "command": [], "argv": ["omp", "--resume=s1"] },
     { "note": "omp resumes the file it reported, as agent.restart does", "kind": "omp", "sessionId": "s1", "sessionPath": "/home/u/.omp/agent/sessions/-w/s1.jsonl",
       "command": ["omp", "--model=opus"], "argv": ["omp", "--model=opus", "--resume=/home/u/.omp/agent/sessions/-w/s1.jsonl"] },
+    { "note": "a file that isn't there (omp's /move renamed it) resumes by id, which omp finds in any project", "kind": "omp", "sessionId": "s1", "sessionPath": "/home/u/.omp/agent/sessions/-w/s1.jsonl",
+      "sessionFileGone": true, "command": ["omp", "--model=opus"], "argv": ["omp", "--model=opus", "--resume=s1"] },
     { "note": "only omp's --resume takes a path", "kind": "claude", "sessionId": "u-1", "sessionPath": "/home/u/.claude/projects/-w/u-1.jsonl",
       "command": [], "argv": ["claude", "--resume", "u-1"] },
     { "kind": "claude", "sessionId": "u-1", "command": [], "argv": ["claude", "--resume", "u-1"] },

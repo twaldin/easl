@@ -438,7 +438,7 @@ struct AgentResumeTests {
     /// tile's `-c` trust override, so Codex asked about the folder again); its session selectors
     /// and prompt don't come along, and nothing is doubled.
     @Test func eachAgentResumesItsOwnWayAsTheSharedFixtureSays() throws {
-        struct Case: Decodable { var note: String?; var kind: String; var sessionId: String; var sessionPath: String?; var command: [String]; var argv: [String]? }
+        struct Case: Decodable { var note: String?; var kind: String; var sessionId: String; var sessionPath: String?; var sessionFileGone: Bool?; var command: [String]; var argv: [String]? }
         struct Fixture: Decodable { var cases: [Case] }
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../Fixtures/agent-resume.json")
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
@@ -446,7 +446,8 @@ struct AgentResumeTests {
         for c in fixture.cases {
             var agent: [String: JSONValue] = ["kind": .string(c.kind), "sessionId": .string(c.sessionId)]
             if let path = c.sessionPath { agent["sessionPath"] = .string(path) }
-            #expect(AgentResume.argv(agent: .object(agent), command: c.command) == c.argv, "\(c.kind) \(c.command): \(c.note ?? "")")
+            let gone = c.sessionFileGone == true
+            #expect(AgentResume.argv(agent: .object(agent), command: c.command, exists: { _ in !gone }) == c.argv, "\(c.kind) \(c.command): \(c.note ?? "")")
         }
     }
 }
