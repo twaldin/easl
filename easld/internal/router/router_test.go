@@ -638,6 +638,65 @@ func TestAScriptsMessageIsTheUsersAndALongPollTakesIt(t *testing.T) {
 	}
 }
 
+// A message sent again with its id (agent.prompt `message`: a sender whose call timed out) is
+// that message: queued once, delivered once. An id that isn't one is refused.
+func TestAMessageSentAgainWithItsIdIsQueuedOnce(t *testing.T) {
+	f := newFixture(t)
+	reviewer := f.namedTerminal("reviewer", "")
+	lead := f.namedTerminal("lead", "")
+	f.result("agent.report", map[string]any{"tile": reviewer, "kind": "omp", "state": "idle", "protocol": 1.0})
+	params := map[string]any{"target": "reviewer", "text": "Check the key.", "caller": lead, "message": "msg_write_toolu_01"}
+	first := f.result("agent.prompt", params)
+	again := f.result("agent.prompt", params)
+	if first["message"] != "msg_write_toolu_01" || first["duplicate"] != nil {
+		t.Fatalf("first: %v", first)
+	}
+	if again["message"] != "msg_write_toolu_01" || again["duplicate"] != true || again["delivery"] != "message" || again["submittedAt"] != first["submittedAt"] {
+		t.Fatalf("again: %v", again)
+	}
+	got := messagesOf(t, f.call("agent.inbox", map[string]any{"tile": reviewer}))
+	if len(got) != 1 || got[0]["id"] != "msg_write_toolu_01" || got[0]["text"] != "Check the key." {
+		t.Fatalf("%v", got)
+	}
+	if code, message := errorOf(f.call("agent.prompt", map[string]any{"target": reviewer, "text": "x", "message": "not an id"})); code != "invalid_params" ||
+		message != "message is the id the message gets, the same on every attempt to send it: msg_ and 8 to 64 letters, digits, _ or -" {
+		t.Fatalf("%s %s", code, message)
+	}
+}
+
+// One sender id may name a message to each of several terminals: each is held by the connection
+// that took it, and another terminal's ack or bounce of that id lets go of no other's.
+func TestOneIdSentToSeveralTerminalsIsAMessageToEach(t *testing.T) {
+	f := newFixture(t)
+	reviewer := f.namedTerminal("reviewer", "")
+	tester := f.namedTerminal("tester", "")
+	lead := f.namedTerminal("lead", "")
+	integrations := map[string]*conn{}
+	for _, tile := range []string{reviewer, tester, lead} {
+		f.result("agent.report", map[string]any{"tile": tile, "kind": "omp", "state": "idle", "protocol": 1.0})
+		if sent := f.result("agent.prompt", map[string]any{"target": tile, "text": "Check the key.", "message": "msg_write_toolu_02"}); sent["message"] != "msg_write_toolu_02" || sent["duplicate"] != nil {
+			t.Fatalf("%s: %v", tile, sent)
+		}
+		integrations[tile] = &conn{}
+	}
+	for tile, integration := range integrations {
+		if got := messagesOf(t, f.on(integration, "agent.inbox", map[string]any{"tile": tile})); len(got) != 1 || got[0]["id"] != "msg_write_toolu_02" {
+			t.Fatalf("%s's own message, while another terminal's of that id is held: %v", tile, got)
+		}
+	}
+	other := &conn{}
+	if got := messagesOf(t, f.on(integrations[reviewer], "agent.inbox", map[string]any{"tile": reviewer, "ack": []any{"msg_write_toolu_02"}})); len(got) != 0 {
+		t.Fatalf("acked, still offered: %v", got)
+	}
+	if got := messagesOf(t, f.on(other, "agent.inbox", map[string]any{"tile": tester})); len(got) != 0 {
+		t.Fatalf("offered again while its holder is open, once reviewer acked its own: %v", got)
+	}
+	f.result("agent.release", map[string]any{"tile": lead, "kind": "omp"})
+	if got := messagesOf(t, f.on(other, "agent.inbox", map[string]any{"tile": tester})); len(got) != 0 {
+		t.Fatalf("offered again while its holder is open, once lead's bounced: %v", got)
+	}
+}
+
 // A composer's prompt (a remote board's viewer) is the user's, typed as the app's composer types
 // it: `from` and `when` are refused before the target is looked up, and it is never queued as a
 // message, even for a terminal whose integration takes them (a client types it; none is attached).

@@ -59,7 +59,7 @@ type Router struct {
 	waiters        []*waiter
 	// messageHolds: which connection holds each message agent.inbox handed out and its
 	// integration hasn't acked yet; offered again once that connection closes.
-	messageHolds map[string]Conn
+	messageHolds map[messageHold]Conn
 	// inboxWaiters are agent.inbox long polls waiting for a message to their terminal.
 	inboxWaiters []*inboxWaiter
 	// restarts: the terminals agent.restart is having a client kill and relaunch, each with
@@ -95,7 +95,7 @@ type Router struct {
 // New is a router over reg; it observes every board's events (agent.wait), and measures the
 // text of reg's boards through its clients.
 func New(reg *board.Registry) *Router {
-	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[string]Conn{}, restarts: map[string]uint64{}, typing: map[string]int{},
+	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[messageHold]Conn{}, restarts: map[string]uint64{}, typing: map[string]int{},
 		FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
 	reg.Hook = r.observe
 	reg.Bounced = r.bounce
