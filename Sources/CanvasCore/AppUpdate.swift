@@ -213,34 +213,39 @@ public enum AppUpdate {
     /// The leftovers and protection directories a launch deletes: at least `leftoverAge` old,
     /// and never `running` or its protection. A backup's newer protection date takes precedence
     /// over its bundle date, which a rename preserves; an old protection never ages a fresh bundle.
-    /// `files` is a directory listing, with unique names.
+    /// Repeated protection names use the newest date.
     public static func staleLeftovers(_ files: [Housekeeping.File], running: String, now: Date) -> [String] {
-        let protections = Dictionary(uniqueKeysWithValues: files.filter { isProtection($0.name) }.map { ($0.name, $0.modified) })
+        let protections = Dictionary(files.filter { isProtection($0.name) }.map { ($0.name, $0.modified) }, uniquingKeysWith: max)
         return files.compactMap { file in
             guard file.name != running, file.name != running + protectionSuffix else { return nil }
             if isLeftover(file.name) {
                 let modified = max(file.modified, protections[file.name + protectionSuffix] ?? file.modified)
                 return now.timeIntervalSince(modified) >= leftoverAge ? file.name : nil
             }
-            return isProtection(file.name) && now.timeIntervalSince(file.modified) >= leftoverAge ? file.name : nil
+            guard let modified = protections[file.name] else { return nil }
+            return now.timeIntervalSince(modified) >= leftoverAge ? file.name : nil
         }
     }
 
     /// Lists the entries in `folder`, applies `staleLeftovers`, and returns the names actually
-    /// removed. Launch cleanup is deliberately best-effort: an unreadable directory or date,
-    /// or a failed removal, is skipped rather than failing launch or stopping other removals.
+    /// removed. Launch cleanup is deliberately best-effort: an unreadable directory is skipped;
+    /// an unreadable date is treated as young, keeping that entry and, for a protection, its backup.
+    /// Failed removals are logged and skipped without failing launch or stopping other removals.
     /// Blocking: call it off the main thread.
     public static func removeStaleLeftovers(beside folder: URL, running: String, now: Date = Date()) -> [String] {
         let files = FileManager.default
         guard let urls = try? files.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
-        let entries = urls.compactMap { url in
-            (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).map { Housekeeping.File(name: url.lastPathComponent, modified: $0) }
+        let entries = urls.map { url in
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantFuture
+            return Housekeeping.File(name: url.lastPathComponent, modified: modified)
         }
         return staleLeftovers(entries, running: running, now: now).filter { name in
+            let url = folder.appendingPathComponent(name)
             do {
-                try files.removeItem(at: folder.appendingPathComponent(name))
+                try files.removeItem(at: url)
                 return true
             } catch {
+                NSLog("easl: couldn't remove %@, left by an update: %@", url.path, error.localizedDescription)
                 return false
             }
         }

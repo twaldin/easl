@@ -269,8 +269,14 @@ struct UpdateStagingTests {
             Housekeeping.File(name: ".easl-previous-0.2.4-\(id).app.protection", modified: old),
             Housekeeping.File(name: ".easl-previous-0.2.5-\(id).app", modified: old),
             Housekeeping.File(name: ".easl-previous-0.2.5-\(id).app.protection", modified: fresh),
+            // Repeated protection names must keep the newest date for both the backup and protection.
+            Housekeeping.File(name: ".easl-previous-0.2.5-\(id).app.protection", modified: old),
             Housekeeping.File(name: ".easl-previous-0.2.6-\(id).app.protection", modified: old),
             Housekeeping.File(name: ".easl-previous-0.2.7-\(id).app.protection", modified: fresh),
+            // An unreadable date is treated as young, never as an absent protection.
+            Housekeeping.File(name: ".easl-previous-0.2.8-\(id).app", modified: old),
+            Housekeeping.File(name: ".easl-previous-0.2.8-\(id).app.protection", modified: .distantFuture),
+            Housekeeping.File(name: ".easl-update-0.2.9-\(id).app", modified: .distantFuture),
             Housekeeping.File(name: ".easl-previous-not-a-transaction.app.protection", modified: old),
             Housekeeping.File(name: ".easl-previous-x-\(id).app.protection", modified: old),
             Housekeeping.File(name: ".easl-previous-0.2.3-not-a-uuid.app.protection", modified: old),
