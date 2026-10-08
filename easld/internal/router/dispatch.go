@@ -172,6 +172,12 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 		if err := b.ReportSession(tile, kind, sid, spath, agentModel, thinking); err != nil {
 			return nil, err
 		}
+		// The relaunched agent has reported (Board.AwaitsRelaunchedAgent): waits on it look again.
+		for _, w := range append([]*waiter(nil), r.waiters...) {
+			if w.tile == tile {
+				r.recheck(w)
+			}
+		}
 		return map[string]any{}, nil
 	case "agent.release":
 		tile, err := str(p, "tile")

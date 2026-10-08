@@ -835,14 +835,26 @@ test("a tile hung up or terminated keeps its agent for the session that resumes 
     // fires session_shutdown as its /exit does. The signal goes to the process's listeners only.
     if (signal) process.emit(signal);
     await omp.emit("session_shutdown");
-    // Past the extension's 1.5 s call timeout, after which a report easl didn't take is spooled.
-    let ticks = 0;
-    await until(() => ++ticks > 400);
     const spool = spoolDirectory(easl.socketPath, TILE);
-    const spooled = existsSync(spool) ? readdirSync(spool).map((name) => JSON.parse(readFileSync(join(spool, name), "utf8")).method) : [];
+    // Only non-hidden JSON names are committed reports, as in easl's spool readers.
+    function spooled(): number {
+      if (!existsSync(spool)) return 0;
+      return readdirSync(spool)
+        .filter((name) => name.endsWith(".json") && !name.startsWith("."))
+        .map((name) => JSON.parse(readFileSync(join(spool, name), "utf8")).method)
+        .filter((method) => method === "agent.release").length;
+    }
+    if (signal) {
+      // No release should arrive, even past the extension's 1.5 s call timeout.
+      let ticks = 0;
+      await until(() => ++ticks > 400);
+    } else {
+      // Shutdown fires the release without awaiting its RPC or atomic spool publication.
+      await until(() => away ? spooled() > 0 : easl.calls.some((call) => call.method === "agent.release"));
+    }
     return {
       released: easl.calls.filter((call) => call.method === "agent.release").length,
-      spooled: spooled.filter((method) => method === "agent.release").length,
+      spooled: spooled(),
     };
   }
   for (const signal of ["SIGHUP", "SIGTERM"] as const) {
