@@ -132,6 +132,12 @@ enum DevInput {
             let window = CanvasWindowController.frontmost?.window ?? NSApp.windows.first { $0.windowController is CanvasWindowController }
             return DevPerf.idle(ms: Double(fields["ms"] ?? "") ?? 5000, window: window)
         }
+        if fields["kind"] == "stall" {
+            // Holds the main thread, as a stall does, so the stall sampler and `key.wait` can be
+            // exercised: one `Metrics.span` turn, logged with its cause when it ends.
+            let ms = Double(fields["ms"] ?? "") ?? 2000
+            return Metrics.shared.span("dev", "dev.stall", detail: "\(Int(ms)) ms") { Thread.sleep(forTimeInterval: ms / 1000) }
+        }
         if fields["kind"] == "remote", let target = fields["target"], let board = fields["board"] {
             // Opens another easl's board as a remote board (`AppDelegate.openRemoteBoard`), its
             // host found over ssh; `home` is the host's support directory (a development instance).

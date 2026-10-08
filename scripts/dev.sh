@@ -111,7 +111,8 @@ launch() {
   # so links handed to the default browser or another app are only logged, and EASL_DEV_SSH
   # and EASL_DEV_REMOTE_HOME so File › Open Remote… reaches another dev instance through a
   # private sshd (docs/testing.md).
-  set -- EASL_NO_ACTIVATE=1 EASL_DEV_INPUT=1 EASL_DEV_PERF=1 EASL_ROOT="$root"
+  # EASL_DEV_PERF=0 turns the probes off, e.g. to let the instance sample its own stalls.
+  set -- EASL_NO_ACTIVATE=1 EASL_DEV_INPUT=1 EASL_DEV_PERF="${EASL_DEV_PERF:-1}" EASL_ROOT="$root"
   [ -z "${EASL_DEV_HOME:-}" ] || set -- "$@" EASL_BROWSER_PROFILE=own
   [ -z "${XDG_CONFIG_HOME:-}" ] || set -- "$@" XDG_CONFIG_HOME="$XDG_CONFIG_HOME"
   [ -z "${EASL_DEV_EXTERNAL_OPEN:-}" ] || set -- "$@" EASL_DEV_EXTERNAL_OPEN="$EASL_DEV_EXTERNAL_OPEN"

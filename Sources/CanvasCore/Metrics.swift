@@ -99,6 +99,15 @@ public final class Metrics: @unchecked Sendable {
     private let signposter = OSSignposter(subsystem: "net.waldin.easl", category: "perf")
     private let launched: Double
     private let process = ProcessSampler()
+    /// The main thread's turn in progress (its start on `now()`'s clock; nil while the loop
+    /// sleeps), written at every run-loop activity for the stall watchdog's thread to read.
+    private let turn = OSAllocatedUnfairLock<Double?>(initialState: nil)
+    private var stalls: StallSampler?
+    /// Correlates the one sample in flight with its turn, even when symbolication finishes
+    /// after that turn. A late file gets a tagged log line and updates the matching longest.
+    private var stallPending: (turn: Double, file: String?, stretch: Stretch?)?
+    private var stallsSampled = 0
+    private var stallNewest: String?
 
     init() {
         launched = Self.now()
@@ -191,21 +200,63 @@ public final class Metrics: @unchecked Sendable {
         MainMonitor.install(self)
     }
 
-    fileprivate func mainStretch(_ ms: Double, cause: @autoclosure () -> String) {
+    /// Samples the process (`/usr/bin/sample`, into `directory`) while the main thread has been in
+    /// one turn for `StallSampling.threshold` seconds, at most every `StallSampling.minInterval`;
+    /// the stretch's cause then names the file. Not for measured runs: `sample` suspends the
+    /// task's threads briefly while it walks their stacks.
+    public func sampleStalls(into directory: URL) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard stalls == nil else { return }
+        stalls = StallSampler(directory: directory, turnStart: { [turn] in turn.withLock { $0 } }, sampling: { [weak self] start in
+            guard let self else { return }
+            lock.lock()
+            stallPending = (start, nil, nil)
+            lock.unlock()
+        }, sampled: { [weak self] start, file in
+            guard let self else { return }
+            lock.lock()
+            stallsSampled += 1
+            stallNewest = file
+            var finished: Stretch?
+            if let pending = stallPending, pending.turn == start {
+                if var stretch = pending.stretch {
+                    stretch.cause = "\(file); \(stretch.cause)"
+                    if longest?.at == stretch.at { longest = stretch }
+                    finished = stretch
+                    stallPending = nil
+                } else {
+                    stallPending?.file = file
+                }
+            }
+            lock.unlock()
+            if let finished { NSLog("easl: main thread busy %.0f ms: %@", finished.ms, finished.cause) }
+        })
+    }
+
+    fileprivate func mainTurn(started: Double?) {
+        turn.withLock { $0 = started }
+    }
+
+    fileprivate func mainStretch(_ ms: Double, turn: Double, cause: @autoclosure () -> String) {
         let now = Self.now()
         let tally = Tally(n: 1, ms: ms, maxMs: ms)
         lock.lock()
         if ms >= Self.hitchStretch { series["main.stretch50", default: Series()].add(tally, at: now) }
         if ms >= Self.logStretch { series["main.stretch250", default: Series()].add(tally, at: now) }
         let longer = ms > (longest?.ms ?? 0)
-        lock.unlock()
-        guard longer || ms >= Self.logStretch else { return }
-        let text = cause()
-        if longer {
-            lock.lock()
-            longest = Stretch(ms: ms, cause: text, at: now)
-            lock.unlock()
+        guard longer || ms >= Self.logStretch else { lock.unlock(); return }
+        var text = cause()
+        if let pending = stallPending, pending.turn == turn {
+            if let file = pending.file {
+                text = "\(file); \(text)"
+                stallPending = nil
+            } else {
+                stallPending?.stretch = Stretch(ms: ms, cause: text, at: now)
+            }
         }
+        if longer { longest = Stretch(ms: ms, cause: text, at: now) }
+        lock.unlock()
         if ms >= Self.logStretch { NSLog("easl: main thread busy %.0f ms: %@", ms, text) }
     }
 
@@ -269,6 +320,8 @@ public final class Metrics: @unchecked Sendable {
         let offenders = self.offenders
         let longest = self.longest
         let since = self.since
+        let stallsSampled = self.stallsSampled
+        let stallNewest = self.stallNewest
         lock.unlock()
         var counters: [String: JSONValue] = [:]
         for (name, s) in series {
@@ -293,6 +346,9 @@ public final class Metrics: @unchecked Sendable {
         if let longest {
             result["longest"] = .object(["ms": .number(longest.ms.rounded()), "cause": .string(longest.cause), "agoS": .number((now - longest.at).rounded())])
         }
+        var stalls: [String: JSONValue] = ["sampled": .number(Double(stallsSampled))]
+        if let stallNewest { stalls["newest"] = .string(stallNewest) }
+        result["stalls"] = .object(stalls)
         return .object(result)
     }
 }
@@ -348,8 +404,10 @@ private enum MainMonitor {
         let now = Metrics.now()
         // Spans that ended before a reset are not the new window's (open ones keep their depth).
         if turns.rebase(reset: metrics.resetAt) { spans.removeAll(keepingCapacity: true) }
+        let started = turns.turnStart
         let step = turns.activity(sleeping: activity == .beforeWaiting, at: now)
-        if let ms = step.turn, ms >= Metrics.hitchStretch { metrics.mainStretch(ms, cause: cause()) }
+        metrics.mainTurn(started: turns.turnStart)
+        if let ms = step.turn, ms >= Metrics.hitchStretch { metrics.mainStretch(ms, turn: started ?? 0, cause: cause()) }
         spans.removeAll(keepingCapacity: true)
         if let busy = step.flush { metrics.mainBusy(busy.ms, turns: busy.turns) }
     }

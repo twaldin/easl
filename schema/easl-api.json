@@ -849,6 +849,7 @@
           "gauges": { "type": "object", "description": "current levels: `live.<Tile>` (tiles showing live content, by kind), `html.webviews`, `events.subscribers`", "additionalProperties": { "type": "number" } },
           "top": { "type": "object", "description": "top offenders since the reset: `writers` (`agent:<tile>` or `user`), `routingTriggers` (the object whose change routed the board; ms the routings took)", "additionalProperties": { "type": "array", "items": { "type": "object", "required": ["key", "n"], "properties": { "key": { "type": "string" }, "n": { "type": "integer" }, "ms": { "type": "number" } } } } },
           "longest": { "type": "object", "description": "the longest main-thread stretch since the reset", "required": ["ms", "cause", "agoS"], "properties": { "ms": { "type": "number" }, "cause": { "type": "string", "description": "the work it did, longest first, e.g. `api.main.object.update obj_… 1790 ms (route.board 84 arrows 1500 ms)`" }, "agoS": { "type": "number" } } },
+          "stalls": { "type": "object", "description": "main-thread stalls (a turn of a second or more) the app `sample`d itself through, into `stalls/` in its home (the Mac app only; easld has no main thread)", "required": ["sampled"], "properties": { "sampled": { "type": "integer", "description": "since launch" }, "newest": { "type": "string", "description": "home-relative, e.g. `stalls/2026-10-08T051210Z.txt`; also named at the start of that stretch's cause" } } },
           "process": {
             "type": "object",
             "properties": {
