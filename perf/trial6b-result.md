@@ -22,6 +22,19 @@ Hold `2026-10-08T02:46Z-perf-hold` (full quiet; I lost the first 17 min waiting 
 3. Shepherd's hold summary: pane `obj_01M4BWM1AV0JXSW1H4` = **Tim's own tiktok session** caught loading the machine in 3 minute-samples: 02:47:16Z Python 199 % + ffmpeg 91 %, 02:55:06Z Python 172 % (both before the run), **03:04:11Z Python pid 35946 at 91 % inside a's active phase** (03:04:06–03:05:06Z); 1 s samples once a minute, true spans unknown — a's phases near 03:04Z are possibly loaded (its instructions 106 G vs 83–88 G in trial 6 fit that: a ran under Tim's activity and his session's CPU). sky-lead's 60 ms read-only process at 03:05:14Z (inside a active), astra's `ls` 02:45–02:47Z (before the run), bench's sleeping timer: negligible.
 4. machine-watch booted out 02:45:30–03:11:30Z; WindowServer rows `~/.local/state/machine-shepherd/ws-cpu-trial6b.jsonl` from 02:45:50Z.
 
+## Run c — the clean pair (04:48–04:54Z, no hold: quiet windows were abolished at ~04:42Z; `machine-ok-queue run`)
+
+Same setup, one interleaved pair, Tim idle through a and b's active/idle phases (he became active during b's restored phase). No WindowServer column (the shepherd's sampler is gone). Rows `runs/idle2c-visible.jsonl`.
+
+| bundle · phase | cpu s | instructions G | GPU util % | draws/s |
+| --- | --- | --- | --- | --- |
+| a active / idle / restored | 34.6 / 34.7 / 11.7 | 93.4 / 97.2 / 31.2 | **40 / 40 / 40** | — |
+| b active / **idle** / restored | 34.8 / **29.7** / 11.7 | 93.8 / **89.4** / 34.8 | 39 / **17** / 65 (Tim active) | 631 / **60.0** / 793 |
+
+- GPU: a is flat at 40 % through all three phases (a steady ambient, Tim idle), b drops **39 → 17 % while idle (−22 points, −56 %)** and comes back on the posted key. The 5/s run's −24.5 points is matched at 2/s with ~40 % of its redraws.
+- Instance: CPU −15 %, instructions −4.8 % while idle (the pulses cost about what they save); draws 631 → 60/s (= 15 × 2 × 2), GUI check PASS.
+- Queue state during the run: Tim's tiktok `edit.py --preview` renders (GPU, nice 10, clamped to utility) ran in the queue — ambient to both arms, and a's flat 40 % says it was steady.
+
 ## Reading
 
-At 2 pulses/s the policy is free for the app itself and removes ~90 % of the terminals' redraws while the user is away; the GPU/WindowServer saving measured clean at 5/s (trial 6) applies at least as much at 2/s but was not cleanly remeasured tonight. Recommendation: PR at 2/s for 0.2.4 with both runs' numbers; a clean 10-minute remeasure (Tim idle) can be run later in a slot the shepherd clears, before or after merge as canvas prefers.
+At 2 pulses/s the policy is free for the app itself and removes ~90 % of the terminals' redraws while the user is away; the GPU/WindowServer saving measured clean at 5/s (trial 6) applies at least as much at 2/s but was not cleanly remeasured tonight. Run c (clean) confirms it: GPU −22 points (−56 %) while idle at no app cost. PR #83 at 2/s for 0.2.4.

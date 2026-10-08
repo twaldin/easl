@@ -1,0 +1,26 @@
+machine-ok-queue: ticket 475 admitted to slot 1/6 after 0m01s (free=74% pageins=51/s swap=0/s compressed=14%); clamp: taskpolicy -c utility, nice 10
+  start keys: easl pid 54200, EASL_SOCKET=/Users/twaldin/dev/easl-lanes/perf-lead/scratch.key-path/easl-perf-loop-4hk687wb/home/easl.sock
+{
+ "app": "idle2.app",
+ "posted": 60,
+ "arrived": 60,
+ "post_to_program_ms": {
+  "median": 22.68,
+  "p90": 34.1,
+  "max": 52.15
+ },
+ "post_call_ms": {
+  "median": 0.135,
+  "max": 1.555
+ },
+ "easl_key_wait_ms": {
+  "n": 60,
+  "mean": 21.59,
+  "max": 49.9
+ },
+ "easl_key_handle_ms": {
+  "mean": 0.132,
+  "max": 1.3
+ },
+ "note": "post_to_program = notification delivery + AppKit queue (key.wait) + handler + Ghostty IO thread + pty + zmx client + daemon + program read"
+}
