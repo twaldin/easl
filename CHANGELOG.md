@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - **easl samples itself when its main thread stalls.** When the board's main thread has been stuck in one piece of work for a second (keys held, nothing redrawing), easl runs the system's `sample` on itself for that second, while the stall is still going, into `~/Library/Application Support/Easl/stalls/<time>.txt` (the development instance's own home under `EASL_HOME`), and the log line naming the stall's cause starts with that file, so a stall nobody caught in the act leaves its backtraces behind. At most one sample every five minutes, the newest twenty kept; `easl metrics` says how many were taken and the newest. Measured runs (`EASL_DEV_PERF=1`) don't sample.
+- Developer tooling: `scripts/rotate-lead.ts` replaces the one-off lead rotation controller. It waits for a natural idle/done boundary, preserves every unforced restart guard, and proves a fresh native session and live PID with the same model and thinking setting before sending one out-of-band handoff. A retained unread `done` is startup-ready, not an idle-only timeout. Evidence records restart separately from message acknowledgment and cannot claim success from queueing alone; the process and its CLI children are bounded. `docs/testing.md` documents the command and the adjacent stateful external-CLI behavior test.
 
 ## 0.2.4
 

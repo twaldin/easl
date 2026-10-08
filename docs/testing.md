@@ -9,6 +9,7 @@ bun scripts/gen-clients.ts --check    # generated TS/Python clients match schema
 bun test extensions/agent-hooks             # hook payload classification: which thread (the tile's session, a subagent, Codex's internal sessions) an event comes from; the Codex awareness block's easl commands stay plain words
 bun test clients/ts                         # TS client: the default socket's platform choice (the app's on macOS, easld's elsewhere)
 bun test cli/metrics-text.test.ts           # `easl metrics` text: the draws and keys lines show with values, not before
+machine-ok-queue run -- bun test scripts/rotate-lead.test.ts  # finite lead rotation against a stateful external easl CLI fixture
 (cd conformance && go test ./...)          # the conformance runner's normalisation and diff (Go 1.26)
 (cd easld && go vet ./... && go test ./...)  # easld (Go 1.26): its packages' tests, and the conformance suite replayed in-process (cmd/easld, ~2 min; -short skips it)
 ```
@@ -16,6 +17,25 @@ bun test cli/metrics-text.test.ts           # `easl metrics` text: the draws and
 `CanvasCoreTests` is an executable target, not a test target: with only the Command Line Tools installed, `swift test` doesn't discover swift-testing suites, so `main.swift` calls the swift-testing entry point. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.
 
 What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` that `CanvasCoreTests` and easld's `go test` both check, so the two can't drift: `terminal-env.json` (a hosted and an owned terminal's session variables), `agent-resume.json` (the command resuming a recorded agent session with the tile's own options, `AgentResume.argv` and `session.ResumeArgv`) and `agent-relaunch.json` (what `agent.restart` relaunches, resumed or fresh, with the recorded model and thinking level and the call's `args`, and the tile's command from then on: `AgentResume.relaunch` and `session.RelaunchOf`). Change a case there, then make both pass.
+
+## Rotating an omp lead
+
+`scripts/rotate-lead.ts` runs one guarded fresh restart and one out-of-band handoff through the existing easl CLI. It is a finite developer tool, not a scheduler:
+
+```sh
+machine-ok-queue run -- bun scripts/rotate-lead.ts --target <tile> --file <handoff.txt> --out <evidence.json>
+```
+
+`--text <handoff>` replaces `--file`. `--easl <executable>` selects the CLI (default `easl` on PATH); `EASL_SOCKET` still selects its server. `--timeoutMs <ms>` bounds the whole operation (default 30 minutes), with startup and delivery each limited to 120 seconds of the time left.
+
+The controller waits for the old agent's natural `idle` or `done` boundary, records its native identity, and calls `agent.restart --mode fresh` without force or retries. Every server restart guard still applies, including pending prompts or messages, drafts (known or unknown), focus, working or blocked agents, concurrent restarts and pastes, and the checks immediately before the kill.
+
+Startup is proved by a different native session and PID, a live local session, kind `omp`, protocol ≥ 1, no draft, and the same reported model and thinking selector. A retained `done` with `seen: false` is accepted; the controller never clears that unread answer or waits only for `idle`. It rechecks identity before handing off to the pinned tile id. `tell` runs as an external script labelled `lead-rotation`, without inherited caller/board identity, and carries one stable message id.
+
+Evidence separates `restart.status: "ready"` from `handoff.status: "queued"` and `"acknowledged"`. Queueing alone cannot set `pass: true`: the controller waits through the public `agent.wait` seam, which cannot answer while a message is queued or held, then checks the same live native identity again. An acknowledgment that starts a turn must also reach its first working or blocked report. This proves the handoff was recorded, **not that its requested work finished**; a working recipient is a successful delivery. Restart, tell, acknowledgment and identity failures remain `pass: false`.
+
+The behavior test drives the controller CLI against a separate stateful easl executable: successful restart, inherited/stale identity, delayed native identity with retained done, exactly one handoff, rejected restart/tell, missing acknowledgment, session changes and a hung CLI. The controller creates no scratch or persistent process; its deadline and SIGINT/SIGTERM handling kill its owned CLI child. Tests record their `mkdtemp` directories under `$TMPDIR` and remove them and their owned children afterward.
+
 
 ## API conformance
 
