@@ -1,6 +1,7 @@
 package router
 
 import (
+	"regexp"
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/board"
@@ -24,8 +25,17 @@ type inboxWaiter struct {
 // (caller, honoured when it is a terminal on an open board) the message is the agent's; with a
 // label (`from`) or none, the user's. It is queued under the registry's lock with nothing
 // awaited, so always for the agent session the call resolved (ApiRouter.swift reads the
-// terminal first and checks Board.agentSession again).
-func (r *Router) queueMessage(text string, terminal model.Object, b *board.Board, mentions []any, caller, label, when string) (any, error) {
+// terminal first and checks Board.agentSession again). With an id (`message`) already queued
+// for the terminal it answers with that message and queues nothing: a sender whose call timed
+// out sends the same id again.
+func (r *Router) queueMessage(text string, terminal model.Object, b *board.Board, mentions []any, caller, label, when, id string) (any, error) {
+	if id != "" {
+		for _, queued := range b.Messages(terminal.ID) {
+			if queued.ID == id {
+				return r.messageResult(queued, terminal, b, true), nil
+			}
+		}
+	}
 	targets := make([]map[string]any, len(mentions))
 	for i, m := range mentions {
 		target, err := promptMention(m, b)
@@ -45,10 +55,19 @@ func (r *Router) queueMessage(text string, terminal model.Object, b *board.Board
 		}
 	}
 	message := board.NewMessage(text, sender, label, when, attached)
+	if id != "" {
+		message.ID = id
+	}
 	if err := b.QueueMessage(message, terminal.ID); err != nil {
 		return nil, err
 	}
 	r.serveInbox(terminal.ID, b)
+	return r.messageResult(message, terminal, b, false), nil
+}
+
+// messageResult is agent.prompt's result for message, queued for terminal: now, or by an
+// earlier attempt with its id (duplicate).
+func (r *Router) messageResult(message board.Message, terminal model.Object, b *board.Board, duplicate bool) map[string]any {
 	result := map[string]any{
 		"agent":       r.agentEntry(terminal, b),
 		"submittedAt": model.FileTime(message.QueuedAt),
@@ -56,11 +75,30 @@ func (r *Router) queueMessage(text string, terminal model.Object, b *board.Board
 		"delivery":    "message",
 		"message":     message.ID,
 	}
-	if len(attached) > 0 {
-		result["mentions"] = board.MentionsJSON(attached)
+	if len(message.Mentions) > 0 {
+		result["mentions"] = board.MentionsJSON(message.Mentions)
 	}
-	return result, nil
+	if duplicate {
+		result["duplicate"] = true
+	}
+	return result
 }
+
+// messageID is agent.prompt's `message`: an id of the sender's own, the same on every attempt
+// at one message ("" when absent).
+func messageID(p map[string]any) (string, error) {
+	value, present := p["message"]
+	if !present || value == nil {
+		return "", nil
+	}
+	id, _ := value.(string)
+	if !messageIDPattern.MatchString(id) {
+		return "", invalid("message is the id the message gets, the same on every attempt to send it: msg_ and 8 to 64 letters, digits, _ or -")
+	}
+	return id, nil
+}
+
+var messageIDPattern = regexp.MustCompile(`^msg_[A-Za-z0-9_-]{8,64}$`)
 
 // inbox is agent.inbox: a terminal's integration acks what it delivered, then takes what waits
 // for it (held by this connection until acked, offered again once it closes), or waits up to

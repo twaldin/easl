@@ -213,6 +213,39 @@ final class AgentMessageTests {
         #expect(typed.isEmpty)
     }
 
+    @Test func aMessageSentAgainWithItsIdIsQueuedOnceAlsoWhileTheFirstStillReadsTheTerminal() async throws {
+        let reviewer = terminal("reviewer"), lead = terminal("lead")
+        try omp(reviewer, .idle, seq: 1)
+        try omp(lead, .working, seq: 1)
+        let first = try connect(), again = try connect()
+        let params: [String: JSONValue] = ["target": "reviewer", "text": "Check the cache key.", "caller": .string(lead), "message": "msg_write_toolu_01"]
+        // A terminal on another machine has its text read over ssh before the message is queued
+        // (2.6 to 10 s to deckbox): the sender's call times out meanwhile, and it sends again.
+        var retried: JSONValue?
+        router.readTerminal = { [unowned self] _, _, _ in
+            guard retried == nil else { return nil }
+            retried = .null
+            retried = try? await call(again, "agent.prompt", params)
+            return nil
+        }
+        let answered = try await call(first, "agent.prompt", params)
+        #expect(retried?["result"]?["message"] == "msg_write_toolu_01" && retried?["result"]?["duplicate"] == nil, "\(String(describing: retried))")
+        #expect(answered["result"]?["message"] == "msg_write_toolu_01" && answered["result"]?["duplicate"] == .bool(true), "\(answered)")
+        #expect(board.messages[reviewer]?.map(\.id) == ["msg_write_toolu_01"])
+
+        // Queued, it answers a later attempt at once, without reading the terminal again.
+        router.readTerminal = { _, _, _ in
+            Issue.record("the terminal was read for a message already queued")
+            return nil
+        }
+        let late = try await call(again, "agent.prompt", params)
+        #expect(late["result"]?["message"] == "msg_write_toolu_01" && late["result"]?["duplicate"] == .bool(true), "\(late)")
+        let taken = try await call(try connect(), "agent.inbox", ["tile": .string(reviewer)])
+        #expect(taken["result"]?["messages"]?.array?.map { $0["id"] } == [.string("msg_write_toolu_01")])
+        #expect(try await sent(again, ["target": .string(reviewer), "text": "x", "message": "not an id"]) == "invalid_params")
+        #expect(typed.isEmpty)
+    }
+
     @Test func anIdleIntegrationKilledWithoutItsReleaseTakesNothingMoreAndWhatWaitedBounces() async throws {
         let reviewer = terminal("reviewer"), lead = terminal("lead")
         try omp(reviewer, .idle, seq: 1)

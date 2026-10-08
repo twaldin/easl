@@ -659,13 +659,14 @@ public final class ApiRouter {
             guard let text = value.string, !text.trimmingCharacters(in: .whitespaces).isEmpty else { throw Failure("invalid_params", "from is a sender label such as \"machine-watch\"") }
             label = text
         }
+        let id = try Self.messageID(p["message"])
         // The foreground program now: a message integration killed since it last reported is
         // found here (`Board.terminalProgram`), before anything is queued for it.
         _ = terminalStatus?(board, resolved.id)
         guard let terminal = board.objects[resolved.id] else { throw Failure("not_found", "terminal \(resolved.id) was closed") }
         if board.agentExited(terminal.id) { throw Self.agentExited(terminal) }
         if PromptTarget.takesMessages(terminal) {
-            return try await queueMessage(text, to: terminal, on: board, mentions: mentions, caller: caller, label: label, when: when)
+            return try await queueMessage(text, to: terminal, on: board, mentions: mentions, caller: caller, label: label, when: when, id: id)
         }
         if when == .nextTurn, Self.state(of: terminal) == LifecycleState.working.rawValue {
             throw Failure("conflict", "\(terminal.id) is in its turn and its integration takes no messages, so typed text would join that turn; agent.wait for it and send again, or send with when: \"now\"")
@@ -680,33 +681,61 @@ public final class ApiRouter {
     /// board) the message is the agent's; with a `label` (`from`) or none, the user's. It is
     /// queued for the agent session there when the prompt arrived: one that ended while the
     /// terminal's text was read (released, died, replaced: `Board.agentSession(of:)`) gets
-    /// nothing, and the sender `unavailable`.
-    private func queueMessage(_ text: String, to terminal: CanvasObject, on board: Board, mentions: [JSONValue], caller: ObjectID?, label: String?, when: AgentMessage.When) async throws -> JSONValue {
+    /// nothing, and the sender `unavailable`. With an `id` (`message`) already queued for the
+    /// terminal it answers with that message and queues nothing: a sender whose call timed out
+    /// sends the same id again. Looked at before the terminal's text is read and again just
+    /// before queueing, so a second attempt arriving while the first still reads (a hosted
+    /// terminal's text comes over ssh) finds it either way.
+    private func queueMessage(_ text: String, to terminal: CanvasObject, on board: Board, mentions: [JSONValue], caller: ObjectID?, label: String?, when: AgentMessage.When, id: String?) async throws -> JSONValue {
+        if let queued = Self.queued(id, for: terminal.id, on: board) { return try messageResult(queued, to: terminal, on: board, duplicate: true) }
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         let attached = try board.messageMentions(try mentions.map { try HandoffMention(json: $0).target(on: board) })
         let sender = caller.flatMap { caller in registry.boards.values.contains { $0.objects[caller]?.type == .terminal } ? caller : nil }
         let session = board.agentSession(of: terminal.id)
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
+        if let queued = Self.queued(id, for: terminal.id, on: board) { return try messageResult(queued, to: current, on: board, duplicate: true) }
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         if board.agentExited(terminal.id) { throw Self.agentExited(current) }
         guard PromptTarget.takesMessages(current), board.agentSession(of: terminal.id) == session else {
             throw Failure("unavailable", "\(terminal.id)'s agent session ended while the message was being sent (its agent was released, exited, "
                 + "or another session took the terminal), so nothing was queued; agent.list shows what runs there now")
         }
-        let message = AgentMessage(text: text, from: sender, label: label, when: when, mentions: attached)
+        let message = AgentMessage(id: id ?? IDs.make("msg"), text: text, from: sender, label: label, when: when, mentions: attached)
         try board.queueMessage(message, to: terminal.id)
         promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
         serveInbox(terminal.id, on: board)
+        return try messageResult(message, to: current, on: board, duplicate: false)
+    }
+
+    /// agent.prompt's result for `message`, queued for `terminal`: now, or by an earlier attempt
+    /// with its id (`duplicate`).
+    private func messageResult(_ message: AgentMessage, to terminal: CanvasObject, on board: Board, duplicate: Bool) throws -> JSONValue {
         var result: [String: JSONValue] = [
-            "agent": agentEntry(current, on: board),
+            "agent": agentEntry(terminal, on: board),
             "submittedAt": .string(message.queuedAt.formatted(.iso8601)),
             "waitable": .bool(true),
             "delivery": .string("message"),
             "message": .string(message.id),
         ]
-        if !attached.isEmpty { result["mentions"] = try JSONValue.encode(attached) }
+        if !message.mentions.isEmpty { result["mentions"] = try JSONValue.encode(message.mentions) }
+        if duplicate { result["duplicate"] = .bool(true) }
         return .object(result)
+    }
+
+    /// agent.prompt's `message`: an id of the sender's own, the same on every attempt at one message.
+    static func messageID(_ value: JSONValue?) throws -> String? {
+        guard let value, value != .null else { return nil }
+        guard let id = value.string, id.wholeMatch(of: /msg_[A-Za-z0-9_-]{8,64}/) != nil else {
+            throw Failure("invalid_params", "message is the id the message gets, the same on every attempt to send it: msg_ and 8 to 64 letters, digits, _ or -")
+        }
+        return id
+    }
+
+    /// The message with `id` queued for `terminal`, if any.
+    private static func queued(_ id: String?, for terminal: ObjectID, on board: Board) -> AgentMessage? {
+        guard let id else { return nil }
+        return board.messages[terminal]?.first { $0.id == id }
     }
 
     /// `agent.inbox`: a terminal's integration acks what it delivered, then takes what waits

@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- **A message to an agent on another machine arrives once.** omp's `write agent://name` to an easl tile whose terminal runs on another host (a deckbox) sometimes arrived twice, seconds apart, with two message ids. easl reads such a terminal's text over ssh before it queues the message, which took 2.6 to 10 s. easl's omp extension gave up after 1.5 s and reported the write as failed, though easl still queued the message. The dotfiles' omp-inbox extension then sent the text again with `easl tell`. `agent.prompt` now takes the sender's own message id (`message`, `easl tell --message`): an id already queued for the terminal answers with that message (`duplicate: true`) and queues nothing, even when the first attempt is still reading the terminal. The extension sends one id for every attempt at a write, waits up to 20 s for easl, and when it still fails it leaves the id in the tool result (`details.easl.message`) for the next handler to send again with. omp-inbox needs its own update to pass that id on.
+
 ## 0.2.3
 
 - **easl updates itself.** A minute after launch and then daily, easl reads easl.sh/latest.json; when a newer version is out, an **Update** button appears at the top right of every board window, and easl › Check for Updates… checks now (and says when easl is up to date). Update shows "Update to X? easl quits and reopens; your terminals keep running." with Release Notes beside it, then downloads the release into easl's support folder, checks its size and SHA-256 against latest.json, its signature, Team ID and notarization, and its version, quits easl like ⌘Q, swaps the app where it is and reopens it. Any failure leaves the running easl as it was and says why; if the swap itself fails, the old version is put back and the next launch says why. A Homebrew install updates the same way (`brew outdated` lists easl until `brew upgrade --cask easl`). Testing: `EASL_UPDATE_URL` reads another latest.json, and `scripts/dev.sh` passes it through; development instances never check by themselves.

@@ -5,7 +5,7 @@
 //   easl <namespace>.<method> [--json '{...}' | --json @file | --json @-] [--key value] [--nested.key value] [--flag]
 //   easl <namespace> <method> ...
 //   easl get <id> [--as raw|graph]       object.get
-//   easl tell <name[@board]> <text> [--when next-turn] [--from <label>]   agent.prompt: a message to another agent
+//   easl tell <name[@board]> <text> [--when next-turn] [--from <label>] [--message <msg_id>]   agent.prompt: a message to another agent
 //   easl render <id|id,id|x,y,w,h> [--out f.png] [--scale 2] [--full] ...   view.render
 //   easl browser <verb> [<tile>] [--key value] ...   browser tiles over the cmux subset (below)
 //   easl metrics [--watch] [--reset] [--json]       app.metrics as text (--watch: every second)
@@ -83,7 +83,7 @@ function usage(help = false): never {
     "usage: easl methods [<name>]",
     "       easl <namespace>.<method> [--json '{...}' | --json @file | --json @-] [--key value] [--flag]",
     "       easl get <id> [--as graph]",
-    "       easl tell <name[@board]> <text> [--when next-turn] [--from <label>]",
+    "       easl tell <name[@board]> <text> [--when next-turn] [--from <label>] [--message <msg_id>]",
     "       easl render <id|id,id|x,y,w,h> [--out file.png] [--scale 2] [--full]",
     "       easl browser <verb> [<tile>] [--key value] [--json '{...}']   (open [url] | list | close | navigate, snapshot, click, …)",
     "       easl metrics [--watch] [--reset] [--json]",

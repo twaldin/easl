@@ -1431,6 +1431,8 @@ export type AgentPromptParams = {
   from?: string;
   /** now: a steer into the running turn, or a new turn when idle; next-turn: never into a running turn, delivered once it has ended */
   when?: "now" | "next-turn";
+  /** out-of-band only: the id the message gets (`msg_` and 8 to 64 letters, digits, `_` or `-`), the same on every attempt to send it. A prompt whose `message` is already queued for the target answers with that message (`duplicate: true`) and queues nothing, also when the first attempt is still being sent, so a sender whose call timed out can send again without the target getting it twice (a terminal on another machine has its text read over ssh before the message is queued, which can outlast a short timeout). The receiving integration drops an id it already delivered. Typing ignores it */
+  message?: string;
   /** typing only: send even though the target is `blocked` or runs another foreground program than its agent (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval */
   force?: boolean;
   /** the user's own prompt from a composer that isn't in this app (a remote board's viewer, docs/design.md "Client mode"): sent exactly as this app's composer sends it, typed into the terminal, also into one whose integration takes messages; `mentions` wait for that prompt's own drain, numbered from 1, never the tray and never a hand-off. Takes no `caller`, `from` or `when` */
@@ -1451,6 +1453,8 @@ export type AgentPromptResult = {
   waitable: boolean;
   /** present with `mentions`: what waits for the target's prompt (an object already waiting there is not attached twice) */
   mentions?: Mention[];
+  /** the prompt's `message` was already queued for the target: this is that message, and nothing new was queued */
+  duplicate?: true;
 };
 
 export type AgentWaitParams = {

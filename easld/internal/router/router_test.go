@@ -638,6 +638,32 @@ func TestAScriptsMessageIsTheUsersAndALongPollTakesIt(t *testing.T) {
 	}
 }
 
+// A message sent again with its id (agent.prompt `message`: a sender whose call timed out) is
+// that message: queued once, delivered once. An id that isn't one is refused.
+func TestAMessageSentAgainWithItsIdIsQueuedOnce(t *testing.T) {
+	f := newFixture(t)
+	reviewer := f.namedTerminal("reviewer", "")
+	lead := f.namedTerminal("lead", "")
+	f.result("agent.report", map[string]any{"tile": reviewer, "kind": "omp", "state": "idle", "protocol": 1.0})
+	params := map[string]any{"target": "reviewer", "text": "Check the key.", "caller": lead, "message": "msg_write_toolu_01"}
+	first := f.result("agent.prompt", params)
+	again := f.result("agent.prompt", params)
+	if first["message"] != "msg_write_toolu_01" || first["duplicate"] != nil {
+		t.Fatalf("first: %v", first)
+	}
+	if again["message"] != "msg_write_toolu_01" || again["duplicate"] != true || again["delivery"] != "message" || again["submittedAt"] != first["submittedAt"] {
+		t.Fatalf("again: %v", again)
+	}
+	got := messagesOf(t, f.call("agent.inbox", map[string]any{"tile": reviewer}))
+	if len(got) != 1 || got[0]["id"] != "msg_write_toolu_01" || got[0]["text"] != "Check the key." {
+		t.Fatalf("%v", got)
+	}
+	if code, message := errorOf(f.call("agent.prompt", map[string]any{"target": reviewer, "text": "x", "message": "not an id"})); code != "invalid_params" ||
+		message != "message is the id the message gets, the same on every attempt to send it: msg_ and 8 to 64 letters, digits, _ or -" {
+		t.Fatalf("%s %s", code, message)
+	}
+}
+
 // A composer's prompt (a remote board's viewer) is the user's, typed as the app's composer types
 // it: `from` and `when` are refused before the target is looked up, and it is never queued as a
 // message, even for a terminal whose integration takes them (a client types it; none is attached).
