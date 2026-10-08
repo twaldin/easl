@@ -17,9 +17,11 @@ func TestResumeArgvMatchesTheSharedFixture(t *testing.T) {
 	}
 	var fixture struct {
 		Cases []struct {
-			Note, Kind, SessionID, SessionPath string
-			SessionFileGone                    bool
-			Command, Argv                      []string
+			Note, Kind, SessionID string
+			// SessionPath is absent (nil) or what was reported, an empty one included.
+			SessionPath     *string
+			SessionFileGone bool
+			Command, Argv   []string
 		}
 	}
 	if err := json.Unmarshal(data, &fixture); err != nil {
@@ -32,8 +34,8 @@ func TestResumeArgvMatchesTheSharedFixture(t *testing.T) {
 	for _, c := range fixture.Cases {
 		sessionFileExists = func(string) bool { return !c.SessionFileGone }
 		agent := map[string]any{"kind": c.Kind, "sessionId": c.SessionID}
-		if c.SessionPath != "" {
-			agent["sessionPath"] = c.SessionPath
+		if c.SessionPath != nil {
+			agent["sessionPath"] = *c.SessionPath
 		}
 		if got := ResumeArgv(agent, c.Command); !reflect.DeepEqual(got, c.Argv) {
 			t.Errorf("%s %s %q (%s): got %q, want %q", c.Kind, c.SessionID, c.Command, c.Note, got, c.Argv)

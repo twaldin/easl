@@ -189,20 +189,10 @@ final class TerminalTile: NSView, TileContent {
         return String(decoding: path.utf8.map { legal.contains($0) ? $0 : UInt8(ascii: "_") }, as: UTF8.self)
     }
 
-    /// What a new session runs before dropping to a login shell: after a reboot, resume the
-    /// recorded agent session with the options of the tile's own `command` (`AgentResume`: omp,
-    /// claude, codex, gemini, opencode); otherwise the tile's initial `command`. As argv.
-    static func initialArgv(_ object: CanvasObject) -> [String]? {
-        let argv = object.props["command"]?.array?.compactMap(\.string) ?? []
-        if let resume = AgentResume.argv(agent: object.props["agent"], command: argv) {
-            return resume
-        }
-        return argv.isEmpty ? nil : argv
-    }
-
-    /// `initialArgv` as one command line.
+    /// What a new session runs before dropping to a login shell (`AgentResume.initialArgv`: the
+    /// recorded agent session resumed, else the tile's `command`) as one command line.
     static func initialCommand(_ object: CanvasObject) -> String? {
-        initialArgv(object).map(ShellWords.quote)
+        AgentResume.initialArgv(object).map(ShellWords.quote)
     }
 
     /// A hosted terminal's command: the attach loop through the app's connection to its host
@@ -221,7 +211,7 @@ final class TerminalTile: NSView, TileContent {
     /// the host's, `run` this instance's relayed sockets' directory there.
     func hostedSpawnParams(home: String, run: String, argv: [String]? = nil) -> JSONValue? {
         guard let object = board.objects[objectID] else { return nil }
-        return HostedTerminal.spawnParams(tile: objectID, board: board.id, argv: argv ?? Self.initialArgv(object), cwd: object.props["cwd"]?.string,
+        return HostedTerminal.spawnParams(tile: objectID, board: board.id, argv: argv ?? AgentResume.initialArgv(object), cwd: object.props["cwd"]?.string,
                                           home: home, run: run, homeLabel: Self.homeLabel, cmuxPassword: AppPaths.cmuxPassword,
                                           ghosttyIntegration: TerminalConfig.shared.shellIntegration != nil)
     }

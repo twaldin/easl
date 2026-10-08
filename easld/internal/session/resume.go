@@ -93,13 +93,13 @@ func ResumeArgv(agent map[string]any, command []string) []string {
 	return g.resumed(program, kept, session)
 }
 
-// RebootSession is the session a new session of the terminal resumes (ResumeArgv):
-// ResumedSession, with omp's session file only while it is there (sessionFileExists: omp's
-// /move renames it without a new report, and omp 18.8 refuses a path with no file), else its
-// session id, which omp finds in any project.
+// RebootSession is the session a new session of the terminal resumes (ResumeArgv,
+// AgentResume.rebootSession): ResumedSession, with omp's session file only while it is there (an
+// empty path is none; sessionFileExists: omp's /move renames it without a new report, and omp
+// 18.8 refuses a path with no file), else its session id, which omp finds in any project.
 func RebootSession(agent map[string]any) string {
 	session := ResumedSession(agent)
-	if id, _ := agent["sessionId"].(string); id != "" && session != id && !sessionFileExists(session) {
+	if id, _ := agent["sessionId"].(string); id != "" && session != id && (session == "" || !sessionFileExists(session)) {
 		return id
 	}
 	return session
@@ -264,7 +264,7 @@ func (g grammar) options(command []string, dropping set) (string, []string) {
 }
 
 // InitialArgv is what a new session of terminal `props` runs before its login shell
-// (TerminalTile.initialArgv): the agent session it recorded (`props.agent`, which agent.release
+// (AgentResume.initialArgv): the agent session it recorded (`props.agent`, which agent.release
 // clears) resumed with the options of the tile's own `command` (ResumeArgv), else the tile's
 // `command`; nil for neither.
 func InitialArgv(props map[string]any) []string {

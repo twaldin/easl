@@ -504,19 +504,43 @@ public enum AgentResume {
         }
     }
 
-    /// The command resuming the session `agent` recorded (`props.agent`: `session(of:)` of its
-    /// `kind`); nil for an agent that can't be resumed or recorded no session. omp's session file
-    /// counts only while `exists` finds it (omp's /move renames it without a new report, and omp
-    /// 18.8 refuses a path with no file); else its session id, which omp finds in any project. A
-    /// hosted tile's file is on its host, so the Mac resumes it by id. `command` is the tile's own
-    /// (`props.command`): its options are kept when its program is that agent (by name, any
-    /// directory).
+    /// What a new session of terminal `object` runs before dropping to a login shell (easld's
+    /// `session.InitialArgv` too): after a reboot, the agent session it recorded resumed with the
+    /// options of its own `command` (`argv`); otherwise its `command`; nil for neither. A hosted
+    /// terminal's session file is on its host, where the Mac can't look: its recorded path is
+    /// kept, as agent.restart keeps it, so one omp's /move renamed there resumes by that stale
+    /// path (only the host could choose, and `session.spawn` carries one command).
+    public static func initialArgv(_ object: CanvasObject,
+                                   exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> [String]? {
+        let command = object.props["command"]?.array?.compactMap(\.string) ?? []
+        let resume = HostedTerminal.host(of: object) == nil
+            ? argv(agent: object.props["agent"], command: command, exists: exists)
+            : argv(agent: object.props["agent"], command: command, exists: { _ in true })
+        return resume ?? (command.isEmpty ? nil : command)
+    }
+
+    /// The command resuming the session `agent` recorded (`props.agent`: `rebootSession(of:)` of
+    /// its `kind`); nil for an agent that can't be resumed or recorded no session. `command` is the
+    /// tile's own (`props.command`): its options are kept when its program is that agent (by name,
+    /// any directory).
     public static func argv(agent: JSONValue?, command: [String] = [],
                             exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> [String]? {
-        guard let kind = agent?["kind"]?.string, let grammar = grammar(kind), var session = session(of: agent) else { return nil }
-        if let id = agent?["sessionId"]?.string, !id.isEmpty, session != id, !exists(session) { session = id }
+        guard let kind = agent?["kind"]?.string, let grammar = grammar(kind),
+              let session = rebootSession(of: agent, exists: exists) else { return nil }
         let (program, kept) = options(of: command, grammar)
         return grammar.resume(program, kept, session)
+    }
+
+    /// The session a new session of the terminal resumes (`argv`, easld's
+    /// `session.RebootSession`): `session(of:)`'s, with omp's session file only while `exists`
+    /// finds it (an empty path is none: omp's /move renames the file without a new report, and omp
+    /// 18.8 refuses a path with no file), else the session id, which omp finds in any project. A
+    /// hosted tile's file is on its host, so the Mac resumes it by id. Nil for none.
+    static func rebootSession(of agent: JSONValue?, exists: (String) -> Bool) -> String? {
+        let id = agent?["sessionId"]?.string ?? ""
+        var session = (agent?["kind"]?.string == "omp" ? agent?["sessionPath"]?.string : nil) ?? id
+        if !id.isEmpty, session != id, session.isEmpty || !exists(session) { session = id }
+        return session.isEmpty ? nil : session
     }
 
     /// The program `command` runs the agent as (its own path when it is that agent, else the

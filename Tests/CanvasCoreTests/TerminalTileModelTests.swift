@@ -450,6 +450,26 @@ struct AgentResumeTests {
             #expect(AgentResume.argv(agent: .object(agent), command: c.command, exists: { _ in !gone }) == c.argv, "\(c.kind) \(c.command): \(c.note ?? "")")
         }
     }
+
+    /// A tile of this Mac resumes omp's session file only while it is here, else the id; a hosted
+    /// tile's file is on its host, where the Mac can't look (`omp --session-dir /srv/sessions`
+    /// there), so it resumes the path omp reported, as agent.restart does.
+    @Test func aHostedTileKeepsItsSessionPathTheMacCantSee() throws {
+        let here = FileManager.default.temporaryDirectory.appendingPathComponent("easl-resume-\(UUID().uuidString).jsonl")
+        try Data("{}\n".utf8).write(to: here)
+        defer { try? FileManager.default.removeItem(at: here) }
+        func tile(host: String?, path: String) -> CanvasObject {
+            var props: [String: JSONValue] = ["command": .array([.string("omp")]),
+                                              "agent": .object(["kind": "omp", "sessionId": "s1", "sessionPath": .string(path)])]
+            if let host { props["host"] = .string(host) }
+            return CanvasObject(id: ObjectID("obj_t"), type: .terminal, frame: Frame(x: 0, y: 0, w: 10, h: 10), z: 0, parent: nil,
+                                createdBy: .user, createdAt: Date(), props: .object(props))
+        }
+        let there = "/srv/sessions/-w/s1.jsonl"
+        #expect(AgentResume.initialArgv(tile(host: nil, path: here.path)) == ["omp", "--resume=\(here.path)"])
+        #expect(AgentResume.initialArgv(tile(host: nil, path: there)) == ["omp", "--resume=s1"])
+        #expect(AgentResume.initialArgv(tile(host: "deckbox", path: there)) == ["omp", "--resume=\(there)"])
+    }
 }
 
 struct TerminalNameTests {
