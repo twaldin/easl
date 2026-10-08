@@ -524,6 +524,87 @@ struct RepoBoardTests {
         #expect(board.objects[arrow.id]?.props["to"]?["node"] == .string(external + "#helper"))
     }
 
+    @Test(arguments: [false, true])
+    func anAdoptedPathWorktreeOpensItsRegionWithoutChangingItsAnchors(detached: Bool) async throws {
+        let (_, worktree) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        if detached { try await TempRepo.run(["checkout", "-q", "--detach"], in: worktree) }
+        let old = Board(id: BoardStore.pathID(worktree), root: worktree)
+        let code = old.create(type: .code, props: .object(["path": .string("src/a.txt")]), frame: Frame(x: 20, y: 40, w: 400, h: 300))
+        let note = old.create(type: .note, props: .object(["markdown": .string("src/a.txt:1")]), frame: Frame(x: 500, y: 40, w: 200, h: 100))
+        let store = BoardStore(directory: boards)
+        store.save(old)
+        var region: ObjectID?
+        var runs: Int?
+        for _ in 0..<3 {
+            let registry = BoardRegistry(store: BoardStore(directory: boards))
+            let router = ApiRouter(registry: registry)
+            let opened = try router.dispatch("board.open", .object(["root": .string(worktree.path)]))
+            let id = try #require(opened["board"]?.string)
+            let board = try #require(registry.boards[id])
+            let group = try #require(board.objects.values.first { $0.props["key"] == .string("worktree:wt-feature") })
+            #expect(region == nil || region == group.id)
+            region = group.id
+            #expect(opened["worktree"]?["region"] == .string(group.id))
+            #expect(opened["worktree"]?["branch"] == (detached ? nil : .string("feature")))
+            let listed = try #require(try router.dispatch("board.list", .object([:]))["boards"]?.array?.first { $0["board"] == .string(board.id) })
+            let rows = try #require(listed["worktrees"]?.array).filter { $0["path"] == .string(GitWorktree.normalized(worktree.path)) }
+            #expect(rows.count == 1)
+            #expect(rows.first?["live"] == .bool(true))
+            #expect(rows.first?["region"] == .string(group.id))
+            #expect(rows.first?["branch"] == (detached ? nil : .string("feature")))
+            #expect(board.repo?.worktrees == [WorktreeRecord(path: GitWorktree.normalized(worktree.path), branch: detached ? nil : "feature", region: group.id)])
+            #expect(board.repo?.merged == [old.id])
+            #expect(Set(board.objects.keys) == Set([code.id, note.id, group.id]))
+            #expect(board.objects[code.id]?.frame == code.frame)
+            #expect(board.objects[note.id]?.frame == note.frame)
+            #expect(board.objects[code.id]?.props["path"] == .string(worktree.appendingPathComponent("src/a.txt").path))
+            #expect(board.objects[code.id]?.props["ref"] == nil)
+            #expect(board.objects[note.id]?.props["root"] == .string(worktree.path))
+            #expect(board.objects[note.id]?.props["ref"] == nil)
+            registry.store.save(board)
+            let count = try ledgerRuns()
+            #expect(runs == nil || runs == count)
+            runs = count
+        }
+    }
+
+    @Test func aPreviouslyAdoptedBranchlessRegionAttachesToTheLiveWorktreeWithoutHidingBranchHistory() async throws {
+        let (repo, worktree) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let common = try #require(GitWorktree.containing(worktree.path)).commonDir
+        let path = GitWorktree.normalized(worktree.path)
+        let board = Board(id: BoardStore.repoID(commonDir: common), root: repo.root)
+        let region = board.create(type: .group, props: .object(["members": .array([]), "key": .string("worktree:wt-feature")]))
+        let historical = board.create(type: .group, props: .object(["members": .array([]), "key": .string("branch:old")]))
+        board.repo = RepoRecord(commonDir: common, worktrees: [
+            WorktreeRecord(path: path, branch: nil, region: region.id),
+            WorktreeRecord(path: path, branch: "feature"),
+            WorktreeRecord(path: path, branch: "old", region: historical.id),
+        ])
+        let store = BoardStore(directory: boards)
+        store.save(board)
+        for _ in 0..<3 {
+            let registry = BoardRegistry(store: BoardStore(directory: boards))
+            let router = ApiRouter(registry: registry)
+            let opened = try router.dispatch("board.open", .object(["root": .string(worktree.path)]))
+            #expect(opened["worktree"]?["region"] == .string(region.id))
+            let listed = try #require(try router.dispatch("board.list", .object([:]))["boards"]?.array?.first { $0["board"] == .string(board.id) })
+            let rows = try #require(listed["worktrees"]?.array).filter { $0["path"] == .string(path) }
+            #expect(rows.count == 2, "one live row and the old branch's history, not another live branchless row")
+            #expect(rows.filter { $0["live"] == .bool(true) }.map { $0["region"] } == [.string(region.id)])
+            #expect(rows.first { $0["branch"] == .string("old") }?["live"] == .bool(false))
+        }
+        var record = try #require(board.repo)
+        record.worktrees[1].region = historical.id
+        #expect(record.region(branch: "feature", path: path, objects: board.objects) == historical.id, "a known branch's region wins over the path fallback")
+        #expect(record.region(branch: nil, path: path, objects: board.objects) == region.id, "detached HEAD still uses its path")
+        try await repo.git("worktree", "remove", "--force", worktree.path)
+        let archived = record.worktreeList(objects: board.objects).filter { $0.path == path }
+        #expect(archived.count == 3)
+        #expect(archived.allSatisfy { !$0.live })
+    }
+
     @Test func aTerminalRecordsTheWorktreeAndBranchItStartsIn() async throws {
         let (repo, worktree) = try await fixture()
         let registry = BoardRegistry(store: BoardStore(directory: boards, debounce: 60))

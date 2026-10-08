@@ -60,10 +60,11 @@ type KeyRename struct {
 	Object, Board, From, To string
 }
 
-// LegacyReport is RepoBoardMigration.LegacyReport, of a path-keyed board: no branch, the
-// worktree its directory is in.
+// LegacyReport is RepoBoardMigration.LegacyReport, of a path-keyed board; Branch is its live
+// worktree's HEAD, independent of the absolute reroot anchor.
 type LegacyReport struct {
 	Board, Root, Label string
+	Branch             *string
 	Anchor             string // "main" or "worktree"
 	Worktree           string
 	WorktreeLive       bool
@@ -133,7 +134,7 @@ func (s *Store) mergeIntoRepositoryBoard(commonDir string, now time.Time) {
 		if info, err := os.Stat(file); err == nil {
 			modified = info.ModTime()
 		}
-		boards = append(boards, pathBoard{file: file, snap: snap, top: w.Toplevel, modified: modified})
+		boards = append(boards, pathBoard{file: file, snap: snap, top: w.Toplevel, branch: branchPtr(*w), modified: modified})
 	}
 	if len(boards) == 0 {
 		return
@@ -211,6 +212,7 @@ type pathBoard struct {
 	file     string
 	snap     *Snapshot
 	top      string
+	branch   *string
 	modified time.Time // when its file was saved: the latest board's object keeps a shared key
 }
 
@@ -288,7 +290,7 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 		if isBase(p) || isMainCheckout(p) {
 			anchor = anchorMain
 		}
-		entry := LegacyReport{Board: snap.ID, Root: snap.Root, Label: label, Anchor: anchor, Worktree: p.top, WorktreeLive: true,
+		entry := LegacyReport{Board: snap.ID, Root: snap.Root, Label: label, Branch: p.branch, Anchor: anchor, Worktree: p.top, WorktreeLive: true,
 			Temporary: isTemporary(p.top), Status: "merged", ObjectsBefore: len(snap.Objects), Unanchored: []string{}}
 		if slices.Contains(repo.Merged, snap.ID) {
 			entry.Status = "alreadyMerged"
@@ -448,12 +450,12 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 			if region != nil {
 				regionID = region.ID
 			}
-			if i := slices.IndexFunc(repo.Worktrees, func(w WorktreeRecord) bool { return w.Path == path && w.Branch == nil }); i >= 0 {
+			if i := slices.IndexFunc(repo.Worktrees, func(w WorktreeRecord) bool { return w.Path == path && sameBranch(w.Branch, p.branch) }); i >= 0 {
 				if regionID != "" {
 					repo.Worktrees[i].Region = regionID
 				}
 			} else {
-				repo.Worktrees = append(repo.Worktrees, WorktreeRecord{Path: path, Region: regionID})
+				repo.Worktrees = append(repo.Worktrees, WorktreeRecord{Path: path, Branch: p.branch, Region: regionID})
 			}
 		}
 		repo.Merged = append(repo.Merged, snap.ID)
@@ -1009,6 +1011,9 @@ func (run *MigrationRun) json() map[string]any {
 				"board": l.Board, "root": l.Root, "label": l.Label, "anchor": l.Anchor, "worktree": l.Worktree,
 				"worktreeLive": l.WorktreeLive, "temporary": l.Temporary, "status": l.Status,
 				"objectsBefore": l.ObjectsBefore, "objectsAfter": l.ObjectsAfter, "unanchored": unanchored,
+			}
+			if l.Branch != nil {
+				m["branch"] = *l.Branch
 			}
 			if l.Region != "" {
 				m["region"] = l.Region

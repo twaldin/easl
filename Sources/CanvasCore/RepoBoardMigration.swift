@@ -52,7 +52,7 @@ public enum RepoBoardMigration {
         public var label: String
         public var branch: String?
         /// main: the main checkout's current branch, placed as it was; branch: anchored by `ref`;
-        /// worktree: detached or branch unknown, paths absolute in the worktree.
+        /// worktree: detached, branch unknown or path-keyed linked checkout; paths absolute there.
         public var anchor: String
         public var worktree: String?
         public var worktreeLive: Bool
@@ -294,9 +294,12 @@ public enum RepoBoardMigration {
                 branch = name
                 anchor = legacy.url == base?.url || (isMainCheckout(legacy) && name == main?.branch) ? .main
                     : .branch(name, sha: GitWorktree.branchSha(commonDir: commonDir, branch: name))
-            case .detached, .unknown, .path:
+            case .path:
+                branch = legacy.live ? GitWorktree.containing(legacy.top).flatMap { $0.commonDir == commonDir ? $0.branch : nil } : nil
+                anchor = legacy.url == base?.url || isMainCheckout(legacy) ? .main : .absolute
+            case .detached, .unknown:
                 branch = nil
-                anchor = legacy.url == base?.url || (legacy.identity == .path && isMainCheckout(legacy)) ? .main : .absolute
+                anchor = legacy.url == base?.url ? .main : .absolute
             }
             var entry = LegacyReport(board: snapshot.id, root: snapshot.root, label: label(of: legacy), branch: branch, anchor: anchor.name,
                                      worktree: legacy.top, worktreeLive: legacy.live, temporary: isTemporary(legacy.top), status: "merged", objectsBefore: snapshot.objects.count,
@@ -342,7 +345,9 @@ public enum RepoBoardMigration {
                 if !members.isEmpty {
                     let frame = Frame(x: bounds.x + dx - inset, y: bounds.y + dy - inset - GroupSpec.titleHeight,
                                       w: bounds.w + 2 * inset, h: bounds.h + 2 * inset + GroupSpec.titleHeight)
-                    let key = branch.map { "branch:\($0)" } ?? "\(legacy.isDetached ? "detached" : "worktree"):\(label(of: legacy))"
+                    let key: String
+                    if case .branch(let name) = legacy.identity { key = "branch:\(name)" }
+                    else { key = "\(legacy.isDetached ? "detached" : "worktree"):\(label(of: legacy))" }
                     region = CanvasObject(id: IDs.make("obj"), type: .group, frame: frame, z: (objects.map(\.z).max() ?? 0) + 1, createdBy: .user, createdAt: now,
                                           props: .object(["members": .array(members.map(JSONValue.string)), "title": .string(label(of: legacy)), "key": .string(key)]))
                 }

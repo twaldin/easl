@@ -318,3 +318,68 @@ func TestAnAdoptedDiagramKeepsItsIdentitiesRelativeToItsDestinationRoot(t *testi
 		})
 	}
 }
+
+func TestBranchlessRegionFallbackKeepsDetachedAndHistoricalWorktrees(t *testing.T) {
+	dir := t.TempDir()
+	repo, worktree := filepath.Join(dir, "repo"), filepath.Join(dir, "topic")
+	commonDir := repository(t, repo)
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runGit("worktree", "add", "-q", "-b", "topic", worktree)
+	path := Normalized(worktree)
+	topic, old := "topic", "old"
+	objects := map[string]model.Object{
+		"obj_path": adoptedObject("obj_path", model.Group, 0, map[string]any{}),
+		"obj_old":  adoptedObject("obj_old", model.Group, 0, map[string]any{}),
+	}
+	r := RepoRecord{CommonDir: commonDir, Worktrees: []WorktreeRecord{
+		{Path: path, Region: "obj_path"},
+		{Path: path, Branch: &topic},
+		{Path: path, Branch: &old, Region: "obj_old"},
+	}}
+	list := r.WorktreeList(objects)
+	var live, historical []WorktreeInfo
+	for _, row := range list {
+		if row.Path != path {
+			continue
+		}
+		if row.Live {
+			live = append(live, row)
+		} else {
+			historical = append(historical, row)
+		}
+	}
+	if len(live) != 1 || !sameBranch(live[0].Branch, &topic) || live[0].Region != "obj_path" || len(historical) != 1 || !sameBranch(historical[0].Branch, &old) {
+		t.Fatalf("live %v, historical %v", live, historical)
+	}
+	r.Worktrees[1].Region = "obj_missing"
+	if got := r.Region(&topic, path, objects); got != "obj_path" {
+		t.Fatalf("missing branch group prevented path fallback: %s", got)
+	}
+	r.Worktrees[1].Region = "obj_old"
+	if got := r.Region(&topic, path, objects); got != "obj_old" {
+		t.Fatalf("known branch region lost precedence: %s", got)
+	}
+	if got := r.Region(nil, path, objects); got != "obj_path" {
+		t.Fatalf("detached HEAD lost its path region: %s", got)
+	}
+	runGit("worktree", "remove", "--force", worktree)
+	var archived []WorktreeInfo
+	for _, row := range r.WorktreeList(objects) {
+		if row.Path == path {
+			archived = append(archived, row)
+			if row.Live {
+				t.Fatalf("deleted worktree is live: %v", row)
+			}
+		}
+	}
+	if len(archived) != 3 {
+		t.Fatalf("deleted worktree lost history: %v", archived)
+	}
+}
