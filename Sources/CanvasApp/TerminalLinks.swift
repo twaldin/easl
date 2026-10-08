@@ -28,6 +28,13 @@ final class CanvasTerminalView: TerminalView {
     /// something took it meanwhile. One at a time: focusing any terminal forgets it.
     private static weak var refocusTarget: CanvasTerminalView?
 
+    /// Redraws, for `easl metrics` (`terminal.draw`) and DevPerf spans: a terminal nobody is
+    /// watching should show few (`IdleRedraw`). Counted here, handed to Metrics once a second.
+    override func surfaceDidDraw() {
+        MainMetricsBatch.shared.draws += 1
+        DevPerf.count("terminal.draw")
+    }
+
     override func becomeFirstResponder() -> Bool {
         Self.refocusTarget = nil
         let became = super.becomeFirstResponder()
@@ -127,7 +134,7 @@ final class CanvasTerminalView: TerminalView {
     /// How long the key waited in the event queue for the main thread (`event.timestamp` is the
     /// press, on the uptime clock) and how long handing it to Ghostty's key handler took: summed
     /// in `KeyLatency` here (six numbers, no lock, no allocation) and handed to `Metrics` once a
-    /// second by one long-lived timer (`KeyLatencyFlush`), for `easl metrics` "keys". A
+    /// second by one long-lived timer (`MainMetricsBatch`), for `easl metrics` "keys". A
     /// main-thread stall holds every key typed during it and releases them together, late and in
     /// order; a long wait here is the board's doing, upstream of the terminal, zmx and the
     /// program. `key.handle` ends at the hand-over: Ghostty queues the PTY write for its IO
@@ -138,7 +145,7 @@ final class CanvasTerminalView: TerminalView {
         let start = Metrics.now()
         super.keyDown(with: event)
         let handled = (Metrics.now() - start) * 1000
-        KeyLatencyFlush.shared.latency.add(waitMs: waited, handleMs: handled)
+        MainMetricsBatch.shared.latency.add(waitMs: waited, handleMs: handled)
     }
 
     override func flagsChanged(with event: NSEvent) {
@@ -204,28 +211,35 @@ final class TerminalLinkUnderline: NSView {
     }
 }
 
-/// The second's key batch into Metrics: a repeating main-queue timer that costs a wakeup a second
-/// and nothing on the key path; `flush` also runs before an `app.metrics` snapshot or reset (so a
-/// key typed before a reset lands in its own epoch) and logs once when keys waited 50 ms or more.
+/// Main-actor metrics summed without a lock and handed to Metrics once a second: the key batch
+/// (`KeyLatency`) and the terminal redraw count. One repeating main-queue timer costs a wakeup a
+/// second and nothing on the key or draw path; `flush` also runs before an `app.metrics` snapshot
+/// or reset (so a key typed before a reset lands in its own epoch) and logs once when keys
+/// waited 50 ms or more.
 @MainActor
-final class KeyLatencyFlush {
-    static let shared = KeyLatencyFlush()
+final class MainMetricsBatch {
+    static let shared = MainMetricsBatch()
     var latency = KeyLatency()
+    var draws = 0
     private var timer: DispatchSourceTimer?
 
     private init() {
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(100))
-        timer.setEventHandler { MainActor.assumeIsolated { KeyLatencyFlush.shared.flush() } }
+        timer.setEventHandler { MainActor.assumeIsolated { MainMetricsBatch.shared.flush() } }
         timer.resume()
         self.timer = timer
-        Metrics.flushBeforeSnapshot = { KeyLatencyFlush.shared.flush() }
+        Metrics.flushBeforeSnapshot = { MainMetricsBatch.shared.flush() }
     }
 
     /// Called once at launch so the timer and the snapshot hook exist before the first key.
     func start() {}
 
     func flush() {
+        if draws > 0 {
+            Metrics.shared.record("terminal.draw", count: draws)
+            draws = 0
+        }
         let batch = latency.flush()
         guard !batch.isEmpty else { return }
         Metrics.shared.record("key.wait", batchMs: batch.waitMs, maxMs: batch.waitMaxMs, count: batch.keys)

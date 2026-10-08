@@ -1,7 +1,15 @@
 {
-  "description": "How a terminal whose session is gone resumes the agent it recorded (props.agent's kind and sessionId) with the options of its own command: AgentResume.argv in Swift (Sources/CanvasCore/TerminalReference.swift, which the app's tiles run after a reboot) and session.ResumeArgv in Go (easld/internal/session/resume.go, which easld runs for the terminals it owns). Both test suites check every case, so the two can't drift. `argv: null` is an agent that can't be resumed (its command runs instead).",
+  "description": "How a terminal whose session is gone resumes the agent it recorded (props.agent's kind, sessionId and, for omp, sessionPath) with the options of its own command: AgentResume.argv in Swift (Sources/CanvasCore/TerminalReference.swift, which the app's tiles run after a reboot) and session.ResumeArgv in Go (easld/internal/session/resume.go, which easld runs for the terminals it owns). Both test suites check every case, so the two can't drift. omp resumes the session file it reported (its --resume takes a path, as agent.restart's does), any other agent its session id. `argv: null` is an agent that can't be resumed (its command runs instead).",
   "cases": [
     { "kind": "omp", "sessionId": "s1", "command": [], "argv": ["omp", "--resume=s1"] },
+    { "note": "omp resumes the file it reported, as agent.restart does", "kind": "omp", "sessionId": "s1", "sessionPath": "/home/u/.omp/agent/sessions/-w/s1.jsonl",
+      "command": ["omp", "--model=opus"], "argv": ["omp", "--model=opus", "--resume=/home/u/.omp/agent/sessions/-w/s1.jsonl"] },
+    { "note": "a file that isn't there (omp's /move renamed it) resumes by id, which omp finds in any project", "kind": "omp", "sessionId": "s1", "sessionPath": "/home/u/.omp/agent/sessions/-w/s1.jsonl",
+      "sessionFileGone": true, "command": ["omp", "--model=opus"], "argv": ["omp", "--model=opus", "--resume=s1"] },
+    { "note": "an empty session path is no file: by id", "kind": "omp", "sessionId": "s1", "sessionPath": "",
+      "command": [], "argv": ["omp", "--resume=s1"] },
+    { "note": "only omp's --resume takes a path", "kind": "claude", "sessionId": "u-1", "sessionPath": "/home/u/.claude/projects/-w/u-1.jsonl",
+      "command": [], "argv": ["claude", "--resume", "u-1"] },
     { "kind": "claude", "sessionId": "u-1", "command": [], "argv": ["claude", "--resume", "u-1"] },
     { "kind": "codex", "sessionId": "t-1", "command": [], "argv": ["codex", "resume", "t-1"] },
     { "kind": "gemini", "sessionId": "g-1", "command": [], "argv": ["gemini", "--resume", "g-1"] },

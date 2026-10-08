@@ -866,7 +866,7 @@ func (r *Router) restart(p map[string]any) (any, error) {
 	kind, _ := agent["kind"].(string)
 	known := slices.Contains(restartKinds, kind)
 	if mode == "resume" {
-		if !known || resumedSession(agent) == "" {
+		if !known || session.ResumedSession(agent) == "" {
 			return nil, fail(api.CodeUnavailable, "%s has no recorded agent session to resume (its agent never reported one, or it exited); mode fresh starts it anew", terminal.ID)
 		}
 	} else if !known && len(strings_(terminal.Props["command"])) == 0 {
@@ -907,19 +907,6 @@ func restartingFailure(tile string) error {
 // typingFailure is agent.restart's answer for a terminal a client is typing an agent.prompt into.
 func typingFailure(tile string) error {
 	return fail(api.CodeConflict, "%s is being prompted right now (agent.prompt is typing into it): restarting would cut that prompt off; try again in a moment", tile)
-}
-
-// resumedSession is the session agent.restart resumes (AgentResume.session): omp's session file
-// when it reported one (its `--resume` takes a path), else the session id; "" for none.
-func resumedSession(agent map[string]any) string {
-	session, isPath := "", false
-	if agent["kind"] == "omp" {
-		session, isPath = agent["sessionPath"].(string)
-	}
-	if !isPath {
-		session, _ = agent["sessionId"].(string)
-	}
-	return session
 }
 
 // restartRefusal is why agent.restart leaves a terminal alone without force: the dialog, turn,

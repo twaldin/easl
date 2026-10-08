@@ -251,11 +251,17 @@ func TestOwnTerminalsStartsAndEndsTheirSessions(t *testing.T) {
 
 // With --own-terminals easld reopens at start the boards it had open. Restarted with their
 // sessions still running it starts none; after a reboot (no session left) each terminal's starts
-// again, resuming the agent session it recorded, or running its command once its agent released.
+// again, resuming the agent session it recorded (omp's by its file), or running its command once
+// its agent released, and easld's log says which.
 func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
 	dir := shortDir(t)
 	home, root, socket := filepath.Join(dir, "home"), filepath.Join(dir, "root"), filepath.Join(dir, "s.sock")
 	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The omp session's file, there when easld resumes it.
+	sessionFile := filepath.Join(dir, "s1.jsonl")
+	if err := os.WriteFile(sessionFile, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	zmx, err := zmxtest.Install(dir)
@@ -275,7 +281,7 @@ func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
 	c := connect(t, socket, stderr)
 	board := c.call(t, "board.open", map[string]any{"root": root})["board"].(string)
 	agent := terminal(c, board, "omp", "--model", "opus")
-	c.call(t, "agent.report_session", map[string]any{"tile": agent, "kind": "omp", "sessionId": "s1"})
+	c.call(t, "agent.report_session", map[string]any{"tile": agent, "kind": "omp", "sessionId": "s1", "sessionPath": sessionFile})
 	released := terminal(c, board, "claude")
 	c.call(t, "agent.report_session", map[string]any{"tile": released, "kind": "claude", "sessionId": "u-1"})
 	c.call(t, "agent.release", map[string]any{"tile": released, "kind": "claude"})
@@ -306,6 +312,9 @@ func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
 			t.Errorf("%s's session was started again by a restart: %q", tile, data)
 		}
 	}
+	if said := stderr.String(); strings.Contains(said, "terminal "+agent) || strings.Contains(said, "terminal "+released) {
+		t.Errorf("a restart noted sessions it didn't start: %q", said)
+	}
 	if code := stop(t, done, syscall.SIGTERM); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
@@ -322,7 +331,7 @@ func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
 	done, stderr = start(t, args...)
 	c = connect(t, socket, stderr)
 	terminal(c, board)
-	for tile, want := range map[string]string{agent: `'omp' '--model' 'opus' '--resume=s1'; exec`, released: `'claude'; exec`} {
+	for tile, want := range map[string]string{agent: `'omp' '--model' 'opus' '--resume=` + sessionFile + `'; exec`, released: `'claude'; exec`} {
 		got, err := zmxtest.Read(sessions, "canvas-"+tile)
 		// The command's PATH, when the interactive login shell gave one, goes first (session.Manager.loginCommand).
 		command := ""
@@ -334,6 +343,12 @@ func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
 		}
 		if err != nil || len(got.Args) != 4 || !strings.HasPrefix(command, want) {
 			t.Errorf("%s after a reboot: %q (%v), want %s…; easld said %q", tile, got.Args, err, want, stderr.String())
+		}
+	}
+	for _, note := range []string{"terminal " + agent + " of board " + board + " resumes its omp session " + sessionFile + "\n",
+		"terminal " + released + " of board " + board + " runs its command: no recorded agent\n"} {
+		if !strings.Contains(stderr.String(), note) {
+			t.Errorf("easld's log doesn't say %q: %q", note, stderr.String())
 		}
 	}
 	if code := stop(t, done, syscall.SIGTERM); code != 0 {

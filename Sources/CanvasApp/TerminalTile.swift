@@ -189,21 +189,10 @@ final class TerminalTile: NSView, TileContent {
         return String(decoding: path.utf8.map { legal.contains($0) ? $0 : UInt8(ascii: "_") }, as: UTF8.self)
     }
 
-    /// What a new session runs before dropping to a login shell: after a reboot, resume the
-    /// recorded agent session with the options of the tile's own `command` (`AgentResume`: omp,
-    /// claude, codex, gemini, opencode); otherwise the tile's initial `command`. As argv.
-    static func initialArgv(_ object: CanvasObject) -> [String]? {
-        let argv = object.props["command"]?.array?.compactMap(\.string) ?? []
-        if let kind = object.props["agent"]?["kind"]?.string, let sessionId = object.props["agent"]?["sessionId"]?.string,
-           let resume = AgentResume.argv(kind: kind, sessionId: sessionId, command: argv) {
-            return resume
-        }
-        return argv.isEmpty ? nil : argv
-    }
-
-    /// `initialArgv` as one command line.
+    /// What a new session runs before dropping to a login shell (`AgentResume.initialArgv`: the
+    /// recorded agent session resumed, else the tile's `command`) as one command line.
     static func initialCommand(_ object: CanvasObject) -> String? {
-        initialArgv(object).map(ShellWords.quote)
+        AgentResume.initialArgv(object).map(ShellWords.quote)
     }
 
     /// A hosted terminal's command: the attach loop through the app's connection to its host
@@ -222,7 +211,7 @@ final class TerminalTile: NSView, TileContent {
     /// the host's, `run` this instance's relayed sockets' directory there.
     func hostedSpawnParams(home: String, run: String, argv: [String]? = nil) -> JSONValue? {
         guard let object = board.objects[objectID] else { return nil }
-        return HostedTerminal.spawnParams(tile: objectID, board: board.id, argv: argv ?? Self.initialArgv(object), cwd: object.props["cwd"]?.string,
+        return HostedTerminal.spawnParams(tile: objectID, board: board.id, argv: argv ?? AgentResume.initialArgv(object), cwd: object.props["cwd"]?.string,
                                           home: home, run: run, homeLabel: Self.homeLabel, cmuxPassword: AppPaths.cmuxPassword,
                                           ghosttyIntegration: TerminalConfig.shared.shellIntegration != nil)
     }
@@ -1083,6 +1072,8 @@ final class TerminalTile: NSView, TileContent {
                 + [NSApplication.didHideNotification, NSApplication.didUnhideNotification, NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification]
                     .map { (app, app.addObserver(forName: $0, object: NSApp, queue: .main, using: changed)) }
                 + [(workspace, workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: changed))]
+                // The user's away or back: a terminal nobody is watching redraws slowly (`IdleRedraw`).
+                + [(app, app.addObserver(forName: UserIdleWatch.changed, object: nil, queue: .main, using: changed))]
         }
         updateSurfaceVisibility()
     }
@@ -1106,9 +1097,52 @@ final class TerminalTile: NSView, TileContent {
     /// sees: ~18% CPU for one busy terminal. Draw only while the tile is live and its window
     /// shown (not minimized, covered, on another Space, in a background tab, or the app hidden);
     /// the session keeps running either way, and a surface shown again draws the current screen.
+    /// While the user is away, a shown terminal is occluded too and shown for one redraw a few
+    /// times a second (`IdleRedraw`): Ghostty presents from a display link of its own on every
+    /// change, and only occlusion stops it.
     private func updateSurfaceVisibility() {
         let shown = window.map { $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) } ?? false
-        terminal.setSurfaceVisible(isLive && shown)
+        let wanted = isLive && shown
+        if wanted != countedDrawable {
+            countedDrawable = wanted
+            UserIdleWatch.shared.terminalDrawable(wanted)
+        }
+        if wanted, UserIdleWatch.shared.isIdle {
+            startIdlePulse()
+        } else {
+            stopIdlePulse()
+            terminal.setSurfaceVisible(wanted)
+        }
+    }
+
+    private var idlePulse: DispatchSourceTimer?
+    /// Whether this terminal is in `UserIdleWatch.drawable` (shown and live).
+    private var countedDrawable = false
+
+    private func startIdlePulse() {
+        guard idlePulse == nil else { return }
+        terminal.setSurfaceVisible(false)
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: 1 / IdleRedraw.idleHertz, leeway: .milliseconds(20))
+        timer.setEventHandler { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.idlePulse != nil else { return }
+                self.terminal.setSurfaceVisible(true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + IdleRedraw.pulse) { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, self.idlePulse != nil else { return }
+                        self.terminal.setSurfaceVisible(false)
+                    }
+                }
+            }
+        }
+        timer.resume()
+        idlePulse = timer
+    }
+
+    private func stopIdlePulse() {
+        idlePulse?.cancel()
+        idlePulse = nil
     }
 
     /// The grid Ghostty reports for this surface, in points; nil until it first lays out.

@@ -190,6 +190,11 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       await report("idle");
       return undefined;
     case "SessionEnd":
+      // Claude Code says why its session ended: `other` when its user didn't end it (a hangup as
+      // the terminal's session is killed, a SIGTERM as the system shuts down; its /exit is
+      // `prompt_input_exit`). The tile then resumes the session it recorded (props.agent), which
+      // a release would clear. Codex (`other` always) and Gemini CLI (`exit` always) can't tell.
+      if (kind === "claude" && input.reason === "other") return undefined;
       await release(client, { tile, kind, source }, seq);
       return undefined;
   }
