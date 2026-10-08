@@ -107,11 +107,12 @@ private final class StallRig: @unchecked Sendable {
         monitor.loop(sleeping: false, at: start)
     }
 
-    /// The turn's `dev.stall` span (`ms` long) ends, and the loop goes to sleep at `end`.
-    func end(at end: Double, stall ms: Double) {
+    /// The turn's `dev.stall` span (`ms` long) ends at `end`, and the loop goes to sleep or
+    /// (`intoNext`) straight into the next turn.
+    func end(at end: Double, stall ms: Double, intoNext: Bool = false) {
         monitor.push()
         monitor.pop("dev.stall", ms: ms)
-        monitor.loop(sleeping: true, at: end)
+        monitor.loop(sleeping: !intoNext, at: end)
     }
 
     /// The watchdog wakes at `now`; if it samples, `child` is how `sample` goes, and
@@ -186,6 +187,26 @@ struct StallSamplingCorrelationTests {
         let lines = rig.busy(naming: file)
         #expect(lines.map(\.ms) == [30])
         #expect(lines.first?.cause == "dev.stall 30 ms")
+    }
+
+    /// A sampled turn whose file is in ends straight into the next, which the watchdog claims
+    /// once the five minutes are up. Ending one turn and publishing the next are one critical
+    /// section, so the next turn's claim can't take the ended one's place before its line is
+    /// settled: each line names its own turn's file.
+    @Test func theNextTurnsClaimDoesNotTakeTheEndedTurnsPlace() throws {
+        let t = Metrics.now()
+        let rig = StallRig(at: t)
+        rig.begin(at: t)
+        rig.wake(at: t + 1.5)
+        let first = try #require(rig.newest)
+        rig.end(at: t + 3, stall: 3000, intoNext: true)
+        #expect(rig.longest?.cause == "\(first); dev.stall 3000 ms")
+        rig.wake(at: t + 302)
+        let second = try #require(rig.newest)
+        rig.end(at: t + 303, stall: 300_000)
+        #expect(rig.samples == 2)
+        #expect(rig.busy(naming: first).contains { $0.ms == 3000 && $0.cause == "dev.stall 3000 ms" })
+        #expect(rig.busy(naming: second).contains { $0.ms == 300_000 && $0.cause == "dev.stall 300000 ms" })
     }
 
     @Test func aSampleFinishingAfterItsTurnTagsALaterLineAndTheLongest() throws {

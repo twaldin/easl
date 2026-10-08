@@ -259,48 +259,47 @@ public final class Metrics: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// The main run loop moves on: the turn that started at `ended` is over and `next` begins
-    /// (nil: the loop sleeps). True when the ended turn is the one the stall watchdog claimed.
-    /// Under the lock the watchdog claims with, so from here on the ended turn can't be claimed:
-    /// whatever its end then records, it knows whether to settle a sample.
-    fileprivate func mainTurn(ended: Double?, next: Double?) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        turnStart = next
-        guard let ended else { return false }
-        return stallPending?.turn == ended
-    }
-
-    /// The turn that started at `turn` ended at `now`, `ms` of it counted by the window (from the
-    /// last reset if one came during it), having run `cause`. A turn a reset cut has no cause of
-    /// its own in the new window (its spans were dropped at its end, the first activity after the
-    /// reset: "untagged work"); `wholeCause` is then what it ran, for its sample's line. Called
-    /// for every turn of `hitchStretch` or more and for the claimed one, however short: a claim
-    /// can land after the observer timed the turn's end but before `mainTurn` published it. The
-    /// lock is held only to update state; the line is formatted and logged after.
-    fileprivate func mainStretch(_ ms: Double, turn: Double, at now: Double, cause: String, wholeCause: String?) {
-        let tally = Tally(n: 1, ms: ms, maxMs: ms)
+    /// A main run-loop activity at `now`: the turn that started at `ended.start` is over and
+    /// `next` begins (nil: the loop sleeps). `ended.ms` is the part of the turn the window counts,
+    /// from the last reset if one came during it, and `cause` what it ran. A turn a reset cut has
+    /// no cause of its own in the new window (its spans were dropped at its end, the first activity
+    /// after the reset: "untagged work"); `wholeCause` is then what it ran, for its sample's line.
+    ///
+    /// Publishing `next` and settling the ended turn's sample are one critical section on the
+    /// lock the watchdog claims with, so no claim lands between them: the ended turn's claim,
+    /// if any, is still its own, and the next turn can't be claimed before it is published. The
+    /// caller formats `cause` beforehand for a turn of `hitchStretch` or more; a shorter one's is
+    /// formatted here only if the watchdog claimed it (the observer timed its end before the
+    /// claim and published it after), which is rare. Lines are formatted and logged after.
+    fileprivate func mainTurn(ended: (start: Double, ms: Double)?, next: Double?, at now: Double,
+                              cause: @autoclosure () -> String, wholeCause: String?) {
         var line: (ms: Double, cause: String)?
-        var tag = ""
         lock.lock()
-        if ms >= Self.hitchStretch { series["main.stretch50", default: Series()].add(tally, at: now) }
-        if ms >= Self.logStretch {
-            series["main.stretch250", default: Series()].add(tally, at: now)
-            line = (ms: ms, cause: cause)
-        }
-        if stallPending?.turn == turn {
-            // The sampled turn's line is all of it, though a reset may have cut what the window
-            // counts.
-            let whole = Stretch(ms: (now - turn) * 1000, cause: wholeCause ?? cause, at: now)
-            if let file = stallPending?.file {
-                tag = "\(file); "
-                stallPending = nil
-            } else {
-                stallPending?.ended = whole
+        turnStart = next
+        if let ended, ended.ms >= Self.hitchStretch || stallPending?.turn == ended.start {
+            let ms = ended.ms
+            let text = cause()
+            let tally = Tally(n: 1, ms: ms, maxMs: ms)
+            var tag = ""
+            if ms >= Self.hitchStretch { series["main.stretch50", default: Series()].add(tally, at: now) }
+            if ms >= Self.logStretch {
+                series["main.stretch250", default: Series()].add(tally, at: now)
+                line = (ms: ms, cause: text)
             }
-            line = (ms: whole.ms, cause: tag + whole.cause)
+            if stallPending?.turn == ended.start {
+                // The sampled turn's line is all of it, though a reset may have cut what the
+                // window counts.
+                let whole = Stretch(ms: (now - ended.start) * 1000, cause: wholeCause ?? text, at: now)
+                if let file = stallPending?.file {
+                    tag = "\(file); "
+                    stallPending = nil
+                } else {
+                    stallPending?.ended = whole
+                }
+                line = (ms: whole.ms, cause: tag + whole.cause)
+            }
+            if ms >= Self.hitchStretch && ms > (longest?.ms ?? 0) { longest = Stretch(ms: ms, cause: tag + text, at: now) }
         }
-        if ms >= Self.hitchStretch && ms > (longest?.ms ?? 0) { longest = Stretch(ms: ms, cause: tag + cause, at: now) }
         lock.unlock()
         if let line { log(Self.busyLine(line.ms, line.cause)) }
     }
@@ -468,12 +467,12 @@ final class MainMonitor {
             spans.removeAll(keepingCapacity: true)
         }
         let step = turns.activity(sleeping: sleeping, at: now)
-        let claimed = metrics.mainTurn(ended: started, next: turns.turnStart)
-        // Formatted here, not under the metrics lock, for a turn that could be counted, logged or
-        // kept, and for the claimed one: its sample is settled by `mainStretch` whatever its length.
-        if let started, let ms = step.turn, ms >= Metrics.hitchStretch || claimed {
-            metrics.mainStretch(ms, turn: started, at: now, cause: cause(), wholeCause: wholeCause)
-        }
+        var ended: (start: Double, ms: Double)?
+        if let started, let ms = step.turn { ended = (start: started, ms: ms) }
+        // Formatted here, off the metrics lock, for a turn that could be counted, logged or kept;
+        // a shorter turn's only under the lock, if the stall watchdog claimed it.
+        let text: String? = (step.turn ?? 0) >= Metrics.hitchStretch ? cause() : nil
+        metrics.mainTurn(ended: ended, next: turns.turnStart, at: now, cause: text ?? cause(), wholeCause: wholeCause)
         spans.removeAll(keepingCapacity: true)
         if let busy = step.flush { metrics.mainBusy(busy.ms, turns: busy.turns) }
     }
