@@ -261,9 +261,10 @@ final class Updater {
     }
 
     /// At launch, off the main thread: logs what the helper did (and says so when it failed),
-    /// deletes `updates/`'s folders, except one easl now runs from, and the hidden copies a
-    /// stopped update left beside this app over an hour ago (`AppUpdate.staleLeftovers`: a newer
-    /// one may be another home's update under way), never this app.
+    /// deletes `updates/`'s folders, except one easl now runs from, and the hidden copies and
+    /// transaction protection directories a stopped update left beside this app over an hour
+    /// ago (`AppUpdate.staleLeftovers`: a newer transaction may be another home's update), never
+    /// this app or its protection.
     private func cleanUp() {
         let updates = AppPaths.updates
         let running = Bundle.main.bundleURL.resolvingSymlinksInPath()
