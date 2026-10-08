@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- **easl samples itself when its main thread stalls.** When the board's main thread has been stuck in one piece of work for a second (keys held, nothing redrawing), easl runs the system's `sample` on itself for that second, while the stall is still going, into `~/Library/Application Support/Easl/stalls/<time>.txt` (the development instance's own home under `EASL_HOME`), and the log line naming the stall's cause starts with that file, so a stall nobody caught in the act leaves its backtraces behind. At most one sample every five minutes, the newest twenty kept; `easl metrics` says how many were taken and the newest. Measured runs (`EASL_DEV_PERF=1`) don't sample.
+
 ## 0.2.4
 
 - **A folder's board survives `git init`.** A board made for a folder before it was a git repository (`~/dev/tiktok`, then `git init` and a commit) was replaced by a new, empty board when easl reopened the folder: the folder now opens its repository's board, and the step that folds older boards into repository boards ran once per Mac and never looked again. When a repository's board loads, easl now takes in the boards of folders inside that repository that were made before they were in git. On an empty repository board (including the empty one easl 0.2.3 saved in its place) the objects stay where they were, with the same ids and frames; on one you have added to since, they arrive as a region beside your work. Messages queued for its terminals and their old names come along, and a subfolder's notes, HTML pages and diagrams keep reading that subfolder (this also holds for per-branch boards merged at launch, which lost those before). The old file moves to `boards/pre-repo-migration/`, and the repository board lists it in `repo.merged`, so agents still using the old board id reach the repository board. A folder board already loaded in the current session waits for the next launch, even after it is closed. easld does the same, and an easld that reopens its boards at start reopens such a folder's board as its repository's board, its owned terminals' running sessions included, instead of dropping it.

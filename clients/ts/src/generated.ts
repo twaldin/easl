@@ -821,6 +821,13 @@ export type AppMetricsResult = {
     cause: string;
     agoS: number;
   };
+  /** main-thread stalls (a turn of a second or more) the app `sample`d itself through, into `stalls/` in its home (the Mac app only; easld has no main thread) */
+  stalls?: {
+    /** since launch */
+    sampled: number;
+    /** home-relative, e.g. `stalls/2026-10-08T051210Z.txt`; also named at the start of that stretch's cause */
+    newest?: string;
+  };
   process: {
     footprintMB?: number;
     peakFootprintMB?: number;
