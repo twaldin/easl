@@ -1,0 +1,6 @@
+{"app": "a", "phase": "active", "started": "03:04:06Z", "seconds": 60.0, "cpu_s": 35.59, "instructions_G": 106.38, "gpu_util_pct": 52.0, "gpu_samples": 58, "draws_s": null, "run": 1}
+{"app": "a", "phase": "idle", "started": "03:05:09Z", "seconds": 60.0, "cpu_s": 36.05, "instructions_G": 107.06, "gpu_util_pct": 61.0, "gpu_samples": 58, "draws_s": null, "run": 1}
+{"app": "a", "phase": "restored", "started": "03:06:12Z", "seconds": 20.0, "cpu_s": 11.76, "instructions_G": 35.06, "gpu_util_pct": 63.5, "gpu_samples": 20, "draws_s": null, "run": 1}
+{"app": "b", "phase": "active", "started": "03:07:12Z", "seconds": 60.0, "cpu_s": 34.76, "instructions_G": 92.61, "gpu_util_pct": 55.0, "gpu_samples": 58, "draws_s": 575.6, "run": 1}
+{"app": "b", "phase": "idle", "started": "03:08:15Z", "seconds": 60.0, "cpu_s": 28.71, "instructions_G": 89.17, "gpu_util_pct": 38.0, "gpu_samples": 58, "draws_s": 59.5, "run": 1}
+{"app": "b", "phase": "restored", "started": "03:09:18Z", "seconds": 20.0, "cpu_s": 11.58, "instructions_G": 30.42, "gpu_util_pct": 53.5, "gpu_samples": 20, "draws_s": 513.6, "run": 1}
