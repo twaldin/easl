@@ -141,7 +141,7 @@ final class AgentMessageTests {
         // Dropping the client doesn't prove its reader thread has let it go or the server has
         // processed EOF. Poll the real inbox until the old connection no longer holds the message.
         let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(5))
+        let deadline = clock.now.advanced(by: .seconds(3))
         var again = try await call(next, "agent.inbox", ["tile": .string(reviewer)])
         while again["result"]?["messages"] == .array([]), clock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
