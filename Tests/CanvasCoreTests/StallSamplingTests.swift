@@ -170,6 +170,24 @@ struct StallSamplingCorrelationTests {
         #expect(rig.longest?.cause == "\(file); dev.stall 3000 ms")
     }
 
+    /// The observer reads the clock as a turn ends and publishes the end a moment later; its
+    /// thread can be descheduled in between, long enough for the watchdog to claim the turn that
+    /// is still published, however short it measured. Its end, published after the claim, still
+    /// settles the claim and names the file, whether `sample` finished first or not.
+    @Test(arguments: [false, true]) func aShortTurnClaimedBeforeItsEndWasPublishedStillGetsItsFile(sampleOutlastsTurn: Bool) throws {
+        let t = Metrics.now()
+        let rig = StallRig(at: t)
+        rig.begin(at: t)
+        // Timed 30 ms in, published after the watchdog's claim 1.5 s in.
+        let end = { rig.end(at: t + 0.03, stall: 30) }
+        rig.wake(at: t + 1.5, whileSampling: sampleOutlastsTurn ? end : {})
+        if !sampleOutlastsTurn { end() }
+        let file = try #require(rig.newest)
+        let lines = rig.busy(naming: file)
+        #expect(lines.map(\.ms) == [30])
+        #expect(lines.first?.cause == "dev.stall 30 ms")
+    }
+
     @Test func aSampleFinishingAfterItsTurnTagsALaterLineAndTheLongest() throws {
         let t = Metrics.now()
         let rig = StallRig(at: t)
