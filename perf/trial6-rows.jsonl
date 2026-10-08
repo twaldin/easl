@@ -1,0 +1,12 @@
+{"app": "a", "phase": "active", "started": "00:06:44Z", "seconds": 60.0, "cpu_s": 34.14, "instructions_G": 85.32, "gpu_util_pct": 37.0, "gpu_samples": 58, "draws_s": null, "run": 1}
+{"app": "a", "phase": "idle", "started": "00:07:48Z", "seconds": 60.0, "cpu_s": 34.18, "instructions_G": 85.6, "gpu_util_pct": 37, "gpu_samples": 57, "draws_s": null, "run": 1}
+{"app": "a", "phase": "restored", "started": "00:08:50Z", "seconds": 20.0, "cpu_s": 11.26, "instructions_G": 28.93, "gpu_util_pct": 36.0, "gpu_samples": 20, "draws_s": null, "run": 1}
+{"app": "b", "phase": "active", "started": "00:09:49Z", "seconds": 60.0, "cpu_s": 34.72, "instructions_G": 88.35, "gpu_util_pct": 38, "gpu_samples": 57, "draws_s": 658.7, "run": 1}
+{"app": "b", "phase": "idle", "started": "00:10:52Z", "seconds": 60.0, "cpu_s": 42.49, "instructions_G": 119.96, "gpu_util_pct": 14, "gpu_samples": 57, "draws_s": 149.2, "run": 1}
+{"app": "b", "phase": "restored", "started": "00:11:55Z", "seconds": 20.0, "cpu_s": 11.64, "instructions_G": 28.08, "gpu_util_pct": 37.5, "gpu_samples": 20, "draws_s": 621.3, "run": 1}
+{"app": "b", "phase": "active", "started": "00:12:54Z", "seconds": 60.0, "cpu_s": 35.13, "instructions_G": 88.7, "gpu_util_pct": 38.0, "gpu_samples": 58, "draws_s": 633.9, "run": 2}
+{"app": "b", "phase": "idle", "started": "00:13:57Z", "seconds": 60.0, "cpu_s": 42.45, "instructions_G": 121.26, "gpu_util_pct": 13.0, "gpu_samples": 58, "draws_s": 153.7, "run": 2}
+{"app": "b", "phase": "restored", "started": "00:15:00Z", "seconds": 20.0, "cpu_s": 11.76, "instructions_G": 30.37, "gpu_util_pct": 39, "gpu_samples": 19, "draws_s": 681.5, "run": 2}
+{"app": "a", "phase": "active", "started": "00:15:59Z", "seconds": 60.0, "cpu_s": 34.33, "instructions_G": 81.45, "gpu_util_pct": 36.5, "gpu_samples": 58, "draws_s": null, "run": 2}
+{"app": "a", "phase": "idle", "started": "00:17:02Z", "seconds": 60.0, "cpu_s": 35.3, "instructions_G": 90.8, "gpu_util_pct": 41, "gpu_samples": 57, "draws_s": null, "run": 2}
+{"app": "a", "phase": "restored", "started": "00:18:05Z", "seconds": 20.0, "cpu_s": 11.29, "instructions_G": 25.83, "gpu_util_pct": 33.5, "gpu_samples": 20, "draws_s": null, "run": 2}
