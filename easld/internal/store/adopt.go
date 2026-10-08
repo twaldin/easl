@@ -37,7 +37,9 @@ type MigrationRun struct {
 	RanAt  time.Time
 	DryRun bool
 	Repos  []RepoReport
-	// NonGit and Unresolved are the app's: easld identifies no legacy board (see appendToLedger).
+	// NonGit is the app's: easld identifies no board outside git. Unresolved (the legacy boards
+	// the run left in the store, by board, sorted) is the last run's, carried over, with this
+	// run's conflicts (see appendToLedger).
 	NonGit     []string
 	Unresolved []any
 }
@@ -304,7 +306,7 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 			continue
 		}
 
-		r := rerooter{oldRoot: Standardized(snap.Root), top: p.top, live: true, anchor: anchor}
+		r := rerooter{oldRoot: Standardized(snap.Root), top: p.top, live: true, anchor: anchor, mainCheckout: isMainCheckout(p)}
 		format := 1
 		if snap.Format != nil {
 			format = *snap.Format
@@ -656,6 +658,9 @@ type rerooter struct {
 	oldRoot, top string
 	live         bool
 	anchor       string
+	// mainCheckout: the board's worktree is the repository's main checkout, where the
+	// repository board is rooted.
+	mainCheckout bool
 	unanchored   []string
 }
 
@@ -790,9 +795,14 @@ func (r *rerooter) reroot(o model.Object) model.Object {
 		}
 	case model.Diagram:
 		// Its file, the graph as last computed (node paths and ids, its aim) and the nodes it
-		// expanded, as an image's path: nothing anchors a diagram by branch.
+		// expanded, as the repository board's next build writes them (moved), so that build
+		// finds them again: nothing anchors a diagram by branch.
 		if path, ok := props["path"].(string); ok {
-			props["path"] = r.worktreePath(path, what)
+			rebased := r.moved(path)
+			if strings.HasPrefix(rebased, "/") && !strings.HasPrefix(path, "/") {
+				rebased = r.pinned(rebased, what)
+			}
+			props["path"] = rebased
 		}
 		if expanded, ok := props["expanded"].([]any); ok {
 			for i, id := range expanded {
@@ -863,18 +873,15 @@ func (r *rerooter) place() string {
 	return ""
 }
 
-// moved is Rerooter.moved: worktreePath without reporting, for a path a cached copy repeats (a
-// diagram's nodes).
+// moved is Rerooter.moved: a path as the repository board writes what code tiles compute (a
+// diagram's file and its nodes, CallGraphBuilder): relative to the new root when it lies in the
+// main checkout, whatever the anchor and absolute or not on the old board, else absolute.
 func (r *rerooter) moved(path string) string {
-	if strings.HasPrefix(path, "/") {
-		return path
+	abs := r.absolute(path)
+	if r.mainCheckout && strings.HasPrefix(abs, r.top+"/") {
+		return abs[len(r.top)+1:]
 	}
-	if r.anchor == anchorMain {
-		if rel, ok := r.repoRelative(path); ok {
-			return rel
-		}
-	}
-	return r.absolute(path)
+	return abs
 }
 
 // nodeID is Rerooter.nodeID: a diagram node's id, `<path>#<symbol>` (CallGraphBuilder), its path
@@ -921,9 +928,11 @@ func backUp(file, dir string, now time.Time) {
 // appendToLedger is RepoBoardMigration.appendToLedger: run appended to the ledger's runs (its
 // earlier runs kept as they decode), pretty-printed with sorted keys and unescaped slashes. A
 // ledger that isn't one starts again, as the app's would. The app reads the last run's
-// `unresolved` as the legacy boards to retry: easld identifies none, so they carry over. A run
-// that took in nothing (only conflicts) and leaves the last run's `unresolved` as it was isn't
-// appended: each load would add it again.
+// `unresolved` as the legacy boards to retry, and lists there every legacy board a run leaves
+// in the store, conflicts too, sorted, whichever repository the run is for. easld identifies
+// only this repository's folder boards: the last run's other boards carry over, and this run's
+// conflicts join them. A run that took in nothing (only conflicts) and leaves the last run's
+// `unresolved` as it was isn't appended: each load would add it again.
 func appendToLedger(run *MigrationRun, dir string) {
 	path := filepath.Join(dir, BackupFolder, LedgerFile)
 	ledger := map[string]any{}
@@ -941,24 +950,31 @@ func appendToLedger(run *MigrationRun, dir string) {
 		last, _ := runs[len(runs)-1].(map[string]any)
 		earlier, _ = last["unresolved"].([]any)
 	}
-	done := map[string]bool{}
+	board := func(u any) string {
+		id, _ := u.(map[string]any)["board"].(string)
+		return id
+	}
+	seen := map[string]bool{}
 	for _, repo := range run.Repos {
 		for _, l := range repo.Legacy {
-			done[l.Board] = l.Status != "conflict"
+			seen[l.Board] = true
+			if l.Status == "conflict" {
+				run.Unresolved = append(run.Unresolved, map[string]any{"board": l.Board, "root": l.Root, "objects": l.ObjectsBefore})
+			}
 		}
 	}
 	for _, u := range earlier {
-		if board, _ := u.(map[string]any)["board"].(string); !done[board] {
+		if !seen[board(u)] {
 			run.Unresolved = append(run.Unresolved, u)
 		}
 	}
+	slices.SortStableFunc(run.Unresolved, func(a, b any) int { return strings.Compare(board(a), board(b)) })
 	// A repository's load that changed nothing (its boards still conflict, the same ones left
 	// unresolved) adds no run: each load would add the same one.
 	boards := func(list []any) []string {
 		ids := []string{}
 		for _, u := range list {
-			board, _ := u.(map[string]any)["board"].(string)
-			ids = append(ids, board)
+			ids = append(ids, board(u))
 		}
 		return ids
 	}

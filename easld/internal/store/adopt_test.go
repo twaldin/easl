@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -70,12 +71,15 @@ func codeMention(id, path string) model.Mention {
 // renamed terminals' old names, the repository board's kept where both have one. Its notes and
 // HTML tiles without a root keep resolving against the subfolder, and its diagrams' files (the
 // symbol's, the aim's, every node's, and the paths in node ids, wherever an id is: expanded
-// nodes, the root, edges, an arrow's bound end) are re-rooted as an image's path.
+// nodes, the root, edges, an arrow's bound end) are written as the repository board's diagram
+// builds write them: relative to the repository, whether the old board had them relative or
+// absolute, when they lie in it.
 func TestASubfoldersBoardKeepsItsMessagesAliasesNoteRootsAndDiagramPaths(t *testing.T) {
 	dir := t.TempDir()
 	repo, boards := filepath.Join(dir, "repo"), filepath.Join(dir, "boards")
 	commonDir := repository(t, repo)
 	sub := filepath.Join(repo, "sub")
+	inside := filepath.Join(sub, "b.go")
 	ours := Message{ID: "msg_ours", Text: "first", When: "next-turn", Mentions: []model.Mention{}, QueuedAt: adoptedAt}
 	theirs := Message{ID: "msg_theirs", Text: "second", From: "obj_term", When: "now", Mentions: []model.Mention{codeMention("men_1", "a.go")}, QueuedAt: adoptedAt}
 	stored(t, boards, &Snapshot{ID: RepoID(commonDir), Root: Standardized(repo), Revision: 3,
@@ -86,11 +90,13 @@ func TestASubfoldersBoardKeepsItsMessagesAliasesNoteRootsAndDiagramPaths(t *test
 		adoptedObject("obj_term", model.Terminal, 0, map[string]any{}),
 		adoptedObject("obj_note", model.Note, 300, map[string]any{"markdown": "![x](x.png)"}),
 		adoptedObject("obj_html", model.HTML, 600, map[string]any{"html": "<a href=b.html>b</a>"}),
-		adoptedObject("obj_diagram", model.Diagram, 900, map[string]any{"path": "a.go", "expanded": []any{"a.go#main", "plain"}, "graph": map[string]any{
+		adoptedObject("obj_diagram", model.Diagram, 900, map[string]any{"path": "a.go", "expanded": []any{"a.go#main", "plain", inside + "#helper"}, "graph": map[string]any{
 			"aim": map[string]any{"kind": "calls", "path": "a.go", "direction": "both"}, "root": "a.go#main",
-			"nodes": []any{map[string]any{"id": "a.go#main", "path": "a.go", "kept": true}, map[string]any{"id": "/elsewhere/b.go#g#h", "path": "/elsewhere/b.go"}},
-			"edges": []any{map[string]any{"from": "a.go#main", "to": "/elsewhere/b.go#g#h"}}}}),
-		adoptedObject("obj_arrow", model.Arrow, 0, map[string]any{"from": map[string]any{"object": "obj_diagram", "node": "a.go#main"}, "to": map[string]any{"object": "obj_note"}}),
+			"nodes": []any{map[string]any{"id": "a.go#main", "path": "a.go", "kept": true}, map[string]any{"id": "/elsewhere/b.go#g#h", "path": "/elsewhere/b.go"},
+				map[string]any{"id": inside + "#helper", "path": inside}},
+			"edges": []any{map[string]any{"from": "a.go#main", "to": "/elsewhere/b.go#g#h"}, map[string]any{"from": "a.go#main", "to": inside + "#helper"}}}}),
+		adoptedObject("obj_arrow", model.Arrow, 0, map[string]any{"from": map[string]any{"object": "obj_diagram", "node": "a.go#main"},
+			"to": map[string]any{"object": "obj_diagram", "node": inside + "#helper"}}),
 	}, Aliases: map[string]string{"old": "obj_term", "worker": "obj_term"}, Messages: map[string][]Message{"obj_term": {theirs}}})
 
 	s := New(boards, time.Hour, nil)
@@ -114,14 +120,16 @@ func TestASubfoldersBoardKeepsItsMessagesAliasesNoteRootsAndDiagramPaths(t *test
 		}
 	}
 	diagram := objects["obj_diagram"].Props
-	want := map[string]any{"path": "sub/a.go", "expanded": []any{"sub/a.go#main", "plain"}, "graph": map[string]any{
+	want := map[string]any{"path": "sub/a.go", "expanded": []any{"sub/a.go#main", "plain", "sub/b.go#helper"}, "graph": map[string]any{
 		"aim": map[string]any{"kind": "calls", "path": "sub/a.go", "direction": "both"}, "root": "sub/a.go#main",
-		"nodes": []any{map[string]any{"id": "sub/a.go#main", "path": "sub/a.go", "kept": true}, map[string]any{"id": "/elsewhere/b.go#g#h", "path": "/elsewhere/b.go"}},
-		"edges": []any{map[string]any{"from": "sub/a.go#main", "to": "/elsewhere/b.go#g#h"}}}}
+		"nodes": []any{map[string]any{"id": "sub/a.go#main", "path": "sub/a.go", "kept": true}, map[string]any{"id": "/elsewhere/b.go#g#h", "path": "/elsewhere/b.go"},
+			map[string]any{"id": "sub/b.go#helper", "path": "sub/b.go"}},
+		"edges": []any{map[string]any{"from": "sub/a.go#main", "to": "/elsewhere/b.go#g#h"}, map[string]any{"from": "sub/a.go#main", "to": "sub/b.go#helper"}}}}
 	if !reflect.DeepEqual(diagram, want) {
 		t.Errorf("diagram %v\nwant %v", diagram, want)
 	}
-	if arrow := objects["obj_arrow"].Props; arrow["from"].(map[string]any)["node"] != "sub/a.go#main" || !reflect.DeepEqual(arrow["to"], map[string]any{"object": "obj_note"}) {
+	if arrow := objects["obj_arrow"].Props; arrow["from"].(map[string]any)["node"] != "sub/a.go#main" ||
+		!reflect.DeepEqual(arrow["to"], map[string]any{"object": "obj_diagram", "node": "sub/b.go#helper"}) {
 		t.Errorf("arrow %v", arrow)
 	}
 }
@@ -143,26 +151,77 @@ func TestTheTopLevelsBoardsNotesKeepNoRoot(t *testing.T) {
 	}
 }
 
+// conflicting is repo made a repository whose stored board already holds the objects of repo's
+// stored folder board (so the folder board conflicts); repo's common git directory.
+func conflicting(t *testing.T, repo, boards string) string {
+	t.Helper()
+	commonDir := repository(t, repo)
+	same := []model.Object{adoptedObject("obj_same", model.Note, 0, map[string]any{})}
+	stored(t, boards, &Snapshot{ID: RepoID(commonDir), Root: Standardized(repo), Revision: 1, Objects: same,
+		Repo: &RepoRecord{CommonDir: commonDir, Worktrees: []WorktreeRecord{}}})
+	stored(t, boards, &Snapshot{ID: PathID(repo), Root: Standardized(repo), Revision: 1, Objects: same})
+	return commonDir
+}
+
+type unresolvedBoard struct {
+	Board, Root string
+	Objects     int
+}
+
+// ledgerRuns is each run of the store's ledger, as the boards it left unresolved.
+func ledgerRuns(t *testing.T, boards string) [][]unresolvedBoard {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(boards, BackupFolder, LedgerFile))
+	var ledger struct {
+		Runs []struct {
+			Unresolved []unresolvedBoard `json:"unresolved"`
+		} `json:"runs"`
+	}
+	if err != nil || json.Unmarshal(data, &ledger) != nil {
+		t.Fatalf("ledger %s: %v", data, err)
+	}
+	runs := [][]unresolvedBoard{}
+	for _, run := range ledger.Runs {
+		runs = append(runs, run.Unresolved)
+	}
+	return runs
+}
+
 // A load that takes in nothing (its folder board's objects clash with the repository board's)
-// leaves the repository board's file as it is and adds no run to the ledger: none when there is
-// no ledger, none each time when there is.
-func TestAConflictOnlyLoadAddsNoLedgerRun(t *testing.T) {
+// leaves both boards' files as they are. The folder board is reported once, unresolved, as the
+// app's run reports it: not by every load after.
+func TestAConflictingFolderBoardIsReportedOnceNotAtEveryLoad(t *testing.T) {
 	dir := t.TempDir()
 	repo, boards := filepath.Join(dir, "repo"), filepath.Join(dir, "boards")
-	commonDir := repository(t, repo)
-	stored(t, boards, &Snapshot{ID: RepoID(commonDir), Root: Standardized(repo), Revision: 1,
-		Objects: []model.Object{adoptedObject("obj_same", model.Note, 0, map[string]any{})}, Repo: &RepoRecord{CommonDir: commonDir, Worktrees: []WorktreeRecord{}}})
-	stored(t, boards, &Snapshot{ID: PathID(repo), Root: Standardized(repo), Revision: 1, Objects: []model.Object{adoptedObject("obj_same", model.Note, 0, map[string]any{})}})
+	commonDir := conflicting(t, repo, boards)
 	repoFile := filepath.Join(boards, RepoID(commonDir)+".json")
 	before, err := os.ReadFile(repoFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	New(boards, time.Hour, nil).Loading(RepoID(commonDir), commonDir, adoptedAt)
-	ledger := filepath.Join(boards, BackupFolder, LedgerFile)
-	if _, err := os.Stat(ledger); !os.IsNotExist(err) {
-		t.Errorf("a ledger was written: %v", err)
+	for range 3 {
+		New(boards, time.Hour, nil).Loading(RepoID(commonDir), commonDir, adoptedAt)
 	}
+	want := [][]unresolvedBoard{{{Board: PathID(repo), Root: Standardized(repo), Objects: 1}}}
+	if runs := ledgerRuns(t, boards); !reflect.DeepEqual(runs, want) {
+		t.Errorf("the ledger's runs left %v unresolved, want %v", runs, want)
+	}
+	if _, err := os.Stat(filepath.Join(boards, PathID(repo)+".json")); err != nil {
+		t.Errorf("the conflicting board's file moved: %v", err)
+	}
+	if after, _ := os.ReadFile(repoFile); string(after) != string(before) {
+		t.Errorf("the repository board was rewritten:\n%s\nwas\n%s", after, before)
+	}
+}
+
+// Two repositories' conflicting folder boards, in a store the app has migrated: each
+// repository's load leaves both unresolved, so launches that load both add nothing after the
+// first.
+func TestTwoRepositoriesConflictingFolderBoardsAreReportedOnce(t *testing.T) {
+	dir := t.TempDir()
+	first, second, boards := filepath.Join(dir, "first"), filepath.Join(dir, "second"), filepath.Join(dir, "boards")
+	firstCommon, secondCommon := conflicting(t, first, boards), conflicting(t, second, boards)
+	ledger := filepath.Join(boards, BackupFolder, LedgerFile)
 	if err := os.MkdirAll(filepath.Dir(ledger), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -170,20 +229,26 @@ func TestAConflictOnlyLoadAddsNoLedgerRun(t *testing.T) {
 	if err := os.WriteFile(ledger, []byte(ran), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
-		New(boards, time.Hour, nil).Loading(RepoID(commonDir), commonDir, adoptedAt)
+	launch := func() {
+		s := New(boards, time.Hour, nil)
+		s.Loading(RepoID(firstCommon), firstCommon, adoptedAt)
+		s.Loading(RepoID(secondCommon), secondCommon, adoptedAt)
 	}
-	data, err := os.ReadFile(ledger)
-	var runs struct {
-		Runs []any `json:"runs"`
+	launch()
+	runs := len(ledgerRuns(t, boards))
+	launch()
+	launch()
+	got := ledgerRuns(t, boards)
+	if len(got) != runs {
+		t.Errorf("%d runs, want the %d of the first launch", len(got), runs)
 	}
-	if err != nil || json.Unmarshal(data, &runs) != nil || len(runs.Runs) != 1 {
-		t.Errorf("ledger %s (%v), want the one run it had", data, err)
+	want := []string{PathID(first), PathID(second)}
+	slices.Sort(want)
+	last := []string{}
+	for _, u := range got[len(got)-1] {
+		last = append(last, u.Board)
 	}
-	if _, err := os.Stat(filepath.Join(boards, PathID(repo)+".json")); err != nil {
-		t.Errorf("the conflicting board's file moved: %v", err)
-	}
-	if after, _ := os.ReadFile(repoFile); string(after) != string(before) {
-		t.Errorf("the repository board was rewritten:\n%s\nwas\n%s", after, before)
+	if !slices.Equal(last, want) {
+		t.Errorf("the last run left %v unresolved, want %v", last, want)
 	}
 }

@@ -342,24 +342,58 @@ struct RepoBoardTests {
         try expectAdopted(old, by: BoardRegistry(store: BoardStore(directory: boards)).open(root: folder), commonDir: commonDir)
     }
 
-    /// A folder board whose objects the repository board already holds stays as it is (a
-    /// conflict), and the launches that find it again add no report.
-    @Test func aFoldersBoardThatConflictsIsReportedOnceNotAtEveryLaunch() async throws {
-        let (folder, old) = try folderBoard()
+    /// `folder`'s repository board, already holding `old`'s objects (so `old` conflicts), saved.
+    func conflictingRepositoryBoard(_ folder: URL, _ old: Board) async throws -> BoardSnapshot {
         let commonDir = try await makeRepository(folder)
         var copy = old.snapshot
         copy.id = BoardStore.repoID(commonDir: commonDir)
         copy.repo = RepoRecord(commonDir: commonDir)
         try RepoBoardMigration.encoder.encode(copy).write(to: boards.appendingPathComponent("\(copy.id).json"))
-        func runs() throws -> Int {
-            try RepoBoardMigration.decoder.decode(RepoBoardMigration.Ledger.self, from: Data(contentsOf: RepoBoardMigration.ledgerURL(boards))).runs.count
-        }
-        let before = try runs()
+        return copy
+    }
 
-        for _ in 1...2 { _ = BoardRegistry(store: BoardStore(directory: boards)).open(root: folder) }
-        #expect(try runs() == before)
+    func ledgerRuns() throws -> Int {
+        try RepoBoardMigration.decoder.decode(RepoBoardMigration.Ledger.self, from: Data(contentsOf: RepoBoardMigration.ledgerURL(boards))).runs.count
+    }
+
+    /// A folder board whose objects the repository board already holds stays as it is (a
+    /// conflict): reported by the launch that first finds it, not by every launch after.
+    @Test func aFoldersBoardThatConflictsIsReportedOnceNotAtEveryLaunch() async throws {
+        let (folder, old) = try folderBoard()
+        let copy = try await conflictingRepositoryBoard(folder, old)
+        let before = try ledgerRuns()
+
+        for _ in 1...3 { _ = BoardRegistry(store: BoardStore(directory: boards)).open(root: folder) }
+        #expect(try ledgerRuns() == before + 1)
+        #expect(RepoBoardMigration.pending(in: boards).unresolved == [old.id], "left in the store")
         #expect(FileManager.default.fileExists(atPath: boards.appendingPathComponent("\(old.id).json").path))
         #expect(try stored(copy.id).revision == copy.revision, "the repository board isn't rewritten")
+    }
+
+    /// Two repositories' conflicting folder boards: each repository's load leaves both in the
+    /// store, so launches that open both add nothing after the first.
+    @Test func twoRepositoriesConflictingFolderBoardsAreReportedOnce() async throws {
+        let (first, firstOld) = try folderBoard()
+        let second = dir.appendingPathComponent("other")
+        try FileManager.default.createDirectory(at: second.appendingPathComponent("src"), withIntermediateDirectories: true)
+        let store = BoardStore(directory: boards)
+        let secondOld = store.load(root: second)
+        secondOld.create(type: .note, props: .object(["markdown": .string("the other folder")]))
+        store.save(secondOld)
+        _ = try await conflictingRepositoryBoard(first, firstOld)
+        _ = try await conflictingRepositoryBoard(second, secondOld)
+
+        func launch() {
+            let registry = BoardRegistry(store: BoardStore(directory: boards))
+            registry.open(root: first)
+            registry.open(root: second)
+        }
+        launch()
+        let runs = try ledgerRuns()
+        launch()
+        launch()
+        #expect(try ledgerRuns() == runs)
+        #expect(RepoBoardMigration.pending(in: boards).unresolved == [firstOld.id, secondOld.id].sorted())
     }
 
     /// `proj/app`'s board (keyed by its path) with what `build` makes, saved; a launch leaves it
@@ -412,30 +446,35 @@ struct RepoBoardTests {
         #expect(board.objects[html]?.props["root"] == .string("app"))
     }
 
-    /// A diagram of `proj/app`'s board: its file, the graph it last drew, the node it expanded and
-    /// an arrow bound to a node all name `app/…` on `proj`'s board, so its next build finds them.
+    /// A diagram of `proj/app`'s board: its file, the graph it last drew (a node in `app`, and one
+    /// in `proj/lib` that `app`'s board named by absolute path), the node it expanded and arrows
+    /// bound to nodes all name them as `proj`'s board's next build will (`app/…`, `lib/…`).
     @Test func anAdoptedSubfoldersDiagramKeepsItsFileNodesAndBoundArrows() async throws {
-        var diagram: ObjectID = "", arrow: ObjectID = ""
+        var diagram: ObjectID = "", arrow: ObjectID = "", outside = ""
         let node = "src/a.txt#run", moved = "app/src/a.txt#run"
         let board = try await adoptedSubfolderBoard { old in
+            outside = old.root.deletingLastPathComponent().appendingPathComponent("lib/b.txt").path + "#helper"
             let graph: JSONValue = .object(["aim": .object(["kind": .string("calls"), "path": .string("src/a.txt")]), "root": .string(node),
-                                            "nodes": .array([.object(["id": .string(node), "name": .string("run"), "path": .string("src/a.txt")])]),
-                                            "edges": .array([.object(["from": .string(node), "to": .string(node), "lines": .array([.number(1)])])]),
+                                            "nodes": .array([.object(["id": .string(node), "name": .string("run"), "path": .string("src/a.txt")]),
+                                                             .object(["id": .string(outside), "name": .string("helper"), "path": .string(String(outside.prefix { $0 != "#" }))])]),
+                                            "edges": .array([.object(["from": .string(node), "to": .string(outside), "lines": .array([.number(1)])])]),
                                             "computedAt": .string("2026-10-07T00:00:00Z")])
             diagram = old.create(type: .diagram, props: .object(["kind": .string("calls"), "path": .string("src/a.txt"), "symbol": .string("run"),
-                                                                 "expanded": .array([.string(node)]), "graph": graph])).id
+                                                                 "expanded": .array([.string(node), .string(outside)]), "graph": graph])).id
             arrow = old.create(type: .arrow, props: .object(["from": .object(["object": .string(diagram), "node": .string(node)]),
-                                                             "to": .object(["point": .array([.number(900), .number(50)])])])).id
+                                                             "to": .object(["object": .string(diagram), "node": .string(outside)])])).id
         }
         let props = try #require(board.objects[diagram]?.props)
         #expect(props["path"] == .string("app/src/a.txt"))
-        #expect(props["expanded"] == .array([.string(moved)]))
+        #expect(props["expanded"] == .array([.string(moved), .string("lib/b.txt#helper")]))
         #expect(props["graph"]?["aim"]?["path"] == .string("app/src/a.txt"))
         #expect(props["graph"]?["root"] == .string(moved))
-        #expect(props["graph"]?["nodes"]?.array?.first?["id"] == .string(moved))
-        #expect(props["graph"]?["nodes"]?.array?.first?["path"] == .string("app/src/a.txt"))
+        #expect(props["graph"]?["nodes"]?.array?.map { $0["id"] } == [.string(moved), .string("lib/b.txt#helper")])
+        #expect(props["graph"]?["nodes"]?.array?.map { $0["path"] } == [.string("app/src/a.txt"), .string("lib/b.txt")])
         #expect(props["graph"]?["edges"]?.array?.first?["from"] == .string(moved))
+        #expect(props["graph"]?["edges"]?.array?.first?["to"] == .string("lib/b.txt#helper"))
         #expect(board.objects[arrow]?.props["from"]?["node"] == .string(moved))
+        #expect(board.objects[arrow]?.props["to"]?["node"] == .string("lib/b.txt#helper"))
     }
 
     @Test func aTerminalRecordsTheWorktreeAndBranchItStartsIn() async throws {

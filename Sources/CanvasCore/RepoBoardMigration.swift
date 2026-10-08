@@ -18,8 +18,9 @@ public enum RepoBoardMigration {
         public var repos: [RepoReport]
         /// Boards of directories outside git: left as they are.
         public var nonGit: [BoardID]
-        /// Legacy boards this run didn't merge: their repository isn't known (root gone), or,
-        /// run for one repository, they are another's.
+        /// Legacy boards this run left in the store, by id: their repository isn't known (root
+        /// gone), they are another repository's (run for one), or they conflict. The same set
+        /// whichever repository a run is for.
         public var unresolved: [Unresolved]
     }
 
@@ -142,6 +143,9 @@ public enum RepoBoardMigration {
             var (target, report, merged) = merge(byRepo[commonDir]!, into: existing?.snapshot, modified: existing.map { modified($0.url) } ?? .distantPast,
                                                  commonDir: commonDir, now: now)
             reports.append(report)
+            for entry in report.legacy where entry.status == "conflict" {
+                unresolved.append(Unresolved(board: entry.board, root: entry.root, objects: entry.objectsBefore))
+            }
             // Nothing merged or backed up (every board a conflict): the target stays as it is.
             guard !dryRun, !merged.isEmpty else { continue }
             target.revision += 1
@@ -149,6 +153,7 @@ public enum RepoBoardMigration {
                   (try? data.write(to: directory.appendingPathComponent("\(target.id).json"), options: .atomic)) != nil else { continue }
             for url in merged { backUp(url, in: directory) }
         }
+        unresolved.sort { $0.board < $1.board }
         let report = Report(ranAt: now, dryRun: dryRun, repos: reports, nonGit: nonGit, unresolved: unresolved)
         // A repository's load that changed nothing (its boards still conflict, the same ones
         // left unresolved) adds no run: each launch would add the same one.
@@ -309,7 +314,8 @@ public enum RepoBoardMigration {
                 continue
             }
 
-            var rerooter = Rerooter(oldRoot: URL(fileURLWithPath: snapshot.root).standardizedFileURL.path, top: legacy.top, live: legacy.live, anchor: anchor)
+            var rerooter = Rerooter(oldRoot: URL(fileURLWithPath: snapshot.root).standardizedFileURL.path, top: legacy.top, live: legacy.live, anchor: anchor,
+                                    mainCheckout: isMainCheckout(legacy))
             var objects = snapshot.objects.map { object -> CanvasObject in
                 var object = object
                 if (snapshot.format ?? 1) < 2, RenderMath.isTile(object.type) { object.frame.h += RenderMath.tileTitleHeight }
@@ -535,6 +541,9 @@ struct Rerooter {
     let top: String
     let live: Bool
     let anchor: Anchor
+    /// The legacy board's worktree is the repository's main checkout, where the repository
+    /// board is rooted.
+    var mainCheckout = false
     var unanchored: [String] = []
 
     /// `path` as written on the legacy board, absolute.
@@ -552,11 +561,12 @@ struct Rerooter {
     /// were relative to, beyond the top.
     var place: String { oldRoot.hasPrefix(top + "/") ? String(oldRoot.dropFirst(top.count + 1)) : "" }
 
-    /// `worktreePath` without reporting: a path a cached copy repeats (a diagram's nodes).
+    /// A path as the repository board writes what code tiles compute (a diagram's file and its
+    /// nodes, `CallGraphBuilder`): relative to the new root when it lies in the main checkout,
+    /// whatever the anchor and absolute or not on the legacy board, else absolute.
     func moved(_ path: String) -> String {
-        guard !path.hasPrefix("/") else { return path }
-        if anchor == .main, let relative = repoRelative(path) { return relative }
-        return absolute(path)
+        let absolute = absolute(path)
+        return mainCheckout && absolute.hasPrefix(top + "/") ? String(absolute.dropFirst(top.count + 1)) : absolute
     }
 
     /// A diagram node's id, `<path>#<symbol>` (`CallGraphBuilder`), with its path moved as the
@@ -666,8 +676,12 @@ struct Rerooter {
             if let path = props["path"]?.string { props["path"] = .string(worktreePath(path, what: what)) }
         case .diagram:
             // Its file, the graph as last computed (node paths and ids, its aim) and the nodes
-            // it expanded, as an image's path: nothing anchors a diagram by branch.
-            if let path = props["path"]?.string { props["path"] = .string(worktreePath(path, what: what)) }
+            // it expanded, as the repository board's next build writes them (`moved`), so that
+            // build finds them again: nothing anchors a diagram by branch.
+            if let path = props["path"]?.string {
+                let rebased = moved(path)
+                props["path"] = .string(rebased.hasPrefix("/") && !path.hasPrefix("/") ? pinned(rebased, what: what) : rebased)
+            }
             if let expanded = props["expanded"]?.array { props["expanded"] = .array(expanded.map { $0.string.map { .string(nodeID($0)) } ?? $0 }) }
             if var graph = props["graph"]?.object {
                 if var aim = graph["aim"]?.object, let path = aim["path"]?.string {
