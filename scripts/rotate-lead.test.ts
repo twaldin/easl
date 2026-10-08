@@ -1,33 +1,49 @@
 // bun test scripts/rotate-lead.test.ts — the finite controller through its CLI, not internal helpers.
 import { afterEach, expect, test } from "bun:test";
 import type { Subprocess } from "bun";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import type { FSWatcher } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent } from "../clients/ts/src/generated";
 
 type FixtureEvidence = {
   pass: boolean; oldAgent: Agent; restart: { status: string; ready: Agent };
   handoff: { status: string; messageId: string };
-  steps: { timedOut: boolean }[]; error?: string;
+  steps: { args: string[]; timedOut: boolean }[]; error?: string;
 };
 type FixtureCall = { args: string[]; pid: number; evidence: FixtureEvidence };
 type FixtureState = {
-  calls: FixtureCall[]; observed: Agent; acked: string[];
+  calls: FixtureCall[]; observed: Agent; acked: string[]; hungPid?: number;
   tells?: { target: string; text: string; id: string; sessionId: string }[];
+};
+type Fixture = {
+  dir: string; cli: string; out: string; state: string; handoff: string; preload?: string;
+  env: Record<string, string | undefined>;
 };
 
 const scratch: string[] = [];
 const processes = new Set<Subprocess>();
+const watchers = new Set<FSWatcher>();
 afterEach(async () => {
-  for (const process of processes) process.kill("SIGKILL");
-  await Promise.all([...processes].map((process) => process.exited));
+  for (const child of processes) child.kill("SIGKILL");
+  await Promise.all([...processes].map((child) => child.exited));
   processes.clear();
-  for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true });
+  for (const watcher of watchers) watcher.close();
+  watchers.clear();
+  for (const dir of scratch.splice(0)) {
+    const state: FixtureState = JSON.parse(readFileSync(join(dir, "state.json"), "utf8"));
+    if (state.hungPid) {
+      try { process.kill(state.hungPid, "SIGKILL"); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    }
+    rmSync(dir, { recursive: true });
+  }
 });
 
-function fixture(options: Record<string, unknown> = {}) {
-  if (!process.env.TMPDIR) throw new Error("rotation tests require a recorded scratch directory under $TMPDIR");
-  const dir = mkdtempSync(join(process.env.TMPDIR, "easl-rotation-test-"));
+function fixture(options: Record<string, unknown> = {}): Fixture {
+  const dir = mkdtempSync(join(tmpdir(), "easl-rotation-test-"));
   scratch.push(dir);
   const state = join(dir, "state.json");
   const out = join(dir, "evidence.json");
@@ -39,8 +55,36 @@ function fixture(options: Record<string, unknown> = {}) {
   const quote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
   writeFileSync(cli, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(join(import.meta.dir, "fixtures/rotation-easl.ts"))} "$@"\n`);
   chmodSync(cli, 0o700);
+  let preload: string | undefined;
+  if (options.expireStartup || options.scenario === "late-boundary" || options.scenario === "late-old-identity" || options.rejectStdout) {
+    // Test-only preload advances long phase deadlines or rejects a stream read; success and child-kill timing use the real clock.
+    preload = join(dir, "preload.ts");
+    writeFileSync(preload, `
+import { readFileSync, watch } from "node:fs";
+const state = () => JSON.parse(readFileSync(process.env.ROTATION_FIXTURE_STATE!, "utf8"));
+const now = Date.now;
+Date.now = () => now() + (state().clockOffsetMs ?? 0);
+if (state().rejectStdout) {
+  const text = Response.prototype.text;
+  let rejected = false;
+  Response.prototype.text = function() {
+    if (rejected) return text.call(this);
+    rejected = true;
+    return (async () => {
+      if (!state().hungPid) await new Promise<void>((resolve) => {
+        const watcher = watch(process.env.ROTATION_FIXTURE_STATE!, () => {
+          if (state().hungPid) { watcher.close(); resolve(); }
+        });
+        if (state().hungPid) { watcher.close(); resolve(); }
+      });
+      throw new Error("fixture stdout read rejected");
+    })();
+  };
+}
+`);
+  }
   return {
-    dir, cli, out, state, handoff,
+    dir, cli, out, state, handoff, preload,
     env: {
       ...process.env, ROTATION_FIXTURE_STATE: state, ROTATION_FIXTURE_EVIDENCE: out,
       EASL_TILE_ID: "obj_sender", EASL_BOARD_ID: "brd_sender", EASL_BOARD_ROOT: "/sender", EASL_ENV: "1",
@@ -48,24 +92,32 @@ function fixture(options: Record<string, unknown> = {}) {
   };
 }
 
-async function run(command: string[], env: Record<string, string | undefined>) {
-  const process = Bun.spawn(command, { env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  processes.add(process);
-  const result = await Promise.all([process.exited, new Response(process.stdout).text(), new Response(process.stderr).text()]);
-  processes.delete(process);
-  return { code: result[0], stdout: result[1], stderr: result[2] };
+function start(f: Fixture, timeoutMs = 320_000) {
+  const child = Bun.spawn([
+    process.execPath, ...(f.preload ? ["--preload", f.preload] : []), join(import.meta.dir, "rotate-lead.ts"),
+    "--target", "canvas@canvas", "--file", f.handoff, "--out", f.out, "--easl", f.cli,
+    "--timeoutMs", String(timeoutMs),
+  ], { env: f.env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  processes.add(child);
+  const result = Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()])
+    .then(([code, stdout, stderr]) => {
+      processes.delete(child);
+      const evidence: FixtureEvidence = JSON.parse(readFileSync(f.out, "utf8"));
+      const state: FixtureState = JSON.parse(readFileSync(f.state, "utf8"));
+      return { ...f, result: { code, stdout, stderr }, evidence, state };
+    });
+  return { child, result };
 }
 
-async function rotate(options: Record<string, unknown> = {}, extra: string[] = []) {
-  const f = fixture(options);
-  const result = await run([
-    process.execPath, join(import.meta.dir, "rotate-lead.ts"),
-    "--target", "canvas@canvas", "--file", f.handoff, "--out", f.out, "--easl", f.cli,
-    "--timeoutMs", "1500", ...extra,
-  ], f.env);
-  const evidence: FixtureEvidence = JSON.parse(readFileSync(f.out, "utf8"));
-  const state: FixtureState = JSON.parse(readFileSync(f.state, "utf8"));
-  return { ...f, result, evidence, state };
+async function rotate(options: Record<string, unknown> = {}, timeoutMs = 320_000) {
+  return start(fixture(options), timeoutMs).result;
+}
+
+function refused(evidence: FixtureEvidence, error: RegExp, restart: string, handoff = "not-sent") {
+  expect(evidence.pass).toBe(false);
+  expect(evidence.error).toMatch(error);
+  expect(evidence.restart.status).toBe(restart);
+  expect(evidence.handoff.status).toBe(handoff);
 }
 
 test("fresh native identity retaining done receives exactly one external OOB handoff, proved only after ACK", async () => {
@@ -87,71 +139,182 @@ test("fresh native identity retaining done receives exactly one external OOB han
   }]);
   const beforeAck = state.calls.find((call) => call.evidence.handoff?.status === "queued");
   expect(beforeAck?.evidence.pass).toBe(false);
-});
+}, 30_000);
 
-test("a retained old session cannot receive the handoff", async () => {
-  const { result, evidence, state } = await rotate({ scenario: "stale-session" });
-  expect(result.code).toBe(1);
-  expect(evidence.pass).toBe(false);
-  expect(evidence.restart.status).toBe("restarted");
-  expect(state.tells).toBeUndefined();
-});
-
-test("a new session on an unexpected model cannot receive the handoff", async () => {
-  const { result, evidence, state } = await rotate({ freshPatch: { model: "another/model" } });
-  expect(result.code).toBe(1);
-  expect(evidence.pass).toBe(false);
-  expect(state.tells).toBeUndefined();
-});
+for (const [name, options] of [
+  ["a retained old session", { scenario: "stale-session" }],
+  ["an unexpected model", { freshPatch: { model: "another/model" } }],
+  ["an unexpected thinking selector", { freshPatch: { thinking: "low" } }],
+  ["a new session with an unchanged PID", { freshPatch: { pid: 27105 } }],
+  ["a new session with no fresh draft report", { scenario: "stale-protocol" }],
+  ["a non-native kind", { freshPatch: { kind: "claude" } }],
+  ["an absent native protocol", { freshPatch: { protocol: null } }],
+  ["a non-live session", { freshPatch: { live: false } }],
+  ["an active draft", { freshPatch: { draft: true } }],
+] as const) {
+  test(`${name} cannot receive the handoff`, async () => {
+    const { result, evidence, state } = await rotate({ ...options, expireStartup: true });
+    expect(result.code).toBe(1);
+    refused(evidence, /fresh native identity was not ready before the startup deadline/, "restarted");
+    expect(evidence.steps.at(-1)?.args[0]).toBe("agent.list");
+    expect(state.tells).toBeUndefined();
+  }, 30_000);
+}
 
 test("a server restart conflict leaves the handoff unsent and cannot claim success", async () => {
   const { result, evidence, state } = await rotate({ restartFailure: "prompt pending" });
   expect(result.code).toBe(1);
-  expect(evidence.pass).toBe(false);
-  expect(evidence.handoff.status).toBe("not-sent");
+  refused(evidence, /easl agent.restart failed .*prompt pending/, "restarting");
+  expect(evidence.steps.at(-1)?.args[0]).toBe("agent.restart");
   expect(state.tells).toBeUndefined();
-});
+}, 30_000);
 
 test("a native session change before tell prevents the handoff", async () => {
   const { result, evidence, state } = await rotate({ scenario: "identity-before-tell" });
   expect(result.code).toBe(1);
-  expect(evidence.pass).toBe(false);
+  refused(evidence, /fresh native identity changed before handoff/, "restarted");
+  expect(evidence.steps.at(-1)?.args[0]).toBe("agent.list");
   expect(state.tells).toBeUndefined();
-});
+}, 30_000);
 
 test("a tell rejected by easl cannot claim a successful handoff", async () => {
   const { result, evidence, state } = await rotate({ scenario: "tell-failure" });
   expect(result.code).toBe(1);
-  expect(evidence.pass).toBe(false);
-  expect(evidence.handoff.status).not.toBe("acknowledged");
+  refused(evidence, /easl tell failed .*handoff rejected/, "ready", "sending");
+  expect(evidence.steps.at(-1)?.args[0]).toBe("tell");
   expect(state.tells).toBeUndefined();
-});
+}, 30_000);
 
 test("a queued handoff without an integration ACK cannot claim success", async () => {
   const { result, evidence, state } = await rotate({ scenario: "ack-timeout" });
   expect(result.code).toBe(1);
-  expect(evidence.pass).toBe(false);
-  expect(evidence.restart.status).toBe("ready");
-  expect(evidence.handoff.status).toBe("queued");
+  refused(evidence, /easl agent.wait failed .*no integration ACK/, "ready", "queued");
+  expect(evidence.steps.at(-1)?.args[0]).toBe("agent.wait");
   expect(state.tells).toHaveLength(1);
   expect(state.acked).toBeUndefined();
-});
+}, 30_000);
 
 test("a session change after tell cannot be mistaken for that handoff's delivery", async () => {
   const { result, evidence, state } = await rotate({ scenario: "identity-after-ack" });
   expect(result.code).toBe(1);
-  expect(evidence.pass).toBe(false);
-  expect(evidence.handoff.status).not.toBe("acknowledged");
+  refused(evidence, /native identity changed before delivery could be proved/, "ready", "queued");
+  expect(evidence.steps.at(-1)?.args[0]).toBe("agent.list");
   expect(state.tells).toHaveLength(1);
   expect(state.observed.sessionId).not.toBe(state.tells?.[0].sessionId);
-});
+}, 30_000);
 
-test("a hung external CLI is killed within the controller deadline and recorded as failure", async () => {
-  const { result, evidence, state } = await rotate({ scenario: "hung-cli" }, ["--timeoutMs", "800"]);
+test("a timeout shorter than the post-boundary reserve cannot restart", async () => {
+  const { result, evidence, state } = await rotate({}, 20_000);
   expect(result.code).toBe(1);
-  expect(evidence.pass).toBe(false);
-  expect(evidence.steps.at(-1).timedOut).toBe(true);
+  refused(evidence, /insufficient time.*post-boundary/, "not-started");
+  expect(state.calls ?? []).toHaveLength(0);
   expect(state.tells).toBeUndefined();
-  const pid = state.calls.at(-1).pid;
-  expect(() => process.kill(pid, 0)).toThrow();
-});
+}, 30_000);
+
+for (const scenario of ["late-boundary", "late-old-identity"]) {
+  test(`${scenario} cannot consume the reserved handoff budget`, async () => {
+    const { result, evidence, state } = await rotate({ scenario });
+    expect(result.code).toBe(1);
+    refused(evidence, /insufficient time.*post-boundary/, "not-started");
+    expect(state.calls.some((call) => call.args[0] === "agent.restart")).toBe(false);
+    expect(state.tells).toBeUndefined();
+    const wait = state.calls[0].args;
+    expect(Number(wait[wait.indexOf("--timeoutMs") + 1])).toBeLessThanOrEqual(20_000);
+  }, 30_000);
+}
+
+for (const command of [
+  ["omp", "--thinking=xhigh"],
+  ["omp", "--model=openai-codex/gpt-6.1-sol", "--thinking=low"],
+]) {
+  test(`a restart command without the recorded model/thinking cannot hand off: ${command.join(" ")}`, async () => {
+    const { result, evidence, state } = await rotate({ restartCommand: command });
+    expect(result.code).toBe(1);
+    refused(evidence, /restart command did not preserve.*model.*thinking/, "restarted");
+    expect(evidence.steps.at(-1)?.args[0]).toBe("agent.restart");
+    expect(state.tells).toBeUndefined();
+  }, 30_000);
+}
+
+test("an odd unrelated closed-board entry cannot prevent the target's rotation", async () => {
+  const { result, evidence, state } = await rotate({ unrelatedEntry: { tile: "obj_unrelated", open: false, kind: null } });
+  expect(result.code).toBe(0);
+  expect(evidence.pass).toBe(true);
+  expect(evidence.handoff.status).toBe("acknowledged");
+  expect(state.tells).toHaveLength(1);
+}, 30_000);
+
+test("a user draft after delivery does not invalidate an acknowledged handoff", async () => {
+  const { result, evidence, state } = await rotate({ scenario: "draft-after-delivery" });
+  expect(result.code).toBe(0);
+  expect(evidence.pass).toBe(true);
+  expect(evidence.handoff.status).toBe("acknowledged");
+  expect(state.observed.draft).toBe(true);
+  expect(state.tells).toHaveLength(1);
+}, 30_000);
+
+test("a hung external CLI is killed within the boundary deadline and recorded as failure", async () => {
+  const { result, evidence, state } = await rotate({ scenario: "hung-cli" }, 301_500);
+  expect(result.code).toBe(1);
+  refused(evidence, /easl agent.wait exceeded the rotation deadline/, "not-started");
+  expect(evidence.steps.at(-1)?.timedOut).toBe(true);
+  expect(state.tells).toBeUndefined();
+  expect(state.hungPid).toBeDefined();
+  expect(() => process.kill(state.hungPid!, 0)).toThrow();
+}, 30_000);
+
+test("a rejected stdout read kills the owned CLI child", async () => {
+  const f = fixture({ scenario: "hung-cli", rejectStdout: true });
+  let watcher: FSWatcher;
+  const completed = new Promise<FixtureEvidence>((resolve) => {
+    watcher = watch(f.dir, (_event, name) => {
+      if (name !== "evidence.json") return;
+      const text = readFileSync(f.out, "utf8");
+      if (!text.endsWith("\n")) return;
+      const evidence = JSON.parse(text);
+      if (evidence.finishedAt) resolve(evidence);
+    });
+    watchers.add(watcher);
+  });
+  const { result: pending } = start(f);
+  await Promise.race([completed, pending.then(({ evidence }) => evidence)]);
+  watcher!.close();
+  watchers.delete(watcher!);
+  const state: FixtureState = JSON.parse(readFileSync(f.state, "utf8"));
+  let leaked = false;
+  try { process.kill(state.hungPid!, 0); leaked = true; } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+  if (leaked) process.kill(state.hungPid!, "SIGKILL");
+  const { result, evidence } = await pending;
+  expect(result.code).toBe(1);
+  refused(evidence, /fixture stdout read rejected/, "not-started");
+  expect(state.hungPid).toBeDefined();
+  expect(leaked).toBe(false);
+}, 30_000);
+
+test("SIGTERM kills a real owned CLI child and records an interrupted unsent rotation", async () => {
+  const f = fixture({ scenario: "hung-cli" });
+  let watcher: FSWatcher;
+  const hung = new Promise<number>((resolve) => {
+    watcher = watch(f.dir, () => {
+      const pid = JSON.parse(readFileSync(f.state, "utf8")).hungPid;
+      if (pid) resolve(pid);
+    });
+    watchers.add(watcher);
+  });
+  const { child, result: pending } = start(f);
+  const pid = await Promise.race([hung, pending.then(() => { throw new Error("controller exited before its CLI child hung"); })]);
+  watcher!.close();
+  watchers.delete(watcher!);
+  expect(pid).toBeDefined();
+  expect(() => process.kill(pid!, 0)).not.toThrow();
+  child.kill("SIGTERM");
+  const { result, evidence, state } = await pending;
+  expect(result.code).toBe(143);
+  refused(evidence, /rotation interrupted by SIGTERM/, "not-started");
+  expect(evidence.steps.at(-1)?.args[0]).toBe("agent.wait");
+  expect(evidence.steps.at(-1)?.timedOut).toBe(false);
+  expect(state.tells).toBeUndefined();
+  expect(() => process.kill(pid!, 0)).toThrow();
+}, 30_000);

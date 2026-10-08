@@ -2,12 +2,19 @@
 // A finite supervisor, not a scheduler. Preserve the server's restart guards and unread done.
 // bun scripts/rotate-lead.ts --target <tile|name@board> --file <handoff.txt> --out <evidence.json>
 // --text replaces --file; --easl selects a CLI executable (default easl); --timeoutMs bounds the
-// whole operation (default 30 min). Startup and delivery each get at most 120 s of what remains.
+// whole operation (default 30 min). Reserve restart/startup/tell/delivery time before restarting.
 import type { Subprocess } from "bun";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { Agent, AgentPromptResult, AgentRestartResult } from "../clients/ts/src/generated";
+
+const CLI_TIMEOUT_MS = 30_000;
+const RESTART_TIMEOUT_MS = 30_000;
+const STARTUP_TIMEOUT_MS = 120_000;
+const TELL_TIMEOUT_MS = 30_000;
+const DELIVERY_TIMEOUT_MS = 120_000;
+const POST_BOUNDARY_BUDGET_MS = RESTART_TIMEOUT_MS + STARTUP_TIMEOUT_MS + TELL_TIMEOUT_MS + DELIVERY_TIMEOUT_MS;
 
 type Step = {
   args: string[]; at: string; code: number; stdout: string; stderr: string; timedOut: boolean;
@@ -51,7 +58,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function agent(value: unknown): Agent {
+function parseAgent(value: unknown): Agent {
   if (!isObject(value) || typeof value.tile !== "string" || typeof value.board !== "string"
     || typeof value.root !== "string" || typeof value.address !== "string" || typeof value.kind !== "string"
     || typeof value.open !== "boolean" || typeof value.focused !== "boolean" || !isObject(value.lifecycle)) {
@@ -83,16 +90,32 @@ function agent(value: unknown): Agent {
   };
 }
 
-function nativeIdentity(a: Agent, old?: Agent) {
-  return a.open === true && a.live === true && a.kind === "omp" && a.draft === false
+function agentOf(value: unknown, step: string) {
+  if (!isObject(value) || !("agent" in value)) throw new Error(`${step} returned no agent`);
+  return parseAgent(value.agent);
+}
+
+function isLiveNativeOmp(a: Agent) {
+  return a.open === true && a.live === true && a.kind === "omp"
     && Number.isSafeInteger(a.protocol) && a.protocol! >= 1
     && Number.isSafeInteger(a.pid) && a.pid! > 0 && a.pid! <= 2_147_483_647
     && typeof a.sessionId === "string" && a.sessionId.length > 0
     && typeof a.model === "string" && a.model.length > 0
-    && typeof a.thinking === "string" && a.thinking.length > 0
-    && (!old || (a.tile === old.tile && a.board === old.board && a.root === old.root
-      && a.sessionId !== old.sessionId && a.pid !== old.pid && a.kind === old.kind
-      && a.model === old.model && a.thinking === old.thinking));
+    && typeof a.thinking === "string" && a.thinking.length > 0;
+}
+
+function isFreshSuccessor(a: Agent, old: Agent) {
+  return isLiveNativeOmp(a) && a.tile === old.tile && a.board === old.board && a.root === old.root
+    && a.sessionId !== old.sessionId && a.pid !== old.pid && a.kind === old.kind
+    && a.model === old.model && a.thinking === old.thinking;
+}
+
+function sameSession(a: Agent, b: Agent) {
+  return a.tile === b.tile && a.sessionId === b.sessionId && a.pid === b.pid;
+}
+
+function atBoundary(a: Agent) {
+  return a.lifecycle.state === "idle" || a.lifecycle.state === "done";
 }
 
 async function main() {
@@ -116,13 +139,14 @@ async function main() {
   const external = { ...process.env };
   for (const key of ["EASL_TILE_ID", "EASL_BOARD_ID", "EASL_BOARD_ROOT", "EASL_ENV"]) delete external[key];
 
-  async function run(args: string[], until: number, externalSender = false): Promise<unknown> {
+  // Only the initial boundary inherits caller identity to resolve --target names.
+  async function run(args: string[], until: number, inheritCallerIdentity = false): Promise<unknown> {
     if (interrupted) throw new Error(`rotation interrupted by ${interrupted}`);
     const remaining = Math.min(deadline, until) - Date.now();
     if (remaining <= 0) throw new Error("rotation deadline exceeded");
     const at = new Date().toISOString();
     child = Bun.spawn([config.easl, ...args], {
-      env: externalSender ? external : process.env, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+      env: inheritCallerIdentity ? process.env : external, stdin: "ignore", stdout: "pipe", stderr: "pipe",
     });
     const running = child;
     let timedOut = false;
@@ -134,6 +158,10 @@ async function main() {
       ]);
     } finally {
       clearTimeout(timer);
+      if (running.exitCode === null) {
+        running.kill("SIGKILL");
+        await running.exited;
+      }
       child = undefined;
     }
     evidence.steps.push({ args, at, code, stdout, stderr, timedOut });
@@ -144,48 +172,62 @@ async function main() {
     return JSON.parse(stdout);
   }
 
-  async function listed(tile: string, until: number) {
-    const value = await run(["agent.list"], Math.min(until, Date.now() + 30_000), true);
-    if (typeof value !== "object" || value === null || !("agents" in value) || !Array.isArray(value.agents)) {
+  async function targetEntry(tile: string, until: number) {
+    const value = await run(["agent.list"], Math.min(until, Date.now() + CLI_TIMEOUT_MS));
+    if (!isObject(value) || !Array.isArray(value.agents)) {
       throw new Error("easl agent.list returned no agents array");
     }
-    const matches = value.agents.map(agent).filter((a) => a.tile === tile);
+    const matches = value.agents.filter((entry) => isObject(entry) && entry.tile === tile);
     if (matches.length !== 1) throw new Error(`target ${tile} is missing or duplicated in agent.list`);
-    return matches[0];
+    return parseAgent(matches[0]);
+  }
+
+  function requirePostBoundaryBudget() {
+    if (deadline - Date.now() < POST_BOUNDARY_BUDGET_MS) {
+      evidence.restart.status = "not-started";
+      throw new Error("insufficient time for the reserved post-boundary restart and handoff budget");
+    }
   }
 
   try {
     const text = config.file === undefined ? config.text! : await readFile(config.file, "utf8");
     if (!text.trim()) throw new Error("handoff must not be empty");
+    requirePostBoundaryBudget();
+    const boundaryDeadline = deadline - POST_BOUNDARY_BUDGET_MS;
     const boundary = await run([
-      "agent.wait", "--target", config.target, "--until", "idle,done", "--timeoutMs", String(Math.max(1, deadline - Date.now())),
-    ], deadline);
-    if (typeof boundary !== "object" || boundary === null || !("agent" in boundary)) throw new Error("safe boundary returned no agent");
-    const old = await listed(agent(boundary.agent).tile, deadline);
+      "agent.wait", "--target", config.target, "--until", "idle,done", "--timeoutMs", String(Math.max(1, boundaryDeadline - Date.now())),
+    ], boundaryDeadline, true);
+    requirePostBoundaryBudget();
+    const old = await targetEntry(agentOf(boundary, "safe boundary").tile, boundaryDeadline);
     evidence.oldAgent = old;
-    if (!["idle", "done"].includes(old.lifecycle.state) || !nativeIdentity(old)) {
+    if (!atBoundary(old) || !isLiveNativeOmp(old) || old.draft !== false) {
       throw new Error("old safe idle/done boundary has no live native OOB identity");
     }
+    requirePostBoundaryBudget();
     // agent.restart, unforced and unretried, remains authoritative for every guard, including
     // pending prompts/messages, unknown drafts, focus, concurrent restart/paste and re-checks.
     evidence.restart.status = "restarting";
     await persist();
-    const restarted = await run(["agent.restart", "--target", old.tile, "--mode", "fresh"], Math.min(deadline, Date.now() + 30_000), true);
-    if (typeof restarted !== "object" || restarted === null || !("agent" in restarted)
-      || !("command" in restarted) || !Array.isArray(restarted.command) || !restarted.command.every((word) => typeof word === "string")) {
+    requirePostBoundaryBudget();
+    const restarted = await run(["agent.restart", "--target", old.tile, "--mode", "fresh"], Math.min(deadline, Date.now() + RESTART_TIMEOUT_MS));
+    if (!isObject(restarted) || !Array.isArray(restarted.command) || !restarted.command.every((word) => typeof word === "string")) {
       throw new Error("easl returned an invalid restart result");
     }
-    const restartAgent = agent(restarted.agent);
+    const restartAgent = agentOf(restarted, "restart");
     if (restartAgent.tile !== old.tile) throw new Error("restart returned a different target");
     evidence.restart.result = { agent: restartAgent, command: restarted.command };
     evidence.restart.status = "restarted";
     await persist();
+    if (!restarted.command.includes(`--model=${old.model}`) || !restarted.command.includes(`--thinking=${old.thinking}`)) {
+      throw new Error("restart command did not preserve the recorded model and thinking selectors");
+    }
 
-    const startupDeadline = Math.min(deadline, Date.now() + 120_000);
+    const startupDeadline = Math.min(deadline, Date.now() + STARTUP_TIMEOUT_MS);
     let ready: Agent | undefined;
     while (Date.now() < startupDeadline) {
-      const candidate = await listed(old.tile, startupDeadline);
-      if (nativeIdentity(candidate, old) && ["idle", "done"].includes(candidate.lifecycle.state)) {
+      const candidate = await targetEntry(old.tile, startupDeadline);
+      // Restart retains protocol/model/thinking; the fresh draft report makes protocol readiness fresh.
+      if (isFreshSuccessor(candidate, old) && candidate.draft === false && atBoundary(candidate)) {
         ready = candidate;
         break;
       }
@@ -194,9 +236,8 @@ async function main() {
     if (!ready) throw new Error("fresh native identity was not ready before the startup deadline (session/PID/live/kind/protocol/model/thinking/draft)");
     // Revalidate immediately before tell. Never resolve the original name again, and never use
     // an idle-only wait: retained done-unseen is a valid boundary, not a failed startup.
-    const current = await listed(old.tile, startupDeadline);
-    if (!nativeIdentity(current, old) || current.sessionId !== ready.sessionId || current.pid !== ready.pid
-      || !["idle", "done"].includes(current.lifecycle.state)) {
+    const current = await targetEntry(old.tile, startupDeadline);
+    if (!isFreshSuccessor(current, old) || current.draft !== false || !sameSession(current, ready) || !atBoundary(current)) {
       throw new Error("fresh native identity changed before handoff");
     }
     evidence.restart.ready = current;
@@ -205,35 +246,32 @@ async function main() {
     await persist();
     const sent = await run([
       "tell", old.tile, text, "--from", "lead-rotation", "--message", evidence.handoff.messageId,
-    ], Math.min(deadline, Date.now() + 30_000), true);
-    if (typeof sent !== "object" || sent === null || !("agent" in sent)
-      || !("delivery" in sent) || sent.delivery !== "message"
-      || !("message" in sent) || sent.message !== evidence.handoff.messageId
-      || !("submittedAt" in sent) || typeof sent.submittedAt !== "string"
+    ], Math.min(deadline, Date.now() + TELL_TIMEOUT_MS));
+    if (!isObject(sent) || sent.delivery !== "message"
+      || sent.message !== evidence.handoff.messageId
+      || typeof sent.submittedAt !== "string"
       || !("waitable" in sent) || sent.waitable !== true) {
       throw new Error("tell did not acknowledge queueing the exact OOB message");
     }
-    const sentAgent = agent(sent.agent);
-    if (sentAgent.tile !== old.tile || sentAgent.sessionId !== current.sessionId || sentAgent.pid !== current.pid) {
+    const sentAgent = agentOf(sent, "tell");
+    if (!sameSession(sentAgent, current)) {
       throw new Error("tell returned a different native identity");
     }
     evidence.handoff.result = { agent: sentAgent, delivery: "message", message: sent.message, submittedAt: sent.submittedAt, waitable: true };
     evidence.handoff.status = "queued";
     await persist();
 
-    const deliveryDeadline = Math.min(deadline, Date.now() + 120_000);
+    const deliveryDeadline = Math.min(deadline, Date.now() + DELIVERY_TIMEOUT_MS);
     // The public wait seam cannot resolve while a message is queued or held. An ACK that starts
     // a turn also waits for working/blocked. This observes delivery, not a completed answer;
     // queueing alone (tell's success) must never set pass:true.
     const delivered = await run([
       "agent.wait", "--target", old.tile, "--until", "working,blocked,idle,done",
       "--timeoutMs", String(Math.max(1, deliveryDeadline - Date.now())),
-    ], deliveryDeadline, true);
-    if (typeof delivered !== "object" || delivered === null || !("agent" in delivered)) throw new Error("delivery wait returned no agent");
-    const acknowledged = agent(delivered.agent);
-    const live = await listed(old.tile, deliveryDeadline);
-    if (acknowledged.tile !== old.tile || acknowledged.sessionId !== current.sessionId || acknowledged.pid !== current.pid
-      || !nativeIdentity(live, old) || live.sessionId !== current.sessionId || live.pid !== current.pid) {
+    ], deliveryDeadline);
+    const acknowledged = agentOf(delivered, "delivery wait");
+    const live = await targetEntry(old.tile, deliveryDeadline);
+    if (!sameSession(acknowledged, current) || !isFreshSuccessor(live, old) || !sameSession(live, current)) {
       throw new Error("native identity changed before delivery could be proved");
     }
     evidence.handoff.acknowledgedAgent = live;
@@ -244,7 +282,6 @@ async function main() {
     evidence.error = error instanceof Error ? error.message : String(error);
     process.exitCode = interrupted === "SIGINT" ? 130 : interrupted === "SIGTERM" ? 143 : 1;
   } finally {
-    if (child) { child.kill("SIGKILL"); await child.exited; }
     process.off("SIGINT", onInterrupt);
     process.off("SIGTERM", onTerminate);
     evidence.finishedAt = new Date().toISOString();

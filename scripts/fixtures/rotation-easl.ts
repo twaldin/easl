@@ -1,7 +1,7 @@
 // External easl fixture for rotate-lead.test.ts. Each CLI process advances one durable state.
 // The identity sequence comes from the 2026-10-08 lead rotation: a successful fresh restart,
 // retained done-unseen, and only later the new native session report (never an idle state).
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
 const file = process.env.ROTATION_FIXTURE_STATE!;
 const state = JSON.parse(readFileSync(file, "utf8"));
@@ -26,7 +26,10 @@ state.calls.push({
   args, pid: process.pid,
   evidence: evidence ? JSON.parse(readFileSync(evidence, "utf8")) : null,
 });
-const save = () => writeFileSync(file, JSON.stringify(state));
+function save() {
+  writeFileSync(`${file}.next`, JSON.stringify(state));
+  renameSync(`${file}.next`, file);
+}
 function reply(value: unknown): never {
   save();
   console.log(JSON.stringify(value));
@@ -39,9 +42,15 @@ function fail(message: string): never {
 }
 switch (args[0]) {
   case "agent.wait": {
+    if (state.scenario === "hung-cli") {
+      state.hungPid = process.pid;
+      save();
+      await Bun.sleep(60_000);
+    }
     const until = flag("--until").split(",");
     if (!state.restarted) {
       if (!until.includes("done")) fail("timeout: old done-unseen did not reach the requested boundary");
+      if (state.scenario === "late-boundary") state.clockOffsetMs = 20_001;
       reply({ agent: oldAgent });
     }
     if (!state.message) {
@@ -55,7 +64,7 @@ switch (args[0]) {
     if (state.scenario === "ack-timeout") fail("timeout: handoff is still queued, no integration ACK");
     if (!until.includes("working")) fail("timeout: ACK started a turn which is still working");
     state.acked = [state.message];
-    reply({ agent: fresh() });
+    reply({ agent: state.scenario === "draft-after-delivery" ? { ...fresh(), draft: true } : fresh() });
   }
   case "agent.restart": {
     if (flag("--mode") !== "fresh") fail("fixture requires a fresh restart");
@@ -63,14 +72,14 @@ switch (args[0]) {
     state.restarted = true;
     state.stage = 0;
     const { sessionId, pid, draft, live, ...inherited } = oldAgent;
-    reply({ agent: inherited, command: ["omp", `--model=${oldAgent.model}`, "--thinking=xhigh"] });
+    reply({ agent: inherited, command: state.restartCommand ?? ["omp", `--model=${oldAgent.model}`, "--thinking=xhigh"] });
   }
   case "agent.list": {
-    if (state.scenario === "hung-cli" && state.restarted) {
-      save();
-      await Bun.sleep(60_000);
+    const unrelated = state.unrelatedEntry ? [state.unrelatedEntry] : [];
+    if (!state.restarted) {
+      if (state.scenario === "late-old-identity") state.clockOffsetMs = 20_001;
+      reply({ agents: [...unrelated, oldAgent] });
     }
-    if (!state.restarted) reply({ agents: [oldAgent] });
     const stage = state.stage++;
     let agent: Record<string, unknown>;
     if (stage === 0) {
@@ -78,15 +87,20 @@ switch (args[0]) {
       agent = inherited;
     } else if (stage === 1 || state.scenario === "stale-session") {
       agent = oldAgent;
+    } else if (stage === 2 || state.scenario === "stale-protocol") {
+      const { draft, ...withoutDraft } = fresh();
+      agent = withoutDraft;
     } else {
       agent = fresh();
     }
-    if ((state.scenario === "identity-before-tell" && stage >= 3)
+    if (state.expireStartup && stage >= 3) state.clockOffsetMs = 120_001;
+    if ((state.scenario === "identity-before-tell" && stage >= 4)
       || (state.scenario === "identity-after-ack" && state.acked?.length)) {
       agent = { ...agent, sessionId: "another-session", pid: 85861 };
     }
+    if (state.scenario === "draft-after-delivery" && state.acked?.length) agent = { ...agent, draft: true };
     state.observed = agent;
-    reply({ agents: [agent] });
+    reply({ agents: [...unrelated, agent] });
   }
   case "tell": {
     if (["EASL_TILE_ID", "EASL_BOARD_ID", "EASL_BOARD_ROOT", "EASL_ENV"].some((key) => process.env[key] !== undefined)) {
@@ -94,7 +108,6 @@ switch (args[0]) {
     }
     if (flag("--from") !== "lead-rotation") fail("invalid_params: missing script sender label");
     const agent = state.observed;
-    if (agent?.sessionId !== newSession || agent.pid !== 85860) fail("fixture refuses stale identity");
     if (state.scenario === "tell-failure") fail("unavailable: handoff rejected");
     state.message = flag("--message");
     state.tells ??= [];

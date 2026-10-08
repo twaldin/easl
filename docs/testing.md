@@ -9,7 +9,7 @@ bun scripts/gen-clients.ts --check    # generated TS/Python clients match schema
 bun test extensions/agent-hooks             # hook payload classification: which thread (the tile's session, a subagent, Codex's internal sessions) an event comes from; the Codex awareness block's easl commands stay plain words
 bun test clients/ts                         # TS client: the default socket's platform choice (the app's on macOS, easld's elsewhere)
 bun test cli/metrics-text.test.ts           # `easl metrics` text: the draws and keys lines show with values, not before, and the stalls line
-machine-ok-queue run -- bun test scripts/rotate-lead.test.ts  # finite lead rotation against a stateful external easl CLI fixture
+bun test scripts/rotate-lead.test.ts         # finite lead rotation against a stateful external easl CLI fixture
 (cd conformance && go test ./...)          # the conformance runner's normalisation and diff (Go 1.26)
 (cd easld && go vet ./... && go test ./...)  # easld (Go 1.26): its packages' tests, and the conformance suite replayed in-process (cmd/easld, ~2 min; -short skips it)
 ```
@@ -23,21 +23,20 @@ What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` t
 `scripts/rotate-lead.ts` runs one guarded fresh restart and one out-of-band handoff through the existing easl CLI. It is a finite developer tool, not a scheduler:
 
 ```sh
-machine-ok-queue run -- bun scripts/rotate-lead.ts --target <tile> --file <handoff.txt> --out <evidence.json>
+bun scripts/rotate-lead.ts --target <tile|name@board> --file <handoff.txt> --out <evidence.json>
 ```
 
-`--text <handoff>` replaces `--file`. `--easl <executable>` selects the CLI (default `easl` on PATH); `EASL_SOCKET` still selects its server. `--timeoutMs <ms>` bounds the whole operation (default 30 minutes), with startup and delivery each limited to 120 seconds of the time left.
+`--text <handoff>` replaces `--file`. `--easl <executable>` selects the CLI (default `easl` on PATH); `EASL_SOCKET` still selects its server. `--timeoutMs <ms>` bounds the whole operation (default 30 minutes). Before restarting, the controller reserves 300 seconds: 30 for restart, 120 for startup, 30 for tell and 120 for delivery. The boundary wait gets only the time outside that reserve; a late boundary or a timeout too short to leave the reserve fails with `restart.status: "not-started"`, without restarting.
 
 Run the controller from a separate terminal or a known broker-owned process outside the target's zmx process tree: `agent.restart` kills that session and everything it started, so merely backgrounding a command inside the target's shell does not make it survive.
 
 The controller waits for the old agent's natural `idle` or `done` boundary, records its native identity, and calls `agent.restart --mode fresh` without force or retries. Every server restart guard still applies, including pending prompts or messages, drafts (known or unknown), focus, working or blocked agents, concurrent restarts and pastes, and the checks immediately before the kill.
 
-Startup is proved by a different native session and PID, a live local session, kind `omp`, protocol ≥ 1, no draft, and the same reported model and thinking selector. A retained `done` with `seen: false` is accepted; the controller never clears that unread answer or waits only for `idle`. It rechecks identity before handing off to the pinned tile id. `tell` runs as an external script labelled `lead-rotation`, without inherited caller/board identity, and carries one stable message id.
+Startup is proved by a different native session and PID, a live local session, kind `omp`, protocol ≥ 1, a fresh report of no draft, and the same reported model and thinking selector. The returned restart command must also carry the exact recorded `--model` and `--thinking` selectors. A retained `done` with `seen: false` is accepted; the controller never clears that unread answer or waits only for `idle`. It rechecks identity and no draft before handing off to the pinned tile id. `tell` runs as an external script labelled `lead-rotation`, without inherited caller/board identity, and carries one stable message id.
 
-Evidence separates `restart.status: "ready"` from `handoff.status: "queued"` and `"acknowledged"`. Queueing alone cannot set `pass: true`: the controller waits through the public `agent.wait` seam, which cannot answer while a message is queued or held, then checks the same live native identity again. An acknowledgment that starts a turn must also reach its first working or blocked report. This proves the handoff was recorded, **not that its requested work finished**; a working recipient is a successful delivery. Restart, tell, acknowledgment and identity failures remain `pass: false`.
+Evidence separates `restart.status: "ready"` from `handoff.status: "queued"` and `"acknowledged"`. Queueing alone cannot set `pass: true`: the controller waits through the public `agent.wait` seam, which cannot answer while a message is queued or held, then checks the same live native identity again. A user draft after delivery does not invalidate that acknowledgment. An acknowledgment that starts a turn must also reach its first working or blocked report. This proves the handoff was recorded, **not that its requested work finished**; a working recipient is a successful delivery. Restart, tell, acknowledgment and identity failures remain `pass: false`.
 
-The behavior test drives the controller CLI against a separate stateful easl executable: successful restart, inherited/stale identity, delayed native identity with retained done, exactly one handoff, rejected restart/tell, missing acknowledgment, session changes and a hung CLI. The controller creates no scratch or persistent process; its deadline and SIGINT/SIGTERM handling kill its owned CLI child. Tests record their `mkdtemp` directories under `$TMPDIR` and remove them and their owned children afterward.
-
+The behavior test drives the controller CLI against a separate stateful easl executable: reserved handoff time, successful restart, inherited/stale identity, delayed native identity with retained done, exactly one handoff, rejected restart/tell, missing acknowledgment, session changes, unrelated saved entries, a hung CLI, rejected output reads and SIGTERM. The controller creates no scratch or persistent process; its deadline and SIGINT/SIGTERM handling kill its owned CLI child. Tests create their `mkdtemp` directories in the operating system's temporary directory (`$TMPDIR` on macOS) and remove them and their owned children afterward.
 
 ## API conformance
 
