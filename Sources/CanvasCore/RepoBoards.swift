@@ -64,7 +64,7 @@ extension RepoRecord {
             return WorktreeInfo(path: path, branch: worktree.branch, live: true, main: worktree.isMain,
                                 region: region(branch: worktree.branch, path: path, objects: objects))
         }
-        for record in worktrees where !list.contains(where: { $0.path == record.path && $0.branch == record.branch }) {
+        for record in worktrees where !list.contains(where: { $0.path == record.path && ($0.branch == record.branch || ($0.live && record.branch == nil)) }) {
             let region = record.region.flatMap { objects[$0] != nil ? $0 : nil }
             let checkout = GitWorktree.containing(record.path).flatMap { $0.commonDir == commonDir && GitWorktree.normalized($0.toplevel) == record.path ? $0 : nil }
             list.append(WorktreeInfo(path: record.path, branch: record.branch, live: checkout != nil && record.branch == nil, main: false, region: region))
@@ -72,11 +72,13 @@ extension RepoRecord {
         return list
     }
 
-    /// The region of `branch` (any worktree it was in), else of the worktree at `path` when
-    /// detached; nil when there's none on the board.
+    /// The region of `branch` (any worktree it was in), else a branchless region at `path`;
+    /// detached HEAD uses only its path. Missing groups aren't regions.
     public func region(branch: String?, path: String, objects: [ObjectID: CanvasObject]) -> ObjectID? {
-        let candidates = branch.map { name in worktrees.filter { $0.branch == name } } ?? worktrees.filter { $0.path == path && $0.branch == nil }
-        return candidates.compactMap(\.region).first { objects[$0] != nil }
+        if let branch, let region = worktrees.first(where: { $0.branch == branch && $0.region.map { objects[$0] != nil } == true })?.region {
+            return region
+        }
+        return worktrees.first(where: { $0.path == path && $0.branch == nil && $0.region.map { objects[$0] != nil } == true })?.region
     }
 
     /// Records the worktree at `path` (`GitWorktree.normalized`) with the branch it has now;

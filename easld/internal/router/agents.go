@@ -263,7 +263,7 @@ func (r *Router) agentList() map[string]any {
 	agents := []any{}
 	for _, b := range r.reg.SortedBoards() {
 		for _, terminal := range sortedTerminals(b) {
-			agents = append(agents, r.withSession(r.agentEntry(terminal, b), b.ID(), terminal, sessions))
+			agents = append(agents, r.withSession(r.agentEntry(terminal, b), b.ID(), mergedInto(b), terminal, sessions))
 		}
 	}
 	return map[string]any{"agents": append(agents, r.closedBoardAgents(sessions)...)}
@@ -291,16 +291,16 @@ func (r *Router) ownSessions() map[string]session.Session {
 
 // withSession is the agent.list entry of `terminal` on board `boardID` with what its session
 // says, when sessions are known (non-nil; ApiRouter.withSession): `live`, a session carrying its
-// labels (Owner.Labels: not another home's or board's of its name); without one no process of
-// it runs (a pid reported before is stale, or another process's by now); with one, its
-// foreground process (session.ForegroundPID) stands in for a pid no integration reported. A
-// hosted terminal's session is its host's.
-func (r *Router) withSession(entry map[string]any, boardID string, terminal model.Object, sessions map[string]session.Session) map[string]any {
+// labels (Owner.Labels: not another home's or board's of its name, but for one of `merged`, the
+// boards boardID took in); without one no process of it runs (a pid reported before is stale,
+// or another process's by now); with one, its foreground process (session.ForegroundPID) stands
+// in for a pid no integration reported. A hosted terminal's session is its host's.
+func (r *Router) withSession(entry map[string]any, boardID string, merged []string, terminal model.Object, sessions map[string]session.Session) map[string]any {
 	if sessions == nil || board.TerminalHost(terminal) != "" {
 		return entry
 	}
 	s, listed := sessions[terminal.ID]
-	live := listed && s.Carries(r.Owns.Labels(boardID, terminal.ID))
+	live := listed && s.Carries(r.Owns.Labels(boardID, terminal.ID), merged...)
 	entry["live"] = live
 	if !live {
 		delete(entry, "pid")
@@ -341,7 +341,11 @@ func (r *Router) closedBoardAgents(sessions map[string]session.Session) []any {
 				entry["name"] = name
 				entry["address"] = name + "@" + filepath.Base(snap.Root)
 			}
-			agents = append(agents, r.withSession(entry, snap.ID, terminal, sessions))
+			var merged []string
+			if snap.Repo != nil {
+				merged = snap.Repo.Merged
+			}
+			agents = append(agents, r.withSession(entry, snap.ID, merged, terminal, sessions))
 		}
 	}
 	return agents

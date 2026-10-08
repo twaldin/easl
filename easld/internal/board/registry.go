@@ -133,8 +133,10 @@ func (r *Registry) Open(root string) (*Board, error) {
 }
 
 // load is BoardStore.load: the stored board (its root following the board's identity), else a
-// new one; a repository board records its common git directory.
+// new one; a repository board records its common git directory. A repository board first takes
+// in the stored boards of folders that became part of it (store.Loading).
 func (r *Registry) load(root, id, commonDir string) (*Board, error) {
+	r.Store.Loading(id, commonDir, time.Now())
 	snap, err := r.Store.Read(id)
 	if err != nil {
 		return nil, err

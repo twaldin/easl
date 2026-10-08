@@ -18,8 +18,9 @@ public enum RepoBoardMigration {
         public var repos: [RepoReport]
         /// Boards of directories outside git: left as they are.
         public var nonGit: [BoardID]
-        /// Legacy boards this run didn't merge: their repository isn't known (root gone), or,
-        /// run for one repository, they are another's.
+        /// Legacy boards this run left in the store, by id: their repository isn't known (root
+        /// gone), they are another repository's (run for one), or they conflict. The same set
+        /// whichever repository a run is for.
         public var unresolved: [Unresolved]
     }
 
@@ -51,7 +52,7 @@ public enum RepoBoardMigration {
         public var label: String
         public var branch: String?
         /// main: the main checkout's current branch, placed as it was; branch: anchored by `ref`;
-        /// worktree: detached or branch unknown, paths absolute in the worktree.
+        /// worktree: detached, branch unknown or path-keyed linked checkout; paths absolute there.
         public var anchor: String
         public var worktree: String?
         public var worktreeLive: Bool
@@ -94,9 +95,10 @@ public enum RepoBoardMigration {
 
     /// Migrates the store at `directory`. `knownRoots` name repositories beyond those of the
     /// stored boards' roots (the saved tabs), for legacy boards whose worktree is gone. With
-    /// `only`, merges just that repository's legacy boards (it is being loaded). A dry run
-    /// writes nothing.
-    public static func run(directory: URL, knownRoots: [URL] = [], only: String? = nil, dryRun: Bool = false, now: Date = Date()) -> Report {
+    /// `only`, merges just that repository's legacy boards (it is being loaded). Legacy boards in
+    /// `skipping` (open in the app, which would save them back) are left as if not stored. A dry
+    /// run writes nothing.
+    public static func run(directory: URL, knownRoots: [URL] = [], only: String? = nil, skipping: Set<BoardID> = [], dryRun: Bool = false, now: Date = Date()) -> Report {
         let files = ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         var repoBoards: [String: (url: URL, snapshot: BoardSnapshot)] = [:]
@@ -106,10 +108,13 @@ public enum RepoBoardMigration {
             guard let data = try? Data(contentsOf: file), let snapshot = try? decoder.decode(BoardSnapshot.self, from: data) else { continue }
             if let repo = snapshot.repo {
                 repoBoards[repo.commonDir] = (file, snapshot)
+            } else if skipping.contains(snapshot.id) {
+                continue
             } else if snapshot.id == BoardStore.pathID(URL(fileURLWithPath: snapshot.root)),
                       !BoardStore.isDirectory(snapshot.root) || GitWorktree.containing(URL(fileURLWithPath: snapshot.root).standardizedFileURL.path) == nil {
-                // A path id in git (a repository with no commit yet, where git named no branch)
-                // is a legacy board of the directory; elsewhere a board outside git.
+                // A path id in git (a repository with no commit yet, where git named no branch,
+                // or a directory that became a repository after its board was made) is a legacy
+                // board of the directory; elsewhere a board outside git.
                 nonGit.append(snapshot.id)
             } else {
                 legacy.append((file, snapshot))
@@ -138,14 +143,23 @@ public enum RepoBoardMigration {
             var (target, report, merged) = merge(byRepo[commonDir]!, into: existing?.snapshot, modified: existing.map { modified($0.url) } ?? .distantPast,
                                                  commonDir: commonDir, now: now)
             reports.append(report)
-            guard !dryRun else { continue }
+            for entry in report.legacy where entry.status == "conflict" {
+                unresolved.append(Unresolved(board: entry.board, root: entry.root, objects: entry.objectsBefore))
+            }
+            // Nothing merged or backed up (every board a conflict): the target stays as it is.
+            guard !dryRun, !merged.isEmpty else { continue }
             target.revision += 1
             guard let data = try? encoder.encode(target),
                   (try? data.write(to: directory.appendingPathComponent("\(target.id).json"), options: .atomic)) != nil else { continue }
             for url in merged { backUp(url, in: directory) }
         }
+        unresolved.sort { $0.board < $1.board }
         let report = Report(ranAt: now, dryRun: dryRun, repos: reports, nonGit: nonGit, unresolved: unresolved)
-        if !dryRun { appendToLedger(report, in: directory) }
+        // A repository's load that changed nothing (its boards still conflict, the same ones
+        // left unresolved) adds no run: each launch would add the same one.
+        let changedNothing = only != nil && reports.allSatisfy { $0.legacy.allSatisfy { $0.status == "conflict" } }
+            && unresolved.map(\.board) == pending(in: directory).unresolved
+        if !dryRun, !changedNothing { appendToLedger(report, in: directory) }
         return report
     }
 
@@ -155,7 +169,8 @@ public enum RepoBoardMigration {
         case branch(String)
         case detached(top: String)
         case unknown
-        /// Keyed by its directory's path: opened before its repository had a commit.
+        /// Keyed by its directory's path: opened before its repository had a commit, or before
+        /// the directory was in a repository at all.
         case path
     }
 
@@ -279,9 +294,12 @@ public enum RepoBoardMigration {
                 branch = name
                 anchor = legacy.url == base?.url || (isMainCheckout(legacy) && name == main?.branch) ? .main
                     : .branch(name, sha: GitWorktree.branchSha(commonDir: commonDir, branch: name))
-            case .detached, .unknown, .path:
+            case .path:
+                branch = legacy.live ? GitWorktree.containing(legacy.top).flatMap { $0.commonDir == commonDir ? $0.branch : nil } : nil
+                anchor = legacy.url == base?.url || isMainCheckout(legacy) ? .main : .absolute
+            case .detached, .unknown:
                 branch = nil
-                anchor = legacy.url == base?.url || (legacy.identity == .path && isMainCheckout(legacy)) ? .main : .absolute
+                anchor = legacy.url == base?.url ? .main : .absolute
             }
             var entry = LegacyReport(board: snapshot.id, root: snapshot.root, label: label(of: legacy), branch: branch, anchor: anchor.name,
                                      worktree: legacy.top, worktreeLive: legacy.live, temporary: isTemporary(legacy.top), status: "merged", objectsBefore: snapshot.objects.count,
@@ -299,13 +317,17 @@ public enum RepoBoardMigration {
                 continue
             }
 
-            var rerooter = Rerooter(oldRoot: URL(fileURLWithPath: snapshot.root).standardizedFileURL.path, top: legacy.top, live: legacy.live, anchor: anchor)
+            // A folder's live HEAD belongs to the worktree record, not its objects' anchors.
+            let rerootBranch = legacy.identity == .path ? nil : branch
+            var rerooter = Rerooter(oldRoot: URL(fileURLWithPath: snapshot.root).standardizedFileURL.path, top: legacy.top, live: legacy.live, anchor: anchor,
+                                    destinationRoot: URL(fileURLWithPath: target.root))
             var objects = snapshot.objects.map { object -> CanvasObject in
                 var object = object
                 if (snapshot.format ?? 1) < 2, RenderMath.isTile(object.type) { object.frame.h += RenderMath.tileTitleHeight }
-                return rerooter.reroot(object, branch: branch)
+                return rerooter.reroot(object, branch: rerootBranch)
             }
             let tray = (snapshot.tray ?? []).map { rerooter.reroot($0) }
+            let messages = (snapshot.messages ?? [:]).mapValues { $0.map { rerooter.reroot($0) } }
 
             var region: CanvasObject?
             if legacy.url != base?.url, !objects.isEmpty {
@@ -325,7 +347,9 @@ public enum RepoBoardMigration {
                 if !members.isEmpty {
                     let frame = Frame(x: bounds.x + dx - inset, y: bounds.y + dy - inset - GroupSpec.titleHeight,
                                       w: bounds.w + 2 * inset, h: bounds.h + 2 * inset + GroupSpec.titleHeight)
-                    let key = branch.map { "branch:\($0)" } ?? "\(legacy.isDetached ? "detached" : "worktree"):\(label(of: legacy))"
+                    let key: String
+                    if case .branch(let name) = legacy.identity { key = "branch:\(name)" }
+                    else { key = "\(legacy.isDetached ? "detached" : "worktree"):\(label(of: legacy))" }
                     region = CanvasObject(id: IDs.make("obj"), type: .group, frame: frame, z: (objects.map(\.z).max() ?? 0) + 1, createdBy: .user, createdAt: now,
                                           props: .object(["members": .array(members.map(JSONValue.string)), "title": .string(label(of: legacy)), "key": .string(key)]))
                 }
@@ -356,6 +380,9 @@ public enum RepoBoardMigration {
                 ours.chosen = ours.chosen ?? theirs.chosen
                 target.promptTarget = ours
             }
+            // Old names keep reaching their terminals; messages not yet taken stay queued.
+            target.aliases = (target.aliases ?? [:]).merging(snapshot.aliases ?? [:]) { old, _ in old }.nilIfEmpty
+            target.messages = (target.messages ?? [:]).merging(messages) { old, new in old + new }.nilIfEmpty
             target.revision = max(target.revision, snapshot.revision)
             if !(anchor == .main && isMainCheckout(legacy)) || region != nil {
                 let path = GitWorktree.normalized(legacy.top)
@@ -522,6 +549,8 @@ struct Rerooter {
     let top: String
     let live: Bool
     let anchor: Anchor
+    /// The board that will build the diagram next, not necessarily this legacy worktree's top.
+    let destinationRoot: URL
     var unanchored: [String] = []
 
     /// `path` as written on the legacy board, absolute.
@@ -533,6 +562,24 @@ struct Rerooter {
     func repoRelative(_ path: String) -> String? {
         let absolute = absolute(path)
         return absolute.hasPrefix(top + "/") ? String(absolute.dropFirst(top.count + 1)) : nil
+    }
+
+    /// Where the legacy board's root is in its worktree ("" at the top): what its relative paths
+    /// were relative to, beyond the top.
+    var place: String { oldRoot.hasPrefix(top + "/") ? String(oldRoot.dropFirst(top.count + 1)) : "" }
+
+    /// A path as the destination board's next diagram build writes it (`CallGraphBuilder`):
+    /// relative to that board's root when beneath it, including nested linked worktrees and
+    /// symlink aliases; standardized and absolute otherwise.
+    func moved(_ path: String) -> String {
+        Board.relativePath(absolute(path), root: destinationRoot)
+    }
+
+    /// A diagram node's id, `<path>#<symbol>` (`CallGraphBuilder`), with its path moved as the
+    /// node's is, so the diagram's next build finds its nodes, expansions and bound arrows again.
+    func nodeID(_ id: String) -> String {
+        guard let hash = id.firstIndex(of: "#") else { return id }
+        return moved(String(id[..<hash])) + id[hash...]
     }
 
     /// A path a tile with `ref` can read: relative stays relative (to the repository), anchored
@@ -599,9 +646,11 @@ struct Rerooter {
         case .note, .html:
             if let root = props["root"]?.string, !root.isEmpty {
                 props["root"] = .string(rootPath(root, what: what))
-            } else if refAnchor {
+            } else if refAnchor && place.isEmpty {
                 setRef()
-            } else if anchor == .absolute {
+            } else if anchor == .absolute || !place.isEmpty {
+                // Its relative links meant the legacy board's root, which the repository
+                // board's isn't (a `ref` reads from the top, so it can't say where either).
                 props["root"] = .string(rootPath(oldRoot, what: what))
             }
         case .changes:
@@ -609,8 +658,7 @@ struct Rerooter {
                 props["root"] = .string(rootPath(root, what: what))
             } else {
                 // Paths and Viewed keys were relative to the old root.
-                let place = oldRoot.hasPrefix(top + "/") ? String(oldRoot.dropFirst(top.count + 1)) : ""
-                func moved(_ path: String) -> String {
+                func inPlace(_ path: String) -> String {
                     guard !path.hasPrefix("/") else { return path }
                     if anchor == .absolute { return absolute(path) }
                     return place.isEmpty ? path : (place as NSString).appendingPathComponent(path)
@@ -618,7 +666,7 @@ struct Rerooter {
                 if anchor == .absolute {
                     props["root"] = .string(rootPath(oldRoot, what: what))
                 } else {
-                    if let paths = props["paths"]?.array { props["paths"] = .array(paths.map { $0.string.map { .string(moved($0)) } ?? $0 }) }
+                    if let paths = props["paths"]?.array { props["paths"] = .array(paths.map { $0.string.map { .string(inPlace($0)) } ?? $0 }) }
                     if refAnchor {
                         // A ref'd changes tile defaults to the branch's merge-base view; keep the
                         // uncommitted work it showed.
@@ -627,11 +675,50 @@ struct Rerooter {
                     }
                 }
                 if let viewed = props["viewed"]?.object {
-                    props["viewed"] = .object(Dictionary(viewed.map { (moved($0.key), $0.value) }, uniquingKeysWith: { a, _ in a }))
+                    props["viewed"] = .object(Dictionary(viewed.map { (inPlace($0.key), $0.value) }, uniquingKeysWith: { a, _ in a }))
                 }
             }
         case .image:
             if let path = props["path"]?.string { props["path"] = .string(worktreePath(path, what: what)) }
+        case .diagram:
+            // Its file, the graph as last computed (node paths and ids, its aim) and the nodes
+            // it expanded, as the repository board's next build writes them (`moved`), so that
+            // build finds them again: nothing anchors a diagram by branch.
+            if let path = props["path"]?.string {
+                let rebased = moved(path)
+                props["path"] = .string(rebased.hasPrefix("/") && !path.hasPrefix("/") ? pinned(rebased, what: what) : rebased)
+            }
+            if let expanded = props["expanded"]?.array { props["expanded"] = .array(expanded.map { $0.string.map { .string(nodeID($0)) } ?? $0 }) }
+            if var graph = props["graph"]?.object {
+                if var aim = graph["aim"]?.object, let path = aim["path"]?.string {
+                    aim["path"] = .string(moved(path))
+                    graph["aim"] = .object(aim)
+                }
+                if let root = graph["root"]?.string { graph["root"] = .string(nodeID(root)) }
+                if let nodes = graph["nodes"]?.array {
+                    graph["nodes"] = .array(nodes.map { node in
+                        guard var fields = node.object else { return node }
+                        if let id = fields["id"]?.string { fields["id"] = .string(nodeID(id)) }
+                        if let path = fields["path"]?.string { fields["path"] = .string(moved(path)) }
+                        return .object(fields)
+                    })
+                }
+                if let edges = graph["edges"]?.array {
+                    graph["edges"] = .array(edges.map { edge in
+                        guard var fields = edge.object else { return edge }
+                        for end in ["from", "to"] { if let id = fields[end]?.string { fields[end] = .string(nodeID(id)) } }
+                        return .object(fields)
+                    })
+                }
+                props["graph"] = .object(graph)
+            }
+        case .arrow:
+            // An end bound to a diagram's node names it by id.
+            for end in ["from", "to"] {
+                guard var binding = props[end]?.object, let node = binding["node"]?.string else { continue }
+                binding["node"] = .string(nodeID(node))
+                props[end] = .object(binding)
+            }
         case .terminal:
             if let cwd = props["cwd"]?.string, !cwd.isEmpty {
                 let directory = absolute(cwd)
@@ -662,6 +749,13 @@ struct Rerooter {
             break
         }
         return mention
+    }
+
+    /// A queued peer message, its mentions rewritten as staged ones.
+    mutating func reroot(_ message: AgentMessage) -> AgentMessage {
+        var message = message
+        message.mentions = message.mentions.map { reroot($0) }
+        return message
     }
 }
 

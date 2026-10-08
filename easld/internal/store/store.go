@@ -41,6 +41,16 @@ type Store struct {
 
 	writeMu sync.Mutex
 	written map[string]uint64 // per board, the number of the snapshot on disk
+
+	// pathBoards are the stored boards of directories outside git (path-keyed), id → root, read
+	// when a repository's board first loads (Loading); nil until read. Used under lock.
+	pathBoards map[string]string
+	// legacyStored: the store held a legacy per-branch board (no `repo`, an id other than its
+	// root's PathID) when pathBoards was read. Used under lock.
+	legacyStored bool
+	// loaded is every board Loading was told of: never merged away while it may be open (its
+	// next save would bring its file back). Used under lock.
+	loaded map[string]bool
 }
 
 type pendingSave struct {
@@ -60,7 +70,7 @@ func New(dir string, debounce time.Duration, lock sync.Locker) *Store {
 			}
 		}
 	}
-	s := &Store{Dir: dir, debounce: debounce, lock: lock, pending: map[string]*pendingSave{}, written: map[string]uint64{}}
+	s := &Store{Dir: dir, debounce: debounce, lock: lock, pending: map[string]*pendingSave{}, written: map[string]uint64{}, loaded: map[string]bool{}}
 	s.idle = sync.NewCond(&s.mu)
 	return s
 }
@@ -412,7 +422,7 @@ func (r RepoRecord) WorktreeList(objects map[string]model.Object) []WorktreeInfo
 	for _, rec := range r.Worktrees {
 		seen := false
 		for _, l := range list {
-			if l.Path == rec.Path && sameBranch(l.Branch, rec.Branch) {
+			if l.Path == rec.Path && (sameBranch(l.Branch, rec.Branch) || (l.Live && rec.Branch == nil)) {
 				seen = true
 			}
 		}
@@ -430,17 +440,20 @@ func (r RepoRecord) WorktreeList(objects map[string]model.Object) []WorktreeInfo
 	return list
 }
 
-// Region is the region of branch (any worktree it was in), else of the worktree at path when
-// detached; "" when there's none on the board.
+// Region is the region of branch (any worktree it was in), else a branchless region at path;
+// detached HEAD uses only its path. Missing groups aren't regions.
 func (r RepoRecord) Region(branch *string, path string, objects map[string]model.Object) string {
-	for _, w := range r.Worktrees {
-		match := false
-		if branch != nil {
-			match = w.Branch != nil && *w.Branch == *branch
-		} else {
-			match = w.Path == path && w.Branch == nil
+	if branch != nil {
+		for _, w := range r.Worktrees {
+			if sameBranch(w.Branch, branch) && w.Region != "" {
+				if _, ok := objects[w.Region]; ok {
+					return w.Region
+				}
+			}
 		}
-		if match && w.Region != "" {
+	}
+	for _, w := range r.Worktrees {
+		if w.Path == path && w.Branch == nil && w.Region != "" {
 			if _, ok := objects[w.Region]; ok {
 				return w.Region
 			}

@@ -85,6 +85,7 @@ func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, 
 	// Checked again at the kill: a turn, prompt or draft that came since would be lost too.
 	r.reg.Mu.Lock()
 	err := r.restartable(b, tile, force)
+	merged := mergedInto(b)
 	if err == nil {
 		// From the kill until the relaunch is recorded, the killed agent's release waits for that
 		// record, which replaces it, so the tile keeps showing its lifecycle (an unseen done
@@ -95,7 +96,7 @@ func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, 
 	if err != nil {
 		return err
 	}
-	if _, err := r.Sessions.End(tile, r.Owns.Labels(b.ID(), tile)); err != nil {
+	if _, err := r.Sessions.End(tile, r.Owns.Labels(b.ID(), tile), merged...); err != nil {
 		return asFailure(err)
 	}
 	deadline := time.Now().Add(unlistedWithin)
@@ -129,6 +130,7 @@ func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, 
 	err = b.RestartedAgent(tile, launch.Command, agent)
 	cwd, _ := terminal.Props["cwd"].(string)
 	spawn := r.Owns.Request(b.ID(), tile, b.Root(), cwd, launch.Argv)
+	spawn.Merged = merged
 	r.reg.Mu.Unlock()
 	if err != nil {
 		return err

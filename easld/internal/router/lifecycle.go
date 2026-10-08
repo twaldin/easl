@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"github.com/twaldin/easl/easld/internal/board"
@@ -52,16 +53,29 @@ func (r *Router) terminals(b *board.Board, created, ended []model.Object) {
 		if board.TerminalHost(o) != "" {
 			continue
 		}
-		labels, spool := r.Owns.Labels(b.ID(), o.ID), r.spoolOf(o.ID)
-		r.queueSession(func() { r.endSession(b, o, labels, spool) })
+		labels, merged, spool := r.Owns.Labels(b.ID(), o.ID), mergedInto(b), r.spoolOf(o.ID)
+		r.queueSession(func() { r.endSession(b, o, labels, merged, spool) })
 	}
 }
 
 // ownedSpawn is the session of owned terminal `o` on `b` as it is now: its recorded agent
 // session resumed, else its command (session.InitialArgv), in its cwd, else the board's root.
+// A session running for it on a board b took in is its own (mergedInto).
 func (r *Router) ownedSpawn(b *board.Board, o model.Object) session.SpawnRequest {
 	cwd, _ := o.Props["cwd"].(string)
-	return r.Owns.Request(b.ID(), o.ID, b.Root(), cwd, session.InitialArgv(o.Props))
+	req := r.Owns.Request(b.ID(), o.ID, b.Root(), cwd, session.InitialArgv(o.Props))
+	req.Merged = mergedInto(b)
+	return req
+}
+
+// mergedInto is the boards b took in (`repo.merged`: a folder's board, made before the folder
+// was in git, or a legacy per-branch one): the sessions of their terminals, labelled with their
+// ids, are b's terminals' (session.Session.Carries). Called under the registry's lock.
+func mergedInto(b *board.Board) []string {
+	if b.Repo == nil {
+		return nil
+	}
+	return slices.Clone(b.Repo.Merged)
 }
 
 // spoolOf is where terminal `tile`'s integration spools reports easld isn't there to take; ""
@@ -194,10 +208,11 @@ func startNote(props map[string]any) string {
 // endSession ends a deleted owned terminal's session the way the Mac's tile does
 // (TerminalTile.killSession: the session, zmx's log of it, also when the session is already
 // gone, and, as the app does for every terminal ended, its spooled reports in `spool`, which
-// nothing would replay). A session not carrying `labels` (another home's or board's) is left
-// alone, and so is its log. What fails is logged in the board's history.
-func (r *Router) endSession(b *board.Board, o model.Object, labels map[string]string, spool string) {
-	if _, err := r.Sessions.End(o.ID, labels); err != nil {
+// nothing would replay). A session not carrying `labels` (another home's or board's, but for
+// one of `merged`, the boards b took in) is left alone, and so is its log. What fails is logged
+// in the board's history.
+func (r *Router) endSession(b *board.Board, o model.Object, labels map[string]string, merged []string, spool string) {
+	if _, err := r.Sessions.End(o.ID, labels, merged...); err != nil {
 		r.sessionFailed(b, o, "easld couldn't end its session: "+err.Error())
 	}
 	if spool != "" {

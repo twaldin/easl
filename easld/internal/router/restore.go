@@ -46,10 +46,14 @@ func (r *Router) Restore() []error {
 			}
 			continue
 		}
-		if _, err := r.reg.Open(root); err != nil {
+		b, err := r.reg.Open(root)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("can't reopen board %s at %s: %w", e.Board, root, err))
+			kept = append(kept, store.Reopened{Root: root, Board: e.Board})
+			continue
 		}
-		kept = append(kept, store.Reopened{Root: root, Board: e.Board})
+		// The board root opens: e.Board, or the repository board that took it in (adopter).
+		kept = append(kept, store.Reopened{Root: root, Board: b.ID()})
 	}
 	if kept = uniqueBoards(kept); !slices.Equal(kept, listed) {
 		if err := store.WriteReopened(r.Reopens, kept); err != nil {
@@ -67,9 +71,10 @@ var errNowhere = errors.New("no directory opens it any more")
 // repository's main checkout); a live worktree of its repository (listing them reads every one
 // the repository names, which can wait on a mount: only when nothing before opens the board).
 // Worktrees come and go (one merged and removed, its path reused by another repository) while
-// the board stays, and a directory that opens another board never stands for this one. With
-// another directory than `opener` it also says why; "" when none opens it (errNowhere), or
-// when its board file can't be read to tell (it stays listed).
+// the board stays, and a directory that opens another board never stands for this one, but for
+// a folder's board whose folder is in a repository now (adopter). With another directory than
+// `opener`, or another board, it also says why; "" when none opens it (errNowhere), or when its
+// board file can't be read to tell (it stays listed).
 func (r *Router) rootOf(id, opener string) (string, error) {
 	opens := func(dir string) bool {
 		if dir == "" || !store.IsDirectory(dir) {
@@ -98,7 +103,36 @@ func (r *Router) rootOf(id, opener string) (string, error) {
 			}
 		}
 	}
+	if dir, ok := r.adopter(id, opener, snap); ok {
+		into, _ := store.Identify(dir)
+		return dir, fmt.Errorf("board %s reopened as board %s from %s: its folder is in that repository now, whose board takes it in", id, into, dir)
+	}
 	return "", fmt.Errorf("board %s is no longer reopened: %w (%s is gone or opens another board)", id, errNowhere, opener)
+}
+
+// adopter is the directory whose repository's board takes in folder board id as it loads
+// (store.Loading: a board made for a folder before the folder was in git), or took it in
+// already: the folder as its board file has it, in git now; else, its file gone, `opener` when
+// the board it opens lists id in `repo.merged`.
+func (r *Router) adopter(id, opener string, snap *store.Snapshot) (string, bool) {
+	if snap != nil {
+		if snap.Repo == nil && snap.ID == store.PathID(snap.Root) && store.IsDirectory(snap.Root) && store.Containing(snap.Root) != nil {
+			return store.Standardized(snap.Root), true
+		}
+		return "", false
+	}
+	if opener == "" || !store.IsDirectory(opener) {
+		return "", false
+	}
+	into, w := store.Identify(opener)
+	if w == nil {
+		return "", false
+	}
+	repo, err := r.reg.Store.Read(into)
+	if err != nil || repo == nil || repo.Repo == nil || !slices.Contains(repo.Repo.Merged, id) {
+		return "", false
+	}
+	return opener, true
 }
 
 // worktreesOf lists a repository's worktrees for rootOf (store.Worktrees; tests count calls).
@@ -148,7 +182,7 @@ func (r *Router) opened(b *board.Board, root string) {
 			}
 		}
 		for _, t := range terminals {
-			if s, ok := running[session.Prefix+t.o.ID]; ok && (s.Unreachable || s.Carries(t.labels)) {
+			if s, ok := running[session.Prefix+t.o.ID]; ok && (s.Unreachable || s.Carries(t.labels, t.spawn.Merged...)) {
 				continue
 			}
 			if r.restarting(t.o.ID) {
@@ -203,9 +237,10 @@ func ownedTerminals(b *board.Board) []model.Object {
 // before found them so too (the same session: the same process). Run a grace apart, a session is
 // ended only after a grace as an orphan, and only while it is still that process
 // (Manager.EndIf: `session.spawn` and `session.kill` don't wait for the sweep). Another home's
-// session is never ended, nor one labelled with a board that isn't open, nor one that doesn't
-// answer or has no pid. Each one ended is logged in its board's history; its spooled reports go
-// with it unless a terminal of that id is on an open board. It returns once the sweep is done.
+// session is never ended, nor one labelled with a board that isn't open (or taken in by one
+// that is: its board label is in that board's `repo.merged`), nor one that doesn't answer or has
+// no pid. Each one ended is logged in its board's history; its spooled reports go with it unless
+// a terminal of that id is on an open board. It returns once the sweep is done.
 func (r *Router) SweepOrphans() {
 	if r.Owns == nil {
 		return
@@ -219,6 +254,14 @@ func (r *Router) SweepOrphans() {
 	for _, b := range r.reg.SortedBoards() {
 		boards[b.ID()] = b
 		owned[b.ID()] = map[string]bool{}
+	}
+	for _, b := range r.reg.SortedBoards() {
+		// A session of a board b took in is b's terminal's (mergedInto).
+		for _, id := range mergedInto(b) {
+			if _, open := boards[id]; !open {
+				boards[id] = b
+			}
+		}
 		for _, o := range ownedTerminals(b) {
 			owned[b.ID()][o.ID] = true
 		}
@@ -245,7 +288,7 @@ func (r *Router) sweep(boards map[string]*board.Board, owned map[string]map[stri
 	for _, s := range list {
 		id := s.Labels["canvas.board"]
 		b, open := boards[id]
-		if s.Unreachable || s.PID <= 0 || s.Labels[session.HomeLabel] != home || s.Labels["canvas.tile"] != s.Tile || !open || owned[id][s.Tile] {
+		if s.Unreachable || s.PID <= 0 || s.Labels[session.HomeLabel] != home || s.Labels["canvas.tile"] != s.Tile || !open || owned[b.ID()][s.Tile] {
 			continue
 		}
 		found[s.Name] = s.PID
@@ -268,7 +311,12 @@ func (r *Router) sweep(boards map[string]*board.Board, owned map[string]map[stri
 // left as they are. An end that fails is tried again at each sweep, logged only the first time
 // for that process.
 func (r *Router) reap(b *board.Board, s session.Session, spool bool) {
-	ended, err := r.Sessions.EndIf(s.Tile, r.Owns.Labels(b.ID(), s.Tile), s.PID)
+	// The sweep found b by the session's board label: b's own, or a board b took in.
+	var merged []string
+	if id := s.Labels["canvas.board"]; id != b.ID() {
+		merged = []string{id}
+	}
+	ended, err := r.Sessions.EndIf(s.Tile, r.Owns.Labels(b.ID(), s.Tile), s.PID, merged...)
 	failedBefore := r.lifecycle.unended[s.Name] == s.PID
 	if err == nil {
 		delete(r.lifecycle.unended, s.Name)

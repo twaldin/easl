@@ -10,6 +10,14 @@ public final class BoardStore {
     /// Legacy boards the migration left unresolved, re-tried when a repository's board loads;
     /// nil until read.
     private var unresolvedLegacy: [BoardID]?
+    /// The stored boards of directories outside git (path-keyed), id → root, read when a
+    /// repository's board first loads: one whose directory has since become part of that
+    /// repository is merged into its board. Nil until read.
+    private var pathBoards: [BoardID: String]?
+    /// Boards loaded this session. Their files are never merged away while they may be open
+    /// (the board's next save would bring the file back), and a repository board takes in other
+    /// boards on its first load only.
+    private var loaded: Set<BoardID> = []
     private let debounce: TimeInterval
 
     public static var defaultDirectory: URL {
@@ -41,13 +49,15 @@ public final class BoardStore {
     /// The board for a directory: a repository's board, rooted at its canonical root
     /// (`boardRoot`), else the directory's. The registry passes what it already worked out: the
     /// board root, `id`, and the repository's common git directory (`repo`). A repository board
-    /// that isn't stored yet first takes in legacy boards the launch migration couldn't place.
+    /// first takes in the boards of the store that belong to it (`mergeIntoRepositoryBoard`).
     public func load(root opened: URL, id known: BoardID? = nil, repo knownRepo: String? = nil) -> Board {
         let worktree = knownRepo == nil ? GitWorktree.containing(opened.standardizedFileURL.path) : nil
         let commonDir = knownRepo ?? worktree?.commonDir
         let root = worktree.map { URL(fileURLWithPath: $0.canonicalRoot) } ?? opened
         let id = known ?? commonDir.map(Self.repoID(commonDir:)) ?? Self.pathID(root)
-        if let commonDir, !FileManager.default.fileExists(atPath: url(for: id).path) { migratePending(commonDir: commonDir) }
+        if loaded.insert(id).inserted, let commonDir {
+            mergeIntoRepositoryBoard(commonDir: commonDir, stored: FileManager.default.fileExists(atPath: url(for: id).path))
+        }
         let board: Board
         if let data = try? Data(contentsOf: url(for: id)), var snapshot = try? Self.decoder.decode(BoardSnapshot.self, from: data) {
             // The root may have moved (renamed checkout); the board follows its identity.
@@ -67,9 +77,10 @@ public final class BoardStore {
     }
 
     /// Folds the store's legacy per-branch boards into repository boards (`RepoBoardMigration`),
-    /// once: later calls only re-try the ones it left unresolved, when a repository they may
-    /// belong to loads. `knownRoots`: directories whose repositories to try beyond the stored
-    /// boards' roots (the saved tabs).
+    /// once: later calls only re-try the ones it left unresolved, and adopt boards of directories
+    /// that became repositories since, when the repository loads (`mergeIntoRepositoryBoard`).
+    /// `knownRoots`: directories whose repositories to try beyond the stored boards' roots (the
+    /// saved tabs).
     @discardableResult
     public func migrateToRepoBoards(knownRoots: [URL] = []) -> RepoBoardMigration.Report? {
         let pending = RepoBoardMigration.pending(in: directory)
@@ -82,10 +93,41 @@ public final class BoardStore {
         return report
     }
 
-    private func migratePending(commonDir: String) {
+    /// Before repository `commonDir`'s board first loads, merges into it (`RepoBoardMigration`,
+    /// for this repository only) the stored boards that belong to it: the boards of directories
+    /// in it that were made before they were in git (a folder's board, then `git init`), and,
+    /// when the repository board isn't stored yet, legacy boards the launch migration couldn't
+    /// place. Boards loaded this session are left for the next launch. Starts no git process:
+    /// a path-keyed board costs the walk up its directory for `.git` (`GitWorktree.containing`).
+    private func mergeIntoRepositoryBoard(commonDir: String, stored: Bool) {
         if unresolvedLegacy == nil { unresolvedLegacy = RepoBoardMigration.pending(in: directory).unresolved }
-        guard unresolvedLegacy?.isEmpty == false else { return }
-        unresolvedLegacy = RepoBoardMigration.run(directory: directory, only: commonDir).unresolved.map(\.board)
+        let adopting = storedPathBoards().contains { id, root in
+            !loaded.contains(id) && Self.isDirectory(root) && GitWorktree.containing(URL(fileURLWithPath: root).standardizedFileURL.path)?.commonDir == commonDir
+        }
+        guard adopting || (!stored && unresolvedLegacy?.isEmpty == false) else { return }
+        let report = RepoBoardMigration.run(directory: directory, only: commonDir, skipping: loaded)
+        unresolvedLegacy = report.unresolved.map(\.board)
+        for legacy in report.repos.flatMap(\.legacy) where legacy.status != "conflict" { pathBoards?[legacy.board] = nil }
+    }
+
+    /// `pathBoards`, read from the store's files the first time.
+    private func storedPathBoards() -> [BoardID: String] {
+        if let pathBoards { return pathBoards }
+        /// What tells a path-keyed board from a repository's or a legacy one.
+        struct Header: Decodable {
+            var id: BoardID
+            var root: String
+            var repo: RepoRecord?
+        }
+        var found: [BoardID: String] = [:]
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: file), let header = try? Self.decoder.decode(Header.self, from: data),
+                  header.repo == nil, header.id == Self.pathID(URL(fileURLWithPath: header.root)) else { continue }
+            found[header.id] = header.root
+        }
+        pathBoards = found
+        return found
     }
 
     public func scheduleSave(_ board: Board) {

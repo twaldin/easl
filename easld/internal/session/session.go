@@ -178,6 +178,9 @@ type SpawnRequest struct {
 	Cwd     string
 	Env     map[string]string
 	Labels  map[string]string
+	// Merged are the boards the board of `Labels` took in (`repo.merged`): a running session
+	// labelled with one of them, of the same home and tile, is its own (Carries).
+	Merged []string
 	// Unset are name prefixes of easld's own environment (Manager.Env) the session doesn't
 	// inherit: an owned terminal's (Owner.Request). session.spawn sets none.
 	Unset []string
@@ -231,7 +234,7 @@ func (m *Manager) Spawn(req SpawnRequest) (session string, created bool, err err
 		if existing != nil {
 			m.mu.Unlock()
 			if !existing.Unreachable {
-				if err := owned(existing, req.Labels); err != nil {
+				if err := owned(existing, req.Labels, req.Merged); err != nil {
 					return "", false, err
 				}
 			}
@@ -368,31 +371,32 @@ func (m *Manager) Kill(tile, home string) (bool, error) {
 	if home != "" {
 		want = map[string]string{HomeLabel: home}
 	}
-	return m.kill(tile, want, false, 0)
+	return m.kill(tile, want, nil, false, 0)
 }
 
 // End is Kill for a terminal gone for good (an owned terminal's delete), of the session that
 // carries every owner label `labels` names (OwnerLabels: in one home, a board copied to another
-// root keeps its tile ids, so the home alone doesn't say whose it is). When its session is no
-// longer there (it exited, or zmx found its daemon dead), zmx's log of it goes too.
-func (m *Manager) End(tile string, labels map[string]string) (bool, error) {
-	return m.kill(tile, labels, true, 0)
+// root keeps its tile ids, so the home alone doesn't say whose it is), its board label also one
+// of `merged` (Carries). When its session is no longer there (it exited, or zmx found its daemon
+// dead), zmx's log of it goes too.
+func (m *Manager) End(tile string, labels map[string]string, merged ...string) (bool, error) {
+	return m.kill(tile, labels, merged, true, 0)
 }
 
 // EndIf is End of a session as a listing found it, run by process `pid` (Session.PID): checked
 // again under the manager's lock, so a session started again under its name since (another
 // process, maybe the terminal's own after its spawn) is left alone, with its log; so is the log
 // of one no longer there. False when it ended nothing.
-func (m *Manager) EndIf(tile string, labels map[string]string, pid int) (bool, error) {
+func (m *Manager) EndIf(tile string, labels map[string]string, pid int, merged ...string) (bool, error) {
 	if pid <= 0 {
 		return false, failure("invalid_params", "pid %d names no process", pid)
 	}
-	return m.kill(tile, labels, false, pid)
+	return m.kill(tile, labels, merged, false, pid)
 }
 
-// kill ends tile's session when it carries `want` and, with `pid`, is run by that process;
-// `gone` deletes zmx's log of one no longer there.
-func (m *Manager) kill(tile string, want map[string]string, gone bool, pid int) (bool, error) {
+// kill ends tile's session when it carries `want` (or `merged`, Carries) and, with `pid`, is
+// run by that process; `gone` deletes zmx's log of one no longer there.
+func (m *Manager) kill(tile string, want map[string]string, merged []string, gone bool, pid int) (bool, error) {
 	if err := m.ready(); err != nil {
 		return false, err
 	}
@@ -419,7 +423,7 @@ func (m *Manager) kill(tile string, want map[string]string, gone bool, pid int) 
 		if existing.Unreachable {
 			return false, failure("unavailable", "session %s doesn't answer, so whose it is can't be told; not ending it", name)
 		}
-		if err := owned(existing, want); err != nil {
+		if err := owned(existing, want, merged); err != nil {
 			return false, err
 		}
 	}
@@ -451,14 +455,19 @@ func (m *Manager) find(name string) (*Session, error) {
 }
 
 // Carries is whether s carries every owner label `want` names, with the same value: whether it
-// is the session of the instance, board and tile `want` says.
-func (s Session) Carries(want map[string]string) bool { return owned(&s, want) == nil }
+// is the session of the instance, board and tile `want` says. Its board label may also be one
+// of `merged`, the boards that board took in (`repo.merged`): a terminal's session started on a
+// folder's board stays the terminal's when the folder's repository board takes that board in.
+func (s Session) Carries(want map[string]string, merged ...string) bool {
+	return owned(&s, want, merged) == nil
+}
 
-// owned is nil when `s` carries every owner label `want` names, with the same value.
-func owned(s *Session, want map[string]string) error {
+// owned is nil when `s` carries every owner label `want` names, with the same value, or, its
+// board label, one of `merged`.
+func owned(s *Session, want map[string]string, merged []string) error {
 	for _, key := range OwnerLabels {
 		expected, given := want[key]
-		if !given || s.Labels[key] == expected {
+		if !given || s.Labels[key] == expected || (key == "canvas.board" && s.Labels[key] != "" && slices.Contains(merged, s.Labels[key])) {
 			continue
 		}
 		have := s.Labels[key]
