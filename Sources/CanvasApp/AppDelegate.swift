@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = Self.makeMenu()
-        KeyLatencyFlush.shared.start()
+        MainMetricsBatch.shared.start()
         UserIdleWatch.shared.start()
         // `kill <pid>` (scripts, logout) quits through the normal path so boards are flushed.
         // The signal is received off the main queue and handed to the main run loop in every

@@ -7,6 +7,9 @@ import CanvasCore
 /// and restore full rate at once. A change posts `changed`; `TerminalTile` reads `isIdle` and
 /// pulses its surface.
 ///
+/// Sampling runs only while a terminal is shown and could draw (`terminalDrawable`): with every
+/// board hidden or minimized there is nothing to slow down, and a fresh sample starts it again.
+///
 /// Development (`dev-input <pid> idle on|off|auto`): `on` feeds the policy an idle time past the
 /// threshold and stops sampling the Mac (its idle time is the user's, not the check's), so a check
 /// can watch terminals slow down and then, on a replayed key or click, speed up through the same
@@ -22,6 +25,15 @@ final class UserIdleWatch {
     private var monitor: Any?
 
     var isIdle: Bool { policy.isIdle }
+    /// Terminals shown and able to draw (`TerminalTile.updateSurfaceVisibility`).
+    private(set) var drawable = 0
+
+    /// A terminal became able to draw, or stopped: sampling runs only while any can.
+    func terminalDrawable(_ on: Bool) {
+        let was = drawable
+        drawable = max(0, drawable + (on ? 1 : -1))
+        if was == 0, drawable > 0 { sample() } else if drawable == 0 { timer?.cancel(); timer = nil }
+    }
 
     func start() {
         guard monitor == nil else { return }
@@ -43,7 +55,8 @@ final class UserIdleWatch {
 
     private func sample() {
         timer?.cancel()
-        guard !pinned else { return }
+        timer = nil
+        guard !pinned, drawable > 0 else { return }
         let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
         apply(idleSeconds: idle)
         let timer = DispatchSource.makeTimerSource(queue: .main)

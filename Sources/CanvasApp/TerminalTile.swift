@@ -1114,6 +1114,10 @@ final class TerminalTile: NSView, TileContent {
     private func updateSurfaceVisibility() {
         let shown = window.map { $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) } ?? false
         let wanted = isLive && shown
+        if wanted != countedDrawable {
+            countedDrawable = wanted
+            UserIdleWatch.shared.terminalDrawable(wanted)
+        }
         if wanted, UserIdleWatch.shared.isIdle {
             startIdlePulse()
         } else {
@@ -1123,6 +1127,8 @@ final class TerminalTile: NSView, TileContent {
     }
 
     private var idlePulse: DispatchSourceTimer?
+    /// Whether this terminal is in `UserIdleWatch.drawable` (shown and live).
+    private var countedDrawable = false
 
     private func startIdlePulse() {
         guard idlePulse == nil else { return }

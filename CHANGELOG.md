@@ -4,7 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
-- **Terminals redraw slowly while you're away.** After a minute without input anywhere on the Mac, every terminal redraws at most twice a second (a working agent's spinner still moves); the first key, click or scroll, in easl or any other app, brings back full rate within a second. Only drawing slows: the terminal reads its program's output, titles change, agent reports and `agent.read` answer at full speed, so nothing is missed. Fifteen agent terminals on a visible board kept the GPU and WindowServer busy all night for an empty chair; now they don't. `easl metrics` counts redraws (`terminal.draw`).
+- **Terminals redraw slowly while you're away.** After a minute without input anywhere on the Mac, every terminal redraws at most twice a second (a working agent's spinner still moves); the first key, click or scroll, in easl or any other app, brings back full rate within a second. Only drawing slows: the terminal reads its program's output, titles change, agent reports and `agent.read` answer at full speed, so nothing is missed. Fifteen agent terminals on a visible board kept the GPU and WindowServer busy all night for an empty chair; now they don't. `easl metrics` counts redraws (`terminal.draw`). Programs that ask the terminal to report its visibility (DEC mode 2033; none easl ships does) are told hidden and visible at that rate.
 
 ## 0.2.3
 
