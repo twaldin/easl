@@ -8,6 +8,7 @@ bun scripts/gen-clients.ts --check    # generated TS/Python clients match schema
 (cd clients/python && python3 -m unittest)   # Python SDK (Python 3.11+): compositions loading, shipped compositions, the default socket's platform choice, connection config/reconnect against a fake socket
 bun test extensions/agent-hooks             # hook payload classification: which thread (the tile's session, a subagent, Codex's internal sessions) an event comes from; the Codex awareness block's easl commands stay plain words
 bun test clients/ts                         # TS client: the default socket's platform choice (the app's on macOS, easld's elsewhere)
+bun test cli/metrics-text.test.ts           # `easl metrics` text: the draws and keys lines show with values, not before
 (cd conformance && go test ./...)          # the conformance runner's normalisation and diff (Go 1.26)
 (cd easld && go vet ./... && go test ./...)  # easld (Go 1.26): its packages' tests, and the conformance suite replayed in-process (cmd/easld, ~2 min; -short skips it)
 ```
@@ -112,7 +113,7 @@ Any kind takes `--repeat N [--interval ms]` (default 8 ms apart) for a trackpad-
 
 ### Performance probes
 
-`EASL_DEV_PERF=1` (set by `dev.sh` and `perf-replica.sh`) turns on `DevPerf` (`Sources/CanvasApp/DevPerf.swift`). Every input burst becomes a span with a `gesture` phase and a 1.5 s `settle` phase (the liveness pass, card and live flips, and the redraws they cause); `input perf [ms]` is an idle span (default 5000 ms), which also works while the window is minimized. At the end of a span `app.log` gets one line per phase:
+`EASL_DEV_PERF=1` (set by `dev.sh` and `perf-replica.sh`) turns on `DevPerf` (`Sources/CanvasApp/DevPerf.swift`). Every input burst becomes a span with a `gesture` phase and a 1.5 s `settle` phase (the liveness pass, card and live flips, and the redraws they cause); `input perf [ms]` is an idle span (default 5000 ms), which also works while the window is minimized; `input idle on|off|auto` feeds the user-idle policy terminals redraw by (`IdleRedraw`: occluded with 2 one-redraw pulses a second when idle) a minute idle or zero and stops sampling the Mac (a replayed key or click then restores full rate through the real input path), or lets it follow the Mac again, and a span's `counts` carry `terminal.draw`, the redraws. At the end of a span `app.log` gets one line per phase:
 
 ```text
 DevPerf: burst of 45 magnify settle 1574 ms: frames 89 missed 6 (vsync 16.7 ms, longest frame 62.9 ms), main busy 278 ms, hitches 3 (longest 46.3 ms), main cpu 231 ms (longest 39.8 ms); counts: terminal.title=12 …; timings (n/total/max ms): card.call.CodeTile=9/46.1/5.9 draw.GroupView=220/11.4/0.1 scene.pass=23/48.0/46.2 …

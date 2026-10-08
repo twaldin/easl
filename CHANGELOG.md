@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- **Terminals redraw slowly while you're away.** After a minute without input anywhere on the Mac, every terminal redraws at most twice a second (a working agent's spinner still moves); the first key, click or scroll, in easl or any other app, brings back full rate within a second. Only drawing slows: the terminal reads its program's output, titles change, agent reports and `agent.read` answer at full speed, so nothing is missed. Fifteen agent terminals on a visible board kept the GPU and WindowServer busy all night for an empty chair; now they don't. `easl metrics` counts redraws (`terminal.draw`). Programs that ask the terminal to report its visibility (DEC mode 2033; none easl ships does) are told hidden and visible at that rate.
+
 ## 0.2.3
 
 - **easl updates itself.** A minute after launch and then daily, easl reads easl.sh/latest.json; when a newer version is out, an **Update** button appears at the top right of every board window, and easl › Check for Updates… checks now (and says when easl is up to date). Update shows "Update to X? easl quits and reopens; your terminals keep running." with Release Notes beside it, then downloads the release into easl's support folder, checks its size and SHA-256 against latest.json, its signature, Team ID and notarization, and its version, quits easl like ⌘Q, swaps the app where it is and reopens it. Any failure leaves the running easl as it was and says why; if the swap itself fails, the old version is put back and the next launch says why. A Homebrew install updates the same way (`brew outdated` lists easl until `brew upgrade --cask easl`). Testing: `EASL_UPDATE_URL` reads another latest.json, and `scripts/dev.sh` passes it through; development instances never check by themselves.
