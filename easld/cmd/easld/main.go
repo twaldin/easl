@@ -101,6 +101,8 @@ func run(args []string, stderr io.Writer) int {
 		}
 		r.Owns = &session.Owner{Socket: socketPath, Home: homePath, Resources: session.Resources(r.Sessions.Home)}
 		r.Reopens = filepath.Join(*home, "open-boards.json")
+		// Whether each session it starts resumes its terminal's agent goes to the journal.
+		r.Log = stderr
 	}
 	// Hosted terminals reach their board through `<home>/run/<instance>/` (relay.open).
 	r.Relays = relay.New(filepath.Join(*home, "run"))

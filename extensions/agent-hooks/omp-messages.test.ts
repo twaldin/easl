@@ -6,13 +6,14 @@
 // something (`until`), so the extension's coalescing, retry, record and reconcile checks run
 // without real waits.
 import { afterEach, beforeEach, expect, test, vi } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { AgentMessage } from "../../clients/ts/src/index";
 import canvas from "../omp/easl";
 import { card, renderCard } from "./messages";
+import { spoolDirectory } from "./report";
 
 const TILE = "obj_bob";
 const ALICE = { tile: "obj_alice", name: "alice", address: "alice@canvas", board: "brd_c" };
@@ -88,6 +89,10 @@ function fakeEasl() {
     /** agent.inbox calls that take messages (long polls, a burst's follow-up), not bare acks. */
     polls(): number {
       return easl.calls.filter((call) => call.method === "agent.inbox" && !(call.params.ack?.length > 0 && !call.params.waitMs)).length;
+    },
+    /** easl goes away (quit, restarting, its host rebooting): nothing answers at the socket. */
+    stop(): void {
+      server.stop(true);
     },
   };
   const holds = new Map<string, number>();
@@ -725,4 +730,36 @@ test("a session that ends while its file is written isn't reported after its rel
   await until(() => calls().includes("agent.report_session"));
   const [report] = easl.calls.filter((call) => call.method === "agent.report_session");
   expect(report.params).toMatchObject({ sessionId: "ses_moved", sessionPath: join(dir, "ses_moved.jsonl") });
+});
+
+test("a tile hung up or terminated keeps its agent for the session that resumes it; one its user ends is released", async () => {
+  // omp's teardown, with easl there or away, after `signal` or none: the agent.release calls easl
+  // took, and those spooled for it to replay.
+  async function shutDown(signal: "SIGHUP" | "SIGTERM" | undefined, away: boolean) {
+    const easl = fakeEasl();
+    const omp = fakeOmp(easl);
+    await omp.emit("session_start");
+    await until(() => easl.calls.some((call) => call.method === "agent.report_session"));
+    if (away) easl.stop();
+    // Killing the terminal's session hangs omp up (a reboot terminates it), and omp's teardown
+    // fires session_shutdown as its /exit does. The signal goes to the process's listeners only.
+    if (signal) process.emit(signal);
+    await omp.emit("session_shutdown");
+    // Past the extension's 1.5 s call timeout, after which a report easl didn't take is spooled.
+    let ticks = 0;
+    await until(() => ++ticks > 400);
+    const spool = spoolDirectory(easl.socketPath, TILE);
+    const spooled = existsSync(spool) ? readdirSync(spool).map((name) => JSON.parse(readFileSync(join(spool, name), "utf8")).method) : [];
+    return {
+      released: easl.calls.filter((call) => call.method === "agent.release").length,
+      spooled: spooled.filter((method) => method === "agent.release").length,
+    };
+  }
+  for (const signal of ["SIGHUP", "SIGTERM"] as const) {
+    expect({ signal, ...(await shutDown(signal, false)) }).toEqual({ signal, released: 0, spooled: 0 });
+    expect({ signal, ...(await shutDown(signal, true)) }).toEqual({ signal, released: 0, spooled: 0 });
+  }
+  // /exit: the user ended it.
+  expect(await shutDown(undefined, false)).toEqual({ released: 1, spooled: 0 });
+  expect(await shutDown(undefined, true)).toEqual({ released: 0, spooled: 1 });
 });
