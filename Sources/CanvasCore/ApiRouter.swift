@@ -432,18 +432,19 @@ public final class ApiRouter {
     }
 
     /// The response for a satisfied waiter, or nil while it must keep waiting. A terminal with no
-    /// lifecycle, or still showing the answer of the agent agent.restart killed
-    /// (`Board.showsKilledAgentsAnswer`), gets `firstReportGrace` to start reporting; one whose
-    /// agent exited (`exited`, a release; or its message integration died, `Board.agentExited`)
-    /// or that stays silent can never satisfy it. An agent reporting by notification
-    /// (`NotifyingAgent`) at `unknown` waits for its next notification.
+    /// lifecycle, or whose agent agent.restart relaunched and that hasn't reported yet, whatever it
+    /// shows meanwhile (`Board.awaitsRelaunchedAgent`), gets `firstReportGrace` to start reporting;
+    /// one whose agent exited (`exited`, a release; or its message integration died,
+    /// `Board.agentExited`) or that stays silent can never satisfy it. An agent reporting by
+    /// notification (`NotifyingAgent`) at `unknown` waits for its next notification.
     private func reply(to waiter: Waiter, on board: Board, exited: Bool = false) -> JSONValue? {
         guard let terminal = board.objects[waiter.tile] else {
             return Self.error(waiter.id, Failure("not_found", "terminal \(waiter.tile) was closed"))
         }
-        let state = board.showsKilledAgentsAnswer(terminal) ? LifecycleState.unknown.rawValue : Self.state(of: terminal)
+        let relaunched = board.awaitsRelaunchedAgent(waiter.tile)
+        let state = relaunched ? LifecycleState.unknown.rawValue : Self.state(of: terminal)
         if state == LifecycleState.unknown.rawValue, !waiter.until.contains(state) {
-            if !exited, NotifyingAgent.reports(terminal) { return nil }
+            if !exited, !relaunched, NotifyingAgent.reports(terminal) { return nil }
             guard exited || Date() >= waiter.firstReportDeadline else { return nil }
             return Self.error(waiter.id, Self.lifecycleUnknown(terminal))
         }
@@ -1355,6 +1356,8 @@ public final class ApiRouter {
             let tile = try string(p, "tile")
             try board(forObject: tile).reportSession(tile: tile, kind: try string(p, "kind"), sessionId: p["sessionId"]?.string, sessionPath: p["sessionPath"]?.string,
                                                      model: p["model"]?.string, thinking: p["thinking"]?.string)
+            // The relaunched agent has reported (`Board.awaitsRelaunchedAgent`): waits on it look again.
+            for waiter in waiters where waiter.tile == tile { recheck(waiter.token) }
             return .object([:])
 
         case "agent.release":

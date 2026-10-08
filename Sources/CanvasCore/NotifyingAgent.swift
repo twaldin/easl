@@ -69,7 +69,10 @@ extension Board {
         if let program, !(bell && answersKey) {
             let kind = (NotifyingAgent.reports(terminal) ? terminal.props["agent"]?["kind"]?.string : nil) ?? NotifyingAgent.kind(program: program)
             if watched { seenSinceWorking.insert(tile) } else { seenSinceWorking.remove(tile) }
-            setNotifiedLifecycle(tile, kind: kind, state: watched ? .idle : .done, message: message, seen: watched)
+            // The agent agent.restart relaunched has reported, even if its notice repeats the
+            // kept answer: pending waits must look again.
+            let relaunched = relaunchedAgents.remove(tile) != nil
+            setNotifiedLifecycle(tile, kind: kind, state: watched ? .idle : .done, message: message, seen: watched, firstReport: relaunched)
             return .lifecycle
         }
         guard !watched else { return .none }
@@ -109,13 +112,13 @@ extension Board {
         }
     }
 
-    private func setNotifiedLifecycle(_ tile: ObjectID, kind: String, state: LifecycleState, message: String?, seen: Bool?) {
+    private func setNotifiedLifecycle(_ tile: ObjectID, kind: String, state: LifecycleState, message: String?, seen: Bool?, firstReport: Bool = false) {
         guard let terminal = objects[tile] else { return }
         var lifecycle: [String: JSONValue] = ["state": .string(state.rawValue), "via": .string(NotifyingAgent.via)]
         if let seen { lifecycle["seen"] = .bool(seen) }
         if let message { lifecycle["message"] = .string(message) }
         let agent: JSONValue = .object(["kind": .string(kind)])
-        guard terminal.props["lifecycle"] != .object(lifecycle) || terminal.props["agent"] != agent else { return }
+        guard firstReport || terminal.props["lifecycle"] != .object(lifecycle) || terminal.props["agent"] != agent else { return }
         _ = try? update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .object(lifecycle)))
     }

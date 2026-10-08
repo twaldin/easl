@@ -322,8 +322,8 @@ func (s *Store) eachFile(f func(*Snapshot, fs.DirEntry)) {
 }
 
 // Export writes a human-readable snapshot (BoardStore.export): the tray, attention markers,
-// agents' answers, lifecycle seqs, repo record and undelivered messages left out; pretty-printed
-// with sorted keys and unescaped slashes, ending in a newline.
+// agents' answers, lifecycle seqs, repo record, undelivered messages and pending relaunches left
+// out; pretty-printed with sorted keys and unescaped slashes, ending in a newline.
 func Export(snap Snapshot, path string) error {
 	snap.Tray, snap.HasTray = nil, false
 	snap.Attention = nil
@@ -332,6 +332,7 @@ func Export(snap Snapshot, path string) error {
 	snap.LifecycleSeq = nil
 	snap.Repo = nil
 	snap.Messages = nil
+	snap.RelaunchedAgents = nil
 	snap.Unknown = nil // the app's export writes BoardSnapshot's own keys
 	data, err := swiftjson.Encode(snap.JSON(), true, false)
 	if err != nil {

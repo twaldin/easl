@@ -347,10 +347,10 @@ func TestLifecycleStalenessApprovalsAndDone(t *testing.T) {
 	}
 }
 
-// The killed agent's release can reach the board before the restart records the relaunch: the
-// unseen answer the tile had as the restart began (RestartedAgent's lifecycle) still stays, and
-// the relaunched agent's idle leaves it done. Any other lifecycle the restart began with ends.
-func TestARestartKeepsAnUnseenAnswerTheKilledAgentsReleaseCleared(t *testing.T) {
+// The killed agent's release can reach the board before the restart records the relaunch:
+// throughout that window the unseen answer stays, and the relaunched agent's idle leaves it
+// done. Any other lifecycle the restart began with ends.
+func TestARestartKeepsAnUnseenAnswerThroughoutTheKilledAgentsRelease(t *testing.T) {
 	b := New("brd", "/r")
 	term := b.Create(model.Terminal, map[string]any{}, frame(0, 0, 1000, 620), "", "")
 	report := func(state string, message *string) {
@@ -361,13 +361,14 @@ func TestARestartKeepsAnUnseenAnswerTheKilledAgentsReleaseCleared(t *testing.T) 
 	}
 	restart := func() {
 		t.Helper()
-		began := model.Clone(b.Objects()[term.ID].Props["lifecycle"])
+		b.AgentRestartBegan(term.ID)
 		if err := b.ReleaseAgent(term.ID); err != nil {
 			t.Fatal(err)
 		}
-		if err := b.RestartedAgent(term.ID, []string{"omp"}, map[string]any{"kind": "omp"}, began); err != nil {
+		if err := b.RestartedAgent(term.ID, []string{"omp"}, map[string]any{"kind": "omp"}); err != nil {
 			t.Fatal(err)
 		}
+		b.AgentRestartEnded(term.ID)
 	}
 	answer := "Tests pass."
 	report("working", nil)

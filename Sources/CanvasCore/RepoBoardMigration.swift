@@ -348,6 +348,7 @@ public enum RepoBoardMigration {
             target.finalAnswers = (target.finalAnswers ?? [:]).merging(snapshot.finalAnswers ?? [:]) { old, _ in old }.nilIfEmpty
             target.turnErrors = (target.turnErrors ?? [:]).merging(snapshot.turnErrors ?? [:]) { old, _ in old }.nilIfEmpty
             target.lifecycleSeq = (target.lifecycleSeq ?? [:]).merging(snapshot.lifecycleSeq ?? [:]) { old, _ in old }.nilIfEmpty
+            target.relaunchedAgents = Array(Set((target.relaunchedAgents ?? []) + (snapshot.relaunchedAgents ?? []))).sorted().nilIfEmpty
             if let theirs = snapshot.promptTarget {
                 var ours = target.promptTarget ?? PromptTarget.State()
                 // The base board's terminals stay the most recently focused.

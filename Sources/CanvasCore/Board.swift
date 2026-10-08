@@ -79,6 +79,9 @@ public struct BoardSnapshot: Codable, Sendable {
     /// Peer messages their integrations haven't acked yet (`Board.messages`); optional so older
     /// board files still load.
     public var messages: [ObjectID: [AgentMessage]]?
+    /// Terminals whose relaunched agent (agent.restart) hasn't reported yet
+    /// (`Board.relaunchedAgents`); optional so older board files still load.
+    public var relaunchedAgents: [ObjectID]?
 }
 
 /// One canvas: all objects for one root directory, the selection tray, and agent lifecycle.
@@ -134,9 +137,16 @@ public final class Board {
     /// Terminals whose message-taking integration died without its release (`agentExited`); in memory.
     var exitedAgents: Set<ObjectID> = []
     /// Terminals whose agent agent.restart relaunched (`restartedAgent`) and that no agent has
-    /// reported in since; in memory. A release meanwhile is the killed agent's, sent as it exits
-    /// after its session is gone, and leaves the record the relaunch runs with (`releaseAgent`).
+    /// reported in since; saved with the board, so a reopened board still knows it. A release
+    /// meanwhile is the killed agent's, sent as it exits after its session is gone, and leaves the
+    /// record the relaunch runs with (`releaseAgent`); agent.wait waits for the relaunched agent's
+    /// first report, whatever the tile shows meanwhile (`awaitsRelaunchedAgent`).
     var relaunchedAgents: Set<ObjectID> = []
+    /// Terminals agent.restart is killing and relaunching (`agentRestartBegan`) and hasn't recorded
+    /// the relaunch of yet, each with whether its agent released meanwhile; in memory. That release
+    /// waits: the relaunch's record replaces it, a restart ending without one applies it
+    /// (`agentRestartEnded`), so what the tile shows doesn't flicker through a release.
+    var restartingAgents: [ObjectID: Bool] = [:]
     /// Messages bounced in the open step, handed on when it closes (`flushBounces`).
     var bouncing: [MessageBounce] = []
     /// Messages whose receiver's agent session ended before its integration took them: the
@@ -307,6 +317,7 @@ public final class Board {
         lifecycleSeq = (snapshot.lifecycleSeq ?? [:]).filter { objects[String($0.key.prefix { $0 != "|" })] != nil }
         aliases = (snapshot.aliases ?? [:]).filter { objects[$0.value]?.type == .terminal }
         messages = (snapshot.messages ?? [:]).filter { objects[$0.key]?.type == .terminal && !$0.value.isEmpty }
+        relaunchedAgents = Set((snapshot.relaunchedAgents ?? []).filter { objects[$0]?.type == .terminal })
         repo = snapshot.repo
     }
 
@@ -316,7 +327,7 @@ public final class Board {
                       promptTarget: promptTarget == PromptTarget.State() ? nil : promptTarget,
                       finalAnswers: finalAnswers.isEmpty ? nil : finalAnswers, turnErrors: turnErrors.isEmpty ? nil : turnErrors,
                       lifecycleSeq: lifecycleSeq.isEmpty ? nil : lifecycleSeq, repo: repo, aliases: aliases.isEmpty ? nil : aliases,
-                      messages: messages.isEmpty ? nil : messages)
+                      messages: messages.isEmpty ? nil : messages, relaunchedAgents: relaunchedAgents.isEmpty ? nil : relaunchedAgents.sorted())
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {
@@ -1166,13 +1177,17 @@ public final class Board {
             turnErrors[tile] = failed
             if message == nil { message = failed }
         }
-        // A turn that died on an error isn't done: the user reads why in its message.
-        let effective: LifecycleState = state == .idle && failed == nil && !seenSinceWorking.contains(tile) && wasWorking(terminal) ? .done : state
+        // A turn that died on an error isn't done: the user reads why in its message. A `done` the
+        // user hasn't seen stays through a report that starts no turn: an `idle`, or the `unknown`
+        // of an agent without an integration as it starts (`bin/aider`, relaunched by agent.restart).
+        let unread = failed == nil && !seenSinceWorking.contains(tile)
+        let wasDone = terminal.props["lifecycle"]?["state"]?.string == LifecycleState.done.rawValue
+        let effective: LifecycleState = unread && (state == .idle && wasWorking(terminal) || state == .unknown && wasDone) ? .done : state
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message {
             lifecycle["message"] = .string(message)
-        } else if effective == .done, terminal.props["lifecycle"]?["state"]?.string == LifecycleState.done.rawValue {
-            // An idle that starts no turn (a relaunched agent reporting in) leaves the answer
+        } else if effective == .done, wasDone {
+            // A report that starts no turn (a relaunched agent reporting in) leaves the answer
             // waiting as it was, its message too.
             lifecycle["message"] = terminal.props["lifecycle"]?["message"]
         }
@@ -1271,10 +1286,16 @@ public final class Board {
     /// messages its integration never took bounce (`endAgentSession`). Ignored while a relaunched
     /// agent hasn't reported yet (`relaunchedAgents`): that release is the killed agent's, which
     /// can exit after agent.restart recorded the relaunch, and the tile keeps what it resumes (its
-    /// session, model and thinking) also when the relaunch never starts.
+    /// session, model and thinking) also when the relaunch never starts. Held while agent.restart
+    /// kills the agent and hasn't recorded the relaunch yet (`restartingAgents`): recording it
+    /// replaces the release, a restart that ends without it applies it (`agentRestartEnded`).
     public func releaseAgent(tile: ObjectID) throws {
         _ = try object(tile)
         guard !relaunchedAgents.contains(tile) else { return }
+        if restartingAgents[tile] != nil {
+            restartingAgents[tile] = true
+            return
+        }
         pendingApprovals[tile] = nil
         exitedAgents.remove(tile)
         try update(tile, props: .object(["lifecycle": .null, "agent": .null]), caller: tile)
@@ -1283,26 +1304,40 @@ public final class Board {
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
     }
 
+    /// agent.restart is about to kill the agent in `tile` and relaunch it: until it records the
+    /// relaunch (`restartedAgent`) or ends without one (`agentRestartEnded`), a release there is
+    /// held (`releaseAgent`), so the tile shows what it had, its unseen answer too, throughout.
+    func agentRestartBegan(_ tile: ObjectID) {
+        restartingAgents[tile] = false
+    }
+
+    /// agent.restart of `tile` is over: a release held meanwhile (`agentRestartBegan`) applies
+    /// unless the relaunch was recorded, which took its place.
+    func agentRestartEnded(_ tile: ObjectID) {
+        guard restartingAgents.removeValue(forKey: tile) == true, objects[tile] != nil else { return }
+        try? releaseAgent(tile: tile)
+    }
+
     /// The agent in `tile` was killed and is being relaunched (agent.restart): the tile runs
     /// `command` now (what a reboot reruns), its agent is `agent` (what it was, without what only
     /// the killed process knew: its draft and pid), and its lifecycle is unknown until the new
     /// agent reports, but for a `done` the user hasn't seen (`isUnseenDone`, the needs-you badge):
     /// that answer is still theirs to read, so the tile stays `done` through the relaunch, also
-    /// through the relaunched agent's reports that start no turn (an `idle` from `done` stays
-    /// `done`), until the user sees it or the relaunched agent starts a turn (`working`), as
-    /// without a restart. `lifecycle` is the tile's as the restart began, taken before the kill
-    /// as `agent` is: the killed agent's release as it exits may have cleared it since. Waits on
-    /// approvals the killed agent had end, and the composer's prompts it never drained return
-    /// their mentions to the tray, as when an agent exits. Recorded once the old session is
-    /// confirmed gone and its agent session ended (`endAgentSession`), before the relaunch starts
-    /// (ApiRouter.restart), so what the relaunched agent reports stays; a death of the killed
-    /// agent's integration seen meanwhile (`agentExited`) isn't the relaunched one's.
-    public func restartedAgent(tile: ObjectID, command: [String], agent: JSONValue, lifecycle began: JSONValue?) throws {
+    /// through the relaunched agent's reports that start no turn (`reportLifecycle`), until the
+    /// user sees it or the relaunched agent starts a turn (`working`), as without a restart. A
+    /// release the killed agent sent as it exited was held (`agentRestartBegan`) and is replaced
+    /// by this. Waits on approvals the killed agent had end, and the composer's prompts it never
+    /// drained return their mentions to the tray, as when an agent exits. Recorded once the old
+    /// session is confirmed gone and its agent session ended (`endAgentSession`), before the
+    /// relaunch starts (ApiRouter.restart), so what the relaunched agent reports stays; a death
+    /// of the killed agent's integration seen meanwhile (`agentExited`) isn't the relaunched one's.
+    public func restartedAgent(tile: ObjectID, command: [String], agent: JSONValue) throws {
         let terminal = try object(tile)
         pendingApprovals[tile] = nil
         exitedAgents.remove(tile)
         relaunchedAgents.insert(tile)
-        let shown = terminal.props["lifecycle"].flatMap { $0 == .null ? nil : $0 } ?? began
+        restartingAgents[tile] = nil
+        let shown = terminal.props["lifecycle"]
         let lifecycle = shown.flatMap { Self.isUnseenDone($0) && !seenSinceWorking.contains(tile) ? $0 : nil } ?? .null
         try update(tile, props: .object(["command": .array(command.map(JSONValue.string)), "lifecycle": lifecycle, "agent": agent]), caller: tile)
         dropComposerPrompts(of: tile)
@@ -1315,11 +1350,11 @@ public final class Board {
         lifecycle["state"]?.string == LifecycleState.done.rawValue && lifecycle["seen"]?.bool != true
     }
 
-    /// `terminal` shows the unseen `done` of the agent agent.restart killed (`restartedAgent`)
-    /// and its relaunched agent hasn't reported yet: what agent.wait sees as no lifecycle, so it
-    /// waits for the relaunched agent's first report rather than taking the killed one's answer.
-    func showsKilledAgentsAnswer(_ terminal: CanvasObject) -> Bool {
-        relaunchedAgents.contains(terminal.id) && !NotifyingAgent.reports(terminal) && terminal.props["lifecycle"].map(Self.isUnseenDone) == true
+    /// agent.restart relaunched the agent in `tile` and no agent has reported there since
+    /// (`relaunchedAgents`): whatever the tile shows (the unseen answer of the agent it killed, or
+    /// that answer seen), agent.wait waits for the relaunched agent's first report.
+    func awaitsRelaunchedAgent(_ tile: ObjectID) -> Bool {
+        relaunchedAgents.contains(tile)
     }
 
     // MARK: Follow mode

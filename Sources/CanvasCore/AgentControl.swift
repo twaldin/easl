@@ -250,9 +250,8 @@ extension ApiRouter {
         }
         guard let restartTerminal else { throw Failure("unsupported", "restarting needs the app UI") }
         // What the relaunched agent is until it reports: the same agent, model and thinking (and
-        // session, resumed), without what only the killed process knew, and the lifecycle the
-        // tile had (an unseen `done` stays: `Board.restartedAgent`). Taken before the kill: the
-        // old agent's release as it exits clears `props.agent` and `props.lifecycle`.
+        // session, resumed), without what only the killed process knew. Taken before the kill:
+        // the old agent's release as it exits clears `props.agent`.
         var kept = agent?.object
         kept?["draft"] = nil
         kept?["pid"] = nil
@@ -261,11 +260,11 @@ extension ApiRouter {
             kept?["sessionPath"] = nil
         }
         let relaunched = kept.map(JSONValue.object) ?? .null
-        let lifecycle = terminal.props["lifecycle"]
         let tile = terminal.id
         restarting.insert(tile)
         defer {
             restarting.remove(tile)
+            board.agentRestartEnded(tile)
             serveInbox(tile, on: board)
         }
         try await restartTerminal(board, tile, launch.argv, {
@@ -273,13 +272,17 @@ extension ApiRouter {
             guard let current = board.objects[tile] else { throw Failure("not_found", "terminal \(tile) was closed") }
             if self.pasting[tile] != nil { throw Self.pastingFailure(tile) }
             if !force { try self.refuseRestart(current, on: board) }
+            // From the kill until the relaunch is recorded, the killed agent's release waits for
+            // that record, which replaces it, so the tile keeps showing its lifecycle (an unseen
+            // `done` stays: `Board.restartedAgent`).
+            board.agentRestartBegan(tile)
         }, {
             // Closed while its session was killed: its delete ended the agent session and
             // bounced the queue; there is nothing to relaunch into.
             guard board.objects[tile] != nil else { throw Failure("not_found", "terminal \(tile) was closed while it restarted: nothing was relaunched") }
             board.endAgentSession(tile)
             self.forgetPrompts(to: tile)
-            try board.restartedAgent(tile: tile, command: launch.command, agent: relaunched, lifecycle: lifecycle)
+            try board.restartedAgent(tile: tile, command: launch.command, agent: relaunched)
         })
         guard let current = board.objects[tile] else { throw Failure("not_found", "terminal \(tile) was closed while it restarted") }
         return .object(["agent": agentEntry(current, on: board), "command": .array(launch.argv.map(JSONValue.string))])

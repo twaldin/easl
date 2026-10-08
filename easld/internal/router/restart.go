@@ -31,9 +31,8 @@ func (r *Router) restartOwned(b *board.Board, terminal model.Object, mode string
 		return nil, fail(api.CodeUnavailable, "%s runs no known agent and has no command to relaunch", terminal.ID)
 	}
 	// What the relaunched agent is until it reports: the same agent, model and thinking (and
-	// session, resumed), without what only the killed process knew, and the lifecycle the tile
-	// had (an unseen done stays: Board.RestartedAgent). Taken now: the old agent's release as it
-	// exits clears props.agent and props.lifecycle.
+	// session, resumed), without what only the killed process knew. Taken now: the old agent's
+	// release as it exits clears props.agent.
 	var relaunched any
 	if agent != nil {
 		kept := map[string]any{}
@@ -48,13 +47,12 @@ func (r *Router) restartOwned(b *board.Board, terminal model.Object, mode string
 		}
 		relaunched = kept
 	}
-	lifecycle := model.Clone(terminal.Props["lifecycle"])
 	tile := terminal.ID
 	r.restartSeq++
 	op := r.restartSeq
 	r.restarts[tile] = op
 	var failure error
-	r.queueSession(func() { failure = r.relaunch(b, tile, launch, relaunched, lifecycle, force) })
+	r.queueSession(func() { failure = r.relaunch(b, tile, launch, relaunched, force) })
 	queued := r.queuedSessions()
 	r.reg.Mu.Unlock()
 	r.waitSessions(queued)
@@ -62,6 +60,7 @@ func (r *Router) restartOwned(b *board.Board, terminal model.Object, mode string
 	if r.restarts[tile] == op {
 		delete(r.restarts, tile)
 	}
+	b.AgentRestartEnded(tile)
 	r.serveInbox(tile, b)
 	if failure != nil {
 		return nil, failure
@@ -82,10 +81,16 @@ func (r *Router) restartOwned(b *board.Board, terminal model.Object, mode string
 // left of it: the job holds every queued start and end meanwhile), the relaunch. A failure
 // before the kill leaves the session as it was; one after it leaves the terminal without a
 // session, logged in its board's history as a failed start is.
-func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, agent, lifecycle any, force bool) error {
+func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, agent any, force bool) error {
 	// Checked again at the kill: a turn, prompt or draft that came since would be lost too.
 	r.reg.Mu.Lock()
 	err := r.restartable(b, tile, force)
+	if err == nil {
+		// From the kill until the relaunch is recorded, the killed agent's release waits for that
+		// record, which replaces it, so the tile keeps showing its lifecycle (an unseen done
+		// stays: Board.RestartedAgent). A restart ending without it applies it (restartOwned).
+		b.AgentRestartBegan(tile)
+	}
 	r.reg.Mu.Unlock()
 	if err != nil {
 		return err
@@ -121,7 +126,7 @@ func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, 
 	}
 	b.EndAgentSession(tile)
 	delete(r.pendingPrompts, tile)
-	err = b.RestartedAgent(tile, launch.Command, agent, lifecycle)
+	err = b.RestartedAgent(tile, launch.Command, agent)
 	cwd, _ := terminal.Props["cwd"].(string)
 	spawn := r.Owns.Request(b.ID(), tile, b.Root(), cwd, launch.Argv)
 	r.reg.Mu.Unlock()

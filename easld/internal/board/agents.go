@@ -139,15 +139,20 @@ func (b *Board) ReportLifecycle(r Report) error {
 			message = &failed
 		}
 	}
+	// A turn that died on an error isn't done: the user reads why in its message. A done the user
+	// hasn't seen stays through a report that starts no turn: an idle, or the unknown of an agent
+	// without an integration as it starts (bin/aider, relaunched by agent.restart).
+	unread := failed == "" && !b.seenSinceWorking[r.Tile]
+	wasDone := LifecycleState(terminal) == "done"
 	effective := state
-	if state == "idle" && failed == "" && !b.seenSinceWorking[r.Tile] && wasWorking(terminal) {
+	if unread && (state == "idle" && wasWorking(terminal) || state == "unknown" && wasDone) {
 		effective = "done"
 	}
 	lifecycle := map[string]any{"state": effective, "seen": b.seenSinceWorking[r.Tile]}
 	if message != nil {
 		lifecycle["message"] = *message
-	} else if was := lifecycleOf(terminal); effective == "done" && was["state"] == "done" && was["message"] != nil {
-		// An idle that starts no turn (a relaunched agent reporting in) leaves the answer
+	} else if was := lifecycleOf(terminal); effective == "done" && wasDone && was["message"] != nil {
+		// A report that starts no turn (a relaunched agent reporting in) leaves the answer
 		// waiting as it was, its message too.
 		lifecycle["message"] = was["message"]
 	}
@@ -308,12 +313,18 @@ func (b *Board) ReportSession(tile, kind string, sessionID, sessionPath, agentMo
 // integration never took bounce (endAgentSession). Ignored while a relaunched agent hasn't
 // reported yet (relaunchedAgents): that release is the killed agent's, which can exit after
 // agent.restart recorded the relaunch, and the tile keeps what it resumes (its session, model
-// and thinking) also when the relaunch never starts.
+// and thinking) also when the relaunch never starts. Held while agent.restart kills the agent
+// and hasn't recorded the relaunch yet (restartingAgents): recording it replaces the release, a
+// restart that ends without it applies it (AgentRestartEnded).
 func (b *Board) ReleaseAgent(tile string) error {
 	if _, err := b.Object(tile); err != nil {
 		return err
 	}
 	if b.relaunchedAgents[tile] {
+		return nil
+	}
+	if _, restarting := b.restartingAgents[tile]; restarting {
+		b.restartingAgents[tile] = true
 		return nil
 	}
 	delete(b.pendingApprovals, tile)
@@ -325,35 +336,49 @@ func (b *Board) ReleaseAgent(tile string) error {
 	return nil
 }
 
+// AgentRestartBegan: agent.restart is about to kill the agent in `tile` and relaunch it
+// (Board.agentRestartBegan): until it records the relaunch (RestartedAgent) or ends without one
+// (AgentRestartEnded), a release there is held (ReleaseAgent), so the tile shows what it had,
+// its unseen answer too, throughout.
+func (b *Board) AgentRestartBegan(tile string) {
+	b.restartingAgents[tile] = false
+}
+
+// AgentRestartEnded: agent.restart of `tile` is over (Board.agentRestartEnded): a release held
+// meanwhile applies unless the relaunch was recorded, which took its place.
+func (b *Board) AgentRestartEnded(tile string) {
+	released := b.restartingAgents[tile]
+	delete(b.restartingAgents, tile)
+	if _, ok := b.objects[tile]; released && ok {
+		_ = b.ReleaseAgent(tile)
+	}
+}
+
 // RestartedAgent: the agent in `tile` was killed and is being relaunched (agent.restart,
 // Board.restartedAgent): the tile runs `command` now (what a reboot reruns), its agent is
 // `agent` (what it was, without what only the killed process knew: its draft and pid), and its
 // lifecycle is unknown until the new agent reports, but for a done the user hasn't seen
 // (unseenDone, the needs-you badge): that answer is still theirs to read, so the tile stays done
-// through the relaunch, also through the relaunched agent's reports that start no turn (an idle
-// from done stays done), until the user sees it or the relaunched agent starts a turn
-// (working), as without a restart. `lifecycle` is the tile's as the restart began, taken before
-// the kill as `agent` is: the killed agent's release as it exits may have cleared it since.
-// Waits on approvals the killed agent had end. Recorded once the old session is gone and its
-// agent session ended (EndAgentSession), before the relaunch starts, so what the relaunched
-// agent reports stays.
-func (b *Board) RestartedAgent(tile string, command []string, agent, lifecycle any) error {
+// through the relaunch, also through the relaunched agent's reports that start no turn
+// (ReportLifecycle), until the user sees it or the relaunched agent starts a turn (working), as
+// without a restart. A release the killed agent sent as it exited was held (AgentRestartBegan)
+// and is replaced by this. Waits on approvals the killed agent had end. Recorded once the old
+// session is gone and its agent session ended (EndAgentSession), before the relaunch starts, so
+// what the relaunched agent reports stays.
+func (b *Board) RestartedAgent(tile string, command []string, agent any) error {
 	terminal, err := b.Object(tile)
 	if err != nil {
 		return err
 	}
 	delete(b.pendingApprovals, tile)
 	b.relaunchedAgents[tile] = true
+	delete(b.restartingAgents, tile)
 	words := make([]any, len(command))
 	for i, w := range command {
 		words[i] = w
 	}
-	shown := terminal.Props["lifecycle"]
-	if shown == nil {
-		shown = lifecycle
-	}
 	var kept any
-	if unseenDone(shown) && !b.seenSinceWorking[tile] {
+	if shown := terminal.Props["lifecycle"]; unseenDone(shown) && !b.seenSinceWorking[tile] {
 		kept = model.Clone(shown)
 	}
 	if _, err := b.Update(tile, nil, nil, nil, map[string]any{"command": words, "lifecycle": kept, "agent": agent}, tile, ""); err != nil {
@@ -370,12 +395,11 @@ func unseenDone(lifecycle any) bool {
 	return l["state"] == "done" && l["seen"] != true
 }
 
-// ShowsKilledAgentsAnswer: terminal shows the unseen done of the agent agent.restart killed
-// (RestartedAgent) and its relaunched agent hasn't reported yet (Board.showsKilledAgentsAnswer):
-// what agent.wait sees as no lifecycle, so it waits for the relaunched agent's first report
-// rather than taking the killed one's answer.
-func (b *Board) ShowsKilledAgentsAnswer(terminal model.Object) bool {
-	return b.relaunchedAgents[terminal.ID] && !NotifyingReports(terminal) && unseenDone(terminal.Props["lifecycle"])
+// AwaitsRelaunchedAgent: agent.restart relaunched the agent in `tile` and no agent has reported
+// there since (relaunchedAgents, Board.awaitsRelaunchedAgent): whatever the tile shows,
+// agent.wait waits for the relaunched agent's first report.
+func (b *Board) AwaitsRelaunchedAgent(tile string) bool {
+	return b.relaunchedAgents[tile]
 }
 
 // NotifyingAgentSubmitted: Return was pressed in a terminal whose agent reports by
