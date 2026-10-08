@@ -50,7 +50,7 @@ switch (args[0]) {
     const until = flag("--until").split(",");
     if (!state.restarted) {
       if (!until.includes("done")) fail("timeout: old done-unseen did not reach the requested boundary");
-      if (state.scenario === "late-boundary") state.clockOffsetMs = 20_001;
+      if (state.scenario === "late-boundary") state.clockOffsetMs = state.clockOffsets.boundary;
       reply({ agent: oldAgent });
     }
     if (!state.message) {
@@ -77,7 +77,7 @@ switch (args[0]) {
   case "agent.list": {
     const unrelated = state.unrelatedEntry ? [state.unrelatedEntry] : [];
     if (!state.restarted) {
-      if (state.scenario === "late-old-identity") state.clockOffsetMs = 20_001;
+      if (state.scenario === "late-old-identity") state.clockOffsetMs = state.clockOffsets.boundary;
       reply({ agents: [...unrelated, oldAgent] });
     }
     const stage = state.stage++;
@@ -93,7 +93,7 @@ switch (args[0]) {
     } else {
       agent = fresh();
     }
-    if (state.expireStartup && stage >= 3) state.clockOffsetMs = 120_001;
+    if (state.expireStartup && stage >= 3) state.clockOffsetMs = state.clockOffsets.startup;
     if ((state.scenario === "identity-before-tell" && stage >= 4)
       || (state.scenario === "identity-after-ack" && state.acked?.length)) {
       agent = { ...agent, sessionId: "another-session", pid: 85861 };

@@ -7,6 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent } from "../clients/ts/src/generated";
 
+const RESERVE_MS = 300_000, WINDOW_MS = 20_000;
+const TEST_TIMEOUT_MS = WINDOW_MS * 1.5;
+
 type FixtureEvidence = {
   pass: boolean; oldAgent: Agent; restart: { status: string; ready: Agent };
   handoff: { status: string; messageId: string };
@@ -21,6 +24,7 @@ type Fixture = {
   dir: string; cli: string; out: string; state: string; handoff: string; preload?: string;
   env: Record<string, string | undefined>;
 };
+type FixtureOptions = { fakeClock?: boolean; timeoutMs?: number };
 
 const scratch: string[] = [];
 const processes = new Set<Subprocess>();
@@ -42,7 +46,7 @@ afterEach(async () => {
   }
 });
 
-function fixture(options: Record<string, unknown> = {}): Fixture {
+function fixture(options: Record<string, unknown> = {}, { fakeClock = false }: FixtureOptions = {}): Fixture {
   const dir = mkdtempSync(join(tmpdir(), "easl-rotation-test-"));
   scratch.push(dir);
   const state = join(dir, "state.json");
@@ -55,34 +59,7 @@ function fixture(options: Record<string, unknown> = {}): Fixture {
   const quote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
   writeFileSync(cli, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(join(import.meta.dir, "fixtures/rotation-easl.ts"))} "$@"\n`);
   chmodSync(cli, 0o700);
-  let preload: string | undefined;
-  if (options.expireStartup || options.scenario === "late-boundary" || options.scenario === "late-old-identity" || options.rejectStdout) {
-    // Test-only preload advances long phase deadlines or rejects a stream read; success and child-kill timing use the real clock.
-    preload = join(dir, "preload.ts");
-    writeFileSync(preload, `
-import { readFileSync, watch } from "node:fs";
-const state = () => JSON.parse(readFileSync(process.env.ROTATION_FIXTURE_STATE!, "utf8"));
-const now = Date.now;
-Date.now = () => now() + (state().clockOffsetMs ?? 0);
-if (state().rejectStdout) {
-  const text = Response.prototype.text;
-  let rejected = false;
-  Response.prototype.text = function() {
-    if (rejected) return text.call(this);
-    rejected = true;
-    return (async () => {
-      if (!state().hungPid) await new Promise<void>((resolve) => {
-        const watcher = watch(process.env.ROTATION_FIXTURE_STATE!, () => {
-          if (state().hungPid) { watcher.close(); resolve(); }
-        });
-        if (state().hungPid) { watcher.close(); resolve(); }
-      });
-      throw new Error("fixture stdout read rejected");
-    })();
-  };
-}
-`);
-  }
+  const preload = fakeClock ? join(import.meta.dir, "fixtures/rotation-clock.ts") : undefined;
   return {
     dir, cli, out, state, handoff, preload,
     env: {
@@ -92,7 +69,7 @@ if (state().rejectStdout) {
   };
 }
 
-function start(f: Fixture, timeoutMs = 320_000) {
+function start(f: Fixture, timeoutMs = RESERVE_MS + WINDOW_MS) {
   const child = Bun.spawn([
     process.execPath, ...(f.preload ? ["--preload", f.preload] : []), join(import.meta.dir, "rotate-lead.ts"),
     "--target", "canvas@canvas", "--file", f.handoff, "--out", f.out, "--easl", f.cli,
@@ -109,8 +86,8 @@ function start(f: Fixture, timeoutMs = 320_000) {
   return { child, result };
 }
 
-async function rotate(options: Record<string, unknown> = {}, timeoutMs = 320_000) {
-  return start(fixture(options), timeoutMs).result;
+async function rotate(options: Record<string, unknown> = {}, harness: FixtureOptions = {}) {
+  return start(fixture(options, harness), harness.timeoutMs).result;
 }
 
 function refused(evidence: FixtureEvidence, error: RegExp, restart: string, handoff = "not-sent") {
@@ -139,7 +116,7 @@ test("fresh native identity retaining done receives exactly one external OOB han
   }]);
   const beforeAck = state.calls.find((call) => call.evidence.handoff?.status === "queued");
   expect(beforeAck?.evidence.pass).toBe(false);
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 for (const [name, options] of [
   ["a retained old session", { scenario: "stale-session" }],
@@ -153,12 +130,14 @@ for (const [name, options] of [
   ["an active draft", { freshPatch: { draft: true } }],
 ] as const) {
   test(`${name} cannot receive the handoff`, async () => {
-    const { result, evidence, state } = await rotate({ ...options, expireStartup: true });
+    const { result, evidence, state } = await rotate({
+      ...options, expireStartup: true, clockOffsets: { startup: RESERVE_MS },
+    }, { fakeClock: true });
     expect(result.code).toBe(1);
     refused(evidence, /fresh native identity was not ready before the startup deadline/, "restarted");
     expect(evidence.steps.at(-1)?.args[0]).toBe("agent.list");
     expect(state.tells).toBeUndefined();
-  }, 30_000);
+  }, TEST_TIMEOUT_MS);
 }
 
 test("a server restart conflict leaves the handoff unsent and cannot claim success", async () => {
@@ -167,7 +146,7 @@ test("a server restart conflict leaves the handoff unsent and cannot claim succe
   refused(evidence, /easl agent.restart failed .*prompt pending/, "restarting");
   expect(evidence.steps.at(-1)?.args[0]).toBe("agent.restart");
   expect(state.tells).toBeUndefined();
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 test("a native session change before tell prevents the handoff", async () => {
   const { result, evidence, state } = await rotate({ scenario: "identity-before-tell" });
@@ -175,7 +154,7 @@ test("a native session change before tell prevents the handoff", async () => {
   refused(evidence, /fresh native identity changed before handoff/, "restarted");
   expect(evidence.steps.at(-1)?.args[0]).toBe("agent.list");
   expect(state.tells).toBeUndefined();
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 test("a tell rejected by easl cannot claim a successful handoff", async () => {
   const { result, evidence, state } = await rotate({ scenario: "tell-failure" });
@@ -183,7 +162,7 @@ test("a tell rejected by easl cannot claim a successful handoff", async () => {
   refused(evidence, /easl tell failed .*handoff rejected/, "ready", "sending");
   expect(evidence.steps.at(-1)?.args[0]).toBe("tell");
   expect(state.tells).toBeUndefined();
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 test("a queued handoff without an integration ACK cannot claim success", async () => {
   const { result, evidence, state } = await rotate({ scenario: "ack-timeout" });
@@ -192,7 +171,7 @@ test("a queued handoff without an integration ACK cannot claim success", async (
   expect(evidence.steps.at(-1)?.args[0]).toBe("agent.wait");
   expect(state.tells).toHaveLength(1);
   expect(state.acked).toBeUndefined();
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 test("a session change after tell cannot be mistaken for that handoff's delivery", async () => {
   const { result, evidence, state } = await rotate({ scenario: "identity-after-ack" });
@@ -201,26 +180,28 @@ test("a session change after tell cannot be mistaken for that handoff's delivery
   expect(evidence.steps.at(-1)?.args[0]).toBe("agent.list");
   expect(state.tells).toHaveLength(1);
   expect(state.observed.sessionId).not.toBe(state.tells?.[0].sessionId);
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 test("a timeout shorter than the post-boundary reserve cannot restart", async () => {
-  const { result, evidence, state } = await rotate({}, 20_000);
+  const { result, evidence, state } = await rotate({}, { timeoutMs: WINDOW_MS });
   expect(result.code).toBe(1);
   refused(evidence, /insufficient time.*post-boundary/, "not-started");
   expect(state.calls ?? []).toHaveLength(0);
   expect(state.tells).toBeUndefined();
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 for (const scenario of ["late-boundary", "late-old-identity"]) {
   test(`${scenario} cannot consume the reserved handoff budget`, async () => {
-    const { result, evidence, state } = await rotate({ scenario });
+    const { result, evidence, state } = await rotate({
+      scenario, clockOffsets: { boundary: WINDOW_MS + 1 },
+    }, { fakeClock: true });
     expect(result.code).toBe(1);
     refused(evidence, /insufficient time.*post-boundary/, "not-started");
     expect(state.calls.some((call) => call.args[0] === "agent.restart")).toBe(false);
     expect(state.tells).toBeUndefined();
     const wait = state.calls[0].args;
-    expect(Number(wait[wait.indexOf("--timeoutMs") + 1])).toBeLessThanOrEqual(20_000);
-  }, 30_000);
+    expect(Number(wait[wait.indexOf("--timeoutMs") + 1])).toBeLessThanOrEqual(WINDOW_MS);
+  }, TEST_TIMEOUT_MS);
 }
 
 for (const command of [
@@ -233,7 +214,7 @@ for (const command of [
     refused(evidence, /restart command did not preserve.*model.*thinking/, "restarted");
     expect(evidence.steps.at(-1)?.args[0]).toBe("agent.restart");
     expect(state.tells).toBeUndefined();
-  }, 30_000);
+  }, TEST_TIMEOUT_MS);
 }
 
 test("an odd unrelated closed-board entry cannot prevent the target's rotation", async () => {
@@ -242,7 +223,7 @@ test("an odd unrelated closed-board entry cannot prevent the target's rotation",
   expect(evidence.pass).toBe(true);
   expect(evidence.handoff.status).toBe("acknowledged");
   expect(state.tells).toHaveLength(1);
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 test("a user draft after delivery does not invalidate an acknowledged handoff", async () => {
   const { result, evidence, state } = await rotate({ scenario: "draft-after-delivery" });
@@ -251,20 +232,21 @@ test("a user draft after delivery does not invalidate an acknowledged handoff", 
   expect(evidence.handoff.status).toBe("acknowledged");
   expect(state.observed.draft).toBe(true);
   expect(state.tells).toHaveLength(1);
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 test("a hung external CLI is killed within the boundary deadline and recorded as failure", async () => {
-  const { result, evidence, state } = await rotate({ scenario: "hung-cli" }, 301_500);
+  const { result, evidence, state } = await rotate({ scenario: "hung-cli" }, { timeoutMs: RESERVE_MS + 1_500 });
   expect(result.code).toBe(1);
   refused(evidence, /easl agent.wait exceeded the rotation deadline/, "not-started");
   expect(evidence.steps.at(-1)?.timedOut).toBe(true);
   expect(state.tells).toBeUndefined();
   expect(state.hungPid).toBeDefined();
   expect(() => process.kill(state.hungPid!, 0)).toThrow();
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 test("a rejected stdout read kills the owned CLI child", async () => {
-  const f = fixture({ scenario: "hung-cli", rejectStdout: true });
+  // This fault-injection test depends on rotation-clock.ts's rejectStdout branch to exercise run's finally kill.
+  const f = fixture({ scenario: "hung-cli", rejectStdout: true }, { fakeClock: true });
   let watcher: FSWatcher;
   const completed = new Promise<FixtureEvidence>((resolve) => {
     watcher = watch(f.dir, (_event, name) => {
@@ -291,7 +273,7 @@ test("a rejected stdout read kills the owned CLI child", async () => {
   refused(evidence, /fixture stdout read rejected/, "not-started");
   expect(state.hungPid).toBeDefined();
   expect(leaked).toBe(false);
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 test("SIGTERM kills a real owned CLI child and records an interrupted unsent rotation", async () => {
   const f = fixture({ scenario: "hung-cli" });
@@ -317,4 +299,4 @@ test("SIGTERM kills a real owned CLI child and records an interrupted unsent rot
   expect(evidence.steps.at(-1)?.timedOut).toBe(false);
   expect(state.tells).toBeUndefined();
   expect(() => process.kill(pid!, 0)).toThrow();
-}, 30_000);
+}, TEST_TIMEOUT_MS);

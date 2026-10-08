@@ -158,7 +158,7 @@ async function main() {
       ]);
     } finally {
       clearTimeout(timer);
-      if (running.exitCode === null) {
+      if (running.exitCode === null && running.signalCode === null) {
         running.kill("SIGKILL");
         await running.exited;
       }
@@ -184,7 +184,6 @@ async function main() {
 
   function requirePostBoundaryBudget() {
     if (deadline - Date.now() < POST_BOUNDARY_BUDGET_MS) {
-      evidence.restart.status = "not-started";
       throw new Error("insufficient time for the reserved post-boundary restart and handoff budget");
     }
   }
@@ -197,18 +196,16 @@ async function main() {
     const boundary = await run([
       "agent.wait", "--target", config.target, "--until", "idle,done", "--timeoutMs", String(Math.max(1, boundaryDeadline - Date.now())),
     ], boundaryDeadline, true);
-    requirePostBoundaryBudget();
-    const old = await targetEntry(agentOf(boundary, "safe boundary").tile, boundaryDeadline);
+    const old = await targetEntry(agentOf(boundary, "safe boundary").tile, deadline);
     evidence.oldAgent = old;
     if (!atBoundary(old) || !isLiveNativeOmp(old) || old.draft !== false) {
       throw new Error("old safe idle/done boundary has no live native OOB identity");
     }
-    requirePostBoundaryBudget();
     // agent.restart, unforced and unretried, remains authoritative for every guard, including
     // pending prompts/messages, unknown drafts, focus, concurrent restart/paste and re-checks.
+    requirePostBoundaryBudget();
     evidence.restart.status = "restarting";
     await persist();
-    requirePostBoundaryBudget();
     const restarted = await run(["agent.restart", "--target", old.tile, "--mode", "fresh"], Math.min(deadline, Date.now() + RESTART_TIMEOUT_MS));
     if (!isObject(restarted) || !Array.isArray(restarted.command) || !restarted.command.every((word) => typeof word === "string")) {
       throw new Error("easl returned an invalid restart result");
