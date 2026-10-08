@@ -34,7 +34,8 @@ few hundred milliseconds started one per line (133 display-link threads in 5 s o
 The coordinator now takes a frame clock from its platform view (`makeFrameLink`,
 `TerminalFrameLink`): `AppTerminalView` gives it its own `NSView.displayLink` (macOS 14+), which
 fires on the main run loop, follows the view's screen, and is paused when idle and resumed when a
-frame is owed, never recreated. UIKit, and macOS 13, keep MSDisplayLink. Diff:
+frame is owed, never recreated. UIKit, and macOS 13, keep MSDisplayLink. `AppTerminalView.surfaceDidDraw()`
+is called after each drawn frame for the host to count (easl's `terminal.draw` metric). Diff:
 `patches/libghostty-spm-frame-link.patch`.
 
 What this doesn't remove: libghostty's own renderer (the prebuilt xcframework) runs a
