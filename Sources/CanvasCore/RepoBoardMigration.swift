@@ -142,14 +142,19 @@ public enum RepoBoardMigration {
             var (target, report, merged) = merge(byRepo[commonDir]!, into: existing?.snapshot, modified: existing.map { modified($0.url) } ?? .distantPast,
                                                  commonDir: commonDir, now: now)
             reports.append(report)
-            guard !dryRun else { continue }
+            // Nothing merged or backed up (every board a conflict): the target stays as it is.
+            guard !dryRun, !merged.isEmpty else { continue }
             target.revision += 1
             guard let data = try? encoder.encode(target),
                   (try? data.write(to: directory.appendingPathComponent("\(target.id).json"), options: .atomic)) != nil else { continue }
             for url in merged { backUp(url, in: directory) }
         }
         let report = Report(ranAt: now, dryRun: dryRun, repos: reports, nonGit: nonGit, unresolved: unresolved)
-        if !dryRun { appendToLedger(report, in: directory) }
+        // A repository's load that changed nothing (its boards still conflict, the same ones
+        // left unresolved) adds no run: each launch would add the same one.
+        let changedNothing = only != nil && reports.allSatisfy { $0.legacy.allSatisfy { $0.status == "conflict" } }
+            && unresolved.map(\.board) == pending(in: directory).unresolved
+        if !dryRun, !changedNothing { appendToLedger(report, in: directory) }
         return report
     }
 
@@ -311,6 +316,7 @@ public enum RepoBoardMigration {
                 return rerooter.reroot(object, branch: branch)
             }
             let tray = (snapshot.tray ?? []).map { rerooter.reroot($0) }
+            let messages = (snapshot.messages ?? [:]).mapValues { $0.map { rerooter.reroot($0) } }
 
             var region: CanvasObject?
             if legacy.url != base?.url, !objects.isEmpty {
@@ -360,6 +366,9 @@ public enum RepoBoardMigration {
                 ours.chosen = ours.chosen ?? theirs.chosen
                 target.promptTarget = ours
             }
+            // Old names keep reaching their terminals; messages not yet taken stay queued.
+            target.aliases = (target.aliases ?? [:]).merging(snapshot.aliases ?? [:]) { old, _ in old }.nilIfEmpty
+            target.messages = (target.messages ?? [:]).merging(messages) { old, new in old + new }.nilIfEmpty
             target.revision = max(target.revision, snapshot.revision)
             if !(anchor == .main && isMainCheckout(legacy)) || region != nil {
                 let path = GitWorktree.normalized(legacy.top)
@@ -539,6 +548,24 @@ struct Rerooter {
         return absolute.hasPrefix(top + "/") ? String(absolute.dropFirst(top.count + 1)) : nil
     }
 
+    /// Where the legacy board's root is in its worktree ("" at the top): what its relative paths
+    /// were relative to, beyond the top.
+    var place: String { oldRoot.hasPrefix(top + "/") ? String(oldRoot.dropFirst(top.count + 1)) : "" }
+
+    /// `worktreePath` without reporting: a path a cached copy repeats (a diagram's nodes).
+    func moved(_ path: String) -> String {
+        guard !path.hasPrefix("/") else { return path }
+        if anchor == .main, let relative = repoRelative(path) { return relative }
+        return absolute(path)
+    }
+
+    /// A diagram node's id, `<path>#<symbol>` (`CallGraphBuilder`), with its path moved as the
+    /// node's is, so the diagram's next build finds its nodes, expansions and bound arrows again.
+    func nodeID(_ id: String) -> String {
+        guard let hash = id.firstIndex(of: "#") else { return id }
+        return moved(String(id[..<hash])) + id[hash...]
+    }
+
     /// A path a tile with `ref` can read: relative stays relative (to the repository), anchored
     /// by the tile's branch; without a branch it becomes absolute in the worktree.
     mutating func tilePath(_ path: String, what: String) -> String {
@@ -603,9 +630,11 @@ struct Rerooter {
         case .note, .html:
             if let root = props["root"]?.string, !root.isEmpty {
                 props["root"] = .string(rootPath(root, what: what))
-            } else if refAnchor {
+            } else if refAnchor && place.isEmpty {
                 setRef()
-            } else if anchor == .absolute {
+            } else if anchor == .absolute || !place.isEmpty {
+                // Its relative links meant the legacy board's root, which the repository
+                // board's isn't (a `ref` reads from the top, so it can't say where either).
                 props["root"] = .string(rootPath(oldRoot, what: what))
             }
         case .changes:
@@ -613,8 +642,7 @@ struct Rerooter {
                 props["root"] = .string(rootPath(root, what: what))
             } else {
                 // Paths and Viewed keys were relative to the old root.
-                let place = oldRoot.hasPrefix(top + "/") ? String(oldRoot.dropFirst(top.count + 1)) : ""
-                func moved(_ path: String) -> String {
+                func inPlace(_ path: String) -> String {
                     guard !path.hasPrefix("/") else { return path }
                     if anchor == .absolute { return absolute(path) }
                     return place.isEmpty ? path : (place as NSString).appendingPathComponent(path)
@@ -622,7 +650,7 @@ struct Rerooter {
                 if anchor == .absolute {
                     props["root"] = .string(rootPath(oldRoot, what: what))
                 } else {
-                    if let paths = props["paths"]?.array { props["paths"] = .array(paths.map { $0.string.map { .string(moved($0)) } ?? $0 }) }
+                    if let paths = props["paths"]?.array { props["paths"] = .array(paths.map { $0.string.map { .string(inPlace($0)) } ?? $0 }) }
                     if refAnchor {
                         // A ref'd changes tile defaults to the branch's merge-base view; keep the
                         // uncommitted work it showed.
@@ -631,11 +659,46 @@ struct Rerooter {
                     }
                 }
                 if let viewed = props["viewed"]?.object {
-                    props["viewed"] = .object(Dictionary(viewed.map { (moved($0.key), $0.value) }, uniquingKeysWith: { a, _ in a }))
+                    props["viewed"] = .object(Dictionary(viewed.map { (inPlace($0.key), $0.value) }, uniquingKeysWith: { a, _ in a }))
                 }
             }
         case .image:
             if let path = props["path"]?.string { props["path"] = .string(worktreePath(path, what: what)) }
+        case .diagram:
+            // Its file, the graph as last computed (node paths and ids, its aim) and the nodes
+            // it expanded, as an image's path: nothing anchors a diagram by branch.
+            if let path = props["path"]?.string { props["path"] = .string(worktreePath(path, what: what)) }
+            if let expanded = props["expanded"]?.array { props["expanded"] = .array(expanded.map { $0.string.map { .string(nodeID($0)) } ?? $0 }) }
+            if var graph = props["graph"]?.object {
+                if var aim = graph["aim"]?.object, let path = aim["path"]?.string {
+                    aim["path"] = .string(moved(path))
+                    graph["aim"] = .object(aim)
+                }
+                if let root = graph["root"]?.string { graph["root"] = .string(nodeID(root)) }
+                if let nodes = graph["nodes"]?.array {
+                    graph["nodes"] = .array(nodes.map { node in
+                        guard var fields = node.object else { return node }
+                        if let id = fields["id"]?.string { fields["id"] = .string(nodeID(id)) }
+                        if let path = fields["path"]?.string { fields["path"] = .string(moved(path)) }
+                        return .object(fields)
+                    })
+                }
+                if let edges = graph["edges"]?.array {
+                    graph["edges"] = .array(edges.map { edge in
+                        guard var fields = edge.object else { return edge }
+                        for end in ["from", "to"] { if let id = fields[end]?.string { fields[end] = .string(nodeID(id)) } }
+                        return .object(fields)
+                    })
+                }
+                props["graph"] = .object(graph)
+            }
+        case .arrow:
+            // An end bound to a diagram's node names it by id.
+            for end in ["from", "to"] {
+                guard var binding = props[end]?.object, let node = binding["node"]?.string else { continue }
+                binding["node"] = .string(nodeID(node))
+                props[end] = .object(binding)
+            }
         case .terminal:
             if let cwd = props["cwd"]?.string, !cwd.isEmpty {
                 let directory = absolute(cwd)
@@ -666,6 +729,13 @@ struct Rerooter {
             break
         }
         return mention
+    }
+
+    /// A queued peer message, its mentions rewritten as staged ones.
+    mutating func reroot(_ message: AgentMessage) -> AgentMessage {
+        var message = message
+        message.mentions = message.mentions.map { reroot($0) }
+        return message
     }
 }
 

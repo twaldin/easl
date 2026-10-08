@@ -342,6 +342,102 @@ struct RepoBoardTests {
         try expectAdopted(old, by: BoardRegistry(store: BoardStore(directory: boards)).open(root: folder), commonDir: commonDir)
     }
 
+    /// A folder board whose objects the repository board already holds stays as it is (a
+    /// conflict), and the launches that find it again add no report.
+    @Test func aFoldersBoardThatConflictsIsReportedOnceNotAtEveryLaunch() async throws {
+        let (folder, old) = try folderBoard()
+        let commonDir = try await makeRepository(folder)
+        var copy = old.snapshot
+        copy.id = BoardStore.repoID(commonDir: commonDir)
+        copy.repo = RepoRecord(commonDir: commonDir)
+        try RepoBoardMigration.encoder.encode(copy).write(to: boards.appendingPathComponent("\(copy.id).json"))
+        func runs() throws -> Int {
+            try RepoBoardMigration.decoder.decode(RepoBoardMigration.Ledger.self, from: Data(contentsOf: RepoBoardMigration.ledgerURL(boards))).runs.count
+        }
+        let before = try runs()
+
+        for _ in 1...2 { _ = BoardRegistry(store: BoardStore(directory: boards)).open(root: folder) }
+        #expect(try runs() == before)
+        #expect(FileManager.default.fileExists(atPath: boards.appendingPathComponent("\(old.id).json").path))
+        #expect(try stored(copy.id).revision == copy.revision, "the repository board isn't rewritten")
+    }
+
+    /// `proj/app`'s board (keyed by its path) with what `build` makes, saved; a launch leaves it
+    /// alone; then `proj` becomes a repository with a commit and opens. The repository board.
+    func adoptedSubfolderBoard(_ build: (Board) throws -> Void) async throws -> Board {
+        let project = dir.appendingPathComponent("proj"), app = project.appendingPathComponent("app")
+        try FileManager.default.createDirectory(at: app.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try "a\n".write(to: app.appendingPathComponent("src/a.txt"), atomically: true, encoding: .utf8)
+        let store = BoardStore(directory: boards)
+        let old = store.load(root: app)
+        try build(old)
+        store.save(old)
+        #expect(store.migrateToRepoBoards()?.nonGit == [old.id])
+        for arguments in [["init", "-q", "--template=", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "init"]] {
+            try await TempRepo.run(arguments, in: project)
+        }
+        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: project)
+        #expect(board.repo?.merged == [old.id])
+        return board
+    }
+
+    /// A message queued for a terminal of the folder's board, not yet taken, stays queued (its
+    /// mention's path now the repository board's), and the terminal's old name still reaches it.
+    @Test func anAdoptedBoardsQueuedMessagesAndOldTerminalNamesComeWithIt() async throws {
+        var terminal: ObjectID = ""
+        let board = try await adoptedSubfolderBoard { old in
+            terminal = old.create(type: .terminal, props: .object(["cwd": .string(old.root.path)])).id
+            let mention = Mention(id: "men_1", target: .code(object: terminal, path: "src/a.txt", lines: LineRange(start: 1, end: 1)), label: "a.txt:1", stagedAt: Date())
+            old.messages[terminal] = [AgentMessage(text: "look at this", from: nil, label: "ci", when: .now, mentions: [mention])]
+            old.aliases["reviewer"] = terminal
+        }
+        #expect(board.aliases["reviewer"] == terminal)
+        let queued = try #require(board.messages[terminal]?.first)
+        #expect(queued.text == "look at this" && queued.label == "ci")
+        guard case .code(_, let path, _, _, _, _, _) = queued.mentions.first?.target else {
+            Issue.record("the code mention is gone: \(queued.mentions)")
+            return
+        }
+        #expect(path == "app/src/a.txt")
+    }
+
+    /// A note of `proj/app`'s board read its links in `proj/app`; on `proj`'s board it still does.
+    @Test func anAdoptedSubfoldersNotesStillReadTheirFolder() async throws {
+        var note: ObjectID = "", html: ObjectID = ""
+        let board = try await adoptedSubfolderBoard { old in
+            note = old.create(type: .note, props: .object(["markdown": .string("see src/a.txt:1")])).id
+            html = old.create(type: .html, props: .object(["html": .string("<img src=\"shot.png\">")])).id
+        }
+        #expect(board.objects[note]?.props["root"] == .string("app"))
+        #expect(board.objects[html]?.props["root"] == .string("app"))
+    }
+
+    /// A diagram of `proj/app`'s board: its file, the graph it last drew, the node it expanded and
+    /// an arrow bound to a node all name `app/…` on `proj`'s board, so its next build finds them.
+    @Test func anAdoptedSubfoldersDiagramKeepsItsFileNodesAndBoundArrows() async throws {
+        var diagram: ObjectID = "", arrow: ObjectID = ""
+        let node = "src/a.txt#run", moved = "app/src/a.txt#run"
+        let board = try await adoptedSubfolderBoard { old in
+            let graph: JSONValue = .object(["aim": .object(["kind": .string("calls"), "path": .string("src/a.txt")]), "root": .string(node),
+                                            "nodes": .array([.object(["id": .string(node), "name": .string("run"), "path": .string("src/a.txt")])]),
+                                            "edges": .array([.object(["from": .string(node), "to": .string(node), "lines": .array([.number(1)])])]),
+                                            "computedAt": .string("2026-10-07T00:00:00Z")])
+            diagram = old.create(type: .diagram, props: .object(["kind": .string("calls"), "path": .string("src/a.txt"), "symbol": .string("run"),
+                                                                 "expanded": .array([.string(node)]), "graph": graph])).id
+            arrow = old.create(type: .arrow, props: .object(["from": .object(["object": .string(diagram), "node": .string(node)]),
+                                                             "to": .object(["point": .array([.number(900), .number(50)])])])).id
+        }
+        let props = try #require(board.objects[diagram]?.props)
+        #expect(props["path"] == .string("app/src/a.txt"))
+        #expect(props["expanded"] == .array([.string(moved)]))
+        #expect(props["graph"]?["aim"]?["path"] == .string("app/src/a.txt"))
+        #expect(props["graph"]?["root"] == .string(moved))
+        #expect(props["graph"]?["nodes"]?.array?.first?["id"] == .string(moved))
+        #expect(props["graph"]?["nodes"]?.array?.first?["path"] == .string("app/src/a.txt"))
+        #expect(props["graph"]?["edges"]?.array?.first?["from"] == .string(moved))
+        #expect(board.objects[arrow]?.props["from"]?["node"] == .string(moved))
+    }
+
     @Test func aTerminalRecordsTheWorktreeAndBranchItStartsIn() async throws {
         let (repo, worktree) = try await fixture()
         let registry = BoardRegistry(store: BoardStore(directory: boards, debounce: 60))
