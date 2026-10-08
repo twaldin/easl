@@ -1,0 +1,189 @@
+package store
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/twaldin/easl/easld/internal/model"
+)
+
+var adoptedAt = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+
+// repository is dir made a git repository with a commit, its subdirectory `sub` holding a.go;
+// its common git directory.
+func repository(t *testing.T, dir string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"commit", "-q", "-m", "init"}} {
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return Containing(dir).CommonDir
+}
+
+func adoptedObject(id string, kind model.ObjectType, x float64, props map[string]any) model.Object {
+	return model.Object{ID: id, Type: kind, Frame: model.Frame{X: x, Y: 0, W: 200, H: 100}, Z: 1, Rev: 1, CreatedBy: model.Actor{Kind: "user"},
+		CreatedAt: adoptedAt, UpdatedAt: adoptedAt, Props: props}
+}
+
+// stored writes snap into the store at dir.
+func stored(t *testing.T, dir string, snap *Snapshot) {
+	t.Helper()
+	format := Format
+	snap.Format = &format
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, snap.ID+".json"), encoded(t, snap), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readStored(t *testing.T, s *Store, id string) *Snapshot {
+	t.Helper()
+	snap, err := s.Read(id)
+	if err != nil || snap == nil {
+		t.Fatalf("board %s: %v (%v)", id, snap, err)
+	}
+	return snap
+}
+
+func codeMention(id, path string) model.Mention {
+	return model.Mention{ID: id, Target: map[string]any{"kind": "code", "object": "obj_code", "path": path}, Label: "a.go", StagedAt: adoptedAt}
+}
+
+// A subfolder's board taken into its repository's: the terminals' unacknowledged messages come
+// along after the repository board's own (their mentions re-rooted as the tray's are), and so do
+// renamed terminals' old names, the repository board's kept where both have one. Its notes and
+// HTML tiles without a root keep resolving against the subfolder, and its diagrams' files (the
+// symbol's, the aim's, every node's, and the paths in node ids, wherever an id is: expanded
+// nodes, the root, edges, an arrow's bound end) are re-rooted as an image's path.
+func TestASubfoldersBoardKeepsItsMessagesAliasesNoteRootsAndDiagramPaths(t *testing.T) {
+	dir := t.TempDir()
+	repo, boards := filepath.Join(dir, "repo"), filepath.Join(dir, "boards")
+	commonDir := repository(t, repo)
+	sub := filepath.Join(repo, "sub")
+	ours := Message{ID: "msg_ours", Text: "first", When: "next-turn", Mentions: []model.Mention{}, QueuedAt: adoptedAt}
+	theirs := Message{ID: "msg_theirs", Text: "second", From: "obj_term", When: "now", Mentions: []model.Mention{codeMention("men_1", "a.go")}, QueuedAt: adoptedAt}
+	stored(t, boards, &Snapshot{ID: RepoID(commonDir), Root: Standardized(repo), Revision: 3,
+		Objects: []model.Object{adoptedObject("obj_there", model.Terminal, 0, map[string]any{})},
+		Aliases: map[string]string{"old": "obj_there", "kept": "obj_there"}, Messages: map[string][]Message{"obj_term": {ours}},
+		Repo: &RepoRecord{CommonDir: commonDir, Worktrees: []WorktreeRecord{}}})
+	stored(t, boards, &Snapshot{ID: PathID(sub), Root: Standardized(sub), Revision: 2, Objects: []model.Object{
+		adoptedObject("obj_term", model.Terminal, 0, map[string]any{}),
+		adoptedObject("obj_note", model.Note, 300, map[string]any{"markdown": "![x](x.png)"}),
+		adoptedObject("obj_html", model.HTML, 600, map[string]any{"html": "<a href=b.html>b</a>"}),
+		adoptedObject("obj_diagram", model.Diagram, 900, map[string]any{"path": "a.go", "expanded": []any{"a.go#main", "plain"}, "graph": map[string]any{
+			"aim": map[string]any{"kind": "calls", "path": "a.go", "direction": "both"}, "root": "a.go#main",
+			"nodes": []any{map[string]any{"id": "a.go#main", "path": "a.go", "kept": true}, map[string]any{"id": "/elsewhere/b.go#g#h", "path": "/elsewhere/b.go"}},
+			"edges": []any{map[string]any{"from": "a.go#main", "to": "/elsewhere/b.go#g#h"}}}}),
+		adoptedObject("obj_arrow", model.Arrow, 0, map[string]any{"from": map[string]any{"object": "obj_diagram", "node": "a.go#main"}, "to": map[string]any{"object": "obj_note"}}),
+	}, Aliases: map[string]string{"old": "obj_term", "worker": "obj_term"}, Messages: map[string][]Message{"obj_term": {theirs}}})
+
+	s := New(boards, time.Hour, nil)
+	s.Loading(RepoID(commonDir), commonDir, adoptedAt)
+	got := readStored(t, s, RepoID(commonDir))
+	if want := map[string]string{"old": "obj_there", "kept": "obj_there", "worker": "obj_term"}; !reflect.DeepEqual(got.Aliases, want) {
+		t.Errorf("aliases %v, want %v", got.Aliases, want)
+	}
+	moved := theirs
+	moved.Mentions = []model.Mention{codeMention("men_1", "sub/a.go")}
+	if want := map[string][]Message{"obj_term": {ours, moved}}; !reflect.DeepEqual(got.Messages, want) {
+		t.Errorf("messages %+v, want %+v", got.Messages, want)
+	}
+	objects := map[string]model.Object{}
+	for _, o := range got.Objects {
+		objects[o.ID] = o
+	}
+	for _, id := range []string{"obj_note", "obj_html"} {
+		if root := objects[id].Props["root"]; root != "sub" {
+			t.Errorf("%s root %v, want sub", id, root)
+		}
+	}
+	diagram := objects["obj_diagram"].Props
+	want := map[string]any{"path": "sub/a.go", "expanded": []any{"sub/a.go#main", "plain"}, "graph": map[string]any{
+		"aim": map[string]any{"kind": "calls", "path": "sub/a.go", "direction": "both"}, "root": "sub/a.go#main",
+		"nodes": []any{map[string]any{"id": "sub/a.go#main", "path": "sub/a.go", "kept": true}, map[string]any{"id": "/elsewhere/b.go#g#h", "path": "/elsewhere/b.go"}},
+		"edges": []any{map[string]any{"from": "sub/a.go#main", "to": "/elsewhere/b.go#g#h"}}}}
+	if !reflect.DeepEqual(diagram, want) {
+		t.Errorf("diagram %v\nwant %v", diagram, want)
+	}
+	if arrow := objects["obj_arrow"].Props; arrow["from"].(map[string]any)["node"] != "sub/a.go#main" || !reflect.DeepEqual(arrow["to"], map[string]any{"object": "obj_note"}) {
+		t.Errorf("arrow %v", arrow)
+	}
+}
+
+// A board of the repository's top level, adopted, leaves its notes without a root: the board's
+// root is theirs still.
+func TestTheTopLevelsBoardsNotesKeepNoRoot(t *testing.T) {
+	dir := t.TempDir()
+	repo, boards := filepath.Join(dir, "repo"), filepath.Join(dir, "boards")
+	commonDir := repository(t, repo)
+	stored(t, boards, &Snapshot{ID: PathID(repo), Root: Standardized(repo), Revision: 1, Objects: []model.Object{
+		adoptedObject("obj_note", model.Note, 0, map[string]any{"markdown": "x"}),
+	}})
+	s := New(boards, time.Hour, nil)
+	s.Loading(RepoID(commonDir), commonDir, adoptedAt)
+	got := readStored(t, s, RepoID(commonDir))
+	if len(got.Objects) != 1 || got.Objects[0].Props["root"] != nil {
+		t.Errorf("objects %+v", got.Objects)
+	}
+}
+
+// A load that takes in nothing (its folder board's objects clash with the repository board's)
+// leaves the repository board's file as it is and adds no run to the ledger: none when there is
+// no ledger, none each time when there is.
+func TestAConflictOnlyLoadAddsNoLedgerRun(t *testing.T) {
+	dir := t.TempDir()
+	repo, boards := filepath.Join(dir, "repo"), filepath.Join(dir, "boards")
+	commonDir := repository(t, repo)
+	stored(t, boards, &Snapshot{ID: RepoID(commonDir), Root: Standardized(repo), Revision: 1,
+		Objects: []model.Object{adoptedObject("obj_same", model.Note, 0, map[string]any{})}, Repo: &RepoRecord{CommonDir: commonDir, Worktrees: []WorktreeRecord{}}})
+	stored(t, boards, &Snapshot{ID: PathID(repo), Root: Standardized(repo), Revision: 1, Objects: []model.Object{adoptedObject("obj_same", model.Note, 0, map[string]any{})}})
+	repoFile := filepath.Join(boards, RepoID(commonDir)+".json")
+	before, err := os.ReadFile(repoFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	New(boards, time.Hour, nil).Loading(RepoID(commonDir), commonDir, adoptedAt)
+	ledger := filepath.Join(boards, BackupFolder, LedgerFile)
+	if _, err := os.Stat(ledger); !os.IsNotExist(err) {
+		t.Errorf("a ledger was written: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(ledger), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ran := `{"runs":[{"dryRun":false,"nonGit":[],"ranAt":"2026-10-01T12:00:00Z","repos":[],"unresolved":[]}]}`
+	if err := os.WriteFile(ledger, []byte(ran), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		New(boards, time.Hour, nil).Loading(RepoID(commonDir), commonDir, adoptedAt)
+	}
+	data, err := os.ReadFile(ledger)
+	var runs struct {
+		Runs []any `json:"runs"`
+	}
+	if err != nil || json.Unmarshal(data, &runs) != nil || len(runs.Runs) != 1 {
+		t.Errorf("ledger %s (%v), want the one run it had", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(boards, PathID(repo)+".json")); err != nil {
+		t.Errorf("the conflicting board's file moved: %v", err)
+	}
+	if after, _ := os.ReadFile(repoFile); string(after) != string(before) {
+		t.Errorf("the repository board was rewritten:\n%s\nwas\n%s", after, before)
+	}
+}

@@ -182,7 +182,7 @@ func (r *Router) opened(b *board.Board, root string) {
 			}
 		}
 		for _, t := range terminals {
-			if s, ok := running[session.Prefix+t.o.ID]; ok && (s.Unreachable || s.Carries(t.labels)) {
+			if s, ok := running[session.Prefix+t.o.ID]; ok && (s.Unreachable || s.Carries(t.labels, t.spawn.Merged...)) {
 				continue
 			}
 			if r.restarting(t.o.ID) {
@@ -237,9 +237,10 @@ func ownedTerminals(b *board.Board) []model.Object {
 // before found them so too (the same session: the same process). Run a grace apart, a session is
 // ended only after a grace as an orphan, and only while it is still that process
 // (Manager.EndIf: `session.spawn` and `session.kill` don't wait for the sweep). Another home's
-// session is never ended, nor one labelled with a board that isn't open, nor one that doesn't
-// answer or has no pid. Each one ended is logged in its board's history; its spooled reports go
-// with it unless a terminal of that id is on an open board. It returns once the sweep is done.
+// session is never ended, nor one labelled with a board that isn't open (or taken in by one
+// that is: its board label is in that board's `repo.merged`), nor one that doesn't answer or has
+// no pid. Each one ended is logged in its board's history; its spooled reports go with it unless
+// a terminal of that id is on an open board. It returns once the sweep is done.
 func (r *Router) SweepOrphans() {
 	if r.Owns == nil {
 		return
@@ -253,6 +254,14 @@ func (r *Router) SweepOrphans() {
 	for _, b := range r.reg.SortedBoards() {
 		boards[b.ID()] = b
 		owned[b.ID()] = map[string]bool{}
+	}
+	for _, b := range r.reg.SortedBoards() {
+		// A session of a board b took in is b's terminal's (mergedInto).
+		for _, id := range mergedInto(b) {
+			if _, open := boards[id]; !open {
+				boards[id] = b
+			}
+		}
 		for _, o := range ownedTerminals(b) {
 			owned[b.ID()][o.ID] = true
 		}
@@ -279,7 +288,7 @@ func (r *Router) sweep(boards map[string]*board.Board, owned map[string]map[stri
 	for _, s := range list {
 		id := s.Labels["canvas.board"]
 		b, open := boards[id]
-		if s.Unreachable || s.PID <= 0 || s.Labels[session.HomeLabel] != home || s.Labels["canvas.tile"] != s.Tile || !open || owned[id][s.Tile] {
+		if s.Unreachable || s.PID <= 0 || s.Labels[session.HomeLabel] != home || s.Labels["canvas.tile"] != s.Tile || !open || owned[b.ID()][s.Tile] {
 			continue
 		}
 		found[s.Name] = s.PID
@@ -302,7 +311,12 @@ func (r *Router) sweep(boards map[string]*board.Board, owned map[string]map[stri
 // left as they are. An end that fails is tried again at each sweep, logged only the first time
 // for that process.
 func (r *Router) reap(b *board.Board, s session.Session, spool bool) {
-	ended, err := r.Sessions.EndIf(s.Tile, r.Owns.Labels(b.ID(), s.Tile), s.PID)
+	// The sweep found b by the session's board label: b's own, or a board b took in.
+	var merged []string
+	if id := s.Labels["canvas.board"]; id != b.ID() {
+		merged = []string{id}
+	}
+	ended, err := r.Sessions.EndIf(s.Tile, r.Owns.Labels(b.ID(), s.Tile), s.PID, merged...)
 	failedBefore := r.lifecycle.unended[s.Name] == s.PID
 	if err == nil {
 		delete(r.lifecycle.unended, s.Name)

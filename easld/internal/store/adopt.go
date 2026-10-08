@@ -147,12 +147,15 @@ func (s *Store) mergeIntoRepositoryBoard(commonDir string, now time.Time) {
 		existingModified = info.ModTime()
 	}
 	target, report, merged := mergePathBoards(boards, existing, existingModified, commonDir, now)
-	target.Revision++
-	if err := s.Write(target); err != nil {
-		return
-	}
-	for _, file := range merged {
-		backUp(file, s.Dir, now)
+	// Nothing merged or backed up (every board a conflict): the target stays as it is.
+	if len(merged) > 0 {
+		target.Revision++
+		if err := s.Write(target); err != nil {
+			return
+		}
+		for _, file := range merged {
+			backUp(file, s.Dir, now)
+		}
 	}
 	for _, l := range report.Legacy {
 		if l.Status != "conflict" {
@@ -404,6 +407,22 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 		target.FinalAnswers = mergedMap(target.FinalAnswers, snap.FinalAnswers)
 		target.TurnErrors = mergedMap(target.TurnErrors, snap.TurnErrors)
 		target.LifecycleSeq = mergedMap(target.LifecycleSeq, snap.LifecycleSeq)
+		// Renamed terminals' old names and their unacknowledged messages come along: a message
+		// the board drops is neither delivered nor bounced.
+		target.Aliases = mergedMap(target.Aliases, snap.Aliases)
+		for _, tile := range sortedKeys(snap.Messages) {
+			if target.Messages == nil {
+				target.Messages = map[string][]Message{}
+			}
+			for _, m := range snap.Messages[tile] {
+				mentions := make([]model.Mention, len(m.Mentions))
+				for i, men := range m.Mentions {
+					mentions[i] = r.rerootMention(men)
+				}
+				m.Mentions = mentions
+				target.Messages[tile] = append(target.Messages[tile], m)
+			}
+		}
 		if theirs := snap.PromptTarget; theirs != nil {
 			ours := PromptTargetState{FocusOrder: []string{}}
 			if target.PromptTarget != nil {
@@ -722,9 +741,11 @@ func (r *rerooter) reroot(o model.Object) model.Object {
 			}
 		}
 	case model.Note, model.HTML:
+		// A note's relative images and links resolve against its root, the board's when it
+		// names none: the old root, unless that is the new one.
 		if root, _ := props["root"].(string); root != "" {
 			props["root"] = r.rootPath(root, what)
-		} else if r.anchor == anchorAbsolute {
+		} else if r.anchor == anchorAbsolute || r.place() != "" {
 			props["root"] = r.rootPath(r.oldRoot, what)
 		}
 	case model.Changes:
@@ -733,10 +754,7 @@ func (r *rerooter) reroot(o model.Object) model.Object {
 			break
 		}
 		// Paths and Viewed keys were relative to the old root.
-		place := ""
-		if strings.HasPrefix(r.oldRoot, r.top+"/") {
-			place = r.oldRoot[len(r.top)+1:]
-		}
+		place := r.place()
 		moved := func(path string) string {
 			switch {
 			case strings.HasPrefix(path, "/"):
@@ -770,6 +788,58 @@ func (r *rerooter) reroot(o model.Object) model.Object {
 		if path, ok := props["path"].(string); ok {
 			props["path"] = r.worktreePath(path, what)
 		}
+	case model.Diagram:
+		// Its file, the graph as last computed (node paths and ids, its aim) and the nodes it
+		// expanded, as an image's path: nothing anchors a diagram by branch.
+		if path, ok := props["path"].(string); ok {
+			props["path"] = r.worktreePath(path, what)
+		}
+		if expanded, ok := props["expanded"].([]any); ok {
+			for i, id := range expanded {
+				if id, ok := id.(string); ok {
+					expanded[i] = r.nodeID(id)
+				}
+			}
+		}
+		graph, _ := props["graph"].(map[string]any)
+		if aim, ok := graph["aim"].(map[string]any); ok {
+			if path, ok := aim["path"].(string); ok {
+				aim["path"] = r.moved(path)
+			}
+		}
+		if root, ok := graph["root"].(string); ok {
+			graph["root"] = r.nodeID(root)
+		}
+		nodes, _ := graph["nodes"].([]any)
+		for _, node := range nodes {
+			if fields, ok := node.(map[string]any); ok {
+				if id, ok := fields["id"].(string); ok {
+					fields["id"] = r.nodeID(id)
+				}
+				if path, ok := fields["path"].(string); ok {
+					fields["path"] = r.moved(path)
+				}
+			}
+		}
+		edges, _ := graph["edges"].([]any)
+		for _, edge := range edges {
+			if fields, ok := edge.(map[string]any); ok {
+				for _, end := range []string{"from", "to"} {
+					if id, ok := fields[end].(string); ok {
+						fields[end] = r.nodeID(id)
+					}
+				}
+			}
+		}
+	case model.Arrow:
+		// An end bound to a diagram's node names it by id.
+		for _, end := range []string{"from", "to"} {
+			if binding, ok := props[end].(map[string]any); ok {
+				if node, ok := binding["node"].(string); ok {
+					binding["node"] = r.nodeID(node)
+				}
+			}
+		}
 	case model.Terminal:
 		if cwd, _ := props["cwd"].(string); cwd != "" {
 			dir := r.absolute(cwd)
@@ -783,6 +853,39 @@ func (r *rerooter) reroot(o model.Object) model.Object {
 		}
 	}
 	return o
+}
+
+// place is the old root relative to the worktree's top level ("" when it is the top level).
+func (r *rerooter) place() string {
+	if strings.HasPrefix(r.oldRoot, r.top+"/") {
+		return r.oldRoot[len(r.top)+1:]
+	}
+	return ""
+}
+
+// moved is Rerooter.moved: worktreePath without reporting, for a path a cached copy repeats (a
+// diagram's nodes).
+func (r *rerooter) moved(path string) string {
+	if strings.HasPrefix(path, "/") {
+		return path
+	}
+	if r.anchor == anchorMain {
+		if rel, ok := r.repoRelative(path); ok {
+			return rel
+		}
+	}
+	return r.absolute(path)
+}
+
+// nodeID is Rerooter.nodeID: a diagram node's id, `<path>#<symbol>` (CallGraphBuilder), its path
+// moved as the node's is, so the diagram's next build finds its nodes, expansions and bound
+// arrows again.
+func (r *rerooter) nodeID(id string) string {
+	path, symbol, found := strings.Cut(id, "#")
+	if !found {
+		return id
+	}
+	return r.moved(path) + "#" + symbol
 }
 
 // rerootMention is Rerooter.reroot(_: Mention): a staged code or image mention's path, rewritten
@@ -818,7 +921,9 @@ func backUp(file, dir string, now time.Time) {
 // appendToLedger is RepoBoardMigration.appendToLedger: run appended to the ledger's runs (its
 // earlier runs kept as they decode), pretty-printed with sorted keys and unescaped slashes. A
 // ledger that isn't one starts again, as the app's would. The app reads the last run's
-// `unresolved` as the legacy boards to retry: easld identifies none, so they carry over.
+// `unresolved` as the legacy boards to retry: easld identifies none, so they carry over. A run
+// that took in nothing (only conflicts) and leaves the last run's `unresolved` as it was isn't
+// appended: each load would add it again.
 func appendToLedger(run *MigrationRun, dir string) {
 	path := filepath.Join(dir, BackupFolder, LedgerFile)
 	ledger := map[string]any{}
@@ -831,21 +936,36 @@ func appendToLedger(run *MigrationRun, dir string) {
 	if !ok {
 		ledger, runs = map[string]any{}, []any{}
 	}
+	var earlier []any
 	if len(runs) > 0 {
 		last, _ := runs[len(runs)-1].(map[string]any)
-		if earlier, ok := last["unresolved"].([]any); ok {
-			done := map[string]bool{}
-			for _, repo := range run.Repos {
-				for _, l := range repo.Legacy {
-					done[l.Board] = l.Status != "conflict"
-				}
-			}
-			for _, u := range earlier {
-				if board, _ := u.(map[string]any)["board"].(string); !done[board] {
-					run.Unresolved = append(run.Unresolved, u)
-				}
-			}
+		earlier, _ = last["unresolved"].([]any)
+	}
+	done := map[string]bool{}
+	for _, repo := range run.Repos {
+		for _, l := range repo.Legacy {
+			done[l.Board] = l.Status != "conflict"
 		}
+	}
+	for _, u := range earlier {
+		if board, _ := u.(map[string]any)["board"].(string); !done[board] {
+			run.Unresolved = append(run.Unresolved, u)
+		}
+	}
+	// A repository's load that changed nothing (its boards still conflict, the same ones left
+	// unresolved) adds no run: each load would add the same one.
+	boards := func(list []any) []string {
+		ids := []string{}
+		for _, u := range list {
+			board, _ := u.(map[string]any)["board"].(string)
+			ids = append(ids, board)
+		}
+		return ids
+	}
+	if !slices.ContainsFunc(run.Repos, func(repo RepoReport) bool {
+		return slices.ContainsFunc(repo.Legacy, func(l LegacyReport) bool { return l.Status != "conflict" })
+	}) && slices.Equal(boards(run.Unresolved), boards(earlier)) {
+		return
 	}
 	ledger["runs"] = append(runs, run.json())
 	data, err := swiftjson.Encode(ledger, true, false)
