@@ -18,7 +18,7 @@
 //                                                    --lines: a mouse wheel's notches (dy 1 = one line up)
 //   dev-input <pid> magnify <x> <y> <amount>         pinch at x,y: zoom × (1 + amount) per step (0.05 in, -0.05 out)
 //   dev-input <pid> perf [ms]                        an idle DevPerf span (EASL_DEV_PERF=1), default 5000 ms
-//   dev-input <pid> idle on|off|auto                 feed the user-idle policy terminals redraw by (5 redraws/s
+//   dev-input <pid> idle on|off|auto                 feed the user-idle policy terminals redraw by (2 redraws/s
 //                                                    when idle) a minute idle / zero, or follow the Mac again
 //   dev-input <pid> panel <path>                     choose <path> in the window's open panel (a page's file
 //                                                    upload), which runs out of process where no click reaches

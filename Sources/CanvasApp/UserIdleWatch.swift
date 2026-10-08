@@ -61,7 +61,7 @@ final class UserIdleWatch {
 
     private func apply(idleSeconds: TimeInterval) {
         guard policy.sampled(idleSeconds: idleSeconds) else { return }
-        NSLog("UserIdleWatch: terminals %@", policy.isIdle ? "redraw 5 times a second (idle)" : "redraw at full rate (active)")
+        NSLog("UserIdleWatch: terminals %@", policy.isIdle ? "redraw twice a second (idle)" : "redraw at full rate (active)")
         NotificationCenter.default.post(name: Self.changed, object: self)
     }
 }

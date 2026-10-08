@@ -19,8 +19,11 @@ import Foundation
 public struct IdleRedraw: Equatable, Sendable {
     /// Seconds without input before terminals slow down.
     public static let threshold: TimeInterval = 60
-    /// Redraws per second for an idle terminal (spinners still read as alive).
-    public static let idleHertz = 5.0
+    /// Redraws per second for an idle terminal: a spinner still reads as moving at 2, and each
+    /// redraw after an occlusion is a full one for Ghostty (measured 2026-10-08: at 5 a second,
+    /// 15 terminals cost the app +22 % CPU for GPU −64 % and WindowServer −4 points; 2 halves
+    /// that cost).
+    public static let idleHertz = 2.0
     /// How long each redraw's visibility lasts.
     public static let pulse: TimeInterval = 0.05
 
