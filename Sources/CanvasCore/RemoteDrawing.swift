@@ -61,7 +61,7 @@ public final class RemoteDrawing {
             return
         }
         busy(true)
-        ticket = mirror.render(object, scale: scale()) { [weak self] outcome in self?.answered(outcome) }
+        ticket = mirror.render(object, scale: scale(), wanted: { [weak self] in self?.live ?? false }) { [weak self] outcome in self?.answered(outcome) }
     }
 
     /// The host changed the object: draws once its changes have settled.
@@ -91,6 +91,11 @@ public final class RemoteDrawing {
     private func answered(_ outcome: Outcome) {
         ticket = nil
         busy(false)
+        if case .failure(let error) = outcome, error is RenderTicket.Withdrawn {
+            again = false
+            owed = true
+            return
+        }
         drawn(outcome)
         guard again else { return }
         again = false

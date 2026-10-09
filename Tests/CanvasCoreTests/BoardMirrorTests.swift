@@ -463,6 +463,46 @@ final class BoardMirrorTests {
         #expect(Set(renderRequests.withLock { $0.first } ?? []) == [kept.id, gone.id, other.id])
     }
 
+    @Test func aTileThatLeftTheViewWhileItsRefusedListWasOutIsAskedForOnlyWhenItIsBack() async throws {
+        let kept = note("kept"), gone = note("gone", at: 400), left = note("panned away", at: 800)
+        let gate = HostGate()
+        let renderServer = serveRenders(FakeHost(gate: gate, gone: [gone.id]))
+        try renderServer.start()
+        defer { renderServer.stop() }
+        let (mirror, board) = try await mirror(rendersAt: renderSocket)
+        defer { mirror.close() }
+        let tiles = Tiles(mirror, on: board)
+        try await eventually { renderRequests.withLock { $0.count } == 1 }
+        tiles.setLive(left.id, false)
+        await gate.open()
+        try await eventually { tiles.answers[kept.id] != nil && tiles.answers[gone.id] != nil }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(tiles.answers[kept.id] == [true])
+        #expect(rendered[left.id] == 1, "asked for in the refused list only, not again while away")
+        #expect(tiles.answers[left.id] == nil, "no Not drawn badge for it")
+        tiles.setLive(left.id, true)
+        try await eventually { tiles.answers[left.id] == [true] }
+        #expect(rendered[left.id] == 2)
+    }
+
+    @Test func tilesThatFitOneByOneButNotTogetherGoInSeveralRequests() async throws {
+        let renderServer = serveRenders()
+        try renderServer.start()
+        defer { renderServer.stop() }
+        // 1.5 M pixels each at the tiles' scale of 1, 4.7 M together.
+        let big = (0..<3).map { host.create(type: .note, props: .object(["markdown": .string("big \($0)")]), frame: Frame(x: Double($0) * 1600, y: 0, w: 1500, h: 1000)) }
+        let (mirror, board) = try await mirror(rendersAt: renderSocket)
+        defer { mirror.close() }
+        let tiles = Tiles(mirror, on: board)
+        try await eventually { big.allSatisfy { tiles.answers[$0.id] == [true] } }
+        let requests = renderRequests.withLock { $0 }
+        #expect(requests.count == 2)
+        for ids in requests {
+            let region = RenderMath.snapped(RenderMath.union(ids.compactMap { board.objects[$0]?.frame })!)
+            #expect(region.w * region.h <= RenderQueue.listPixels, "the host's reply for \(ids.count) tiles stays within its line limit")
+        }
+    }
+
     // MARK: Host-drawn tiles after a reconnect (`RemoteDrawing`, `BoardMirror.onRedraw`)
 
     @Test func afterOnlyTheBoardLinkDropsEachTileDrawsOnceMoreAndOneBuiltMeanwhileDrawsOnce() async throws {

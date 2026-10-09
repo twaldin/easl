@@ -21,11 +21,20 @@ public final class RenderTicket {
     /// The host refused a list holding it (a target deleted there that the viewer hasn't heard
     /// of yet): it goes by itself from then on.
     fileprivate var alone = false
+    /// Its tile still wants the drawing. A tile that leaves the view can't take back an ask that is
+    /// out, so this is asked again if a refused list puts the ask back to waiting.
+    fileprivate let wanted: @MainActor () -> Bool
     private let answer: @MainActor (Result<BoardMirror.Render, Error>) -> Void
 
-    fileprivate init(id: ObjectID, scale: Double, answer: @escaping @MainActor (Result<BoardMirror.Render, Error>) -> Void) {
+    /// The answer to an ask that a refused list put back after its tile had left the view: no
+    /// drawing was made, and the tile asks again once it is back.
+    public struct Withdrawn: Error {}
+
+    fileprivate init(id: ObjectID, scale: Double, wanted: @escaping @MainActor () -> Bool,
+                     answer: @escaping @MainActor (Result<BoardMirror.Render, Error>) -> Void) {
         self.id = id
         self.scale = scale
+        self.wanted = wanted
         self.answer = answer
     }
 
@@ -57,6 +66,11 @@ final class RenderQueue {
     /// Tiles in one request. The host loads a list's pages at once: 20 HTML cards took 0.95 s
     /// together and 0.29 s each one by one.
     static let listLimit = 20
+    /// Most pixels a list's region may have at its scale. The host sends the region's PNG base64
+    /// on one line and drops a link whose unsent replies pass 32 MiB (`SocketServer`); at worst a
+    /// PNG is 4 bytes a pixel and base64 4/3 of that, so 4 M pixels is under 22 MiB. A tile goes
+    /// alone whatever its size, as it did before lists.
+    static let listPixels = 4_000_000.0
     /// The host draws only the targets: the viewer draws notes, shapes, arrows and groups itself,
     /// and a list's region would otherwise have the host draw every other tile under it again.
     /// These are the types every host that answers `inline` (0.2.0 on) knows: a type it doesn't
@@ -86,8 +100,9 @@ final class RenderQueue {
 
     /// Queues an ask. `answer` is called once, on the main actor, unless the ticket is taken back
     /// first; never before this returns.
-    func add(_ id: ObjectID, scale: Double, answer: @escaping @MainActor (Result<BoardMirror.Render, Error>) -> Void) -> RenderTicket {
-        let ticket = RenderTicket(id: id, scale: min(4, max(0.1, scale)), answer: answer)
+    func add(_ id: ObjectID, scale: Double, wanted: @escaping @MainActor () -> Bool,
+             answer: @escaping @MainActor (Result<BoardMirror.Render, Error>) -> Void) -> RenderTicket {
+        let ticket = RenderTicket(id: id, scale: min(4, max(0.1, scale)), wanted: wanted, answer: answer)
         waiting.append(ticket)
         scheduleFlush()
         return ticket
@@ -134,11 +149,17 @@ final class RenderQueue {
             let drawings = await Self.split(result, ids: ids, scale: scale, hostName: hostName)
             for ticket in batch { ticket.finish(drawings[ticket.id] ?? .failure(ApiRouter.Failure("unavailable", "\(hostName) didn't draw it"))) }
         } catch let failure as EaslConnection.Failure where batch.count > 1 && failure.code == "not_found" {
+            var again: [RenderTicket] = []
             for ticket in batch {
+                guard ticket.wanted() else {
+                    ticket.finish(.failure(RenderTicket.Withdrawn()))
+                    continue
+                }
                 ticket.state = .waiting
                 ticket.alone = true
+                again.append(ticket)
             }
-            waiting.insert(contentsOf: batch, at: 0)
+            waiting.insert(contentsOf: again, at: 0)
         } catch let failure as EaslConnection.Failure {
             for ticket in batch { ticket.finish(.failure(ApiRouter.Failure(failure.code, failure.message))) }
         } catch {
@@ -158,8 +179,9 @@ final class RenderQueue {
     /// Which waiting asks (indices into `asks`) the next request carries: nearest the user first,
     /// those in `view` before the rest, each by the distance from the view's centre to theirs,
     /// then by arrival (by arrival alone without a view). The first, and those after it of its
-    /// scale and on its side of the view's edge, up to `listLimit`: tiles out of view never hold
-    /// up the ones in it. An ask the host refused in a list goes by itself.
+    /// scale and on its side of the view's edge, up to `listLimit` and while their region stays
+    /// within `listPixels`: tiles out of view never hold up the ones in it. An ask the host refused
+    /// in a list goes by itself.
     private static func next(_ asks: [(id: ObjectID, scale: Double, alone: Bool)], frames: [ObjectID: Frame], view: Frame?) -> [Int] {
         func rank(_ index: Int) -> (Int, Double, Int) {
             guard let view, let frame = frames[asks[index].id] else { return (0, 0, index) }
@@ -169,8 +191,19 @@ final class RenderQueue {
         let ranks = asks.indices.map(rank)
         let ranked = asks.indices.sorted { ranks[$0] < ranks[$1] }
         guard let lead = ranked.first else { return [] }
-        if asks[lead].alone { return [lead] }
-        return Array(ranked.filter { !asks[$0].alone && asks[$0].scale == asks[lead].scale && ranks[$0].0 == ranks[lead].0 }.prefix(listLimit))
+        guard !asks[lead].alone, var region = frames[asks[lead].id] else { return [lead] }
+        let scale = asks[lead].scale
+        var picked = [lead]
+        for index in ranked.dropFirst() where picked.count < listLimit {
+            guard !asks[index].alone, asks[index].scale == scale, ranks[index].0 == ranks[lead].0, let frame = frames[asks[index].id],
+                  let grown = RenderMath.union([region, frame]) else { continue }
+            // The host draws the targets' union snapped out to whole points.
+            let snapped = RenderMath.snapped(grown)
+            guard snapped.w * snapped.h * scale * scale <= listPixels else { continue }
+            region = grown
+            picked.append(index)
+        }
+        return picked
     }
 
     /// One reply as each target's drawing, or why not. The picture is decoded once, off the main

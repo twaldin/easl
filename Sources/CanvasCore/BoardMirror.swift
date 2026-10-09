@@ -504,10 +504,12 @@ public final class BoardMirror: BoardHost {
     }
 
     /// Asks the host for `id`'s drawing at `scale`; it goes with the other waiting asks nearest
-    /// the view (`RenderQueue`). `answer` is called once, on the main actor, unless the ticket is
-    /// taken back first: the drawing, or why not (offline, the host's refusal, a picture this Mac
-    /// can't read).
-    public func render(_ id: ObjectID, scale: Double, answer: @escaping @MainActor (Result<Render, Error>) -> Void) -> RenderTicket {
-        queue.add(id, scale: scale, answer: answer)
+    /// the view (`RenderQueue`). `wanted`: whether its tile still wants it (is near the view),
+    /// asked before a refused list's asks go again. `answer` is called once, on the main actor,
+    /// unless the ticket is taken back first: the drawing, or why not (offline, the host's refusal,
+    /// a picture this Mac can't read, `RenderTicket.Withdrawn`).
+    public func render(_ id: ObjectID, scale: Double, wanted: @escaping @MainActor () -> Bool,
+                       answer: @escaping @MainActor (Result<Render, Error>) -> Void) -> RenderTicket {
+        queue.add(id, scale: scale, wanted: wanted, answer: answer)
     }
 }
