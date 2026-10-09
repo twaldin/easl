@@ -111,14 +111,12 @@ struct HostedTerminalTests {
         for (n, list) in lists.enumerated() {
             try list.write(to: home.appendingPathComponent(n == lists.count - 1 ? "list-last" : "list-\(n)"), atomically: true, encoding: .utf8)
         }
-        try executable(home.appendingPathComponent(".local/bin/zmx"), """
-        #!/bin/sh
-        d="\(home.path)"
-        case "$1" in
-        list) n=$(cat "$d/lists" 2>/dev/null || echo 0); echo $((n + 1)) > "$d/lists"; f="$d/list-$n"; [ -f "$f" ] || f="$d/list-last"; cat "$f" ;;
-        attach) printf 'attach %s SHELL=%s ZMX_DIR=%s\\n' "$2" "$SHELL" "$ZMX_DIR" ;;
-        esac
-        """)
+        let zmx = home.appendingPathComponent(".local/bin/zmx")
+        if !fm.fileExists(atPath: zmx.path) {
+            try fm.createDirectory(at: zmx.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../Fixtures/hosted-zmx.sh")
+            try fm.createSymbolicLink(at: zmx, withDestinationURL: fixture)
+        }
     }
 
     func listed(_ labels: String) -> String {
@@ -159,6 +157,15 @@ struct HostedTerminalTests {
             #expect(text.contains("belongs to another easl instance or board (\(owner))"), "\(labels): \(text)")
             #expect(!text.contains("attach "), "\(labels): never attached")
         }
+    }
+
+    @Test func theHostSideKeepsAMergedBoardsSession() async throws {
+        let home = try scratch()
+        defer { try? FileManager.default.removeItem(at: home) }
+        try fakeZmx(home: home, lists: [listed("canvas.board=brd_old\tcanvas.home=home\tcanvas.tile=\(tile)")])
+        let (status, output) = try await sh(HostedTerminal.attach(session: session, home: "home", board: "brd_repo", tile: tile), env: ["HOME": home.path])
+        #expect(status == 0, "\(String(decoding: output, as: UTF8.self))")
+        #expect(String(decoding: output, as: UTF8.self) == "attach \(session) SHELL=/bin/false ZMX_DIR=\(home.path)/.local/state/easl/zmx\n")
     }
 
     /// A call to the host's easld (`HostedTerminal.request` running `easldRelay`, here without

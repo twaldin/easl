@@ -68,3 +68,24 @@ esac
 		t.Errorf("without zmx: %v", reply)
 	}
 }
+
+func TestSessionSpawnKeepsAMergedBoardsSession(t *testing.T) {
+	f := newFixture(t)
+	home := t.TempDir()
+	zmx, err := filepath.Abs("../../../Tests/Fixtures/hosted-zmx.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := "  name=canvas-obj_x\tpid=7\tclients=0\tcanvas.home=mac\tcanvas.board=brd_old\tcanvas.tile=obj_x\n"
+	if err := os.WriteFile(filepath.Join(home, "list-last"), []byte(list), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.router.Sessions = &session.Manager{Zmx: zmx, Dir: filepath.Join(home, "zmx-dir"), Shell: "/bin/sh", Home: home, Env: []string{"HOME=" + home, "PATH=/usr/bin:/bin"}}
+	reply := f.router.HandleConn(map[string]any{"id": 1, "method": "session.spawn", "params": map[string]any{
+		"tile": "obj_x", "labels": map[string]any{"canvas.home": "mac", "canvas.board": "brd_repo", "canvas.tile": "obj_x"},
+	}}, f.conn).(map[string]any)
+	result, _ := reply["result"].(map[string]any)
+	if reply["ok"] != true || result["session"] != "canvas-obj_x" || result["created"] != false {
+		t.Fatalf("merged board re-check: %v", reply)
+	}
+}
