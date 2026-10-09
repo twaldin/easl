@@ -159,18 +159,38 @@ final class BoardMirrorTests {
         return hash & 0xFFFFFF
     }
 
+    /// The body colour (0xRRGGBB) of a drawing: its pixel halfway down the body, below the title band.
+    static func bodyColour(_ render: BoardMirror.Render) -> UInt32? {
+        let image = render.image, title = Int((RenderMath.tileTitleHeight * render.scale).rounded())
+        guard image.height > title, let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                                           space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let pixels = context.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        // The bitmap's first row is the image's top.
+        let at = ((title + (image.height - title) / 2) * image.width + image.width / 2) * 4
+        return UInt32(pixels[at]) << 16 | UInt32(pixels[at + 1]) << 8 | UInt32(pixels[at + 2])
+    }
+
     /// What `CanvasView` does with a remote board's host-drawn tiles: one `RemoteDrawing` per
-    /// object, drawn when the object appears, again when it changes, and when the mirror says so.
+    /// object, drawn when the object appears, again when it changes, and when the mirror says so,
+    /// and told when it comes near the view or leaves it (`TileFrameView`, `startAsCard`).
     @MainActor final class Tiles {
         private let mirror: BoardMirror
+        private let live: @MainActor (CanvasObject) -> Bool
         private var drawings: [ObjectID: RemoteDrawing] = [:]
         /// How often the mirror said to draw again.
         private(set) var redraws = 0
         /// Each answer by object: whether it was the host's drawing.
         private(set) var answers: [ObjectID: [Bool]] = [:]
+        /// Each drawing's body colour, by object.
+        private(set) var colours: [ObjectID: [UInt32]] = [:]
+        /// Why each answer that wasn't a drawing wasn't, by object.
+        private(set) var reasons: [ObjectID: [String]] = [:]
 
-        init(_ mirror: BoardMirror, on board: Board) {
+        /// `live`: whether a tile is near the view when it is made.
+        init(_ mirror: BoardMirror, on board: Board, live: @escaping @MainActor (CanvasObject) -> Bool = { _ in true }) {
             self.mirror = mirror
+            self.live = live
             board.onEvent = { [weak self] event in
                 guard let self else { return }
                 switch event {
@@ -182,10 +202,16 @@ final class BoardMirrorTests {
             mirror.onRedraw = { [weak self] in
                 guard let self else { return }
                 redraws += 1
-                for drawing in drawings.values { drawing.redraw() }
+                for drawing in drawings.values { drawing.draw() }
             }
             for object in board.objects.values { add(object) }
         }
+
+        /// The tile came near the view or left it.
+        func setLive(_ id: ObjectID, _ live: Bool) { drawings[id]?.setLive(live) }
+
+        /// The badge's ↻.
+        func refresh(_ id: ObjectID) { drawings[id]?.draw() }
 
         private func add(_ object: CanvasObject) {
             guard drawings[object.id] == nil else { return }
@@ -193,10 +219,18 @@ final class BoardMirrorTests {
             // Weak: a test can end with a render out, and `close` answers it after the test is gone.
             let drawing = RemoteDrawing(object: id, mirror: mirror, settle: 0.2, scale: { 1 }, drawn: { [weak self] outcome in
                 guard let self else { return }
-                if case .success = outcome { answers[id, default: []].append(true) } else { answers[id, default: []].append(false) }
+                switch outcome {
+                case .success(let render):
+                    answers[id, default: []].append(true)
+                    colours[id, default: []].append(BoardMirrorTests.bodyColour(render) ?? 0xFFFF_FFFF)
+                case .failure(let error):
+                    answers[id, default: []].append(false)
+                    reasons[id, default: []].append(BoardMirror.reason(error))
+                }
             })
             drawings[id] = drawing
             drawing.draw()
+            if !live(object) { drawing.setLive(false) }
         }
     }
 
@@ -343,6 +377,90 @@ final class BoardMirrorTests {
         try await eventually { cards.allSatisfy { tiles.answers[$0.id] != nil } }
         let failed = cards.filter { tiles.answers[$0.id] != [true] }.count
         #expect(failed == 0, "\(failed) of 40 tiles not drawn")
+    }
+
+    /// A card of a kanban board on the host, in column `col`, row `row`.
+    func card(col: Int, row: Int) -> CanvasObject {
+        host.create(type: .note, props: .object(["markdown": .string("card \(col).\(row)")]), frame: Frame(x: Double(col) * 330, y: Double(row) * 230, w: 300, h: 200))
+    }
+
+    @Test func theTilesInViewAreAskedForFirstAndTogetherAndTilesAwayFromItNotAtAll() async throws {
+        let renderServer = serveRenders()
+        try renderServer.start()
+        defer { renderServer.stop() }
+        let cards = (0..<10).flatMap { row in (0..<6).map { card(col: $0, row: row) } }
+        let (mirror, board) = try await mirror(rendersAt: renderSocket)
+        defer { mirror.close() }
+        let view = Frame(x: 10, y: 10, w: 900, h: 400)
+        board.viewport = { view }
+        let near = Frame(x: view.x - 300, y: view.y - 300, w: view.w + 600, h: view.h + 600)
+        let tiles = Tiles(mirror, on: board, live: { $0.frame.intersects(near) })
+        let inView = Set(cards.filter { $0.frame.intersects(view) }.map(\.id))
+        let nearby = Set(cards.filter { $0.frame.intersects(near) }.map(\.id)).subtracting(inView)
+        #expect(inView.count == 6 && nearby.count == 10)
+        try await eventually { inView.union(nearby).allSatisfy { tiles.answers[$0] == [true] } }
+        #expect(renderRequests.withLock { $0.map(Set.init) } == [inView, nearby])
+        #expect(inView.union(nearby).allSatisfy { tiles.colours[$0] == [Self.colour(of: $0)] }, "each tile shows its own part of the host's picture")
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(Set(rendered.keys) == inView.union(nearby), "the 44 tiles away from the view are never asked for")
+    }
+
+    @Test func oneRequestIsOutAtATimeAndATileThatLeavesTheViewBeforeItsTurnIsNotAskedFor() async throws {
+        let gate = HostGate()
+        let renderServer = serveRenders(FakeHost(gate: gate))
+        try renderServer.start()
+        defer { renderServer.stop() }
+        let first = note("first")
+        let (mirror, board) = try await mirror(rendersAt: renderSocket)
+        defer { mirror.close() }
+        let tiles = Tiles(mirror, on: board)
+        try await eventually { renderRequests.withLock { $0 } == [[first.id]] }
+        let left = note("panned away", at: 400), stayed = note("stayed", at: 800)
+        try await eventually { board.objects[left.id] != nil && board.objects[stayed.id] != nil }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(renderRequests.withLock { $0 } == [[first.id]])
+        tiles.setLive(left.id, false)
+        await gate.open()
+        try await eventually { tiles.answers[first.id] == [true] && tiles.answers[stayed.id] == [true] }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(renderRequests.withLock { $0 } == [[first.id], [stayed.id]])
+        #expect(tiles.answers[left.id] == nil, "taken back before it left: no request and no Not drawn badge")
+        tiles.setLive(left.id, true)
+        try await eventually { tiles.answers[left.id] == [true] }
+        #expect(rendered == [first.id: 1, stayed.id: 1, left.id: 1])
+    }
+
+    @Test func aTileChangedAwayFromTheViewIsDrawnOnceWhenItComesBack() async throws {
+        let renderServer = serveRenders()
+        try renderServer.start()
+        defer { renderServer.stop() }
+        let away = note("away")
+        let (mirror, board) = try await mirror(rendersAt: renderSocket)
+        defer { mirror.close() }
+        let tiles = Tiles(mirror, on: board, live: { _ in false })
+        _ = try host.update(away.id, props: .object(["markdown": .string("one")]))
+        _ = try host.update(away.id, props: .object(["markdown": .string("two")]))
+        try await eventually { board.objects[away.id]?.props["markdown"]?.string == "two" }
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(rendered.isEmpty)
+        tiles.setLive(away.id, true)
+        try await eventually { tiles.answers[away.id] == [true] }
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(rendered == [away.id: 1])
+    }
+
+    @Test func aListTheHostRefusesForATileDeletedThereStillDrawsTheOthers() async throws {
+        let kept = note("kept"), gone = note("gone", at: 400), other = note("other", at: 800)
+        let renderServer = serveRenders(FakeHost(gone: [gone.id]))
+        try renderServer.start()
+        defer { renderServer.stop() }
+        let (mirror, board) = try await mirror(rendersAt: renderSocket)
+        defer { mirror.close() }
+        let tiles = Tiles(mirror, on: board)
+        try await eventually { [kept, gone, other].allSatisfy { tiles.answers[$0.id] != nil } }
+        #expect(tiles.answers[kept.id] == [true] && tiles.answers[other.id] == [true])
+        #expect(tiles.answers[gone.id] == [false] && tiles.reasons[gone.id]?.first?.contains("is not on board") == true)
+        #expect(Set(renderRequests.withLock { $0.first } ?? []) == [kept.id, gone.id, other.id])
     }
 
     // MARK: Host-drawn tiles after a reconnect (`RemoteDrawing`, `BoardMirror.onRedraw`)

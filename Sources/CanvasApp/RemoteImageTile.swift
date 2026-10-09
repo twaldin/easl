@@ -15,8 +15,8 @@ final class RemoteImageTile: NSView, TileContent {
     private let badgeRow: NSStackView
     /// The host's last drawing of the body.
     private var image: NSImage?
-    /// The requests for the host's drawing (`RemoteDrawing`: one at a time, a burst of changes
-    /// draws once).
+    /// The asks for the host's drawing (`RemoteDrawing`: one at a time, a burst of changes draws
+    /// once, only while the tile is near the view).
     private lazy var drawing = RemoteDrawing(
         object: object.id, mirror: remote.mirror,
         scale: { [weak self] in Double(self?.window?.backingScaleFactor ?? 2) },
@@ -79,10 +79,11 @@ final class RemoteImageTile: NSView, TileContent {
 
     @objc private func refreshPressed() { drawing.draw() }
 
-    /// The link to the host dropped and is back (`BoardMirror.onRedraw`): asks for a fresh drawing.
-    /// The host's read after the drop announces only objects that changed, so a tile whose drawing
-    /// failed or went stale meanwhile gets no other cue.
-    func redraw() { drawing.redraw() }
+    /// The link to the host dropped and is back (`BoardMirror.onRedraw`): asks for a fresh drawing,
+    /// now if the tile is near the view, else once it is. The host's read after the drop announces
+    /// only objects that changed, so a tile whose drawing failed or went stale meanwhile gets no
+    /// other cue.
+    func redraw() { drawing.draw() }
 
     /// What the host answered: its drawing of the body, or why not.
     private func show(_ outcome: RemoteDrawing.Outcome) {
@@ -99,16 +100,13 @@ final class RemoteImageTile: NSView, TileContent {
         }
     }
 
-    /// The part of the host's render under the tile's body (below its title bar, which the tile
-    /// frame here draws itself), by where the host had the object when it drew it: the whole
-    /// image (the object alone) when the host didn't say.
+    /// The part of the host's drawing under the tile's body: the object's pixels below its title
+    /// bar, which the tile frame here draws itself.
     static func body(of render: BoardMirror.Render) -> NSImage? {
-        guard let source = NSBitmapImageRep(data: render.image)?.cgImage else { return nil }
-        let scale = render.scale, title = RenderMath.tileTitleHeight * scale
-        let object = render.pixels ?? Frame(x: 0, y: 0, w: Double(source.width), h: Double(source.height))
-        let crop = CGRect(x: object.x, y: object.y + title, width: object.w, height: max(scale, object.h - title)).integral
-        let cropped = source.cropping(to: crop.intersection(CGRect(x: 0, y: 0, width: source.width, height: source.height))) ?? source
-        return NSImage(cgImage: cropped, size: NSSize(width: Double(cropped.width) / scale, height: Double(cropped.height) / scale))
+        let image = render.image, scale = render.scale, title = RenderMath.tileTitleHeight * scale
+        let crop = CGRect(x: 0, y: title, width: Double(image.width), height: max(scale, Double(image.height) - title)).integral
+        guard let body = image.cropping(to: crop.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))) else { return nil }
+        return NSImage(cgImage: body, size: NSSize(width: Double(body.width) / scale, height: Double(body.height) / scale))
     }
 
     func update(_ object: CanvasObject) {
@@ -118,7 +116,8 @@ final class RemoteImageTile: NSView, TileContent {
         drawing.changed()
     }
 
-    func setLive(_ live: Bool) {}
+    /// Near the view or not (`CanvasView.shouldBeLive`): a tile away from it asks the host for nothing.
+    func setLive(_ live: Bool) { drawing.setLive(live) }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
         guard let image else { return .placeholder(request, "not drawn by \(remote.host.name) yet") }

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// A user's write to a remote board, already applied there as a preview, for its host.
@@ -44,7 +45,7 @@ public final class BoardMirror: BoardHost {
     /// Subscriptions, reads, writes and prompts.
     public let connection: EaslConnection
     /// `view.render`'s own link: the host answers one link's requests in order, and a render may
-    /// wait seconds for a page.
+    /// wait seconds for a page. `queue` keeps one request on it at a time.
     private let renders: EaslConnection
     /// Nil until `load` succeeded.
     public private(set) var board: Board?
@@ -93,7 +94,11 @@ public final class BoardMirror: BoardHost {
     /// How many times the link went down after the board loaded (a read that spans one reads again).
     private var drops = 0
     private var listeners: [Task<Void, Never>] = []
-    /// How long a `view.render` may take before it fails `timeout`.
+    /// The tiles' asks for the host's drawings, sent on `renders` one request at a time.
+    private lazy var queue = RenderQueue(link: renders, board: boardID, hostName: hostName, timeout: renderTimeout) { [weak self] in
+        (self?.board?.objects.mapValues(\.frame) ?? [:], self?.board?.viewport())
+    }
+    /// How long a `view.render` may take, from when it is sent, before it fails `timeout`.
     private let renderTimeout: Duration
 
     public init(hostName: String, board: BoardID, connection: EaslConnection, renders: EaslConnection, renderTimeout: Duration = .seconds(30)) {
@@ -128,12 +133,14 @@ public final class BoardMirror: BoardHost {
         return board
     }
 
-    /// Ends both links; the board stays as last seen.
+    /// Ends both links; the board stays as last seen. Asks for drawings not sent yet are answered
+    /// `unavailable`.
     public func close() {
         for task in listeners { task.cancel() }
         listeners = []
         connection.close()
         renders.close()
+        queue.close()
     }
 
     private func listen() {
@@ -487,33 +494,20 @@ public final class BoardMirror: BoardHost {
         return result
     }
 
-    /// An object as the host draws it (`view.render` `inline`): the image's bytes, the board rect
-    /// they cover, and where the object is in them as the host laid it out when it drew it (a
-    /// move here meanwhile doesn't change what the image shows).
-    public struct Render: Sendable {
-        public var image: Data
-        public var canvasRect: Frame
+    /// An object as the host draws it (`view.render` `inline`): its whole frame, title bar on top,
+    /// cut from the host's picture where the host had the object when it drew it (a move here
+    /// meanwhile doesn't change what the image shows), top-left origin.
+    public struct Render {
+        public var image: CGImage
+        /// Pixels per point the host drew at.
         public var scale: Double
-        /// The object's pixels in `image`, top-left origin (`RenderedObject.pixelRect`); nil from
-        /// a host that didn't say.
-        public var pixels: Frame?
     }
 
-    public func render(_ id: ObjectID, scale: Double) async throws -> Render {
-        let params: JSONValue = .object([
-            "board": .string(boardID), "target": .string(id), "inline": .bool(true),
-            "scale": .number(min(4, max(0.1, scale))), "timeoutMs": .number(8000),
-        ])
-        let result: JSONValue
-        do {
-            result = try await renders.request("view.render", params, timeout: renderTimeout)
-        } catch let failure as EaslConnection.Failure {
-            throw ApiRouter.Failure(failure.code, failure.message)
-        }
-        guard let data = result["data"]?.string.flatMap({ Data(base64Encoded: $0) }), let rect = result["canvasRect"] else {
-            throw ApiRouter.Failure("unavailable", "\(hostName) sent no image (an easl without view.render inline)")
-        }
-        let pixels = result["objects"]?.array?.first { $0["id"]?.string == id }?["pixelRect"].flatMap { try? $0.decode(Frame.self) }
-        return Render(image: data, canvasRect: try rect.decode(Frame.self), scale: result["scale"]?.number ?? scale, pixels: pixels)
+    /// Asks the host for `id`'s drawing at `scale`; it goes with the other waiting asks nearest
+    /// the view (`RenderQueue`). `answer` is called once, on the main actor, unless the ticket is
+    /// taken back first: the drawing, or why not (offline, the host's refusal, a picture this Mac
+    /// can't read).
+    public func render(_ id: ObjectID, scale: Double, answer: @escaping @MainActor (Result<Render, Error>) -> Void) -> RenderTicket {
+        queue.add(id, scale: scale, answer: answer)
     }
 }
