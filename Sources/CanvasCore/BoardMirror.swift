@@ -93,12 +93,15 @@ public final class BoardMirror: BoardHost {
     /// How many times the link went down after the board loaded (a read that spans one reads again).
     private var drops = 0
     private var listeners: [Task<Void, Never>] = []
+    /// How long a `view.render` may take before it fails `timeout`.
+    private let renderTimeout: Duration
 
-    public init(hostName: String, board: BoardID, connection: EaslConnection, renders: EaslConnection) {
+    public init(hostName: String, board: BoardID, connection: EaslConnection, renders: EaslConnection, renderTimeout: Duration = .seconds(30)) {
         self.hostName = hostName
         boardID = board
         self.connection = connection
         self.renders = renders
+        self.renderTimeout = renderTimeout
     }
 
     /// Subscribes, reads the board and returns it; throws the host's failure (`not_found`: no such
@@ -503,7 +506,7 @@ public final class BoardMirror: BoardHost {
         ])
         let result: JSONValue
         do {
-            result = try await renders.request("view.render", params, timeout: .seconds(30))
+            result = try await renders.request("view.render", params, timeout: renderTimeout)
         } catch let failure as EaslConnection.Failure {
             throw ApiRouter.Failure(failure.code, failure.message)
         }
