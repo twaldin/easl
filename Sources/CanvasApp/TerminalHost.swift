@@ -229,9 +229,9 @@ final class TerminalHost {
         if connecting == nil { lost(lastError ?? "") }
     }
 
-    /// While connected, opens the relay again every 30 s (one `relay.open`, a no-op while it is
-    /// open), so it comes back when the host's easld restarts, or a connection that didn't reach
-    /// the gate disarmed it; what the integrations spooled meanwhile replays then (`catchUp`).
+    /// While connected, opens the relay again every 30 s to re-arm a failed connection and fetch
+    /// reports spooled during a disarm or easld restart (`catchUp`). easld restores the sockets
+    /// itself at startup; a keepalive leaves an open relay's sockets in place.
     private func keepRelayOpen() {
         keepAlive?.cancel()
         keepAlive = Task { [weak self] in

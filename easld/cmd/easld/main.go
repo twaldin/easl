@@ -107,6 +107,9 @@ func run(args []string, stderr io.Writer) int {
 	// Hosted terminals reach their board through `<home>/run/<instance>/` (relay.open).
 	r.Relays = relay.New(filepath.Join(*home, "run"))
 	defer r.Relays.Close()
+	for _, err := range r.Relays.Restore() {
+		fmt.Fprintln(stderr, "easld:", err)
+	}
 	// The boards it owned reopen, every one loaded and its spool replayed before it serves; their
 	// missing sessions (after a reboot) start once it serves, so their agents' first reports
 	// reach it.

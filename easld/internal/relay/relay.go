@@ -16,6 +16,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -53,13 +54,19 @@ type Relays struct {
 	open map[string]*relay
 }
 
+type registration struct {
+	Port  int    `json:"port"`
+	Token string `json:"token"`
+}
+
 type relay struct {
 	// port and token are where the client's forward is and the secret it proves; port is 0 once
 	// a connection there failed (the forward is gone, or what listens can't prove the token),
 	// until the client opens the relay again.
-	port      int
-	token     string
-	listeners []net.Listener
+	port        int
+	token       string
+	needsReplay bool
+	listeners   []net.Listener
 }
 
 // New is the relays of `dir` (easld's `<home>/run`).
@@ -76,11 +83,11 @@ var (
 
 // Open serves `instance`'s sockets through the client's forward at `port`, whose end holds
 // `token`: their paths, by name, and whether integrations may have spooled reports the client
-// should fetch (opened). Opening again with the same token (the client's keepalive) only takes
-// the port and re-arms a relay a failed connection disarmed (opened then). A new token is a new
-// connection of the client's (its app restarted, or it reconnected): the sockets are bound anew
-// at the same paths, so the integrations watching their socket's identity see the board come back
-// and report again (extensions/agent-hooks/report.ts `watchCanvasReturn`).
+// should fetch (opened). Opening again with the same token (the client's keepalive) takes the
+// port and reports a restart or re-arms a relay a failed connection disarmed (opened then).
+// A new token is a new connection of the client's (its app restarted, or it reconnected):
+// the sockets are bound anew at the same paths, so integrations watching their socket's
+// identity see the board come back and report again.
 func (r *Relays) Open(instance string, port int, token string) (map[string]string, bool, error) {
 	if !instancePattern.MatchString(instance) || instance == "." || instance == ".." {
 		return nil, false, &Error{"invalid_params", fmt.Sprintf("instance must be [A-Za-z0-9._-], at most 64 characters, got %q", instance)}
@@ -100,9 +107,15 @@ func (r *Relays) Open(instance string, port int, token string) (map[string]strin
 	defer r.mu.Unlock()
 	existing := r.open[instance]
 	if existing != nil && existing.token == token {
-		disarmed := existing.port == 0
+		if existing.port != port {
+			if err := saveRegistration(dir, port, token); err != nil {
+				return nil, false, &Error{"unavailable", err.Error()}
+			}
+		}
+		replay := existing.port == 0 || existing.needsReplay
 		existing.port = port
-		return paths, disarmed, nil
+		existing.needsReplay = false
+		return paths, replay, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, false, &Error{"unavailable", err.Error()}
@@ -110,23 +123,30 @@ func (r *Relays) Open(instance string, port int, token string) (map[string]strin
 	_ = os.Chmod(r.Dir, 0o700)
 	_ = os.Chmod(dir, 0o700)
 	opened := &relay{port: port, token: token}
+	var err error
 	for _, name := range Sockets {
-		listener, err := bind(paths[name])
+		var listener net.Listener
+		listener, err = bind(paths[name])
 		if err != nil {
-			// The sockets bound so far replaced the open relay's: neither serves any more.
-			for i, l := range opened.listeners {
-				l.Close()
-				_ = os.Remove(paths[Sockets[i]])
-			}
-			if existing != nil {
-				for _, l := range existing.listeners {
-					l.Close()
-				}
-				delete(r.open, instance)
-			}
-			return nil, false, &Error{"unavailable", fmt.Sprintf("can't serve %s: %v", paths[name], err)}
+			break
 		}
 		opened.listeners = append(opened.listeners, listener)
+	}
+	if err == nil {
+		err = saveRegistration(dir, port, token)
+	}
+	if err != nil {
+		for i, listener := range opened.listeners {
+			listener.Close()
+			_ = os.Remove(paths[Sockets[i]])
+		}
+		if existing != nil {
+			for _, listener := range existing.listeners {
+				listener.Close()
+			}
+			delete(r.open, instance)
+		}
+		return nil, false, &Error{"unavailable", fmt.Sprintf("can't serve %s: %v", instance, err)}
 	}
 	if existing != nil {
 		// Its paths are the new listeners' now.
@@ -139,6 +159,68 @@ func (r *Relays) Open(instance string, port int, token string) (map[string]strin
 		go r.serve(instance, name, opened.listeners[i])
 	}
 	return paths, true, nil
+}
+
+func saveRegistration(dir string, port int, token string) error {
+	data, err := json.Marshal(registration{Port: port, Token: token})
+	if err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(dir, ".relay.json.tmp-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	_, err = file.Write(data)
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(file.Name(), filepath.Join(dir, "relay.json"))
+	}
+	return err
+}
+
+// Restore rebinds registered sockets before easld serves. It does not dial the targets:
+// a Mac that went away must not delay startup, and pass still requires its proof.
+func (r *Relays) Restore() []error {
+	entries, err := os.ReadDir(r.Dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return []error{err}
+	}
+	var failures []error
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(r.Dir, entry.Name(), "relay.json")
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		var saved registration
+		if err == nil {
+			err = json.Unmarshal(data, &saved)
+		}
+		if err == nil {
+			_, _, err = r.Open(entry.Name(), saved.Port, saved.Token)
+		}
+		if err != nil {
+			failures = append(failures, fmt.Errorf("can't restore relay %s: %w", entry.Name(), err))
+			continue
+		}
+		r.mu.Lock()
+		// The next keepalive must still fetch reports spooled while easld was down.
+		r.open[entry.Name()].needsReplay = true
+		r.mu.Unlock()
+	}
+	return failures
 }
 
 // bind serves `path` for the user only. The socket is bound beside it and renamed over it, so a
@@ -273,7 +355,7 @@ func Proof(token, role, name, easld, gate string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// Close stops every relay and removes its sockets.
+// Close stops every relay and removes its sockets, leaving registrations for the next start.
 func (r *Relays) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
