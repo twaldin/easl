@@ -119,13 +119,13 @@ public enum HostedTerminal {
 
     /// The host side of a tile's attach: waits until easld has started the session (the app asks
     /// it to as the connection comes up), then attaches, only if the session is this tile's:
-    /// labelled with this instance's `home` label, `board` and `tile`, as easld labels the
-    /// sessions it starts (`spawnParams`). A board copied into another home has the same ids, so
-    /// another instance's session of the same name is refused, as a local tile's `ownerGuard`
-    /// does: the host prints whose it is and exits `refused`. Never creates a session: `zmx attach`
+    /// labelled with this instance's `home` label, `tile`, and `board` or one of `merged`, as
+    /// easld checks the sessions it starts (`spawnParams`). A board copied into another home
+    /// has the same ids, so another instance's session of the same name is refused, as a local
+    /// tile's `ownerGuard` does: the host prints whose it is and exits `refused`. Never creates a session: `zmx attach`
     /// to a missing one would start a login shell under ssh, outside easld's slice, so in the
     /// moment between the check and the attach `SHELL=/bin/false` makes that one exit at once.
-    public static func attach(session: String, home: String, board: BoardID, tile: ObjectID) -> String {
+    public static func attach(session: String, home: String, board: BoardID, tile: ObjectID, merged: [BoardID]) -> String {
         remote(#"""
         export ZMX_DIR=\#(zmxDir)
         z="$HOME/.local/bin/zmx"
@@ -140,15 +140,24 @@ public enum HostedTerminal {
           sleep 1
         done
         [ -z "$shown" ] || printf '\r\033[K'
-        for label in "canvas.home=$2" "canvas.board=$3" "canvas.tile=$4"; do
-          if ! printf '%s\n' "$fields" | grep -qxF -- "$label"; then
-            owner=$(printf '%s\n' "$fields" | sed -n 's/^canvas\.home=//p')
-            printf '\r\nThis terminal session (%s on %s) belongs to another easl instance or board (%s).\r\nNot attaching: this copy of the board can neither type into it nor end it.\r\n' "$1" "$(hostname)" "${owner:-no owner}"
-            exit \#(refused)
+        session=$1
+        refuse() {
+          owner=$(printf '%s\n' "$fields" | sed -n 's/^canvas\.home=//p')
+          printf '\r\nThis terminal session (%s on %s) belongs to another easl instance or board (%s).\r\nNot attaching: this copy of the board can neither type into it nor end it.\r\n' "$session" "$(hostname)" "${owner:-no owner}"
+          exit \#(refused)
+        }
+        for label in "canvas.home=$2" "canvas.tile=$4"; do
+          printf '%s\n' "$fields" | grep -qxF -- "$label" || refuse
+        done
+        board=$3
+        shift 4
+        for candidate in "$board" "$@"; do
+          if printf '%s\n' "$fields" | grep -qxF -- "canvas.board=$candidate"; then
+            SHELL=/bin/false exec "$z" attach "$session"
           fi
         done
-        SHELL=/bin/false exec "$z" attach "$1"
-        """#, [session, home, board, tile])
+        refuse
+        """#, [session, home, board, tile] + merged.filter(ApiRouter.isBoardID))
     }
 
     /// `attach`'s status when the session isn't this tile's (zmx's own attach exits 0 or 1).
@@ -212,7 +221,7 @@ public enum HostedTerminal {
     /// variables pointing at this instance's relayed sockets in `run` (`relay.open`), and easl's
     /// files under the host's `home` (`LoginSession.tileShellIntegration`: easl's bin first on PATH,
     /// its Python client, the zsh and bash integration, the `open` shim as `BROWSER`).
-    public static func spawnParams(tile: ObjectID, board: BoardID, argv: [String]?, cwd: String?, home: String, run: String,
+    public static func spawnParams(tile: ObjectID, board: BoardID, merged: [BoardID], argv: [String]?, cwd: String?, home: String, run: String,
                                    homeLabel: String, cmuxPassword: String?, ghosttyIntegration: Bool) -> JSONValue {
         let files = resources(home: home)
         var env = LoginSession.tileShellIntegration(resources: files, inherited: [:])
@@ -236,6 +245,8 @@ public enum HostedTerminal {
             "env": .object(env.mapValues(JSONValue.string)),
             "labels": .object(["canvas.board": .string(board), "canvas.tile": .string(tile), "canvas.home": .string(homeLabel)]),
         ]
+        let merged = merged.filter(ApiRouter.isBoardID)
+        if !merged.isEmpty { params["merged"] = .array(merged.map(JSONValue.string)) }
         if let argv, !argv.isEmpty { params["command"] = .array(argv.map(JSONValue.string)) }
         if let cwd, !cwd.isEmpty { params["cwd"] = .string(cwd) }
         return .object(params)

@@ -1098,7 +1098,7 @@ public final class ApiRouter {
     }
 
     /// A board id as both servers make them (`BoardStore.boardID`): `brd_`, then letters and digits.
-    static func isBoardID(_ text: String) -> Bool {
+    nonisolated static func isBoardID(_ text: String) -> Bool {
         text.hasPrefix("brd_") && text.count > 4 && text.dropFirst(4).unicodeScalars.allSatisfy { $0.isASCII && CharacterSet.alphanumerics.contains($0) }
     }
 

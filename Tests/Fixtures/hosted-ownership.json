@@ -1,0 +1,62 @@
+{
+  "description": "Ownership cases shared by HostedTerminal's real attach script and easld's session.spawn router. Home and tile must match; the board may be current or merged.",
+  "tile": "obj_01M3MWD38ZV1P794MV",
+  "board": "brd_repo",
+  "home": "home",
+  "cases": [
+    {
+      "name": "current board",
+      "labels": { "canvas.board": "brd_repo", "canvas.home": "home", "canvas.tile": "obj_01M3MWD38ZV1P794MV" },
+      "merged": [],
+      "accepted": true
+    },
+    {
+      "name": "merged board",
+      "labels": { "canvas.board": "brd_old", "canvas.home": "home", "canvas.tile": "obj_01M3MWD38ZV1P794MV" },
+      "merged": ["brd_other", "brd_old"],
+      "accepted": true
+    },
+    {
+      "name": "no merge history",
+      "labels": { "canvas.board": "brd_old", "canvas.home": "home", "canvas.tile": "obj_01M3MWD38ZV1P794MV" },
+      "merged": [],
+      "accepted": false
+    },
+    {
+      "name": "unrelated board",
+      "labels": { "canvas.board": "brd_old", "canvas.home": "home", "canvas.tile": "obj_01M3MWD38ZV1P794MV" },
+      "merged": ["brd_other"],
+      "accepted": false
+    },
+    {
+      "name": "prefix-similar board",
+      "labels": { "canvas.board": "brd_oldextra", "canvas.home": "home", "canvas.tile": "obj_01M3MWD38ZV1P794MV" },
+      "merged": ["brd_old"],
+      "accepted": false
+    },
+    {
+      "name": "another home",
+      "labels": { "canvas.board": "brd_old", "canvas.home": "other", "canvas.tile": "obj_01M3MWD38ZV1P794MV" },
+      "merged": ["brd_old"],
+      "accepted": false
+    },
+    {
+      "name": "another tile",
+      "labels": { "canvas.board": "brd_old", "canvas.home": "home", "canvas.tile": "obj_other" },
+      "merged": ["brd_old"],
+      "accepted": false
+    },
+    {
+      "name": "missing board label",
+      "labels": { "canvas.home": "home", "canvas.tile": "obj_01M3MWD38ZV1P794MV" },
+      "merged": [],
+      "accepted": false
+    },
+    {
+      "name": "missing labels",
+      "labels": {},
+      "merged": [],
+      "accepted": false
+    }
+  ]
+}

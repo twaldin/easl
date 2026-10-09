@@ -1,6 +1,7 @@
 package router
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,5 +67,87 @@ esac
 	f.router.Sessions = nil
 	if reply := call("session.list", nil); !strings.Contains(stringOf(reply["error"].(map[string]any)["message"]), "zmx isn't installed") {
 		t.Errorf("without zmx: %v", reply)
+	}
+}
+
+func TestSessionSpawnKeepsAMergedBoardsSession(t *testing.T) {
+	f := newFixture(t)
+	home := t.TempDir()
+	zmx, err := filepath.Abs("../../../Tests/Fixtures/hosted-zmx.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Tile  string
+		Board string
+		Home  string
+		Cases []struct {
+			Name     string
+			Labels   map[string]string
+			Merged   []string
+			Accepted bool
+		}
+	}
+	data, err := os.ReadFile("../../../Tests/Fixtures/hosted-ownership.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	f.router.Sessions = &session.Manager{Zmx: zmx, Dir: filepath.Join(home, "zmx-dir"), Shell: "/bin/sh", Home: home, Env: []string{"HOME=" + home, "PATH=/usr/bin:/bin"}}
+	call := func(merged any) map[string]any {
+		return f.router.HandleConn(map[string]any{"id": 1, "method": "session.spawn", "params": map[string]any{
+			"tile": fixture.Tile, "merged": merged, "labels": map[string]any{"canvas.home": fixture.Home, "canvas.board": fixture.Board, "canvas.tile": fixture.Tile},
+		}}, f.conn).(map[string]any)
+	}
+	for _, ownership := range fixture.Cases {
+		t.Run(ownership.Name, func(t *testing.T) {
+			var labels []string
+			for key, value := range ownership.Labels {
+				labels = append(labels, key+"="+value)
+			}
+			list := "  name=canvas-" + fixture.Tile + "\tpid=7\tclients=0\t" + strings.Join(labels, "\t") + "\n"
+			if err := os.WriteFile(filepath.Join(home, "list-last"), []byte(list), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			merged := make([]any, len(ownership.Merged))
+			for i, id := range ownership.Merged {
+				merged[i] = id
+			}
+			reply := call(merged)
+			if !ownership.Accepted {
+				failure, _ := reply["error"].(map[string]any)
+				if reply["ok"] != false || failure["code"] != "conflict" {
+					t.Fatalf("re-check: %v, want conflict", reply)
+				}
+				return
+			}
+			result, _ := reply["result"].(map[string]any)
+			if reply["ok"] != true || result["session"] != "canvas-"+fixture.Tile || result["created"] != false {
+				t.Fatalf("re-check: %v", reply)
+			}
+		})
+	}
+	for _, c := range []struct {
+		name   string
+		merged any
+	}{
+		{"not an array", "brd_old"},
+		{"not all strings", []any{"brd_old", float64(1)}},
+		{"null", nil},
+		{"newline", []any{"brd_other\ncanvas.board=brd_old"}},
+		{"trailing newline", []any{"brd_old\n"}},
+		{"empty", []any{""}},
+		{"uppercase prefix", []any{"BRD_old"}},
+		{"extra separator", []any{"brd_old_extra"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			reply := call(c.merged)
+			failure, _ := reply["error"].(map[string]any)
+			if reply["ok"] != false || failure["code"] != "invalid_params" {
+				t.Fatalf("re-check: %v, want invalid_params", reply)
+			}
+		})
 	}
 }
