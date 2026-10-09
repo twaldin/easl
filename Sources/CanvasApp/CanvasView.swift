@@ -494,8 +494,10 @@ final class CanvasView: NSScrollView {
         // Created where it wouldn't be live (a batch building a board zoomed out or offscreen),
         // a code, note, or HTML tile starts as its card rather than building its live view for
         // the liveness pass to swap out. Terminals and browsers start live: they run a session
-        // or a page an agent may be driving.
-        if object.type != .terminal, object.type != .browser, !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
+        // or a page an agent may be driving. A remote board's browser tile is the host's picture
+        // (`RemoteImageTile`) and starts as its card like the rest, so it asks the host for nothing
+        // until it is near the view.
+        if !(content is TerminalTile), !(content is BrowserTile), !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
         document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay)
         tiles[id] = tile
         tile.zoomedOut = RenderMath.isZoomedOut(magnification: magnification, zoom: tile.zoom)
