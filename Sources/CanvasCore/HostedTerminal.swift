@@ -117,12 +117,6 @@ public enum HostedTerminal {
         return (home, easld)
     }
 
-    private static let boardIDPattern = try! NSRegularExpression(pattern: #"^[a-z]+_[0-9A-Za-z]+\z"#)
-
-    private static func isBoardID(_ id: BoardID) -> Bool {
-        boardIDPattern.firstMatch(in: id, range: NSRange(location: 0, length: id.utf16.count)) != nil
-    }
-
     /// The host side of a tile's attach: waits until easld has started the session (the app asks
     /// it to as the connection comes up), then attaches, only if the session is this tile's:
     /// labelled with this instance's `home` label, `tile`, and `board` or one of `merged`, as
@@ -163,7 +157,7 @@ public enum HostedTerminal {
           fi
         done
         refuse
-        """#, [session, home, board, tile] + merged.filter(isBoardID))
+        """#, [session, home, board, tile] + merged.filter(ApiRouter.isBoardID))
     }
 
     /// `attach`'s status when the session isn't this tile's (zmx's own attach exits 0 or 1).
@@ -251,7 +245,7 @@ public enum HostedTerminal {
             "env": .object(env.mapValues(JSONValue.string)),
             "labels": .object(["canvas.board": .string(board), "canvas.tile": .string(tile), "canvas.home": .string(homeLabel)]),
         ]
-        let merged = merged.filter(isBoardID)
+        let merged = merged.filter(ApiRouter.isBoardID)
         if !merged.isEmpty { params["merged"] = .array(merged.map(JSONValue.string)) }
         if let argv, !argv.isEmpty { params["command"] = .array(argv.map(JSONValue.string)) }
         if let cwd, !cwd.isEmpty { params["cwd"] = .string(cwd) }

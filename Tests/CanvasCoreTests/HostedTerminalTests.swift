@@ -354,7 +354,7 @@ struct HostedTerminalTests {
     /// The session's variables point the agent's integration and the CLI at this instance's
     /// relayed sockets and easl's files on the host, never at this Mac's paths.
     @Test func theSessionReachesTheBoardThroughTheForwardedSockets() throws {
-        let params = HostedTerminal.spawnParams(tile: "obj_t", board: "brd_b", merged: ["brd_old", "brd_other", "brd_old\n"], argv: ["omp", "--model", "x"], cwd: nil, home: "/home/tim",
+        let params = HostedTerminal.spawnParams(tile: "obj_t", board: "brd_b", merged: ["brd_old", "brd_other", "brd_old\n", "obj_old"], argv: ["omp", "--model", "x"], cwd: nil, home: "/home/tim",
                                                 run: "/home/tim/.local/state/easl/run/mac-1", homeLabel: "home", cmuxPassword: nil, ghosttyIntegration: true)
         let env = params["env"]?.object?.compactMapValues(\.string) ?? [:]
         #expect(env["EASL_SOCKET"] == "/home/tim/.local/state/easl/run/mac-1/easl.sock")
