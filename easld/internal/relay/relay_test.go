@@ -108,6 +108,11 @@ func TestRelayPassesConnectionsOnceBothEndsProveTheToken(t *testing.T) {
 	if info, _ := os.Stat(filepath.Dir(paths["easl"])); info.Mode().Perm() != 0o700 {
 		t.Errorf("instance directory mode %v", info.Mode())
 	}
+	for i := range 12 {
+		if got := roundTrip(t, paths["easl"], "without draining observations\n"); got != "without draining observations\n" {
+			t.Fatalf("connection %d blocked on the gate's observations: %q", i+1, got)
+		}
+	}
 }
 
 // Whatever listens on the port once the client's forward is gone (another user's listener, or the
@@ -217,6 +222,37 @@ func TestANewTokenRebindsTheSockets(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(filepath.Join(blocked, "easl.sock")); string(data) != "mine" {
 		t.Error("the file in the way was touched")
+	}
+	if err := os.Remove(paths["cmux"]); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths["cmux"], []byte("mine"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Open("mac-1", first, token); !errors.As(err, &e) || e.Code != "unavailable" || !strings.Contains(e.Message, paths["cmux"]) {
+		t.Fatalf("new token with a blocked cmux socket: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "mac-1", "relay.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the failed rebind retained its old registration: %v", err)
+	}
+	if data, _ := os.ReadFile(paths["cmux"]); string(data) != "mine" {
+		t.Fatal("the failed rebind changed the blocking file")
+	}
+	r.Close()
+	if err := os.Remove(paths["cmux"]); err != nil {
+		t.Fatal(err)
+	}
+	restarted := New(dir)
+	defer restarted.Close()
+	if failures := restarted.Restore(); len(failures) != 0 {
+		t.Fatal(failures)
+	}
+	conn, err := net.Dial("unix", paths["easl"])
+	if conn != nil {
+		conn.Close()
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("restart resurrected a registration whose rebind failed: %v", err)
 	}
 }
 

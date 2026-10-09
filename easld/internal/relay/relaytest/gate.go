@@ -14,12 +14,15 @@ import (
 	"time"
 )
 
+// Gate echoes connections after mutual relay authentication. Names and Wire record
+// observations without blocking connections; observations beyond their buffers are dropped.
 type Gate struct {
 	net.Listener
 	Names chan string
 	Wire  chan string
 }
 
+// New starts a gate holding token and closes its listener when t finishes.
 func New(t testing.TB, token string) *Gate {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -46,11 +49,17 @@ func New(t testing.TB, token string) *Gate {
 				const mine = "ffeeddccbbaa99887766554433221100"
 				fmt.Fprintf(conn, "%s %s\n", mine, proof(token, "gate", name, nonce, mine))
 				answer, _ := reader.ReadString('\n')
-				gate.Wire <- hello + answer
+				select {
+				case gate.Wire <- hello + answer:
+				default:
+				}
 				if strings.TrimSuffix(answer, "\n") != proof(token, "easld", name, nonce, mine) {
 					return
 				}
-				gate.Names <- name
+				select {
+				case gate.Names <- name:
+				default:
+				}
 				_, _ = io.Copy(conn, reader)
 			}()
 		}

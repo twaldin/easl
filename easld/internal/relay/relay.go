@@ -154,6 +154,7 @@ func (r *Relays) open(instance string, port int, token string, restored bool) (m
 			for _, listener := range existing.listeners {
 				listener.Close()
 			}
+			r.removeRegistration(instance, existing)
 			delete(r.active, instance)
 		}
 		return nil, false, &Error{"unavailable", err.Error()}
@@ -185,6 +186,15 @@ func (r *Relays) persist(instance string, current *relay) {
 		return
 	}
 	current.persisted = target
+}
+
+func (r *Relays) removeRegistration(instance string, current *relay) {
+	path := filepath.Join(r.Dir, instance, "relay.json")
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(r.Log, "easld: can't remove %s: %v\n", path, err)
+	} else {
+		current.persisted = registration{}
+	}
 }
 
 func saveRegistration(dir string, port int, token string) error {
@@ -330,12 +340,7 @@ func (r *Relays) disarm(instance string, port int, token string) {
 	defer r.mu.Unlock()
 	if current := r.active[instance]; current != nil && current.port == port && current.token == token {
 		current.port = 0
-		path := filepath.Join(r.Dir, instance, "relay.json")
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(r.Log, "easld: can't remove %s: %v\n", path, err)
-		} else {
-			current.persisted = registration{}
-		}
+		r.removeRegistration(instance, current)
 	}
 }
 
