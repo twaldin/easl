@@ -1,0 +1,48 @@
+{
+  "description": "A hosted terminal keeps its running session after its board merges into a repository board. session.spawn accepts an old board label only when merged names it and the home and tile still match.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "terminal", "props": { "host": "deckbox", "name": "hosted" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } },
+      "save": "hosted"
+    },
+    {
+      "call": "session.spawn",
+      "note": "the session started under the old board id",
+      "params": { "tile": "{{hosted.object.id}}", "labels": { "canvas.home": "mac-1", "canvas.board": "brd_old", "canvas.tile": "{{hosted.object.id}}" } }
+    },
+    {
+      "call": "session.spawn",
+      "note": "without the merge history, the old board label conflicts",
+      "params": { "tile": "{{hosted.object.id}}", "labels": { "canvas.home": "mac-1", "canvas.board": "{{board}}", "canvas.tile": "{{hosted.object.id}}" } }
+    },
+    {
+      "call": "session.spawn",
+      "note": "the merge history accepts the existing session without creating or relabelling it",
+      "params": { "tile": "{{hosted.object.id}}", "merged": ["brd_other", "brd_old"], "labels": { "canvas.home": "mac-1", "canvas.board": "{{board}}", "canvas.tile": "{{hosted.object.id}}" } }
+    },
+    {
+      "call": "session.spawn",
+      "note": "an unrelated board id cannot claim the session",
+      "params": { "tile": "{{hosted.object.id}}", "merged": ["brd_other"], "labels": { "canvas.home": "mac-1", "canvas.board": "{{board}}", "canvas.tile": "{{hosted.object.id}}" } }
+    },
+    {
+      "call": "session.spawn",
+      "note": "a merged board still cannot claim another home's session",
+      "params": { "tile": "{{hosted.object.id}}", "merged": ["brd_old"], "labels": { "canvas.home": "mac-2", "canvas.board": "{{board}}", "canvas.tile": "{{hosted.object.id}}" } }
+    },
+    {
+      "call": "session.spawn",
+      "note": "a merged board still requires the same tile label",
+      "params": { "tile": "{{hosted.object.id}}", "merged": ["brd_old"], "labels": { "canvas.home": "mac-1", "canvas.board": "{{board}}", "canvas.tile": "obj_other" } }
+    },
+    {
+      "call": "session.list",
+      "note": "the running session retains its original labels"
+    },
+    {
+      "call": "session.kill",
+      "params": { "tile": "{{hosted.object.id}}", "home": "mac-1" }
+    }
+  ]
+}

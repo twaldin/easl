@@ -81,11 +81,39 @@ func TestSessionSpawnKeepsAMergedBoardsSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.router.Sessions = &session.Manager{Zmx: zmx, Dir: filepath.Join(home, "zmx-dir"), Shell: "/bin/sh", Home: home, Env: []string{"HOME=" + home, "PATH=/usr/bin:/bin"}}
-	reply := f.router.HandleConn(map[string]any{"id": 1, "method": "session.spawn", "params": map[string]any{
-		"tile": "obj_x", "labels": map[string]any{"canvas.home": "mac", "canvas.board": "brd_repo", "canvas.tile": "obj_x"},
-	}}, f.conn).(map[string]any)
-	result, _ := reply["result"].(map[string]any)
-	if reply["ok"] != true || result["session"] != "canvas-obj_x" || result["created"] != false {
-		t.Fatalf("merged board re-check: %v", reply)
+	for _, c := range []struct {
+		name   string
+		board  string
+		home   string
+		tile   string
+		merged any
+		code   string
+	}{
+		{"same board", "brd_old", "mac", "obj_x", []any{}, ""},
+		{"merged board", "brd_repo", "mac", "obj_x", []any{"brd_other", "brd_old"}, ""},
+		{"no merge history", "brd_repo", "mac", "obj_x", []any{}, "conflict"},
+		{"unrelated board", "brd_repo", "mac", "obj_x", []any{"brd_other"}, "conflict"},
+		{"another home", "brd_repo", "other", "obj_x", []any{"brd_old"}, "conflict"},
+		{"another tile", "brd_repo", "mac", "obj_other", []any{"brd_old"}, "conflict"},
+		{"not an array", "brd_repo", "mac", "obj_x", "brd_old", "invalid_params"},
+		{"not all strings", "brd_repo", "mac", "obj_x", []any{"brd_old", float64(1)}, "invalid_params"},
+		{"null", "brd_repo", "mac", "obj_x", nil, "invalid_params"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			reply := f.router.HandleConn(map[string]any{"id": 1, "method": "session.spawn", "params": map[string]any{
+				"tile": "obj_x", "merged": c.merged, "labels": map[string]any{"canvas.home": c.home, "canvas.board": c.board, "canvas.tile": c.tile},
+			}}, f.conn).(map[string]any)
+			if c.code != "" {
+				failure, _ := reply["error"].(map[string]any)
+				if reply["ok"] != false || failure["code"] != c.code {
+					t.Fatalf("re-check: %v, want %s", reply, c.code)
+				}
+				return
+			}
+			result, _ := reply["result"].(map[string]any)
+			if reply["ok"] != true || result["session"] != "canvas-obj_x" || result["created"] != false {
+				t.Fatalf("re-check: %v", reply)
+			}
+		})
 	}
 }

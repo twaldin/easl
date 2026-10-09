@@ -162,10 +162,27 @@ struct HostedTerminalTests {
     @Test func theHostSideKeepsAMergedBoardsSession() async throws {
         let home = try scratch()
         defer { try? FileManager.default.removeItem(at: home) }
-        try fakeZmx(home: home, lists: [listed("canvas.board=brd_old\tcanvas.home=home\tcanvas.tile=\(tile)")])
-        let (status, output) = try await sh(HostedTerminal.attach(session: session, home: "home", board: "brd_repo", tile: tile), env: ["HOME": home.path])
-        #expect(status == 0, "\(String(decoding: output, as: UTF8.self))")
-        #expect(String(decoding: output, as: UTF8.self) == "attach \(session) SHELL=/bin/false ZMX_DIR=\(home.path)/.local/state/easl/zmx\n")
+        for (labels, merged, expected) in [
+            ("canvas.board=brd_repo\tcanvas.home=home\tcanvas.tile=\(tile)", [], Int32(0)),
+            ("canvas.board=brd_old\tcanvas.home=home\tcanvas.tile=\(tile)", ["brd_other", "brd_old"], Int32(0)),
+            ("canvas.board=brd_old\tcanvas.home=home\tcanvas.tile=\(tile)", [], HostedTerminal.refused),
+            ("canvas.board=brd_old\tcanvas.home=home\tcanvas.tile=\(tile)", ["brd_other"], HostedTerminal.refused),
+            ("canvas.board=brd_old_extra\tcanvas.home=home\tcanvas.tile=\(tile)", ["brd_old"], HostedTerminal.refused),
+            ("canvas.board=brd_old\tcanvas.home=other\tcanvas.tile=\(tile)", ["brd_old"], HostedTerminal.refused),
+            ("canvas.board=brd_old\tcanvas.home=home\tcanvas.tile=obj_other", ["brd_old"], HostedTerminal.refused),
+            ("canvas.home=home\tcanvas.tile=\(tile)", [""], HostedTerminal.refused),
+        ] {
+            try fakeZmx(home: home, lists: [listed(labels)])
+            let (status, output) = try await sh(HostedTerminal.attach(session: session, home: "home", board: "brd_repo", tile: tile, merged: merged), env: ["HOME": home.path])
+            let text = String(decoding: output, as: UTF8.self)
+            #expect(status == expected, "\(labels), merged \(merged): \(text)")
+            if expected == 0 {
+                #expect(text == "attach \(session) SHELL=/bin/false ZMX_DIR=\(home.path)/.local/state/easl/zmx\n")
+            } else {
+                #expect(text.contains("belongs to another easl instance or board"))
+                #expect(!text.contains("attach "))
+            }
+        }
     }
 
     /// A call to the host's easld (`HostedTerminal.request` running `easldRelay`, here without
@@ -335,7 +352,7 @@ struct HostedTerminalTests {
     /// The session's variables point the agent's integration and the CLI at this instance's
     /// relayed sockets and easl's files on the host, never at this Mac's paths.
     @Test func theSessionReachesTheBoardThroughTheForwardedSockets() throws {
-        let params = HostedTerminal.spawnParams(tile: "obj_t", board: "brd_b", argv: ["omp", "--model", "x"], cwd: nil, home: "/home/tim",
+        let params = HostedTerminal.spawnParams(tile: "obj_t", board: "brd_b", merged: ["brd_old", "brd_other"], argv: ["omp", "--model", "x"], cwd: nil, home: "/home/tim",
                                                 run: "/home/tim/.local/state/easl/run/mac-1", homeLabel: "home", cmuxPassword: nil, ghosttyIntegration: true)
         let env = params["env"]?.object?.compactMapValues(\.string) ?? [:]
         #expect(env["EASL_SOCKET"] == "/home/tim/.local/state/easl/run/mac-1/easl.sock")
@@ -348,9 +365,11 @@ struct HostedTerminalTests {
         #expect(env["CMUX_SOCKET_PASSWORD"] == nil && env["EASL_BOARD_ROOT"] == nil)
         #expect(params["command"] == .array(["omp", "--model", "x"].map(JSONValue.string)) && params["cwd"] == nil)
         #expect(params["labels"] == .object(["canvas.board": .string("brd_b"), "canvas.tile": .string("obj_t"), "canvas.home": .string("home")]))
+        #expect(params["merged"] == .array(["brd_old", "brd_other"].map(JSONValue.string)))
         let shell = HostedTerminal.spawnParams(tile: "obj_t", board: "brd_b", argv: nil, cwd: "/srv/repo", home: "/home/tim",
                                                run: "/home/tim/.local/state/easl/run/mac-1", homeLabel: "home", cmuxPassword: nil, ghosttyIntegration: false)
         #expect(shell["command"] == nil && shell["cwd"] == .string("/srv/repo") && shell["env"]?["EASL_GHOSTTY_INTEGRATION"] == nil)
+        #expect(shell["merged"] == nil)
     }
 
     /// A hosted terminal's session gets what an easld-owned one gets (Tests/Fixtures/terminal-env.json,

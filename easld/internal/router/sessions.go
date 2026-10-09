@@ -68,10 +68,15 @@ func (r *Router) session(method string, p map[string]any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		req := session.SpawnRequest{Tile: tile, Command: strings_(p["command"]), Env: map[string]string{}, Labels: map[string]string{}}
+		req := session.SpawnRequest{Tile: tile, Command: strings_(p["command"]), Merged: strings_(p["merged"]), Env: map[string]string{}, Labels: map[string]string{}}
 		if raw, present := p["command"]; present {
 			if _, ok := raw.([]any); !ok || len(req.Command) != len(raw.([]any)) {
 				return nil, invalid("command must be an array of strings")
+			}
+		}
+		if raw, present := p["merged"]; present {
+			if _, ok := raw.([]any); !ok || len(req.Merged) != len(raw.([]any)) {
+				return nil, invalid("merged must be an array of strings")
 			}
 		}
 		if raw, present := p["cwd"]; present {

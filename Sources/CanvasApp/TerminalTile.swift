@@ -62,7 +62,7 @@ final class TerminalTile: NSView, TileContent {
                 // A hosted session's `cwd` is the host's; ssh runs here.
                 workingDirectory: host == nil ? object.props["cwd"]?.string ?? board.root.path : board.root.path,
                 envVars: environment,
-                command: host.map { Self.hostedCommand(session: sessionName, tile: object.id, board: board.id, route: $0.route, keep: Set(environment.keys)) }
+                command: host.map { Self.hostedCommand(session: sessionName, tile: object.id, board: board, route: $0.route, keep: Set(environment.keys)) }
                     ?? Self.command(session: sessionName, object: object, board: board, environment: environment)
             )
         }
@@ -198,10 +198,10 @@ final class TerminalTile: NSView, TileContent {
     /// A hosted terminal's command: the attach loop through the app's connection to its host
     /// (`HostedTerminal.attachLoop`), with the app's inherited variables unset as for a local one.
     /// The session itself is easld's to start (`hostedSpawnParams`); the host attaches only to one
-    /// labelled with this instance's home, `board` and `tile`, as that starts it.
-    static func hostedCommand(session: String, tile: ObjectID, board: BoardID, route: HostRoute, keep: Set<String>) -> String {
+    /// labelled with this instance's home and tile, and this board or one it merged.
+    static func hostedCommand(session: String, tile: ObjectID, board: Board, route: HostRoute, keep: Set<String>) -> String {
         let strip = LoginSession.strippedForTile(ProcessInfo.processInfo.environment, keep: keep).flatMap { ["-u", $0] }
-        let attach = HostedTerminal.attach(session: session, home: homeLabel, board: board, tile: tile)
+        let attach = HostedTerminal.attach(session: session, home: homeLabel, board: board.id, tile: tile, merged: board.repo?.merged ?? [])
         return ShellWords.quote(["/usr/bin/env"] + strip + ["/bin/sh", "-c", HostedTerminal.attachLoop, "canvas-host",
                                  "/usr/bin/ssh", route.controlPath, route.target, session, attach])
     }
@@ -211,7 +211,7 @@ final class TerminalTile: NSView, TileContent {
     /// the host's, `run` this instance's relayed sockets' directory there.
     func hostedSpawnParams(home: String, run: String, argv: [String]? = nil) -> JSONValue? {
         guard let object = board.objects[objectID] else { return nil }
-        return HostedTerminal.spawnParams(tile: objectID, board: board.id, argv: argv ?? AgentResume.initialArgv(object), cwd: object.props["cwd"]?.string,
+        return HostedTerminal.spawnParams(tile: objectID, board: board.id, merged: board.repo?.merged ?? [], argv: argv ?? AgentResume.initialArgv(object), cwd: object.props["cwd"]?.string,
                                           home: home, run: run, homeLabel: Self.homeLabel, cmuxPassword: AppPaths.cmuxPassword,
                                           ghosttyIntegration: TerminalConfig.shared.shellIntegration != nil)
     }

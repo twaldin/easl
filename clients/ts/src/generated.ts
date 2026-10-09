@@ -1671,6 +1671,8 @@ export type SessionSpawnParams = {
   env?: Record<string, unknown>;
   /** zmx labels the session is created with (`canvas.board`, `canvas.tile`, `canvas.home`); keys and values in [A-Za-z0-9._-] */
   labels?: Record<string, unknown>;
+  /** board ids the caller's board took in (`repo.merged`): an existing session labelled with one of them is accepted when its home and tile labels match. The session keeps its original labels. Absent or empty: only the board label in `labels` matches */
+  merged?: Id[];
 };
 export type SessionSpawnResult = {
   /** `canvas-<tile>` */
@@ -1884,7 +1886,7 @@ export interface CanvasApi {
     snapshot(params?: ViewSnapshotParams): Promise<ViewSnapshotResult>;
   };
   session: {
-    /** easld only (the Mac app answers `unsupported`): start terminal tile `tile`'s zmx session, `canvas-<tile>`, on the machine easld runs on, as easld's own child, so the session and everything it runs stay in easld's cgroup (a hosted terminal's session: docs/contracts.md "Hosted terminals"). `command` runs in the user's login shell, which stays when it exits (`$SHELL -l -c '<command>; exec $SHELL -l'`); without one the session is the login shell. zmx keeps its sockets and logs in `<easld home>/zmx`, the user's own (a symlink, another user's directory or one others can write to is `unavailable`). A session that exists already is left as it is (`created: false`), unless one of its `canvas.home`, `canvas.board` and `canvas.tile` labels isn't the one `labels` gives (`conflict`, naming it). zmx's dead sessions (`status=cleaning up`) don't exist. Clients attach to it with `zmx attach canvas-<tile>` in that directory, once they have checked its labels. */
+    /** easld only (the Mac app answers `unsupported`): start terminal tile `tile`'s zmx session, `canvas-<tile>`, on the machine easld runs on, as easld's own child, so the session and everything it runs stay in easld's cgroup (a hosted terminal's session: docs/contracts.md "Hosted terminals"). `command` runs in the user's login shell, which stays when it exits (`$SHELL -l -c '<command>; exec $SHELL -l'`); without one the session is the login shell. zmx keeps its sockets and logs in `<easld home>/zmx`, the user's own (a symlink, another user's directory or one others can write to is `unavailable`). A session that exists already is left as it is (`created: false`), unless one of its `canvas.home`, `canvas.board` and `canvas.tile` labels isn't the one `labels` gives (`conflict`, naming it). Its `canvas.board` may also be one of `merged`, the board ids the caller's board took in; its home and tile must still match. zmx's dead sessions (`status=cleaning up`) don't exist. Clients attach to it with `zmx attach canvas-<tile>` in that directory, once they have checked its labels. */
     spawn(params: SessionSpawnParams): Promise<SessionSpawnResult>;
     /** easld only (the Mac app answers `unsupported`): the terminal tiles' zmx sessions on easld's machine (`canvas-…`, whoever started them). */
     list(params?: SessionListParams): Promise<SessionListResult>;

@@ -21,7 +21,7 @@ import (
 // that starts passing is reported, so it can join the list.
 var passing = []string{
 	"agent-control", "agent-control-owned", "agents", "arrows", "batch", "board-get-history", "boards", "client-delegation", "client-failures", "client-mode", "client-versions",
-	"code-tiles", "events", "follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "messages",
+	"code-tiles", "events", "follow-attention", "groups", "hosted-merged", "keys-upsert-find", "layout", "layout-check", "messages",
 	"metrics", "no-client", "objects-crud", "open-url", "owned-terminals", "placement", "protocol", "questions", "tray",
 }
 
@@ -34,7 +34,7 @@ var passing = []string{
 // owning are the scenarios replayed against an easld that owns its boards' terminals
 // (--own-terminals), with a zmx that runs no session (zmxtest); the rest run against one in its
 // default mode (an easld on a Mac, where the app runs its terminals): no zmx, no ownership.
-var owning = map[string]bool{"owned-terminals": true, "agent-control-owned": true}
+var owning = map[string]bool{"owned-terminals": true, "agent-control-owned": true, "hosted-merged": true}
 
 // The suite replayed against easld in-process: a fresh home, the real router and socket server,
 // in the mode each scenario needs (owning).

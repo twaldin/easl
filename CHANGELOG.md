@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- **Hosted terminals survive a board merge.** A terminal running on another machine was refused after its board merged into a repository board because its running session still named the old board. easl now recognises that merged board id when it attaches and rechecks the session, while sessions belonging to another board, home or tile remain protected.
+
 ## 0.2.5
 
 **Updating from 0.2.4.** The update that installs 0.2.5 still runs 0.2.4's own install helper, so the updater fix below applies from the next update on. If Update in 0.2.4 stops with nothing replaced, quit easl and install 0.2.5 from its zip on [GitHub Releases](https://github.com/twaldin/easl/releases), or run `brew upgrade --cask easl` for a Homebrew install.
