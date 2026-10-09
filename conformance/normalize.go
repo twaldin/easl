@@ -74,7 +74,7 @@ var idKeys = map[string]bool{
 	// Typed in the schema.
 	"ack": true, "arrow": true, "arrows": true, "board": true, "boards": true, "caller": true, "changed": true, "cleared": true, "client": true,
 	"crosses": true, "enteredGroup": true, "exclude": true, "focused": true, "followOf": true, "id": true, "ids": true, "lines": true,
-	"members": true, "message": true, "near": true, "object": true, "objects": true, "overlaps": true, "parent": true,
+	"members": true, "merged": true, "message": true, "near": true, "object": true, "objects": true, "overlaps": true, "parent": true,
 	"promptTarget": true, "region": true, "regions": true, "selection": true, "target": true, "tile": true,
 	// Untyped on the wire: an object's graph (arrowsIn/arrowsOut ends, enclosure), the terminal a
 	// follow tile follows, who raised an attention marker.
