@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"io"
 	"net"
@@ -11,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/twaldin/easl/easld/internal/relay/relaytest"
 )
 
 func relayDir(t *testing.T) string {
@@ -26,7 +29,7 @@ func relayDir(t *testing.T) string {
 func TestRestoreKeepsTheLatestRegistrationAndRequestsSpoolReplayOnce(t *testing.T) {
 	dir := relayDir(t)
 	r := New(dir)
-	first, _, _ := gate(t, token)
+	first := relaytest.New(t, token).Port()
 	paths, _, err := r.Open("mac-1", first, token)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +38,7 @@ func TestRestoreKeepsTheLatestRegistrationAndRequestsSpoolReplayOnce(t *testing.
 	if _, _, err := r.Open("mac-1", first, rotated); err != nil {
 		t.Fatal(err)
 	}
-	latest, _, _ := gate(t, rotated)
+	latest := relaytest.New(t, rotated).Port()
 	if _, _, err := r.Open("mac-1", latest, rotated); err != nil {
 		t.Fatal(err)
 	}
@@ -118,11 +121,7 @@ func TestRestoredRelayRejectsImpostorsAndBoundsSilentTargets(t *testing.T) {
 					t.Fatal(err)
 				}
 				_ = conn.SetDeadline(time.Now().Add(time.Second))
-				_, err = io.WriteString(conn, "secret report\n")
-				if err != nil && !errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) {
-					conn.Close()
-					t.Fatal(err)
-				}
+				_, _ = io.WriteString(conn, "secret report\n")
 				reply, err := bufio.NewReader(conn).ReadBytes('\n')
 				conn.Close()
 				if len(reply) != 0 || !(errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET)) {
@@ -143,5 +142,150 @@ func TestRestoredRelayRejectsImpostorsAndBoundsSilentTargets(t *testing.T) {
 			case <-time.After(200 * time.Millisecond):
 			}
 		})
+	}
+}
+
+func TestPersistenceFailuresDoNotStopLiveRelays(t *testing.T) {
+	dir := relayDir(t)
+	r := New(dir)
+	defer r.Close()
+	var log bytes.Buffer
+	r.Log = &log
+	first := relaytest.New(t, token)
+	paths, _, err := r.Open("mac-1", first.Port(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "mac-1", "relay.json")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "block"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, opened, err := r.Open("mac-1", first.Port(), token); err != nil || opened {
+		t.Fatalf("unchanged keepalive: opened=%v, %v", opened, err)
+	}
+	if log.Len() != 0 {
+		t.Fatalf("an unchanged persisted target attempted a save: %s", log.String())
+	}
+	stolen, _ := impostor(t)
+	if _, _, err := r.Open("mac-1", stolen, token); err != nil {
+		t.Fatalf("save failure stopped changing the live target: %v", err)
+	}
+	if got := roundTrip(t, paths["easl"], "secret\n"); got != "" {
+		t.Fatalf("an impostor replied %q", got)
+	}
+	if _, opened, err := r.Open("mac-1", first.Port(), token); err != nil || !opened {
+		t.Fatalf("save failure stopped re-arming: opened=%v, %v", opened, err)
+	}
+	if got := roundTrip(t, paths["easl"], "rearmed\n"); got != "rearmed\n" {
+		t.Fatalf("re-armed reply %q", got)
+	}
+	rotated := strings.Repeat("9", 32)
+	fresh := relaytest.New(t, rotated)
+	if _, opened, err := r.Open("mac-1", fresh.Port(), rotated); err != nil || !opened {
+		t.Fatalf("save failure stopped a new token: opened=%v, %v", opened, err)
+	}
+	if got := roundTrip(t, paths["easl"], "rotated\n"); got != "rotated\n" {
+		t.Fatalf("new-token reply %q", got)
+	}
+	if !strings.Contains(log.String(), "can't save "+path) || !strings.Contains(log.String(), "can't remove "+path) {
+		t.Fatalf("persistence failures did not name the registration path: %s", log.String())
+	}
+}
+
+func TestDisarmedRegistrationRetiresUntilTheClientRearmsIt(t *testing.T) {
+	dir := relayDir(t)
+	r := New(dir)
+	stolen, wire := impostor(t)
+	paths, _, err := r.Open("mac-1", stolen, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roundTrip(t, paths["easl"], "secret\n"); got != "" {
+		t.Fatalf("an impostor replied %q", got)
+	}
+	<-wire
+	path := filepath.Join(dir, "mac-1", "relay.json")
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("disarmed registration was retained: %v", err)
+	}
+	r.Close()
+	r = New(dir)
+	defer r.Close()
+	if failures := r.Restore(); len(failures) != 0 {
+		t.Fatal(failures)
+	}
+	for _, name := range Sockets {
+		conn, err := net.Dial("unix", paths[name])
+		if conn != nil {
+			conn.Close()
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("known-dead %s socket restored: %v", name, err)
+		}
+	}
+	select {
+	case sent := <-wire:
+		t.Fatalf("startup dialed a known-dead target: %q", sent)
+	case <-time.After(200 * time.Millisecond):
+	}
+	fresh := relaytest.New(t, token)
+	if _, opened, err := r.Open("mac-1", fresh.Port(), token); err != nil || !opened {
+		t.Fatalf("re-arm after restart: opened=%v, %v", opened, err)
+	}
+	if got := roundTrip(t, paths["easl"], "back\n"); got != "back\n" {
+		t.Fatalf("reply after re-arm %q", got)
+	}
+	r.Close()
+	r = New(dir)
+	defer r.Close()
+	if failures := r.Restore(); len(failures) != 0 {
+		t.Fatal(failures)
+	}
+	if got := roundTrip(t, paths["easl"], "persisted again\n"); got != "persisted again\n" {
+		t.Fatalf("the re-arm did not persist its registration: %q", got)
+	}
+}
+
+func TestRestoreLeavesRegistrationFilesUntouched(t *testing.T) {
+	dir := relayDir(t)
+	r := New(dir)
+	gate := relaytest.New(t, token)
+	paths, _, err := r.Open("mac-1", gate.Port(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "mac-1", "relay.json")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	r = New(dir)
+	defer r.Close()
+	if failures := r.Restore(); len(failures) != 0 {
+		t.Fatal(failures)
+	}
+	after, err := os.Stat(path)
+	if err != nil || !os.SameFile(before, after) || after.Mode().Perm() != 0o400 {
+		t.Fatalf("startup rewrote the readable registration: %v %v", after, err)
+	}
+	if got := roundTrip(t, paths["easl"], "restored\n"); got != "restored\n" {
+		t.Fatalf("restored reply %q", got)
+	}
+	if _, opened, err := r.Open("mac-1", gate.Port(), token); err != nil || !opened {
+		t.Fatalf("restored keepalive: opened=%v, %v", opened, err)
+	}
+	after, err = os.Stat(path)
+	if err != nil || !os.SameFile(before, after) || after.Mode().Perm() != 0o400 {
+		t.Fatalf("an unchanged keepalive rewrote the registration: %v %v", after, err)
 	}
 }

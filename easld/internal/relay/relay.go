@@ -49,9 +49,11 @@ type Relays struct {
 	// DialTimeout bounds connecting to the client's port; HandshakeTimeout the client's proof.
 	DialTimeout      time.Duration
 	HandshakeTimeout time.Duration
+	// Log receives persistence failures; they do not stop a live relay.
+	Log io.Writer
 
-	mu   sync.Mutex
-	open map[string]*relay
+	mu     sync.Mutex
+	active map[string]*relay
 }
 
 type registration struct {
@@ -66,12 +68,13 @@ type relay struct {
 	port        int
 	token       string
 	needsReplay bool
+	persisted   registration
 	listeners   []net.Listener
 }
 
 // New is the relays of `dir` (easld's `<home>/run`).
 func New(dir string) *Relays {
-	return &Relays{Dir: dir, DialTimeout: 5 * time.Second, HandshakeTimeout: 5 * time.Second, open: map[string]*relay{}}
+	return &Relays{Dir: dir, DialTimeout: 5 * time.Second, HandshakeTimeout: 5 * time.Second, Log: os.Stderr, active: map[string]*relay{}}
 }
 
 var (
@@ -89,6 +92,10 @@ var (
 // the sockets are bound anew at the same paths, so integrations watching their socket's
 // identity see the board come back and report again.
 func (r *Relays) Open(instance string, port int, token string) (map[string]string, bool, error) {
+	return r.open(instance, port, token, false)
+}
+
+func (r *Relays) open(instance string, port int, token string, restored bool) (map[string]string, bool, error) {
 	if !instancePattern.MatchString(instance) || instance == "." || instance == ".." {
 		return nil, false, &Error{"invalid_params", fmt.Sprintf("instance must be [A-Za-z0-9._-], at most 64 characters, got %q", instance)}
 	}
@@ -105,16 +112,16 @@ func (r *Relays) Open(instance string, port int, token string) (map[string]strin
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	existing := r.open[instance]
+	existing := r.active[instance]
 	if existing != nil && existing.token == token {
-		if existing.port != port {
-			if err := saveRegistration(dir, port, token); err != nil {
-				return nil, false, &Error{"unavailable", err.Error()}
-			}
-		}
 		replay := existing.port == 0 || existing.needsReplay
 		existing.port = port
-		existing.needsReplay = false
+		existing.needsReplay = restored
+		if restored {
+			existing.persisted = registration{Port: port, Token: token}
+		} else {
+			r.persist(instance, existing)
+		}
 		return paths, replay, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -122,18 +129,21 @@ func (r *Relays) Open(instance string, port int, token string) (map[string]strin
 	}
 	_ = os.Chmod(r.Dir, 0o700)
 	_ = os.Chmod(dir, 0o700)
-	opened := &relay{port: port, token: token}
+	opened := &relay{port: port, token: token, needsReplay: restored}
+	if restored {
+		opened.persisted = registration{Port: port, Token: token}
+	} else if existing != nil {
+		opened.persisted = existing.persisted
+	}
 	var err error
 	for _, name := range Sockets {
 		var listener net.Listener
 		listener, err = bind(paths[name])
 		if err != nil {
+			err = fmt.Errorf("can't serve %s: %w", paths[name], err)
 			break
 		}
 		opened.listeners = append(opened.listeners, listener)
-	}
-	if err == nil {
-		err = saveRegistration(dir, port, token)
 	}
 	if err != nil {
 		for i, listener := range opened.listeners {
@@ -144,9 +154,9 @@ func (r *Relays) Open(instance string, port int, token string) (map[string]strin
 			for _, listener := range existing.listeners {
 				listener.Close()
 			}
-			delete(r.open, instance)
+			delete(r.active, instance)
 		}
-		return nil, false, &Error{"unavailable", fmt.Sprintf("can't serve %s: %v", instance, err)}
+		return nil, false, &Error{"unavailable", err.Error()}
 	}
 	if existing != nil {
 		// Its paths are the new listeners' now.
@@ -154,11 +164,27 @@ func (r *Relays) Open(instance string, port int, token string) (map[string]strin
 			listener.Close()
 		}
 	}
-	r.open[instance] = opened
+	if !restored {
+		r.persist(instance, opened)
+	}
+	r.active[instance] = opened
 	for i, name := range Sockets {
 		go r.serve(instance, name, opened.listeners[i])
 	}
 	return paths, true, nil
+}
+
+func (r *Relays) persist(instance string, current *relay) {
+	target := registration{Port: current.port, Token: current.token}
+	if current.persisted == target {
+		return
+	}
+	dir := filepath.Join(r.Dir, instance)
+	if err := saveRegistration(dir, target.Port, target.Token); err != nil {
+		fmt.Fprintf(r.Log, "easld: can't save %s: %v\n", filepath.Join(dir, "relay.json"), err)
+		return
+	}
+	current.persisted = target
 }
 
 func saveRegistration(dir string, port int, token string) error {
@@ -209,16 +235,12 @@ func (r *Relays) Restore() []error {
 			err = json.Unmarshal(data, &saved)
 		}
 		if err == nil {
-			_, _, err = r.Open(entry.Name(), saved.Port, saved.Token)
+			_, _, err = r.open(entry.Name(), saved.Port, saved.Token, true)
 		}
 		if err != nil {
 			failures = append(failures, fmt.Errorf("can't restore relay %s: %w", entry.Name(), err))
 			continue
 		}
-		r.mu.Lock()
-		// The next keepalive must still fetch reports spooled while easld was down.
-		r.open[entry.Name()].needsReplay = true
-		r.mu.Unlock()
 	}
 	return failures
 }
@@ -269,7 +291,7 @@ func (r *Relays) pass(instance, name string, client net.Conn) {
 	r.mu.Lock()
 	var port int
 	var token string
-	if current := r.open[instance]; current != nil {
+	if current := r.active[instance]; current != nil {
 		port, token = current.port, current.token
 	}
 	r.mu.Unlock()
@@ -306,8 +328,14 @@ func (r *Relays) pass(instance, name string, client net.Conn) {
 func (r *Relays) disarm(instance string, port int, token string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if current := r.open[instance]; current != nil && current.port == port && current.token == token {
+	if current := r.active[instance]; current != nil && current.port == port && current.token == token {
 		current.port = 0
+		path := filepath.Join(r.Dir, instance, "relay.json")
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(r.Log, "easld: can't remove %s: %v\n", path, err)
+		} else {
+			current.persisted = registration{}
+		}
 	}
 }
 
@@ -359,11 +387,11 @@ func Proof(token, role, name, easld, gate string) string {
 func (r *Relays) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for instance, open := range r.open {
+	for instance, open := range r.active {
 		for i, listener := range open.listeners {
 			listener.Close()
 			_ = os.Remove(filepath.Join(r.Dir, instance, Sockets[i]+".sock"))
 		}
-		delete(r.open, instance)
+		delete(r.active, instance)
 	}
 }

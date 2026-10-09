@@ -1720,7 +1720,7 @@ export type RelayOpenResult = {
   easl: string;
   /** the socket for the cmux browser subset (`CMUX_SOCKET_PATH`) */
   cmux: string;
-  /** reports may have been spooled meanwhile (fetch and replay them): the sockets were bound now, or a disarmed relay re-armed; false for the same token and an armed relay */
+  /** reports may have been spooled meanwhile (fetch and replay them): the sockets were bound now, a disarmed relay re-armed, or the first open after easld restored it at startup; false for later opens with the same token and an armed relay */
   opened: boolean;
 };
 

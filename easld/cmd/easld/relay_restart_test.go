@@ -3,54 +3,18 @@ package main
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/relay"
+	"github.com/twaldin/easl/easld/internal/relay/relaytest"
 )
 
 const relayToken = "0123456789abcdef0123456789abcdef"
-
-func relayGate(t *testing.T) net.Listener {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { listener.Close() })
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer conn.Close()
-				_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
-				reader := bufio.NewReader(conn)
-				hello, err := reader.ReadString('\n')
-				if err != nil {
-					return
-				}
-				name, nonce, _ := strings.Cut(strings.TrimSuffix(hello, "\n"), " ")
-				const mine = "ffeeddccbbaa99887766554433221100"
-				fmt.Fprintf(conn, "%s %s\n", mine, relay.Proof(relayToken, "gate", name, nonce, mine))
-				proof, _ := reader.ReadString('\n')
-				if strings.TrimSuffix(proof, "\n") != relay.Proof(relayToken, "easld", name, nonce, mine) {
-					return
-				}
-				_, _ = io.Copy(conn, reader)
-			}()
-		}
-	}()
-	return listener
-}
 
 func relayReply(t *testing.T, path string) {
 	t.Helper()
@@ -73,8 +37,8 @@ func relayReply(t *testing.T, path string) {
 func TestHostedRelayAnswersAfterEasldRestarts(t *testing.T) {
 	dir := shortDir(t)
 	home, socket := filepath.Join(dir, "home"), filepath.Join(dir, "easld.sock")
-	gate := relayGate(t)
-	params := map[string]any{"instance": "mac-1", "port": gate.Addr().(*net.TCPAddr).Port, "token": relayToken}
+	gate := relaytest.New(t, relayToken)
+	params := map[string]any{"instance": "mac-1", "port": gate.Port(), "token": relayToken}
 	done, stderr := start(t, "--home", home, "--socket", socket)
 	c := connect(t, socket, stderr)
 	paths := c.call(t, "relay.open", params)
@@ -112,8 +76,8 @@ func TestHostedRelayAnswersAfterEasldRestarts(t *testing.T) {
 func TestHostedRelayClosesClientsIfTheMacLeftDuringRestart(t *testing.T) {
 	dir := shortDir(t)
 	home, socket := filepath.Join(dir, "home"), filepath.Join(dir, "easld.sock")
-	gate := relayGate(t)
-	params := map[string]any{"instance": "mac-1", "port": gate.Addr().(*net.TCPAddr).Port, "token": relayToken}
+	gate := relaytest.New(t, relayToken)
+	params := map[string]any{"instance": "mac-1", "port": gate.Port(), "token": relayToken}
 	done, stderr := start(t, "--home", home, "--socket", socket)
 	c := connect(t, socket, stderr)
 	paths := c.call(t, "relay.open", params)
@@ -145,8 +109,8 @@ func TestHostedRelayClosesClientsIfTheMacLeftDuringRestart(t *testing.T) {
 		}
 	}
 	t.Log("restored sockets closed clients within 1 s when the Mac's forward was gone")
-	fresh := relayGate(t)
-	params["port"] = fresh.Addr().(*net.TCPAddr).Port
+	fresh := relaytest.New(t, relayToken)
+	params["port"] = fresh.Port()
 	if opened := c.call(t, "relay.open", params)["opened"]; opened != true {
 		t.Fatalf("re-arming must fetch spooled reports: opened=%v", opened)
 	}

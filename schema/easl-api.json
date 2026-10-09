@@ -1843,7 +1843,7 @@
         "properties": {
           "easl": { "type": "string", "description": "the socket for the easl API (a hosted terminal's `EASL_SOCKET`; integrations spool undelivered reports in `agent-reports/` beside it)" },
           "cmux": { "type": "string", "description": "the socket for the cmux browser subset (`CMUX_SOCKET_PATH`)" },
-          "opened": { "type": "boolean", "description": "reports may have been spooled meanwhile (fetch and replay them): the sockets were bound now, or a disarmed relay re-armed; false for the same token and an armed relay" }
+          "opened": { "type": "boolean", "description": "reports may have been spooled meanwhile (fetch and replay them): the sockets were bound now, a disarmed relay re-armed, or the first open after easld restored it at startup; false for later opens with the same token and an armed relay" }
         }
       }
     },

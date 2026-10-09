@@ -106,6 +106,7 @@ func run(args []string, stderr io.Writer) int {
 	}
 	// Hosted terminals reach their board through `<home>/run/<instance>/` (relay.open).
 	r.Relays = relay.New(filepath.Join(*home, "run"))
+	r.Relays.Log = stderr
 	defer r.Relays.Close()
 	for _, err := range r.Relays.Restore() {
 		fmt.Fprintln(stderr, "easld:", err)

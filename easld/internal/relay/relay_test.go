@@ -12,49 +12,11 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/twaldin/easl/easld/internal/relay/relaytest"
 )
 
 const token = "0123456789abcdef0123456789abcdef"
-
-// gate stands in for the client's end of the forward (RelayGate) holding `token`: it answers a
-// connection's challenge, checks easld's proof, and then echoes what follows. `wire` gets what
-// each connection sent before that (its handshake), `names` the socket of each it let through.
-func gate(t *testing.T, token string) (port int, names, wire chan string) {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { listener.Close() })
-	names, wire = make(chan string, 8), make(chan string, 8)
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer conn.Close()
-				reader := bufio.NewReader(conn)
-				hello, err := reader.ReadString('\n')
-				if err != nil {
-					return
-				}
-				name, nonce, _ := strings.Cut(strings.TrimSuffix(hello, "\n"), " ")
-				const mine = "ffeeddccbbaa99887766554433221100"
-				fmt.Fprintf(conn, "%s %s\n", mine, Proof(token, "gate", name, nonce, mine))
-				proof, _ := reader.ReadString('\n')
-				wire <- hello + proof
-				if strings.TrimSuffix(proof, "\n") != Proof(token, "easld", name, nonce, mine) {
-					return
-				}
-				names <- name
-				_, _ = io.Copy(conn, reader)
-			}()
-		}
-	}()
-	return listener.Addr().(*net.TCPAddr).Port, names, wire
-}
 
 // impostor listens on a port the client's forward let go of, as another user of the machine
 // could: it answers a connection's challenge with a made-up proof and records everything the
@@ -97,8 +59,8 @@ func roundTrip(t *testing.T, path, text string) string {
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := io.WriteString(conn, text); err != nil {
 		// The relay closes a connection it won't pass on, and that close can land before the
-		// write: a broken pipe or reset is that close, so there is no reply.
-		if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+		// write: a broken pipe, reset or ENOTCONN is that close, so there is no reply.
+		if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ENOTCONN) {
 			return ""
 		}
 		t.Fatal(err)
@@ -122,7 +84,8 @@ func inode(t *testing.T, path string) uint64 {
 func TestRelayPassesConnectionsOnceBothEndsProveTheToken(t *testing.T) {
 	r := New(filepath.Join(t.TempDir(), "run"))
 	defer r.Close()
-	port, names, wire := gate(t, token)
+	gate := relaytest.New(t, token)
+	port, names, wire := gate.Port(), gate.Names, gate.Wire
 	paths, opened, err := r.Open("mac-1", port, token)
 	if err != nil || !opened {
 		t.Fatalf("open: %v %v", opened, err)
@@ -178,7 +141,8 @@ func TestNothingPassesToAnEndThatCantProveTheToken(t *testing.T) {
 	}
 
 	// The client's end under a newer token than easld holds: the same.
-	rotated, _, rotatedWire := gate(t, strings.Repeat("9", 32))
+	rotatedGate := relaytest.New(t, strings.Repeat("9", 32))
+	rotated, rotatedWire := rotatedGate.Port(), rotatedGate.Wire
 	if _, opened, err := r.Open("mac-1", rotated, token); err != nil || !opened {
 		t.Fatalf("re-arming open: %v %v", opened, err)
 	}
@@ -189,7 +153,8 @@ func TestNothingPassesToAnEndThatCantProveTheToken(t *testing.T) {
 		t.Errorf("the other end got %q", sent)
 	}
 
-	fresh, names, _ := gate(t, strings.Repeat("7", 32))
+	freshGate := relaytest.New(t, strings.Repeat("7", 32))
+	fresh, names := freshGate.Port(), freshGate.Names
 	if _, opened, err := r.Open("mac-1", fresh, strings.Repeat("7", 32)); err != nil || !opened {
 		t.Fatalf("open with the new forward: %v %v", opened, err)
 	}
@@ -217,7 +182,7 @@ func TestANewTokenRebindsTheSockets(t *testing.T) {
 
 	r := New(dir)
 	defer r.Close()
-	first, _, _ := gate(t, token)
+	first := relaytest.New(t, token).Port()
 	paths, opened, err := r.Open("mac-1", first, token)
 	if err != nil || !opened {
 		t.Fatalf("open over a stale socket: %v %v", opened, err)
@@ -227,7 +192,8 @@ func TestANewTokenRebindsTheSockets(t *testing.T) {
 		t.Fatalf("keepalive: opened %v, %v, rebound %v", opened, err, inode(t, paths["easl"]) != before)
 	}
 	other := strings.Repeat("f", 32)
-	second, names, _ := gate(t, other)
+	secondGate := relaytest.New(t, other)
+	second, names := secondGate.Port(), secondGate.Names
 	if _, opened, err := r.Open("mac-1", second, other); err != nil || !opened {
 		t.Fatalf("reopen: %v %v", opened, err)
 	}
