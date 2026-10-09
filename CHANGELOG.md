@@ -2,10 +2,12 @@
 
 Each version's section is its GitHub release's notes.
 
-## Unreleased
+## 0.2.5
+
+**Updating from 0.2.4.** The update that installs 0.2.5 still runs 0.2.4's own install helper, so the updater fix below applies from the next update on. If Update in 0.2.4 stops with nothing replaced, quit easl and install 0.2.5 from its zip on [GitHub Releases](https://github.com/twaldin/easl/releases), or run `brew upgrade --cask easl` for a Homebrew install.
 
 - **easl samples itself when its main thread stalls.** When the board's main thread has been stuck in one piece of work for a second (keys held, nothing redrawing), easl runs the system's `sample` on itself for that second, while the stall is still going, into `~/Library/Application Support/Easl/stalls/<time>.txt` (the development instance's own home under `EASL_HOME`), and the log line naming the stall's cause starts with that file, so a stall nobody caught in the act leaves its backtraces behind. At most one sample every five minutes, the newest twenty kept; `easl metrics` says how many were taken and the newest. Measured runs (`EASL_DEV_PERF=1`) don't sample.
-- **Updates install where easl can't change its own app's dates.** Where macOS refuses to change the installed app's dates, Update stopped with nothing replaced. easl now protects the old app for rollback without changing its dates. The first update from 0.2.4 still runs 0.2.4's own helper, so this fix applies to updates made by this version onward, not the update that first installs it. If 0.2.4 hits this failure, quit easl and install this version from its zip on [GitHub Releases](https://github.com/twaldin/easl/releases), or run `brew upgrade --cask easl` for a Homebrew install.
+- **Updates install where easl can't change its own app's dates.** Where macOS refuses to change the installed app's dates, Update stopped with nothing replaced. easl now protects the old app for rollback without changing its dates.
 - Development: `scripts/rotate-lead.ts` performs a guarded fresh lead restart and an acknowledged out-of-band handoff with reserved delivery time and recorded evidence.
 
 ## 0.2.4
