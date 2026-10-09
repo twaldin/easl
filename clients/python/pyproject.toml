@@ -1,6 +1,6 @@
 [project]
 name = "easl-sdk"
-version = "0.2.4"
+version = "0.2.5"
 description = "Python SDK for the easl app socket API"
 requires-python = ">=3.11"
 dependencies = []
