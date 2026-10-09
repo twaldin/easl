@@ -70,7 +70,7 @@ struct HostedTerminalTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         // The first attach drops (255), the second ends as zmx does when its session ends.
         let ssh = try fakeSSH(in: dir, statuses: [255, 7])
-        let remote = HostedTerminal.attach(session: session, home: "home", board: "brd_b", tile: tile)
+        let remote = HostedTerminal.attach(session: session, home: "home", board: "brd_b", tile: tile, merged: [])
         let (status, output) = try await sh(HostedTerminal.attachLoop, ["canvas-host", ssh.path, "/tmp/ctl", "deckbox", session, remote])
         #expect(status == 7, "zmx's exit ends the loop with its status")
         #expect(try String(contentsOf: dir.appendingPathComponent("attaches"), encoding: .utf8) == "2\n")
@@ -134,7 +134,7 @@ struct HostedTerminalTests {
         defer { try? FileManager.default.removeItem(at: home) }
         for lists in [["", listed(ownLabels)], [listed(""), listed(ownLabels)]] {
             try fakeZmx(home: home, lists: lists)
-            let (status, output) = try await sh(HostedTerminal.attach(session: session, home: "home", board: "brd_b", tile: tile), env: ["HOME": home.path])
+            let (status, output) = try await sh(HostedTerminal.attach(session: session, home: "home", board: "brd_b", tile: tile, merged: []), env: ["HOME": home.path])
             #expect(status == 0)
             let text = String(decoding: output, as: UTF8.self)
             #expect(text.contains("Waiting for \(session) to start"))
@@ -142,47 +142,49 @@ struct HostedTerminalTests {
         }
     }
 
-    /// A session of the tile's name that isn't this tile's (another instance's home: a board copied
-    /// there has the same ids; another board's; one without labels) is refused, never attached.
-    @Test func theHostSideRefusesAnotherOwnersSession() async throws {
-        let home = try scratch()
-        defer { try? FileManager.default.removeItem(at: home) }
-        for (labels, owner) in [("canvas.board=brd_b\tcanvas.home=other\tcanvas.tile=\(tile)", "other"),
-                                ("canvas.board=brd_x\tcanvas.home=home\tcanvas.tile=\(tile)", "home"),
-                                ("", "no owner")] {
-            try fakeZmx(home: home, lists: [listed(labels)])
-            let (status, output) = try await sh(HostedTerminal.attach(session: session, home: "home", board: "brd_b", tile: tile), env: ["HOME": home.path])
-            let text = String(decoding: output, as: UTF8.self)
-            #expect(status == HostedTerminal.refused, "\(labels)")
-            #expect(text.contains("belongs to another easl instance or board (\(owner))"), "\(labels): \(text)")
-            #expect(!text.contains("attach "), "\(labels): never attached")
-        }
-    }
-
     @Test func theHostSideKeepsAMergedBoardsSession() async throws {
+        struct Ownership: Decodable { var name: String; var labels: [String: String]; var merged: [String]; var accepted: Bool }
+        struct Fixture: Decodable { var tile: String; var board: String; var home: String; var cases: [Ownership] }
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../Fixtures/hosted-ownership.json")
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
         let home = try scratch()
         defer { try? FileManager.default.removeItem(at: home) }
-        for (labels, merged, expected) in [
-            ("canvas.board=brd_repo\tcanvas.home=home\tcanvas.tile=\(tile)", [], Int32(0)),
-            ("canvas.board=brd_old\tcanvas.home=home\tcanvas.tile=\(tile)", ["brd_other", "brd_old"], Int32(0)),
-            ("canvas.board=brd_old\tcanvas.home=home\tcanvas.tile=\(tile)", [], HostedTerminal.refused),
-            ("canvas.board=brd_old\tcanvas.home=home\tcanvas.tile=\(tile)", ["brd_other"], HostedTerminal.refused),
-            ("canvas.board=brd_old_extra\tcanvas.home=home\tcanvas.tile=\(tile)", ["brd_old"], HostedTerminal.refused),
-            ("canvas.board=brd_old\tcanvas.home=other\tcanvas.tile=\(tile)", ["brd_old"], HostedTerminal.refused),
-            ("canvas.board=brd_old\tcanvas.home=home\tcanvas.tile=obj_other", ["brd_old"], HostedTerminal.refused),
-            ("canvas.home=home\tcanvas.tile=\(tile)", [""], HostedTerminal.refused),
-        ] {
-            try fakeZmx(home: home, lists: [listed(labels)])
-            let (status, output) = try await sh(HostedTerminal.attach(session: session, home: "home", board: "brd_repo", tile: tile, merged: merged), env: ["HOME": home.path])
+        let session = "canvas-" + fixture.tile
+        for ownership in fixture.cases {
+            let labels = ownership.labels.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\t")
+            try fakeZmx(home: home, lists: ["  name=\(session)\tpid=2\tclients=0\t\(labels)\n"])
+            let (status, output) = try await sh(HostedTerminal.attach(session: session, home: fixture.home, board: fixture.board, tile: fixture.tile, merged: ownership.merged), env: ["HOME": home.path])
             let text = String(decoding: output, as: UTF8.self)
-            #expect(status == expected, "\(labels), merged \(merged): \(text)")
-            if expected == 0 {
+            #expect(status == (ownership.accepted ? 0 : HostedTerminal.refused), "\(ownership.name): \(text)")
+            if ownership.accepted {
                 #expect(text == "attach \(session) SHELL=/bin/false ZMX_DIR=\(home.path)/.local/state/easl/zmx\n")
             } else {
-                #expect(text.contains("belongs to another easl instance or board"))
+                let owner = ownership.labels["canvas.home"] ?? "no owner"
+                #expect(text.contains("belongs to another easl instance or board (\(owner))"), "\(ownership.name): \(text)")
                 #expect(!text.contains("attach "))
             }
         }
+    }
+
+    @Test func invalidMergedIDsDoNotClaimAHostedSession() async throws {
+        let home = try scratch()
+        defer { try? FileManager.default.removeItem(at: home) }
+        try fakeZmx(home: home, lists: [listed("canvas.board=brd_old\tcanvas.home=home\tcanvas.tile=\(tile)")])
+        for id in ["brd_other\ncanvas.board=brd_old", "brd_old\n", "", "BRD_old", "brd_old_extra"] {
+            let (status, output) = try await sh(HostedTerminal.attach(session: session, home: "home", board: "brd_repo", tile: tile, merged: [id]), env: ["HOME": home.path])
+            let text = String(decoding: output, as: UTF8.self)
+            #expect(status == HostedTerminal.refused, "\(id.debugDescription): \(text)")
+            #expect(!text.contains("attach "))
+        }
+    }
+
+    @Test func aHostedRelaunchOmitsMergeHistory() {
+        let params = HostedTerminal.spawnParams(tile: tile, board: "brd_repo", merged: [], argv: ["omp"], cwd: nil,
+                                                home: "/home/tim", run: "/home/tim/.local/state/easl/run/mac-1",
+                                                homeLabel: "home", cmuxPassword: nil, ghosttyIntegration: false)
+        #expect(params["command"] == .array(["omp"]))
+        #expect(params["merged"] == nil)
+        #expect(params["labels"]?["canvas.board"] == .string("brd_repo"))
     }
 
     /// A call to the host's easld (`HostedTerminal.request` running `easldRelay`, here without
@@ -352,7 +354,7 @@ struct HostedTerminalTests {
     /// The session's variables point the agent's integration and the CLI at this instance's
     /// relayed sockets and easl's files on the host, never at this Mac's paths.
     @Test func theSessionReachesTheBoardThroughTheForwardedSockets() throws {
-        let params = HostedTerminal.spawnParams(tile: "obj_t", board: "brd_b", merged: ["brd_old", "brd_other"], argv: ["omp", "--model", "x"], cwd: nil, home: "/home/tim",
+        let params = HostedTerminal.spawnParams(tile: "obj_t", board: "brd_b", merged: ["brd_old", "brd_other", "brd_old\n"], argv: ["omp", "--model", "x"], cwd: nil, home: "/home/tim",
                                                 run: "/home/tim/.local/state/easl/run/mac-1", homeLabel: "home", cmuxPassword: nil, ghosttyIntegration: true)
         let env = params["env"]?.object?.compactMapValues(\.string) ?? [:]
         #expect(env["EASL_SOCKET"] == "/home/tim/.local/state/easl/run/mac-1/easl.sock")
@@ -366,7 +368,7 @@ struct HostedTerminalTests {
         #expect(params["command"] == .array(["omp", "--model", "x"].map(JSONValue.string)) && params["cwd"] == nil)
         #expect(params["labels"] == .object(["canvas.board": .string("brd_b"), "canvas.tile": .string("obj_t"), "canvas.home": .string("home")]))
         #expect(params["merged"] == .array(["brd_old", "brd_other"].map(JSONValue.string)))
-        let shell = HostedTerminal.spawnParams(tile: "obj_t", board: "brd_b", argv: nil, cwd: "/srv/repo", home: "/home/tim",
+        let shell = HostedTerminal.spawnParams(tile: "obj_t", board: "brd_b", merged: [], argv: nil, cwd: "/srv/repo", home: "/home/tim",
                                                run: "/home/tim/.local/state/easl/run/mac-1", homeLabel: "home", cmuxPassword: nil, ghosttyIntegration: false)
         #expect(shell["command"] == nil && shell["cwd"] == .string("/srv/repo") && shell["env"]?["EASL_GHOSTTY_INTEGRATION"] == nil)
         #expect(shell["merged"] == nil)
@@ -380,7 +382,7 @@ struct HostedTerminalTests {
         struct Fixture: Decodable { var tile: String; var board: String; var userHome: String; var env: [String: String]; var hosted: Side }
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../Fixtures/terminal-env.json")
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
-        let params = HostedTerminal.spawnParams(tile: fixture.tile, board: fixture.board, argv: nil, cwd: nil, home: fixture.userHome, run: fixture.hosted.run,
+        let params = HostedTerminal.spawnParams(tile: fixture.tile, board: fixture.board, merged: [], argv: nil, cwd: nil, home: fixture.userHome, run: fixture.hosted.run,
                                                 homeLabel: fixture.hosted.labels["canvas.home"] ?? "", cmuxPassword: nil, ghosttyIntegration: true)
         #expect(params["env"]?.object?.compactMapValues(\.string) == fixture.env.merging(fixture.hosted.env) { $1 })
         #expect(params["labels"]?.object?.compactMapValues(\.string) == fixture.hosted.labels)

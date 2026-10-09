@@ -1,6 +1,7 @@
 package router
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,43 +77,76 @@ func TestSessionSpawnKeepsAMergedBoardsSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	list := "  name=canvas-obj_x\tpid=7\tclients=0\tcanvas.home=mac\tcanvas.board=brd_old\tcanvas.tile=obj_x\n"
-	if err := os.WriteFile(filepath.Join(home, "list-last"), []byte(list), 0o600); err != nil {
+	var fixture struct {
+		Tile  string
+		Board string
+		Home  string
+		Cases []struct {
+			Name     string
+			Labels   map[string]string
+			Merged   []string
+			Accepted bool
+		}
+	}
+	data, err := os.ReadFile("../../../Tests/Fixtures/hosted-ownership.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
 	}
 	f.router.Sessions = &session.Manager{Zmx: zmx, Dir: filepath.Join(home, "zmx-dir"), Shell: "/bin/sh", Home: home, Env: []string{"HOME=" + home, "PATH=/usr/bin:/bin"}}
-	for _, c := range []struct {
-		name   string
-		board  string
-		home   string
-		tile   string
-		merged any
-		code   string
-	}{
-		{"same board", "brd_old", "mac", "obj_x", []any{}, ""},
-		{"merged board", "brd_repo", "mac", "obj_x", []any{"brd_other", "brd_old"}, ""},
-		{"no merge history", "brd_repo", "mac", "obj_x", []any{}, "conflict"},
-		{"unrelated board", "brd_repo", "mac", "obj_x", []any{"brd_other"}, "conflict"},
-		{"another home", "brd_repo", "other", "obj_x", []any{"brd_old"}, "conflict"},
-		{"another tile", "brd_repo", "mac", "obj_other", []any{"brd_old"}, "conflict"},
-		{"not an array", "brd_repo", "mac", "obj_x", "brd_old", "invalid_params"},
-		{"not all strings", "brd_repo", "mac", "obj_x", []any{"brd_old", float64(1)}, "invalid_params"},
-		{"null", "brd_repo", "mac", "obj_x", nil, "invalid_params"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			reply := f.router.HandleConn(map[string]any{"id": 1, "method": "session.spawn", "params": map[string]any{
-				"tile": "obj_x", "merged": c.merged, "labels": map[string]any{"canvas.home": c.home, "canvas.board": c.board, "canvas.tile": c.tile},
-			}}, f.conn).(map[string]any)
-			if c.code != "" {
+	call := func(merged any) map[string]any {
+		return f.router.HandleConn(map[string]any{"id": 1, "method": "session.spawn", "params": map[string]any{
+			"tile": fixture.Tile, "merged": merged, "labels": map[string]any{"canvas.home": fixture.Home, "canvas.board": fixture.Board, "canvas.tile": fixture.Tile},
+		}}, f.conn).(map[string]any)
+	}
+	for _, ownership := range fixture.Cases {
+		t.Run(ownership.Name, func(t *testing.T) {
+			var labels []string
+			for key, value := range ownership.Labels {
+				labels = append(labels, key+"="+value)
+			}
+			list := "  name=canvas-" + fixture.Tile + "\tpid=7\tclients=0\t" + strings.Join(labels, "\t") + "\n"
+			if err := os.WriteFile(filepath.Join(home, "list-last"), []byte(list), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			merged := make([]any, len(ownership.Merged))
+			for i, id := range ownership.Merged {
+				merged[i] = id
+			}
+			reply := call(merged)
+			if !ownership.Accepted {
 				failure, _ := reply["error"].(map[string]any)
-				if reply["ok"] != false || failure["code"] != c.code {
-					t.Fatalf("re-check: %v, want %s", reply, c.code)
+				if reply["ok"] != false || failure["code"] != "conflict" {
+					t.Fatalf("re-check: %v, want conflict", reply)
 				}
 				return
 			}
 			result, _ := reply["result"].(map[string]any)
-			if reply["ok"] != true || result["session"] != "canvas-obj_x" || result["created"] != false {
+			if reply["ok"] != true || result["session"] != "canvas-"+fixture.Tile || result["created"] != false {
 				t.Fatalf("re-check: %v", reply)
+			}
+		})
+	}
+	for _, c := range []struct {
+		name   string
+		merged any
+	}{
+		{"not an array", "brd_old"},
+		{"not all strings", []any{"brd_old", float64(1)}},
+		{"null", nil},
+		{"newline", []any{"brd_other\ncanvas.board=brd_old"}},
+		{"trailing newline", []any{"brd_old\n"}},
+		{"empty", []any{""}},
+		{"uppercase prefix", []any{"BRD_old"}},
+		{"extra separator", []any{"brd_old_extra"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			reply := call(c.merged)
+			failure, _ := reply["error"].(map[string]any)
+			if reply["ok"] != false || failure["code"] != "invalid_params" {
+				t.Fatalf("re-check: %v, want invalid_params", reply)
 			}
 		})
 	}

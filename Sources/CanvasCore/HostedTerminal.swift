@@ -117,6 +117,12 @@ public enum HostedTerminal {
         return (home, easld)
     }
 
+    private static let boardIDPattern = try! NSRegularExpression(pattern: #"^[a-z]+_[0-9A-Za-z]+\z"#)
+
+    private static func isBoardID(_ id: BoardID) -> Bool {
+        boardIDPattern.firstMatch(in: id, range: NSRange(location: 0, length: id.utf16.count)) != nil
+    }
+
     /// The host side of a tile's attach: waits until easld has started the session (the app asks
     /// it to as the connection comes up), then attaches, only if the session is this tile's:
     /// labelled with this instance's `home` label, `tile`, and `board` or one of `merged`, as
@@ -125,7 +131,7 @@ public enum HostedTerminal {
     /// tile's `ownerGuard` does: the host prints whose it is and exits `refused`. Never creates a session: `zmx attach`
     /// to a missing one would start a login shell under ssh, outside easld's slice, so in the
     /// moment between the check and the attach `SHELL=/bin/false` makes that one exit at once.
-    public static func attach(session: String, home: String, board: BoardID, tile: ObjectID, merged: [BoardID] = []) -> String {
+    public static func attach(session: String, home: String, board: BoardID, tile: ObjectID, merged: [BoardID]) -> String {
         remote(#"""
         export ZMX_DIR=\#(zmxDir)
         z="$HOME/.local/bin/zmx"
@@ -140,25 +146,24 @@ public enum HostedTerminal {
           sleep 1
         done
         [ -z "$shown" ] || printf '\r\033[K'
-        owned=1
-        for label in "canvas.home=$2" "canvas.tile=$4"; do
-          if ! printf '%s\n' "$fields" | grep -qxF -- "$label"; then owned=; break; fi
-        done
         session=$1
-        board=$3
-        shift 4
-        boardOwned=
-        for candidate in "$board" "$@"; do
-          [ -n "$candidate" ] || continue
-          if printf '%s\n' "$fields" | grep -qxF -- "canvas.board=$candidate"; then boardOwned=1; break; fi
-        done
-        if [ -z "$owned" ] || [ -z "$boardOwned" ]; then
+        refuse() {
           owner=$(printf '%s\n' "$fields" | sed -n 's/^canvas\.home=//p')
           printf '\r\nThis terminal session (%s on %s) belongs to another easl instance or board (%s).\r\nNot attaching: this copy of the board can neither type into it nor end it.\r\n' "$session" "$(hostname)" "${owner:-no owner}"
           exit \#(refused)
-        fi
-        SHELL=/bin/false exec "$z" attach "$session"
-        """#, [session, home, board, tile] + merged)
+        }
+        for label in "canvas.home=$2" "canvas.tile=$4"; do
+          printf '%s\n' "$fields" | grep -qxF -- "$label" || refuse
+        done
+        board=$3
+        shift 4
+        for candidate in "$board" "$@"; do
+          if printf '%s\n' "$fields" | grep -qxF -- "canvas.board=$candidate"; then
+            SHELL=/bin/false exec "$z" attach "$session"
+          fi
+        done
+        refuse
+        """#, [session, home, board, tile] + merged.filter(isBoardID))
     }
 
     /// `attach`'s status when the session isn't this tile's (zmx's own attach exits 0 or 1).
@@ -222,7 +227,7 @@ public enum HostedTerminal {
     /// variables pointing at this instance's relayed sockets in `run` (`relay.open`), and easl's
     /// files under the host's `home` (`LoginSession.tileShellIntegration`: easl's bin first on PATH,
     /// its Python client, the zsh and bash integration, the `open` shim as `BROWSER`).
-    public static func spawnParams(tile: ObjectID, board: BoardID, merged: [BoardID] = [], argv: [String]?, cwd: String?, home: String, run: String,
+    public static func spawnParams(tile: ObjectID, board: BoardID, merged: [BoardID], argv: [String]?, cwd: String?, home: String, run: String,
                                    homeLabel: String, cmuxPassword: String?, ghosttyIntegration: Bool) -> JSONValue {
         let files = resources(home: home)
         var env = LoginSession.tileShellIntegration(resources: files, inherited: [:])
@@ -246,6 +251,7 @@ public enum HostedTerminal {
             "env": .object(env.mapValues(JSONValue.string)),
             "labels": .object(["canvas.board": .string(board), "canvas.tile": .string(tile), "canvas.home": .string(homeLabel)]),
         ]
+        let merged = merged.filter(isBoardID)
         if !merged.isEmpty { params["merged"] = .array(merged.map(JSONValue.string)) }
         if let argv, !argv.isEmpty { params["command"] = .array(argv.map(JSONValue.string)) }
         if let cwd, !cwd.isEmpty { params["cwd"] = .string(cwd) }

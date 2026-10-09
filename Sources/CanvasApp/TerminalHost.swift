@@ -328,7 +328,8 @@ final class TerminalHost {
             try? await Task.sleep(for: .milliseconds(100))
         }
         try ended()
-        guard let params = tile.hostedSpawnParams(home: home, run: run, argv: argv) else {
+        // The session is gone, so merge history cannot matter; older easld accepts this relaunch.
+        guard let params = tile.hostedSpawnParams(home: home, run: run, argv: argv, merged: []) else {
             throw ApiRouter.Failure("not_found", "terminal \(id) was closed")
         }
         let result: JSONValue

@@ -209,9 +209,9 @@ final class TerminalTile: NSView, TileContent {
     /// `session.spawn`'s params for this hosted terminal, read from the object as it is now (a
     /// recorded agent session resumes), or running `argv` (agent.restart's relaunch): `home` is
     /// the host's, `run` this instance's relayed sockets' directory there.
-    func hostedSpawnParams(home: String, run: String, argv: [String]? = nil) -> JSONValue? {
+    func hostedSpawnParams(home: String, run: String, argv: [String]? = nil, merged: [BoardID]? = nil) -> JSONValue? {
         guard let object = board.objects[objectID] else { return nil }
-        return HostedTerminal.spawnParams(tile: objectID, board: board.id, merged: board.repo?.merged ?? [], argv: argv ?? AgentResume.initialArgv(object), cwd: object.props["cwd"]?.string,
+        return HostedTerminal.spawnParams(tile: objectID, board: board.id, merged: merged ?? board.repo?.merged ?? [], argv: argv ?? AgentResume.initialArgv(object), cwd: object.props["cwd"]?.string,
                                           home: home, run: run, homeLabel: Self.homeLabel, cmuxPassword: AppPaths.cmuxPassword,
                                           ghosttyIntegration: TerminalConfig.shared.shellIntegration != nil)
     }
