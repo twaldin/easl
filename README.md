@@ -29,7 +29,7 @@ Requires macOS 14 or later on Apple silicon. easl is signed with a Developer ID 
    ```sh
    brew install --cask twaldin/tap/easl
    ```
-   `brew upgrade --cask easl` updates it; it quits easl first, and terminal tiles keep running.
+   `brew upgrade --cask easl` updates it; it quits easl first, and terminal tiles keep running. After installing, the cask clears the quarantine flag Homebrew puts on what it downloads, so easl opens without Gatekeeper's one-time "downloaded from the Internet" confirmation, also when an agent starts it. If clearing the flag fails, the install still succeeds and the first launch asks as before.
 2. Or quit easl if it's running and run the installer. It downloads the latest release from [Releases](https://github.com/twaldin/easl/releases), checks its SHA-256 and moves `easl.app` to `/Applications` (`~/Applications` if that isn't writable), with no sudo ([read the script](https://easl.sh/install.txt)).
    ```sh
    curl -fsSL https://easl.sh/install | sh

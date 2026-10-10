@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- **A Homebrew install opens without Gatekeeper's prompt.** After `brew install` or `brew upgrade`, the first launch waited on macOS's "downloaded from the Internet" confirmation. That prompt can open on a Space you aren't looking at, so a launch from an agent's shell (`open -g`) hung with nothing shown, and every `easl` command in your terminals waited behind it. The cask now clears the quarantine flag once easl is installed; the zip it installs is the notarized one the release published, pinned by its SHA-256. If clearing the flag fails, the install still succeeds and the first launch asks as before. This applies from the next `brew install` or `brew upgrade` on.
+
 ## 0.2.6
 
 **Updating from 0.2.4.** The update still runs 0.2.4's own install helper. If Update in 0.2.4 stops with nothing replaced, quit easl and install 0.2.6 from its zip on [GitHub Releases](https://github.com/twaldin/easl/releases), or run `brew upgrade --cask easl` for a Homebrew install.
