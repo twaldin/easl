@@ -2,8 +2,8 @@
 # Prints the Homebrew cask for a notarized release: scripts/homebrew-cask.sh <version> <zip sha256>.
 # The Release workflow writes it to twaldin/homebrew-tap's Casks/easl.rb after publishing
 # (docs/releasing.md "Homebrew"), so `brew install --cask twaldin/tap/easl` installs that release.
-# Only for a notarized zip: Homebrew quarantines what a cask downloads, and it doesn't support casks
-# that fail Gatekeeper.
+# Only for a notarized zip: Homebrew doesn't support casks that fail Gatekeeper, and the cask clears
+# the quarantine flag Homebrew sets, so the zip it pins must be one spctl accepted as notarized.
 set -eu
 
 version="${1:-}"
@@ -31,6 +31,14 @@ cask "easl" do
   depends_on macos: :sonoma
 
   app "easl.app"
+
+  # Gatekeeper's first-launch prompt can open on a Space nobody is looking at, and a launch from an
+  # agent's shell (open -g, the easl CLI inside the app) then waits on it with nothing shown (easl#60).
+  # The Release workflow writes this cask only for a zip spctl accepted as notarized, and sha256 pins
+  # that zip, so the flag only asks for a confirmation. If clearing it fails, the app keeps it.
+  postflight_steps do
+    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/easl.app"], must_succeed: false
+  end
 
   # Quitting keeps terminal tiles running (zmx holds their sessions); boards are saved on quit.
   uninstall quit: "net.waldin.easl"
