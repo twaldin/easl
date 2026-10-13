@@ -2463,3 +2463,19 @@ private final class FirstAnswer<Value: Sendable> {
         continuation = nil
     }
 }
+
+extension ScrollGesture.Step {
+    /// Where `event` sits in a trackpad gesture; nil for a scroll outside one (a wheel notch, a
+    /// replayed step).
+    init?(_ event: NSEvent) {
+        switch (event.phase, event.momentumPhase) {
+        case let (phase, _) where phase.contains(.began) || phase.contains(.mayBegin): self = .began
+        case let (phase, _) where phase.contains(.ended) || phase.contains(.cancelled): self = .ended
+        case let (phase, _) where !phase.isEmpty: self = .changed
+        case let (_, momentum) where momentum.contains(.began): self = .momentumBegan
+        case let (_, momentum) where momentum.contains(.ended) || momentum.contains(.cancelled): self = .momentumEnded
+        case let (_, momentum) where !momentum.isEmpty: self = .momentumChanged
+        default: return nil
+        }
+    }
+}

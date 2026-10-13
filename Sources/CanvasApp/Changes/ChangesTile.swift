@@ -42,10 +42,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     private var messageWork: DispatchWorkItem?
     private let cache = ChangesLineCache()
     private var filterField: NSSearchField?
-    /// Who a trackpad gesture scrolls, decided by its first movement and kept to its end
-    /// (momentum included): the tile never hands a gesture to the canvas halfway.
-    private var gestureOwner: GestureOwner?
-    private enum GestureOwner { case tile, canvas }
+    /// Who the trackpad gesture under way scrolls: the tile never hands one to the canvas halfway.
+    private var gesture = ScrollGesture()
     private var toolTipWork: DispatchWorkItem?
     /// The rows of the last painter and what they were laid out for: stepping through hunks or
     /// selecting lines doesn't rewrap every line.
@@ -556,17 +554,12 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             dy *= CodeMetrics.rowHeight
         }
         let scrollable = contentHeight > viewportHeight + 0.5
-        let gesture = !event.phase.isEmpty || !event.momentumPhase.isEmpty
-        guard gesture else {
+        guard let step = ScrollGesture.Step(event) else {
             // A mouse wheel notch or a replayed step: each one on its own.
             guard scrollable, abs(dy) >= abs(dx), dy != 0 else { return super.scrollWheel(with: event) }
             return setScroll(scroll - dy)
         }
-        if event.phase.contains(.began) || event.phase.contains(.mayBegin) { gestureOwner = nil }
-        if gestureOwner == nil, dx != 0 || dy != 0 {
-            gestureOwner = scrollable && abs(dy) >= abs(dx) ? .tile : .canvas
-        }
-        switch gestureOwner {
+        switch gesture.owner(of: step, dx: dx, dy: dy, tileTakes: scrollable && abs(dy) >= abs(dx)) {
         case .tile?:
             if dy != 0 { setScroll(scroll - dy) }
         case .canvas?:

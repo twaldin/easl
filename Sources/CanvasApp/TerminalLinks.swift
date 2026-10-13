@@ -22,6 +22,8 @@ final class CanvasTerminalView: TerminalView {
 
     private var swallowedMouseUp = false
     private var hovered: TerminalReferences.Hit?
+    /// Who the trackpad gesture under way scrolls (`scrollWheel`).
+    private var gesture = ScrollGesture()
     /// AppKit takes keyboard focus from a view it hides, and a terminal is hidden whenever its
     /// tile turns into its card (panned offscreen, zoomed out, a resize that took it out of
     /// view): the terminal that lost focus that way gets it back when shown again, unless
@@ -113,17 +115,27 @@ final class CanvasTerminalView: TerminalView {
         super.mouseUp(with: forcingDefaultBrowser ? Self.commandOnly(event) : event)
     }
 
-    /// Scrolling goes to the terminal (its scrollback, or a program that reads the wheel) except
-    /// when it would pan over a code tile too: a horizontal-dominant step pans the canvas, and
-    /// over a terminal without keyboard focus a vertical step pans unless the terminal has
-    /// scrollback to scroll (a full-screen TUI in the alternate screen has none; click in first).
+    /// Vertical scrolling over the terminal stays with it, focused or not, and a sideways step
+    /// (`CanvasWheel.sideways`, a ⇧-wheel too) pans the canvas; a trackpad gesture keeps the
+    /// owner its first movement chose (`ScrollGesture`). Ghostty gets the scroll (its scrollback,
+    /// or a program that reads the mouse) unless the terminal lacks keyboard focus, the program
+    /// hasn't captured the mouse and there is no scrollback: Ghostty would type ↑/↓ into a
+    /// full-screen program then (alternate scroll), so the scroll does nothing. Click in first.
     override func scrollWheel(with event: NSEvent) {
-        let horizontal = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
-        if horizontal || (window?.firstResponder !== self && hasScrollback?() != true) {
-            nextResponder?.scrollWheel(with: event)
-        } else {
-            super.scrollWheel(with: event)
+        let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
+        let sideways = CanvasWheel.sideways(dx: dx, dy: dy, precise: event.hasPreciseScrollingDeltas, shift: event.modifierFlags.contains(.shift))
+        var owner: ScrollGesture.Owner = sideways ? .canvas : .tile
+        if let step = ScrollGesture.Step(event) {
+            // A gesture's first event without movement stays here: the canvas mustn't start
+            // tracking a gesture that may turn out to be the terminal's.
+            owner = gesture.owner(of: step, dx: dx, dy: dy, tileTakes: !sideways) ?? .tile
         }
+        if owner == .canvas {
+            nextResponder?.scrollWheel(with: event)
+            return
+        }
+        guard window?.firstResponder === self || isMouseCaptured || hasScrollback?() == true else { return }
+        super.scrollWheel(with: event)
     }
 
     override func mouseMoved(with event: NSEvent) {
