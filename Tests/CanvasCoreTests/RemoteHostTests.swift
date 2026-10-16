@@ -179,7 +179,8 @@ struct RemoteHostTests {
         }
     }
 
-    @Test func aCopiedTileRefusalHoldsItsOwnerNoticeWithoutReattaching() async throws {
+    // Keep Process.run and waitUntilExit on the same thread.
+    @Test func aCopiedTileRefusalHoldsItsOwnerNoticeWithoutReattaching() throws {
         let hosted = HostedTerminalTests()
         let home = try hosted.scratch()
         defer { try? FileManager.default.removeItem(at: home) }
@@ -212,9 +213,9 @@ struct RemoteHostTests {
         let notice = "canvas.board=brd_original"
         for _ in 0..<300 {
             if (try String(contentsOf: output, encoding: .utf8)).contains(notice) { break }
-            try await Task.sleep(for: .milliseconds(10))
+            Thread.sleep(forTimeInterval: 0.01)
         }
-        try await Task.sleep(for: .milliseconds(2200))
+        Thread.sleep(forTimeInterval: 2.2)
         #expect(process.isRunning, "the surface remains open on the refusal")
         #expect(try String(contentsOf: attempts, encoding: .utf8) == "attach\n")
         let text = try String(contentsOf: output, encoding: .utf8)
