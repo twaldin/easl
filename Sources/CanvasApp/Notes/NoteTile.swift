@@ -813,8 +813,8 @@ final class NoteTile: NSView, TileContent {
 /// "visible" follows every pan and pinch step (the canvas clips too), so each step re-laid out
 /// every note on screen and resized it to a new height estimate, sometimes never converging: a
 /// seconds-long beachball while zooming a board of notes, once an AppKit layout-loop exception.
-/// A note is short; lay all of it out once per content change instead. NSTextView implements
-/// this viewport delegate method without exposing it to Swift, hence the selector.
+/// A note is short; lay all of it out once per content change instead. Older SDKs do not expose
+/// this viewport delegate method to Swift.
 final class NoteDisplayView: NSTextView {
     /// The text's context menu leads with Mention: the block under the right-click.
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -823,10 +823,16 @@ final class NoteDisplayView: NSTextView {
         return menu
     }
 
+    #if compiler(>=6.4)
+    override func viewportBounds(for controller: NSTextViewportLayoutController) -> CGRect {
+        bounds
+    }
+    #else
     @objc(viewportBoundsForTextViewportLayoutController:)
     func wholeTextViewport(_ controller: NSTextViewportLayoutController) -> CGRect {
         bounds
     }
+    #endif
 
     override func draw(_ dirtyRect: NSRect) {
         let perfStart = DevPerf.mark()

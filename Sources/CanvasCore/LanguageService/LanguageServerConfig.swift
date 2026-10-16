@@ -61,7 +61,7 @@ public struct LanguageServerConfig: Sendable, Equatable {
         LanguageServerConfig(language: "swift", command: "sourcekit-lsp", languageIDs: ["swift": "swift"],
                              rootMarkers: ["Package.swift", "compile_commands.json", "buildServer.json"],
                              initializationOptions: .object(["backgroundIndexing": .bool(false)]),
-                             emptyResultHint: "easl doesn't index Swift projects itself; sourcekit-lsp answers from the index your own builds write (swift build).",
+                             emptyResultHint: "easl doesn't index Swift projects itself. For SwiftPM, run swift build --build-system native --enable-index-store, then restart easl to read that index. Swift 6.4's SwiftBuild backend reports the wrong index-store path.",
                              installHint: "It comes with Xcode or the Command Line Tools: xcode-select --install"),
         LanguageServerConfig(language: "python", command: "pyright-langserver", arguments: ["--stdio"], languageIDs: ["py": "python", "pyi": "python"],
                              rootMarkers: ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"],
