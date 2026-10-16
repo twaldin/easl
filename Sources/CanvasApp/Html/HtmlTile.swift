@@ -656,9 +656,7 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
             ExternalOpen.open(url, because: "html \(object.id) link (⌥-click)", naming: !board.isRemote)
         } else {
             let opened = board.openLink(url, near: object.id, caller: nil)
-            if board.isRemote {
-                NSLog("easl: html %@ link → %@ %@", object.id, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
-            } else {
+            if !board.isRemote {
                 NSLog("easl: html %@ link %@ → %@ %@", object.id, url.absoluteString, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
             }
             onOpenedLink?(opened.object.id)
