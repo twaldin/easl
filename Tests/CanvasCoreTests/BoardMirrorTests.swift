@@ -40,11 +40,11 @@ final class BoardMirrorTests {
         SocketServer(path: path) { request, connection in await router.handle(request, connection: connection) }
     }
 
-    func mirror(rendersAt renderSocket: String? = nil, renderTimeout: Duration = .seconds(30)) async throws -> (BoardMirror, Board) {
+    func mirror(board: BoardID? = nil, rendersAt renderSocket: String? = nil, renderTimeout: Duration = .seconds(30)) async throws -> (BoardMirror, Board) {
         // The whole suite keeps the main actor (the router's) busy for seconds at a time.
         let fast = EaslConnection.Backoff(initial: .milliseconds(50), maximum: .milliseconds(200))
         func link(_ path: String) -> EaslConnection { .unixSocket(path, backoff: fast, handshakeTimeout: .seconds(60)) }
-        let mirror = BoardMirror(hostName: "home", board: host.id, connection: link(socket), renders: link(renderSocket ?? socket), renderTimeout: renderTimeout)
+        let mirror = BoardMirror(hostName: "home", board: board ?? host.id, connection: link(socket), renders: link(renderSocket ?? socket), renderTimeout: renderTimeout)
         mirrors.append(mirror)
         return (mirror, try await mirror.load())
     }
@@ -259,11 +259,8 @@ final class BoardMirrorTests {
     @Test func aLegacyBoardAddressUsesTheCurrentBoardForSessionOwnership() async throws {
         host.repo = RepoRecord(commonDir: dir.appendingPathComponent("root/.git").path, merged: ["brd_old"])
         let terminal = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]))
-        let mirror = BoardMirror(hostName: "home", board: "brd_old",
-                                 connection: .unixSocket(socket), renders: .unixSocket(socket))
-        mirrors.append(mirror)
+        let (mirror, board) = try await mirror(board: "brd_old")
         defer { mirror.close() }
-        let board = try await mirror.load()
         #expect(mirror.boardID == "brd_old")
         #expect(board.id == "brd_old")
         #expect(mirror.sessionBoardID == host.id)
