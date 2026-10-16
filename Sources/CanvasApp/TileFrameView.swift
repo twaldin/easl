@@ -200,6 +200,12 @@ final class TileFrameView: NSView {
         layoutParts()
     }
 
+    /// A drag moves the tile by its origin alone.
+    override func setFrameOrigin(_ newOrigin: NSPoint) {
+        super.setFrameOrigin(newOrigin)
+        content.alignToPixels()
+    }
+
     /// Moves the tile and zooms its content in one step, so the content never lays out at a size
     /// in between.
     func place(_ rect: NSRect, zoom: CGFloat) {
@@ -210,6 +216,7 @@ final class TileFrameView: NSView {
             applyZoom()
             updateZoomControl()
         }
+        content.alignToPixels()
     }
 
     /// The content at `zoom` in the body: laid out at the body divided by the zoom.
@@ -218,6 +225,7 @@ final class TileFrameView: NSView {
         let natural = NSSize(width: body.width / zoom, height: body.height / zoom)
         if abs(zoomView.bounds.width - natural.width) > 0.001 || abs(zoomView.bounds.height - natural.height) > 0.001 { zoomView.setBoundsSize(natural) }
         if content.frame.size != zoomView.bounds.size || content.frame.origin != .zero { content.frame = NSRect(origin: .zero, size: zoomView.bounds.size) }
+        content.alignToPixels()
     }
 
     private func layoutParts() {

@@ -1051,6 +1051,24 @@ final class TerminalTile: NSView, TileContent {
     func setLive(_ live: Bool) {
         isLive = live
         updateSurfaceVisibility()
+        if live { alignToPixels() }
+    }
+
+    /// Ghostty's Metal surface is composited, not drawn by AppKit, so between device pixels it is
+    /// resampled and its text goes soft (on a 1x screen most of all). The surface keeps the tile's
+    /// size and moves by under a pixel onto the nearest one in window space; the tile's frame and
+    /// the board's scroll origin stay exact. Position and zoom come from the views' geometry
+    /// (`convert`), never `magnification`, so a pinch still settling is included.
+    func alignToPixels() {
+        guard let window else { return }
+        let shown = convert(NSPoint.zero, to: nil)
+        let origin = convert(PixelGrid.nearest(shown, pixelsPerPoint: window.backingScaleFactor), from: nil)
+        if terminal.frame.origin != origin { terminal.setFrameOrigin(origin) }
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        alignToPixels()
     }
 
     /// Below this a terminal is a smudge, and Ghostty at ~0.1 zoom held ~235 MB of GPU memory
@@ -1076,6 +1094,7 @@ final class TerminalTile: NSView, TileContent {
                 + [(app, app.addObserver(forName: UserIdleWatch.changed, object: nil, queue: .main, using: changed))]
         }
         updateSurfaceVisibility()
+        alignToPixels()
     }
 
     /// AppKit posts these before `occlusionState` settles (`didMiniaturize` arrives with the
