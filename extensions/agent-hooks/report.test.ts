@@ -95,8 +95,8 @@ test("a Codex Stop hook run while easl is closed spools the turn's end with its 
 /** Waits for real filesystem IO while the polling clock stays still. */
 async function socketChange(socket: string, change: () => void): Promise<void> {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
-  const observer = watch(dirname(socket), { persistent: false }, (event, name) => {
-    if (event !== "rename" || (name !== null && name !== basename(socket))) return;
+  const observer = watch(dirname(socket), { persistent: false }, (_event, name) => {
+    if (name !== null && name !== basename(socket)) return;
     observer.close();
     setImmediate(resolve);
   });

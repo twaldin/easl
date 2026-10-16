@@ -310,7 +310,7 @@ test("SIGTERM after the owned CLI exits still records a clean interrupted rotati
   // Hold stdout after reaping the CLI and expose the native ESRCH instead of Bun's exited-handle no-op.
   writeFileSync(f.preload, `
     import type { Subprocess } from "bun";
-    import { readFileSync, watch } from "node:fs";
+    import { readFileSync } from "node:fs";
     const spawn = Bun.spawn;
     let owned: Subprocess;
     Bun.spawn = function (...args: Parameters<typeof spawn>) {
@@ -326,13 +326,8 @@ test("SIGTERM after the owned CLI exits still records a clean interrupted rotati
       first = false;
       return (async () => {
         const stateFile = process.env.ROTATION_FIXTURE_STATE!;
-        const hung = () => JSON.parse(readFileSync(stateFile, "utf8")).hungPid;
-        if (!hung()) await new Promise<void>((resolve) => {
-          const watcher = watch(stateFile, () => {
-            if (hung()) { watcher.close(); resolve(); }
-          });
-          if (hung()) { watcher.close(); resolve(); }
-        });
+        // Fake time cannot advance this external CLI, and a rename notification can precede readiness.
+        while (!JSON.parse(readFileSync(stateFile, "utf8")).hungPid) await Bun.sleep(5);
         process.kill(owned.pid, "SIGKILL");
         await owned.exited;
         const terminated = new Promise<void>((resolve) => process.once("SIGTERM", () => resolve()));
