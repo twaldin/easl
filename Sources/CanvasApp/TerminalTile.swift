@@ -799,11 +799,10 @@ final class TerminalTile: NSView, TileContent {
         guard let last = lastCommand?.command, !commandIsRunning, scrolledBack == 0, surface?.readSelection()?.isEmpty ?? true, let cursorRow else { return nil }
         for row in stride(from: cursorRow - 1, through: max(0, cursorRow - TerminalBlocks.promptRows - 1), by: -1) {
             guard let block = commandBlock(row: row, column: 0) else { continue }
-            // An older block nearest the prompt: the last command printed nothing.
             guard block.command == last else { break }
             return (last, block.output)
         }
-        return (last, "")
+        return nil
     }
 
     /// `agent.read` `block`: the output of the command `index` from the end (-1 the last the
