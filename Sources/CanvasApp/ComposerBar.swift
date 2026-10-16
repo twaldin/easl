@@ -4,13 +4,13 @@ import CanvasCore
 /// The composer (docs/design.md, Composer): the bar at the bottom of the board window where the
 /// user writes a prompt for the terminals its "→ target" names. Each staged mention is an inline
 /// token (`TokenAttachment`) showing the `[n]` it is sent as and what it points at; a click on a
-/// token shows that (`onReveal`). One line while it doesn't have the keyboard, a few once it does
-/// (up to `maxLines`). A blocked target's question shows above the text. The bar only shows and
-/// edits the draft; `ComposerController` keeps it in step with the tray and sends it.
+/// token shows that (`onReveal`). One line without the keyboard; with it, the prompt grows to
+/// half the window's height. A blocked target's question shows above the text. The bar edits
+/// the draft; `ComposerController` keeps it in step with the tray and sends it.
 @MainActor
 final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     let text = ComposerTextView(usingTextLayoutManager: false)
-    private let scroll = NSScrollView()
+    private let scroll = OverlayScrollView()
     private let placeholder = NSTextField(labelWithString: "")
     private let question = NSTextField(labelWithString: "")
     /// "→ name ▾": a click opens `targetMenu` (the board's terminals, several can be checked).
@@ -34,7 +34,6 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     /// The text's font, at the chrome text size (`ChromeText`), as are the bar's heights.
     static var font: NSFont { ChromeText.font(.systemFont(ofSize: 13)) }
     static var unfocusedHeight: CGFloat { ChromeText.scaled(34) }
-    static let maxLines: CGFloat = 8
     private static let insets = (left: CGFloat(12), right: CGFloat(12), vertical: CGFloat(8))
     private static var questionHeight: CGFloat { ChromeText.scaled(18) }
     private static var labelFont: NSFont { ChromeText.font(.systemFont(ofSize: 12, weight: .medium)) }
@@ -97,6 +96,19 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didResizeNotification, object: nil)
+        if let window {
+            NotificationCenter.default.addObserver(self, selector: #selector(windowResized), name: NSWindow.didResizeNotification, object: window)
+        }
+        refresh()
+    }
+
+    @objc private func windowResized(_ notification: Notification) {
+        refresh()
+    }
 
     override var isFlipped: Bool { true }
 
@@ -253,14 +265,15 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     private var textHeight: CGFloat {
         guard let layout = text.layoutManager, let container = text.textContainer else { return lineHeight }
         layout.ensureLayout(for: container)
-        return max(ceil(layout.usedRect(for: container).height), lineHeight)
+        return max(ceil(max(layout.usedRect(for: container).maxY, layout.extraLineFragmentRect.maxY)), lineHeight)
     }
 
     override var intrinsicContentSize: NSSize {
         let questionRow = question.isHidden ? 0 : Self.questionHeight
         guard hasKeyboard else { return NSSize(width: NSView.noIntrinsicMetric, height: Self.unfocusedHeight + questionRow) }
-        let lines = min(max(textHeight, lineHeight * 2), lineHeight * Self.maxLines)
-        return NSSize(width: NSView.noIntrinsicMetric, height: max(Self.unfocusedHeight, lines + Self.insets.vertical * 2) + questionRow)
+        let desired = max(Self.unfocusedHeight, max(textHeight, lineHeight * 2) + Self.insets.vertical * 2) + questionRow
+        let cap = max(Self.unfocusedHeight + questionRow, (window?.contentView?.bounds.height ?? 0) / 2)
+        return NSSize(width: NSView.noIntrinsicMetric, height: min(desired, cap))
     }
 
     override func layout() {
@@ -277,6 +290,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         let firstLine = hasKeyboard ? insets.vertical + lineHeight / 2 : rowHeight / 2
         target.frame = NSRect(x: bounds.maxX - insets.right - targetWidth, y: top + (firstLine - targetSize.height / 2).rounded(), width: targetWidth, height: targetSize.height)
         let textWidth = max(0, target.frame.minX - 12 - insets.left)
+        let widthChanged = text.frame.width != textWidth
         text.maxSize = NSSize(width: textWidth, height: .greatestFiniteMagnitude)
         text.setFrameSize(NSSize(width: textWidth, height: text.frame.height))
         // One line while it hasn't the keyboard: the last, where new tokens go.
@@ -285,6 +299,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         scroll.frame = NSRect(x: insets.left, y: top + ((rowHeight - textHeight) / 2).rounded(), width: textWidth, height: textHeight)
         text.minSize = NSSize(width: textWidth, height: textHeight)
         text.setFrameSize(NSSize(width: textWidth, height: max(textHeight, self.textHeight)))
+        if widthChanged { invalidateIntrinsicContentSize() }
         let size = placeholder.intrinsicContentSize
         placeholder.frame = NSRect(x: insets.left, y: scroll.frame.minY + ((lineHeight - size.height) / 2).rounded(), width: textWidth, height: size.height)
         if !hasKeyboard {
