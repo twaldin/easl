@@ -8,7 +8,7 @@ func toolOutput(_ executable: String, _ arguments: [String]) -> String {
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
     process.standardOutput = output
-    process.standardError = output
+    process.standardError = FileHandle.standardError
     do {
         try process.run()
     } catch {
