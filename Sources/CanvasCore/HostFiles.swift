@@ -237,15 +237,15 @@ public struct HostFiles: Sendable {
         if (!candidate.startsWith(base + '/')) fail('refused');
         if (commit) {
           if (!req.bytes) return { ok: true, root, commit, data: '' };
-          const data = git(root, ['show', '--end-of-options', commit + ':./' + rel], 33554432);
+          const data = git(root, ['show', '--end-of-options', commit + ':./' + rel], \#(NoteSource.maxOutput));
           if (data === null) fail('not_found', { commit });
           return { ok: true, root, commit, data: data.toString('base64') };
         }
         const p = real(candidate);
         if (!p) fail('not_found');
-        return readRegular(p, root, 4194304);
+        return readRegular(p, root, \#(SourceExcerpt.maxFileBytes));
       }
-      const extensions = new Set(['png','jpg','jpeg','gif','webp','heic','heif','tif','tiff','bmp','svg','pdf']);
+      const extensions = new Set(\#(String(decoding: try! JSONEncoder().encode(LocalImage.extensions.sorted()), as: UTF8.self)));
       const dirs = [root, ...policy.temps].map(d => real(d) || path.resolve(d));
       const allowed = p => p && extensions.has(path.extname(p).slice(1).toLowerCase()) && dirs.some(d => inside(d, p));
       if (policy.relative != null) {
