@@ -1241,6 +1241,7 @@ public final class ApiRouter {
                 "board": .string(board.id), "root": .string(board.root.path),
                 "revision": .number(Double(board.revision)), "objects": .array(objects.map(JSONValue.init)),
             ]
+            if let merged = board.repo?.merged, !merged.isEmpty { result["merged"] = .array(merged.map(JSONValue.string)) }
             if let regions { result["regions"] = .array(regions.map(JSONValue.string)) }
             if let since = p["since"]?.int { result["changed"] = .array(board.changed(since: since).map(JSONValue.string)) }
             return .object(result)

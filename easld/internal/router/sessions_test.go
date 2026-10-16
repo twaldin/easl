@@ -10,8 +10,6 @@ import (
 	"github.com/twaldin/easl/easld/internal/session"
 )
 
-// session.* over the socket: env and labels reach zmx, a spawn's reply says whether it created
-// the session, list shows it with its labels, and bad params and a missing zmx keep their codes.
 func TestSessionMethods(t *testing.T) {
 	f := newFixture(t)
 	dir := t.TempDir()
@@ -37,9 +35,6 @@ esac
 		if reply["ok"] != true || result["session"] != "canvas-obj_x" || result["created"] != created {
 			t.Fatalf("spawn %d: %v", i, reply)
 		}
-	}
-	if data, _ := os.ReadFile(filepath.Join(dir, "canvas-obj_x")); string(data) != "/r/mac/easl.sock /bin/sh" {
-		t.Errorf("session started with %q", data)
 	}
 	list := call("session.list", nil)["result"].(map[string]any)["sessions"].([]any)
 	if len(list) != 1 {

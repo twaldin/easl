@@ -855,6 +855,8 @@ export type BoardGetParams = {
 export type BoardGetResult = {
   board: Id;
   root: string;
+  /** board ids this repository board took in (`repo.merged`), omitted when empty. A terminal session may still carry one of these original board labels; an attaching client accepts it only when its home and tile labels also match. Absent: only this board's current id owns its terminals */
+  merged?: Id[];
   revision: number;
   objects: CanvasObject[];
   changed?: Id[];

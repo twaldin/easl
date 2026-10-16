@@ -159,8 +159,9 @@ struct HostedTerminalTests {
             if ownership.accepted {
                 #expect(text == "attach \(session) SHELL=/bin/false ZMX_DIR=\(home.path)/.local/state/easl/zmx\n")
             } else {
-                let owner = ownership.labels["canvas.home"] ?? "no owner"
-                #expect(text.contains("belongs to another easl instance or board (\(owner))"), "\(ownership.name): \(text)")
+                for (label, owner) in ownership.labels {
+                    #expect(text.contains("\(label)=\(owner)"), "\(ownership.name): \(text)")
+                }
                 #expect(!text.contains("attach "))
             }
         }
