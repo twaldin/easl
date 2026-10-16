@@ -179,8 +179,8 @@ struct RemoteHostTests {
         }
     }
 
-    // Keep Process.run and waitUntilExit on the same thread.
-    @Test func aCopiedTileRefusalHoldsItsOwnerNoticeWithoutReattaching() throws {
+    // Keep the Process lifecycle on one thread without blocking Swift's cooperative pool.
+    @Test func aCopiedTileRefusalHoldsItsOwnerNoticeWithoutReattaching() async throws {
         let hosted = HostedTerminalTests()
         let home = try hosted.scratch()
         defer { try? FileManager.default.removeItem(at: home) }
@@ -198,27 +198,34 @@ struct RemoteHostTests {
         """)
         let output = home.appendingPathComponent("output")
         try Data().write(to: output)
-        let handle = try FileHandle(forWritingTo: output)
-        defer { try? handle.close() }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", "exec " + RemoteHost.terminalCommand([ssh.path, remote])]
-        process.standardOutput = handle
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        defer {
-            if process.isRunning { process.terminate() }
-            process.waitUntilExit()
-        }
         let notice = "canvas.board=brd_original"
-        for _ in 0..<300 {
-            if (try String(contentsOf: output, encoding: .utf8)).contains(notice) { break }
-            Thread.sleep(forTimeInterval: 0.01)
-        }
-        Thread.sleep(forTimeInterval: 2.2)
-        #expect(process.isRunning, "the surface remains open on the refusal")
-        #expect(try String(contentsOf: attempts, encoding: .utf8) == "attach\n")
-        let text = try String(contentsOf: output, encoding: .utf8)
+        let observed = try await offPool {
+            Result {
+                let handle = try FileHandle(forWritingTo: output)
+                defer { try? handle.close() }
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/sh")
+                process.arguments = ["-c", "exec " + RemoteHost.terminalCommand([ssh.path, remote])]
+                process.standardOutput = handle
+                process.standardError = FileHandle.nullDevice
+                try process.run()
+                defer {
+                    if process.isRunning { process.terminate() }
+                    process.waitUntilExit()
+                }
+                for _ in 0..<300 {
+                    if (try String(contentsOf: output, encoding: .utf8)).contains(notice) { break }
+                    Thread.sleep(forTimeInterval: 0.01)
+                }
+                Thread.sleep(forTimeInterval: 2.2)
+                return (running: process.isRunning,
+                        attempts: try String(contentsOf: attempts, encoding: .utf8),
+                        output: try String(contentsOf: output, encoding: .utf8))
+            }
+        }.get()
+        #expect(observed.running, "the surface remains open on the refusal")
+        #expect(observed.attempts == "attach\n")
+        let text = observed.output
         #expect(text.contains(notice))
         #expect(text.contains("canvas.home=_original"))
         #expect(text.contains("canvas.tile=\(hosted.tile)"))
