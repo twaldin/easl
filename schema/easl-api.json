@@ -881,6 +881,7 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "root": { "type": "string" },
+          "merged": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "board ids this repository board took in (`repo.merged`), omitted when empty. A terminal session may still carry one of these original board labels; an attaching client accepts it only when its home and tile labels also match. Absent: only this board's current id owns its terminals" },
           "revision": { "type": "integer" },
           "objects": { "type": "array", "items": { "$ref": "#/definitions/CanvasObject" } },
           "changed": { "type": "array", "items": { "$ref": "#/definitions/Id" } },

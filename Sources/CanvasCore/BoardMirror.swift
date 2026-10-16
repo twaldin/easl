@@ -41,7 +41,8 @@ protocol BoardHost: AnyObject {
 public final class BoardMirror: BoardHost {
     /// The host as the user knows it, for titles and notices.
     public let hostName: String
-    public let boardID: BoardID
+    public private(set) var boardID: BoardID
+    public private(set) var mergedBoards: [BoardID] = []
     /// Subscriptions, reads, writes and prompts.
     public let connection: EaslConnection
     /// `view.render`'s own link: the host answers one link's requests in order, and a render may
@@ -122,8 +123,10 @@ public final class BoardMirror: BoardHost {
         } catch let failure as EaslConnection.Failure {
             throw ApiRouter.Failure(failure.code, failure.message)
         }
+        if let current = manifest["board"]?.string, ApiRouter.isBoardID(current) { boardID = current }
         let board = Board(remote: boardID, root: URL(fileURLWithPath: manifest["root"]?.string ?? "/"), host: self)
         self.board = board
+        mergedBoards = manifest["merged"]?.array?.compactMap(\.string).filter(ApiRouter.isBoardID) ?? []
         install(objects, on: board)
         reading = nil
         // The tiles are made now: they ask over a render link that is offline and fail at once, and
@@ -265,7 +268,9 @@ public final class BoardMirror: BoardHost {
             stale = false
             do {
                 let manifest = try await connection.request("board.get", .object(["board": .string(boardID)]))
-                install(try await whole(manifest["objects"]), on: board)
+                let objects = try await whole(manifest["objects"])
+                mergedBoards = manifest["merged"]?.array?.compactMap(\.string).filter(ApiRouter.isBoardID) ?? []
+                install(objects, on: board)
             } catch {
                 // Down again: the next `online` reads it.
                 stale = true

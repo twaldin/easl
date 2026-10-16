@@ -234,6 +234,44 @@ final class BoardMirrorTests {
         }
     }
 
+    @Test func theManifestReportsMergedBoardOwnersOnlyWhenPresent() async throws {
+        let client = try LineClient(path: socket)
+        func manifest(_ params: String = "{}") async throws -> JSONValue {
+            client.send(#"{"id":"get","method":"board.get","params":\#(params)}"#)
+            let reply = try await client.next()
+            #expect(reply["ok"] == .bool(true))
+            return try #require(reply["result"])
+        }
+        #expect(try await manifest()["merged"] == nil)
+        host.repo = RepoRecord(commonDir: dir.appendingPathComponent("root/.git").path)
+        #expect(try await manifest()["merged"] == nil)
+        host.repo?.merged = []
+        #expect(try await manifest()["merged"] == nil)
+        host.repo?.merged = ["brd_old", "brd_second"]
+        let current = try await manifest()
+        #expect(current["board"] == .string(host.id))
+        #expect(current["merged"] == .array(["brd_old", "brd_second"]))
+        let legacy = try await manifest(#"{"board":"brd_old","branch":"main"}"#)
+        #expect(legacy["board"] == .string(host.id))
+        #expect(legacy["merged"] == .array(["brd_old", "brd_second"]))
+    }
+
+    @Test func aLegacyBoardAddressUsesTheCurrentBoardForSessionOwnership() async throws {
+        host.repo = RepoRecord(commonDir: dir.appendingPathComponent("root/.git").path, merged: ["brd_old"])
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]))
+        let mirror = BoardMirror(hostName: "home", board: "brd_old",
+                                 connection: .unixSocket(socket), renders: .unixSocket(socket))
+        mirrors.append(mirror)
+        defer { mirror.close() }
+        let board = try await mirror.load()
+        #expect(mirror.boardID == host.id)
+        #expect(board.id == host.id)
+        #expect(mirror.mergedBoards == ["brd_old"])
+        #expect(board.objects[terminal.id] == host.objects[terminal.id])
+        let added = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]))
+        try await eventually { board.objects[added.id] == host.objects[added.id] }
+    }
+
     @Test func theViewerShowsTheHostsBoardWholeAndFollowsItsChanges() async throws {
         let long = String(repeating: "word ", count: 120)
         let first = note(long)
@@ -346,20 +384,48 @@ final class BoardMirrorTests {
     @Test func backOnlineTheViewerCatchesUpWithWhatChangedMeanwhile() async throws {
         let kept = note("kept")
         let gone = note("gone", at: 400)
+        host.repo = RepoRecord(commonDir: dir.appendingPathComponent("root/.git").path,
+                               merged: ["brd_old", "obj_other", "brd_bad_id", "brd_old\n", ""])
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]))
         let (mirror, board) = try await mirror()
         defer { mirror.close() }
+        #expect(mirror.boardID == host.id)
+        #expect(mirror.mergedBoards == ["brd_old"])
+        #expect(board.objects[terminal.id] == host.objects[terminal.id])
+        #expect(board.repo == nil, "a remote board must not acquire the host's local repository state")
+        var ownershipAtCreation: [ObjectID: [BoardID]] = [:]
+        board.onEvent = { [weak mirror] event in
+            guard let mirror else { return }
+            if case .objectCreated(let object) = event, object.type == .terminal {
+                ownershipAtCreation[object.id] = mirror.mergedBoards
+            }
+        }
         var states: [EaslConnection.State] = []
         mirror.onState = { states.append($0) }
         server.stop()
         try await eventually { mirror.state != .online }
         try host.delete(gone.id)
         _ = try host.update(kept.id, props: .object(["markdown": .string("changed while away")]))
-        let added = note("added while away", at: 800)
+        host.repo?.merged = ["brd_old", "brd_second"]
+        let added = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]), frame: Frame(x: 800, y: 0, w: 400, h: 300))
         server = Self.serve(router, at: socket)
         try server.start()
         try await eventually { mirror.state == .online }
         try await eventually { board.objects[gone.id] == nil && board.objects[added.id] != nil && board.objects[kept.id] == host.objects[kept.id] }
         #expect(states.last == .online && states.contains { $0 != .online })
+        #expect(mirror.mergedBoards == ["brd_old", "brd_second"])
+        #expect(ownershipAtCreation == [added.id: ["brd_old", "brd_second"]])
+        #expect(board.repo == nil)
+
+        server.stop()
+        try await eventually { mirror.state != .online }
+        host.repo?.merged = nil
+        let withoutHistory = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]), frame: Frame(x: 1300, y: 0, w: 400, h: 300))
+        server = Self.serve(router, at: socket)
+        try server.start()
+        try await eventually { board.objects[withoutHistory.id] == host.objects[withoutHistory.id] }
+        #expect(mirror.mergedBoards == [])
+        #expect(ownershipAtCreation == [added.id: ["brd_old", "brd_second"], withoutHistory.id: []])
     }
 
     // MARK: Host-drawn tiles on a big board (issue #82)

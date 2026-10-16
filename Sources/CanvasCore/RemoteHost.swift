@@ -62,28 +62,26 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         ["-T"] + Self.batchOptions + [sshTarget, "nc", "-U"] + (ncShutdown ? ["-N"] : []) + [Self.quote(socketPath)]
     }
 
-    /// Exit status of `terminalAttachCommand` when the host has no such session (yet).
-    public static let noSessionStatus: Int32 = 75
-
-    /// The command a terminal tile runs to show the host's zmx session `session`. It attaches
-    /// only to a session that exists, else exits `noSessionStatus`: `zmx attach` creates a
-    /// missing one (a bare shell without labels), and the host's own tile attaching later would
-    /// find it and never run its agent.
-    public func terminalAttachCommand(session: String) -> [String] {
-        let zmx = Self.quote(zmxBin)
-        let script = "\(zmx) get \"$1\" >/dev/null 2>&1 || { echo \"no session $1 yet\" >&2; exit \(Self.noSessionStatus); }; exec \(zmx) attach \"$1\""
-        return [Self.ssh, "-t", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", sshTarget,
-                "env", "TMPDIR=" + Self.quote(tmpdir)] + (zmxDir.map { ["ZMX_DIR=" + Self.quote($0)] } ?? []) +
-                ["sh", "-c", Self.quote(script), "sh", Self.quote(session)]
+    /// Attaches only to this tile's session in the discovered socket's home, on its board or a merged board.
+    /// The shared hosted attach waits through session restarts and refuses copies owned elsewhere.
+    public func terminalAttachCommand(tile: ObjectID, board: BoardID, merged: [BoardID]) -> [String] {
+        let home = (socketPath as NSString).deletingLastPathComponent
+        let setup = "export TMPDIR=\(Self.quote(tmpdir))\n"
+            + (zmxDir.map { "export ZMX_DIR=\(Self.quote($0))\n" } ?? "")
+            + "z=\(Self.quote(zmxBin))"
+        let command = HostedTerminal.ownershipAttach(session: "canvas-" + tile, home: HostedTerminal.homeLabel(home),
+                                                     board: board, tile: tile, merged: merged, setup: setup)
+        return [Self.ssh, "-t", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", sshTarget, command]
     }
 
-    /// Retries until the viewer disposes the terminal surface. A missing session can be the
-    /// gap in agent.restart, even after an earlier attach succeeded.
+    /// Retries transport failures and ended sessions until the viewer disposes the surface.
+    /// An ownership refusal holds the notice without retrying or repainting it.
     public static func terminalCommand(_ attach: [String]) -> String {
         let loop = #"""
         while :; do
           "$@"
           case $? in
+            \#(HostedTerminal.refused)) exec sleep 2147483647 ;;
             0) sleep 1; continue ;;
           esac
           printf '\r\033[2K[easl] waiting for the host…'

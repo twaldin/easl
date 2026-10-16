@@ -102,57 +102,128 @@ struct RemoteHostTests {
         #expect(try await remoteWords(host.relayArguments, after: "work") == ["nc", "-U", "/Users/tim/Library/Application Support/Easl/easl.sock"])
     }
 
-    /// The attach command's remote half as the host's shell runs it, with a zmx that knows one
-    /// session ("present") and says what it attached to.
-    @Test func aTerminalAttachesOnlyToASessionTheHostHasWithItsGuiTmpdir() async throws {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("rh-\(UUID().uuidString.prefix(8)) zmx")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let zmx = dir.appendingPathComponent("zmx").path
-        try "#!/bin/sh\ncase \"$1\" in get) [ \"$2\" = present ] ;; attach) echo \"attached $2 in $TMPDIR\" ;; *) exit 2 ;; esac\n".write(toFile: zmx, atomically: true, encoding: .utf8)
-        chmod(zmx, 0o755)
-        let host = RemoteHost(name: "work", sshTarget: "work", socketPath: "/s", tmpdir: "/var/folders/3b/x/T/", easlBin: "easl", zmxBin: zmx)
-
-        func run(_ session: String) async throws -> (status: Int32, output: String, errors: String) {
-            let command = host.terminalAttachCommand(session: session)
-            #expect(command.first == RemoteHost.ssh)
-            #expect(command.contains("-t"), "zmx attach needs a terminal")
-            let index = try #require(command.firstIndex(of: "work"))
-            return try await RemoteHost.run("/bin/sh", ["-c", command[(index + 1)...].joined(separator: " ")], timeout: 5)
-        }
-        let present = try await run("present")
-        #expect(present.status == 0)
-        #expect(present.output == "attached present in /var/folders/3b/x/T/\n")
-        let missing = try await run("it's missing")
-        #expect(missing.status == RemoteHost.noSessionStatus)
-        #expect(missing.output.isEmpty, "never attached, so zmx never created it")
-        #expect(missing.errors == "no session it's missing yet\n")
+    func runAttach(_ host: RemoteHost, home: URL, tile: ObjectID, board: BoardID, merged: [BoardID]) async throws -> (status: Int32, output: String, errors: String) {
+        let command = host.terminalAttachCommand(tile: tile, board: board, merged: merged)
+        let index = try #require(command.firstIndex(of: host.sshTarget))
+        return try await RemoteHost.run("/usr/bin/env", ["-u", "ZMX_DIR", "HOME=" + home.path, "/bin/sh", "-c", command[(index + 1)...].joined(separator: " ")], timeout: 10)
     }
 
-    @Test func anEasldTerminalUsesItsOwnHomesZmxDirectory() async throws {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("rh-\(UUID().uuidString.prefix(8)) host's home")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let zmx = dir.appendingPathComponent("zmx-command").path
-        try """
+    func fixtureZmx(home: URL) throws -> String {
+        let zmx = home.appendingPathComponent("zmx command").path
+        try HostedTerminalTests().executable(URL(fileURLWithPath: zmx), #"""
         #!/bin/sh
-        case "$1" in
-          get) [ "$ZMX_DIR" = \(RemoteHost.quote(dir.path + "/zmx")) ] && [ "$2" = present ] ;;
-          attach) printf 'attached %s in %s with %s\\n' "$2" "$ZMX_DIR" "$TMPDIR" ;;
-          *) exit 2 ;;
-        esac
-        """.write(toFile: zmx, atomically: true, encoding: .utf8)
-        chmod(zmx, 0o755)
-        let host = try #require(RemoteHost.parseDiscovery("os=Linux\nhome=/home/tim\ntmpdir=/tmp\nzmx=\(zmx)\n",
-                                                        name: "deckbox", sshTarget: "deckbox", support: dir.path))
-        let command = host.terminalAttachCommand(session: "present")
-        let index = try #require(command.firstIndex(of: "deckbox"))
-        let result = try await RemoteHost.run("/bin/sh", ["-c", command[(index + 1)...].joined(separator: " ")], timeout: 5)
-        #expect(result.status == 0)
-        #expect(result.output == "attached present in \(dir.path)/zmx with /tmp\n")
+        if [ "$1" = attach ]; then printf 'TMPDIR=%s\n' "$TMPDIR"; fi
+        exec "$HOME/.local/bin/zmx" "$@"
+        """#)
+        return zmx
     }
 
-    @Test func aRemoteTerminalRetriesMissingSessionsAfterAnAttachAndLinkFailure() async throws {
+    @Test func remoteAttachChecksEveryOwnershipLabelAgainstTheDiscoveredHome() async throws {
+        struct Ownership: Decodable { var name: String; var labels: [String: String]; var merged: [String]; var accepted: Bool }
+        struct Fixture: Decodable { var tile: String; var board: String; var home: String; var cases: [Ownership] }
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../Fixtures/hosted-ownership.json")
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
+        let hosted = HostedTerminalTests()
+        let home = try hosted.scratch()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let zmx = try fixtureZmx(home: home)
+        let host = try #require(RemoteHost.parseDiscovery("os=Linux\nhome=/home/tim\ntmpdir=/tmp remote\nzmx=\(zmx)\n",
+                                                        name: "deckbox", sshTarget: "deckbox", support: "/srv/host's état"))
+        let session = "canvas-" + fixture.tile
+        for ownership in fixture.cases {
+            let labels = ownership.labels.mapValues { $0 == fixture.home ? "_srv_host_s___tat" : $0 }
+                .sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\t")
+            try hosted.fakeZmx(home: home, lists: ["  name=\(session)\tpid=2\tclients=0\t\(labels)\n"])
+            let result = try await runAttach(host, home: home, tile: fixture.tile, board: fixture.board, merged: ownership.merged)
+            #expect(result.status == (ownership.accepted ? 0 : HostedTerminal.refused), "\(ownership.name): \(result.output)")
+            if ownership.accepted {
+                #expect(result.output == "TMPDIR=/tmp remote\nattach \(session) SHELL=/bin/false ZMX_DIR=/srv/host's état/zmx\n")
+            } else {
+                let owner = ownership.labels["canvas.home"].map { $0 == fixture.home ? "_srv_host_s___tat" : $0 } ?? "no owner"
+                #expect(result.output.contains("belongs to another easl instance or board (\(owner))"), "\(ownership.name): \(result.output)")
+                #expect(!result.output.contains("attach "))
+            }
+        }
+    }
+
+    @Test func aRemoteMacWaitsThroughMissingSessionsAndLabelsUsingItsGuiTmpdir() async throws {
+        let hosted = HostedTerminalTests()
+        let home = try hosted.scratch()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let zmx = try fixtureZmx(home: home)
+        let host = try #require(RemoteHost.parseDiscovery("os=Darwin\nhome=/Users/tim\ntmpdir=/var/folders/3b/x/T/\nzmx=\(zmx)\n",
+                                                        name: "work", sshTarget: "work"))
+        let own = "canvas.board=brd_b\tcanvas.home=_Users_tim_Library_Application_Support_Easl\tcanvas.tile=\(hosted.tile)"
+        for lists in [["", hosted.listed(own)], [hosted.listed(""), hosted.listed(own)]] {
+            try hosted.fakeZmx(home: home, lists: lists)
+            let result = try await runAttach(host, home: home, tile: hosted.tile, board: "brd_b", merged: [])
+            #expect(result.status == 0)
+            #expect(result.output.contains("Waiting for \(hosted.session) to start"))
+            #expect(result.output.hasSuffix("TMPDIR=/var/folders/3b/x/T/\nattach \(hosted.session) SHELL=/bin/false ZMX_DIR=\n"))
+        }
+    }
+
+    @Test func malformedMergeHistoryCannotClaimARemoteSession() async throws {
+        let hosted = HostedTerminalTests()
+        let home = try hosted.scratch()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let host = RemoteHost(name: "work", sshTarget: "work", socketPath: "/home/easl.sock", tmpdir: "/tmp", easlBin: "easl",
+                              zmxBin: try fixtureZmx(home: home), zmxDir: "/home/zmx")
+        try hosted.fakeZmx(home: home, lists: [hosted.listed("canvas.board=brd_old\tcanvas.home=_home\tcanvas.tile=\(hosted.tile)")])
+        for merged in ["brd_other\ncanvas.board=brd_old", "brd_old\n", "", "BRD_old", "brd_old_extra"] {
+            let result = try await runAttach(host, home: home, tile: hosted.tile, board: "brd_repo", merged: [merged])
+            #expect(result.status == HostedTerminal.refused)
+            #expect(result.output.contains("belongs to another easl instance or board (_home)"))
+            #expect(!result.output.contains("attach "))
+        }
+    }
+
+    @Test func aCopiedTileRefusalHoldsItsOwnerNoticeWithoutReattaching() async throws {
+        let hosted = HostedTerminalTests()
+        let home = try hosted.scratch()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let host = RemoteHost(name: "work", sshTarget: "work", socketPath: "/original/easl.sock", tmpdir: "/tmp", easlBin: "easl",
+                              zmxBin: try fixtureZmx(home: home), zmxDir: "/original/zmx")
+        try hosted.fakeZmx(home: home, lists: [hosted.listed("canvas.board=brd_original\tcanvas.home=_original\tcanvas.tile=\(hosted.tile)")])
+        let command = host.terminalAttachCommand(tile: hosted.tile, board: "brd_copy", merged: [])
+        let remote = try #require(command.last)
+        let attempts = home.appendingPathComponent("attempts")
+        let ssh = home.appendingPathComponent("ssh")
+        try hosted.executable(ssh, """
+        #!/bin/sh
+        printf 'attach\\n' >> \(RemoteHost.quote(attempts.path))
+        exec env HOME=\(RemoteHost.quote(home.path)) /bin/sh -c "$1"
+        """)
+        let output = home.appendingPathComponent("output")
+        try Data().write(to: output)
+        let handle = try FileHandle(forWritingTo: output)
+        defer { try? handle.close() }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "exec " + RemoteHost.terminalCommand([ssh.path, remote])]
+        process.standardOutput = handle
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        defer {
+            if process.isRunning { process.terminate() }
+            process.waitUntilExit()
+        }
+        let notice = "belongs to another easl instance or board (_original)"
+        for _ in 0..<300 {
+            if (try String(contentsOf: output, encoding: .utf8)).contains(notice) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .milliseconds(2200))
+        #expect(process.isRunning, "the surface remains open on the refusal")
+        #expect(try String(contentsOf: attempts, encoding: .utf8) == "attach\n")
+        let text = try String(contentsOf: output, encoding: .utf8)
+        #expect(text.contains(notice))
+        #expect(text.contains("this copy of the board can neither type into it nor end it"))
+        #expect(!text.contains("[easl] waiting for the host"))
+        #expect(!text.contains("SHELL="), "the copied tile never reaches zmx attach")
+    }
+
+    @Test func aRemoteTerminalRetriesEndedSessionsAndTransportFailures() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("rh-\(UUID().uuidString.prefix(8)) retry")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }

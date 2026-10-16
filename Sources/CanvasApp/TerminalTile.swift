@@ -171,23 +171,16 @@ final class TerminalTile: NSView, TileContent {
         """#
     }
 
-    /// The support directory as a zmx label value (`label(_:)`).
-    static let homeLabel = label(AppPaths.support.path)
+    /// The support directory as a zmx label value.
+    static let homeLabel = HostedTerminal.homeLabel(AppPaths.support.path)
     /// The default home's sessions from before a rename, labelled with an earlier name's support
     /// directory (Canvas's, Chalkwork's), which LegacyMigration moved here: this instance's own
     /// (attaching relabels them).
     static let legacyHomeLabels: [String] = {
         guard AppPaths.isDefaultHome else { return [] }
         let migration = LegacyMigration(home: FileManager.default.homeDirectoryForCurrentUser)
-        return migration.sources.map { TerminalTile.label(migration.support($0).path) }
+        return migration.sources.map { HostedTerminal.homeLabel(migration.support($0).path) }
     }()
-
-    /// A path as a zmx label value, which allows only `[A-Za-z0-9._-]`: every other UTF-8 byte
-    /// becomes `_` (what `tr -c` does in scripts/dev.sh).
-    static func label(_ path: String) -> String {
-        let legal = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-".utf8)
-        return String(decoding: path.utf8.map { legal.contains($0) ? $0 : UInt8(ascii: "_") }, as: UTF8.self)
-    }
 
     /// What a new session runs before dropping to a login shell (`AgentResume.initialArgv`: the
     /// recorded agent session resumed, else the tile's `command`) as one command line.
