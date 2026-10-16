@@ -127,6 +127,29 @@ struct RemoteHostTests {
         #expect(missing.errors == "no session it's missing yet\n")
     }
 
+    @Test func anEasldTerminalUsesItsOwnHomesZmxDirectory() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("rh-\(UUID().uuidString.prefix(8)) host's home")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let zmx = dir.appendingPathComponent("zmx-command").path
+        try """
+        #!/bin/sh
+        case "$1" in
+          get) [ "$ZMX_DIR" = \(RemoteHost.quote(dir.path + "/zmx")) ] && [ "$2" = present ] ;;
+          attach) printf 'attached %s in %s with %s\\n' "$2" "$ZMX_DIR" "$TMPDIR" ;;
+          *) exit 2 ;;
+        esac
+        """.write(toFile: zmx, atomically: true, encoding: .utf8)
+        chmod(zmx, 0o755)
+        let host = try #require(RemoteHost.parseDiscovery("os=Linux\nhome=/home/tim\ntmpdir=/tmp\nzmx=\(zmx)\n",
+                                                        name: "deckbox", sshTarget: "deckbox", support: dir.path))
+        let command = host.terminalAttachCommand(session: "present")
+        let index = try #require(command.firstIndex(of: "deckbox"))
+        let result = try await RemoteHost.run("/bin/sh", ["-c", command[(index + 1)...].joined(separator: " ")], timeout: 5)
+        #expect(result.status == 0)
+        #expect(result.output == "attached present in \(dir.path)/zmx with /tmp\n")
+    }
+
     @Test func recentHostsAreNewestFirstOncePerTargetAndCapped() throws {
         let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("rh-\(UUID().uuidString.prefix(8))/remote-hosts.json")
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
