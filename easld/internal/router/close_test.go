@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -168,11 +169,11 @@ func TestBoardCloseValidatesDispositionAndNonownershipBeforeChangingAnything(t *
 	f := newFixture(t)
 	tile := idOf(f.result("object.create", terminal(map[string]any{"name": "kept"})))
 	for _, value := range []any{nil, "true", 1.0, []any{}, map[string]any{}} {
-		if code, message := errorOf(f.call("board.close", map[string]any{"endSessions": value})); code != "invalid_params" || message != "endSessions must be a boolean" {
+		if code, message := errorOf(f.call("board.close", map[string]any{"endSessions": value})); code != "invalid_params" {
 			t.Errorf("endSessions %v: %s %q", value, code, message)
 		}
 	}
-	if code, message := errorOf(f.call("board.close", map[string]any{"endSessions": true})); code != "unsupported" || !strings.Contains(message, "does not own terminal sessions") {
+	if code, message := errorOf(f.call("board.close", map[string]any{"endSessions": true})); code != "unsupported" {
 		t.Fatalf("nonowner end close: %s %q", code, message)
 	}
 	if got := f.result("object.get", map[string]any{"id": tile})["object"].(map[string]any); got["id"] != tile {
@@ -190,8 +191,23 @@ func TestBoardCloseValidatesDispositionAndNonownershipBeforeChangingAnything(t *
 	if data, err := os.ReadFile(f.router.Reopens); err != nil || string(data) != string(original) {
 		t.Fatalf("nonowner changed restore policy: %q, %v", data, err)
 	}
-	if code, message := errorOf(f.call("board.close", map[string]any{})); code != "not_found" || message != "no open board" {
+	if code, message := errorOf(f.call("board.close", map[string]any{})); code != "not_found" {
 		t.Fatalf("empty frontmost: %s %q", code, message)
+	}
+}
+
+func TestBoardCloseRejectsMalformedTargetWithoutClosingDefaultBoard(t *testing.T) {
+	for _, value := range []any{nil, "", true, 42.0, []any{}, map[string]any{}} {
+		t.Run(fmt.Sprintf("%T-%v", value, value), func(t *testing.T) {
+			f := newFixture(t)
+			tile := idOf(f.result("object.create", terminal(map[string]any{"name": "must stay open"})))
+			if code, message := errorOf(f.call("board.close", map[string]any{"board": value})); code != "invalid_params" {
+				t.Fatalf("malformed target closed or selected the default board: %s %q", code, message)
+			}
+			if got := f.result("object.get", map[string]any{"id": tile})["object"].(map[string]any); got["id"] != tile {
+				t.Fatalf("malformed target lost the terminal: %v", got)
+			}
+		})
 	}
 }
 

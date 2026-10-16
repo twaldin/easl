@@ -1,7 +1,7 @@
 {
   "scenario": "board-close",
   "description": "Close keeps terminal objects and sessions, catalogs the stored board as closed, rejects closed targets and malformed params, and reopens the same board. A second board avoids the Mac last-board guard. Reopen before terminal teardown.",
-  "recordedOn": "board.close candidate, scratch easld; Mac replay and recording pending",
+  "recordedOn": "board.close candidate with strict target boundary, scratch easld; Mac recording pending",
   "steps": [
     {
       "step": "board.open",
@@ -212,10 +212,55 @@
       "step": "board.close",
       "method": "board.close",
       "request": {
+        "board": 42
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "board must be a board id"
+        },
+        "id": "r9",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": null
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "board must be a board id"
+        },
+        "id": "r10",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": ""
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "board must be a board id"
+        },
+        "id": "r11",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
         "board": "<board>"
       },
       "response": {
-        "id": "r9",
+        "id": "r12",
         "ok": true,
         "result": {
           "board": "<board>",
@@ -235,7 +280,7 @@
       "method": "board.list",
       "request": {},
       "response": {
-        "id": "r10",
+        "id": "r13",
         "ok": true,
         "result": {
           "boards": [
@@ -264,7 +309,7 @@
           "code": "not_found",
           "message": "board <board>"
         },
-        "id": "r11",
+        "id": "r14",
         "ok": false
       }
     },
@@ -279,7 +324,7 @@
           "code": "not_found",
           "message": "board <board>"
         },
-        "id": "r12",
+        "id": "r15",
         "ok": false
       }
     },
@@ -290,7 +335,7 @@
         "root": "<root>"
       },
       "response": {
-        "id": "r13",
+        "id": "r16",
         "ok": true,
         "result": {
           "board": "<board>",
@@ -306,7 +351,7 @@
         "id": "<obj:1>"
       },
       "response": {
-        "id": "r14",
+        "id": "r17",
         "ok": true,
         "result": {
           "object": {
@@ -344,7 +389,7 @@
         "endSessions": false
       },
       "response": {
-        "id": "r15",
+        "id": "r18",
         "ok": true,
         "result": {
           "board": "<board>",
@@ -366,7 +411,7 @@
         "root": "<root>"
       },
       "response": {
-        "id": "r16",
+        "id": "r19",
         "ok": true,
         "result": {
           "board": "<board>",
@@ -382,7 +427,7 @@
         "id": "<obj:1>"
       },
       "response": {
-        "id": "r17",
+        "id": "r20",
         "ok": true,
         "result": {
           "object": {

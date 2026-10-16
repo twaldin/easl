@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import CanvasCore
+@testable import CanvasCore
 
 extension ApiRouterTests {
     @Test func closeKeepsTerminalsAndReopensTheirLatestObjects() async throws {

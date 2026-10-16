@@ -45,6 +45,11 @@ func (r *Router) boardClose(p map[string]any) (any, error) {
 			disposition = endOwnedSessions
 		}
 	}
+	if value, present := p["board"]; present {
+		if id, ok := value.(string); !ok || id == "" {
+			return nil, invalid("board must be a board id")
+		}
+	}
 	b, err := r.boardOf(p)
 	if err != nil {
 		return nil, err
