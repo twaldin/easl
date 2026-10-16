@@ -264,7 +264,7 @@ final class LanguageServiceTests: Sendable {
         // own build, as it would for a repo someone works in.
         let build = Process()
         build.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
-        build.arguments = ["build", "-j", "2", "--package-path", dir.path]
+        build.arguments = ["build", "--build-system", "native", "--enable-index-store", "-j", "2", "--package-path", dir.path]
         build.standardOutput = FileHandle.nullDevice
         build.standardError = FileHandle.nullDevice
         let buildStatus = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, Error>) in
