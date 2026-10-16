@@ -158,8 +158,8 @@ public enum HostedTerminal {
         [ -z "$shown" ] || printf '\r\033[K'
         session=$1
         refuse() {
-          owner=$(printf '%s\n' "$fields" | sed -n 's/^canvas\.home=//p')
-          printf '\r\nThis terminal session (%s on %s) belongs to another easl instance or board (%s).\r\nNot attaching: this copy of the board can neither type into it nor end it.\r\n' "$session" "$(hostname)" "${owner:-no owner}"
+          owners=$(printf '%s\n' "$fields" | sed -n '/^canvas\.home=/p; /^canvas\.board=/p; /^canvas\.tile=/p')
+          printf '\r\nThis terminal session (%s on %s) belongs to another easl instance or board.\r\n%s\r\nNot attaching: this copy of the board can neither type into it nor end it.\r\n' "$session" "$(hostname)" "${owners:-No ownership labels.}"
           exit \#(refused)
         }
         for label in "canvas.home=$2" "canvas.tile=$4"; do

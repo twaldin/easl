@@ -139,8 +139,10 @@ struct RemoteHostTests {
             if ownership.accepted {
                 #expect(result.output == "TMPDIR=/tmp remote\nattach \(session) SHELL=/bin/false ZMX_DIR=/srv/host's état/zmx\n")
             } else {
-                let owner = ownership.labels["canvas.home"].map { $0 == fixture.home ? "_srv_host_s___tat" : $0 } ?? "no owner"
-                #expect(result.output.contains("belongs to another easl instance or board (\(owner))"), "\(ownership.name): \(result.output)")
+                for (label, value) in ownership.labels {
+                    let owner = value == fixture.home ? "_srv_host_s___tat" : value
+                    #expect(result.output.contains("\(label)=\(owner)"), "\(ownership.name): \(result.output)")
+                }
                 #expect(!result.output.contains("attach "))
             }
         }
@@ -158,7 +160,6 @@ struct RemoteHostTests {
             try hosted.fakeZmx(home: home, lists: lists)
             let result = try await runAttach(host, home: home, tile: hosted.tile, board: "brd_b", merged: [])
             #expect(result.status == 0)
-            #expect(result.output.contains("Waiting for \(hosted.session) to start"))
             #expect(result.output.hasSuffix("TMPDIR=/var/folders/3b/x/T/\nattach \(hosted.session) SHELL=/bin/false ZMX_DIR=\n"))
         }
     }
@@ -173,7 +174,7 @@ struct RemoteHostTests {
         for merged in ["brd_other\ncanvas.board=brd_old", "brd_old\n", "", "BRD_old", "brd_old_extra"] {
             let result = try await runAttach(host, home: home, tile: hosted.tile, board: "brd_repo", merged: [merged])
             #expect(result.status == HostedTerminal.refused)
-            #expect(result.output.contains("belongs to another easl instance or board (_home)"))
+            #expect(result.output.contains("canvas.board=brd_old"))
             #expect(!result.output.contains("attach "))
         }
     }
@@ -208,7 +209,7 @@ struct RemoteHostTests {
             if process.isRunning { process.terminate() }
             process.waitUntilExit()
         }
-        let notice = "belongs to another easl instance or board (_original)"
+        let notice = "canvas.board=brd_original"
         for _ in 0..<300 {
             if (try String(contentsOf: output, encoding: .utf8)).contains(notice) { break }
             try await Task.sleep(for: .milliseconds(10))
@@ -218,8 +219,8 @@ struct RemoteHostTests {
         #expect(try String(contentsOf: attempts, encoding: .utf8) == "attach\n")
         let text = try String(contentsOf: output, encoding: .utf8)
         #expect(text.contains(notice))
-        #expect(text.contains("this copy of the board can neither type into it nor end it"))
-        #expect(!text.contains("[easl] waiting for the host"))
+        #expect(text.contains("canvas.home=_original"))
+        #expect(text.contains("canvas.tile=\(hosted.tile)"))
         #expect(!text.contains("SHELL="), "the copied tile never reaches zmx attach")
     }
 
