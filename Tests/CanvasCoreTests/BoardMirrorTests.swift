@@ -264,8 +264,9 @@ final class BoardMirrorTests {
         mirrors.append(mirror)
         defer { mirror.close() }
         let board = try await mirror.load()
-        #expect(mirror.boardID == host.id)
-        #expect(board.id == host.id)
+        #expect(mirror.boardID == "brd_old")
+        #expect(board.id == "brd_old")
+        #expect(mirror.sessionBoardID == host.id)
         #expect(mirror.mergedBoards == ["brd_old"])
         #expect(board.objects[terminal.id] == host.objects[terminal.id])
         let added = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]))
