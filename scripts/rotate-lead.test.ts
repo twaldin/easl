@@ -281,18 +281,16 @@ test("a rejected stdout read kills the owned CLI child", async () => {
 
 test("SIGTERM kills a real owned CLI child and records an interrupted unsent rotation", async () => {
   const f = fixture({ scenario: "hung-cli" });
-  let watcher: FSWatcher;
-  const hung = new Promise<number>((resolve) => {
-    watcher = watch(f.dir, () => {
-      const pid = JSON.parse(readFileSync(f.state, "utf8")).hungPid;
-      if (pid) resolve(pid);
-    });
-    watchers.add(watcher);
-  });
   const { child, result: pending } = start(f);
-  const pid = await Promise.race([hung, pending.then(() => { throw new Error("controller exited before its CLI child hung"); })]);
-  watcher!.close();
-  watchers.delete(watcher!);
+  const completed = pending.then(() => true, () => true);
+  let pid: number | undefined;
+  // Poll the external CLI's durable state. Linux can notify before its rename, and fake time cannot advance that process.
+  while (pid === undefined) {
+    pid = JSON.parse(readFileSync(f.state, "utf8")).hungPid;
+    if (pid === undefined && await Promise.race([Bun.sleep(5), completed])) {
+      throw new Error("controller exited before its CLI child hung");
+    }
+  }
   expect(pid).toBeDefined();
   expect(() => process.kill(pid!, 0)).not.toThrow();
   child.kill("SIGTERM");
