@@ -74,13 +74,14 @@ struct GitSignTests {
         let open = CodeRows(lineCount: 10, signs: signs, peeked: [0, 1, 2, 3])
         #expect(open.peekedSigns == [0, 1, 3], "additions have no base lines to peek")
         #expect(open.count == 15)
-        #expect((0..<open.count).compactMap(open.row) == [
+        let expectedRows: [CodeRows.Row] = [
             .peek(old: 1, sign: 0), .peek(old: 2, sign: 0),
             .line(1), .line(2), .line(3),
             .peek(old: 5, sign: 1),
             .line(4), .line(5), .line(6), .line(7), .line(8), .line(9), .line(10),
             .peek(old: 12, sign: 3), .peek(old: 13, sign: 3),
-        ])
+        ]
+        #expect((0..<open.count).compactMap(open.row) == expectedRows)
         #expect(open.index(ofLine: 1) == 2 && open.index(ofLine: 4) == 6 && open.index(ofLine: 10) == 12)
         #expect(open.index(ofPeek: 1, old: 5) == 5 && open.index(ofPeek: 3, old: 13) == 14)
         #expect(open.index(ofPeek: 1, old: 6) == nil && open.index(ofPeek: 2, old: 10) == nil)
