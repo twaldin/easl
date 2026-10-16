@@ -1,10 +1,9 @@
 // bun test extensions/agent-hooks — lifecycle reports while easl is away (report.ts).
 import type { UnixSocketListener } from "bun";
 import { afterEach, expect, jest, test } from "bun:test";
-import * as fs from "node:fs";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { CanvasClient, CanvasError } from "../../clients/ts/src/index";
 import { release, report, spoolDirectory, watchCanvasReturn } from "./report";
 
@@ -92,34 +91,10 @@ test("a Codex Stop hook run while easl is closed spools the turn's end with its 
   expect(entry.seq).toBe(entry.params.seq as number);
 });
 
-/** Waits for real filesystem IO while the polling clock stays still. */
-async function socketChange(socket: string, change: () => void): Promise<void> {
-  const { promise, resolve, reject } = Promise.withResolvers<void>();
-  const observer = watch(dirname(socket), { persistent: false }, (_event, name) => {
-    if (name !== null && name !== basename(socket)) return;
-    observer.close();
-    setImmediate(resolve);
-  });
-  observer.on("error", reject);
-  try {
-    change();
-    await promise;
-  } finally {
-    observer.close();
-  }
-}
-
-test("an integration hears easl come back after a quit, and after a restart between two checks", async () => {
+test("an integration hears easl come back after a quit, and after a restart between two checks", () => {
   const socket = join(home(), "easl.sock");
   const listen = () => Bun.listen({ unix: socket, socket: { data() {} } });
   let server = listen();
-  // Force the Linux collision independently of the filesystem's inode and timestamp reuse.
-  const identity = { dev: 1, ino: 1, birthtimeMs: 1 };
-  const realStat = fs.statSync;
-  const stat = jest.spyOn(fs, "statSync").mockImplementation((path) => {
-    const value = realStat(path);
-    return path === socket ? Object.assign(value, identity) : value;
-  });
   let returns = 0;
   jest.useFakeTimers();
   const stop = watchCanvasReturn(socket, () => returns++, 1000);
@@ -127,50 +102,37 @@ test("an integration hears easl come back after a quit, and after a restart betw
     jest.advanceTimersByTime(3000);
     expect(returns).toBe(0);
     // Quit: the socket goes, and nothing is there to report to.
-    await socketChange(socket, () => {
-      server.stop(true);
-      rmSync(socket, { force: true });
-    });
+    server.stop(true);
+    rmSync(socket, { force: true });
     jest.advanceTimersByTime(3000);
     expect(returns).toBe(0);
-    await socketChange(socket, () => {
-      server = listen();
-      // A check can observe the return before its filesystem notification arrives.
-      jest.advanceTimersByTime(1000);
-      expect(returns).toBe(1);
-    });
+    server = listen();
     jest.advanceTimersByTime(1000);
     expect(returns).toBe(1);
     jest.advanceTimersByTime(3000);
     expect(returns).toBe(1);
-    // Restarted faster than a check, with exactly the same observed socket identity.
-    await socketChange(socket, () => {
-      server.stop(true);
-      rmSync(socket, { force: true });
-      server = listen();
-    });
-    expect(fs.statSync(socket)).toMatchObject(identity);
+    // Restarted faster than a check: retaining the old inode prevents Linux from reusing it.
+    server.stop(true);
+    rmSync(socket, { force: true });
+    server = listen();
     jest.advanceTimersByTime(1000);
     expect(returns).toBe(2);
     jest.advanceTimersByTime(3000);
     expect(returns).toBe(2);
     stop();
-    await socketChange(socket, () => {
-      server.stop(true);
-      rmSync(socket, { force: true });
-      server = listen();
-    });
+    server.stop(true);
+    rmSync(socket, { force: true });
+    server = listen();
     jest.advanceTimersByTime(3000);
     expect(returns).toBe(2);
   } finally {
     stop();
     jest.useRealTimers();
-    stat.mockRestore();
     server.stop(true);
   }
 });
 
-test("return checks tolerate a missing socket directory and watch it once it appears", async () => {
+test("return checks tolerate a missing socket directory and notice it once it appears", () => {
   const socket = join(home(), "later", "easl.sock");
   let returns = 0;
   let server: UnixSocketListener<undefined> | undefined;
@@ -184,11 +146,9 @@ test("return checks tolerate a missing socket directory and watch it once it app
     server = listen();
     jest.advanceTimersByTime(1000);
     expect(returns).toBe(1);
-    await socketChange(socket, () => {
-      server!.stop(true);
-      rmSync(socket, { force: true });
-      server = listen();
-    });
+    server!.stop(true);
+    rmSync(socket, { force: true });
+    server = listen();
     jest.advanceTimersByTime(1000);
     expect(returns).toBe(2);
     jest.advanceTimersByTime(3000);

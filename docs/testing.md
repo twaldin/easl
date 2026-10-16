@@ -15,7 +15,7 @@ python3 -m unittest discover -s scripts     # Python script tests
 (cd easld && go vet ./... && go test ./...)  # easld (Go 1.26): its packages' tests, and the conformance suite replayed in-process (cmd/easld, ~2 min; -short skips it)
 ```
 
-Run every Bun, Python, and Go command above on Linux as well as macOS. Only `CanvasCoreTests` needs macOS. The hook suite covers socket replacement even when Linux reuses the socket's inode and timestamps. The rotation suite covers SIGTERM both while its CLI child runs and after the child exits.
+Run every Bun, Python, and Go command above on Linux as well as macOS. Only `CanvasCoreTests` needs macOS. The hook suite covers socket replacement between checks. The Linux watcher retains the observed socket inode with one `O_PATH` descriptor, preventing inode reuse, and releases it on replacement or stop. macOS keeps its existing metadata polling. The rotation suite covers SIGTERM both while its CLI child runs and after the child exits.
 
 `CanvasCoreTests` is an executable target, not a test target: with only the Command Line Tools installed, `swift test` doesn't discover swift-testing suites, so `main.swift` calls the swift-testing entry point. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.
 

@@ -6,10 +6,14 @@
 // spooling ever throws or waits on anything but its own short IO: the agent carries on as if
 // there were no hook.
 import { randomBytes } from "node:crypto";
-import { statSync, watch, type FSWatcher } from "node:fs";
+import { closeSync, fstatSync, openSync, statSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { CanvasError, type AgentReleaseParams, type AgentReportParams, type CanvasClient } from "../../clients/ts/src/index";
+
+// Linux flags omitted by node:fs. Pin the inode without socket IO or inheritance into child processes.
+const O_PATH = 0x200000;
+const O_CLOEXEC = 0x80000;
 
 /** Where reports for `tile` wait while easl is away: `agent-reports/<tile>/` beside the socket. */
 export function spoolDirectory(socketPath: string, tile: string): string {
@@ -42,60 +46,45 @@ async function deliver(client: CanvasClient, method: string, params: { tile: str
  * again, or restarted between two checks (it binds a new socket file each launch). A restarted
  * easl restores a `working` or `blocked` tile as `restored` and refuses prompts to a restored
  * `working` one until its agent reports again, so an integration that lives as long as its agent
- * (omp's extension, opencode's plugin) re-reports its state from here. Checks every `intervalMs`,
- * watching the directory for replacements whose socket metadata is reused. Neither the timer
- * nor the directory watch keeps the process alive. Returns a stop function.
+ * (omp's extension, opencode's plugin) re-reports its state from here. Checks every `intervalMs`;
+ * the timer never keeps the process alive. On Linux, retains the observed socket's inode so a
+ * rebind cannot reuse it between checks. Returns a stop function.
  */
 export function watchCanvasReturn(socketPath: string, onReturn: () => void, intervalMs = 2000): () => void {
-  const directory = dirname(socketPath);
-  const filename = basename(socketPath);
-  let seen = socketIdentity(socketPath);
-  let watcher: FSWatcher | undefined;
-  const observe = () => {
-    watcher?.close();
-    watcher = undefined;
-    try {
-      const current = watch(directory, { persistent: false }, (event, name) => {
-        if (watcher === current && event === "rename" && (name === null || name === filename)) seen = undefined;
-      });
-      current.on("error", () => {
-        if (watcher !== current) return;
-        watcher = undefined;
-        current.close();
-      });
-      watcher = current;
-    } catch {
-      // The directory can be missing while easl is away. A later check retries.
-    }
-  };
-  observe();
+  let seen = socketIdentity(socketPath, true);
   const timer = setInterval(() => {
     const now = socketIdentity(socketPath);
-    if (now === seen) {
-      if (!watcher) observe();
+    if (now?.key === seen?.key) return;
+    const next = now && process.platform === "linux" ? socketIdentity(socketPath, true) : now;
+    if (next?.key === seen?.key) {
+      if (next?.descriptor !== undefined) closeSync(next.descriptor);
       return;
     }
-    seen = now;
-    // Drop queued notifications for the replacement this check already observed.
-    observe();
-    if (now !== undefined) onReturn();
+    if (seen?.descriptor !== undefined) closeSync(seen.descriptor);
+    seen = next;
+    if (next !== undefined) onReturn();
   }, intervalMs);
   timer.unref();
   return () => {
     clearInterval(timer);
-    watcher?.close();
-    watcher = undefined;
+    if (seen?.descriptor !== undefined) closeSync(seen.descriptor);
+    seen = undefined;
   };
 }
 
-/** The socket file's metadata, which can be reused after a restart; undefined when none. */
-function socketIdentity(path: string): string | undefined {
+type SocketIdentity = { key: string; descriptor?: number };
+
+function socketIdentity(path: string, retain = false): SocketIdentity | undefined {
+  let descriptor: number | undefined;
   try {
-    const stat = statSync(path);
-    return stat.isSocket() ? `${stat.dev}:${stat.ino}:${stat.birthtimeMs}` : undefined;
+    if (retain && process.platform === "linux") descriptor = openSync(path, O_PATH | O_CLOEXEC);
+    const stat = descriptor === undefined ? statSync(path) : fstatSync(descriptor);
+    if (stat.isSocket()) return { key: `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`, descriptor };
   } catch {
-    return undefined;
+    // A missing socket is expected while easl is away.
   }
+  if (descriptor !== undefined) closeSync(descriptor);
+  return undefined;
 }
 
 /** Written under a hidden name, then renamed: easl never reads half a report. */
