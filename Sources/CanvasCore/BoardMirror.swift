@@ -49,7 +49,9 @@ public final class BoardMirror: BoardHost {
     private let renders: EaslConnection
     /// Nil until `load` succeeded.
     public private(set) var board: Board?
-    public private(set) var state: EaslConnection.State = .connecting
+    public var state: EaslConnection.State { refreshFailure != nil && linkState == .online ? .offline : linkState }
+    private var linkState: EaslConnection.State = .connecting
+    private var refreshFailure: String?
     /// Each state change, after the board was loaded.
     public var onState: ((EaslConnection.State) -> Void)?
     /// Something to tell the user (a write the host refused, a create that failed).
@@ -157,15 +159,17 @@ public final class BoardMirror: BoardHost {
     }
 
     private func changed(_ state: EaslConnection.State) {
-        guard state != self.state else { return }
-        self.state = state
+        guard state != linkState else { return }
+        let previous = self.state
+        linkState = state
+        if state != .online { refreshFailure = nil }
         guard board != nil else { return }
         if state != .online {
             stale = true
             drops += 1
             redrawDue = true
         }
-        onState?(state)
+        if self.state != previous { onState?(self.state) }
         if state == .online, stale { Task { await reread() } }
     }
 
@@ -188,12 +192,16 @@ public final class BoardMirror: BoardHost {
         onRedraw?()
     }
 
-    /// Why the link isn't online, for the user (ssh's reason); nil while online.
-    public var problem: String? { connection.problem }
+    /// Why the board isn't current: a failed refresh, else ssh's reason.
+    public var problem: String? { refreshFailure ?? connection.problem }
 
     /// Tries the host again now (the user started easl there).
     public func reconnect() {
-        connection.reconnect()
+        if linkState == .online, stale {
+            Task { await reread() }
+        } else {
+            connection.reconnect()
+        }
         renders.reconnect()
     }
 
@@ -266,15 +274,22 @@ public final class BoardMirror: BoardHost {
             do {
                 let manifest = try await connection.request("board.get", .object(["board": .string(boardID)]))
                 install(try await whole(manifest["objects"]), on: board)
+                setRefreshFailure(nil)
             } catch {
-                // Down again: the next `online` reads it.
+                setRefreshFailure("Couldn't refresh \(hostName): \(Self.reason(error))")
                 stale = true
             }
-            again = drops != before && state == .online
+            again = drops != before && linkState == .online
         } while again
         reading = nil
         release()
         drawAgainIfDue()
+    }
+
+    private func setRefreshFailure(_ failure: String?) {
+        let previous = state
+        refreshFailure = failure
+        if state != previous { onState?(state) }
     }
 
     /// Applies a read of the whole board: what the read has, unless newer is here already
