@@ -24,11 +24,13 @@ struct RemoteHostTests {
     @Test func linuxKeepsEasldsHomeUnderXDGState() {
         let plain = RemoteHost.parseDiscovery("os=Linux\nhome=/home/tim\ntmpdir=/tmp\nstate=\neasl=/home/tim/.local/bin/easl\n", name: "deckbox", sshTarget: "deckbox")
         #expect(plain?.socketPath == "/home/tim/.local/state/easl/easl.sock")
+        #expect(plain?.zmxDir == "/home/tim/.local/state/easl/zmx")
         #expect(plain?.tmpdir == "/tmp")
         #expect(plain?.easlBin == "/home/tim/.local/bin/easl")
         #expect(plain?.zmxBin == "zmx", "not installed: the PATH's, if any")
         let xdg = RemoteHost.parseDiscovery("os=Linux\nhome=/home/tim\ntmpdir=/tmp\nstate=/srv/state\n", name: "deckbox", sshTarget: "deckbox")
         #expect(xdg?.socketPath == "/srv/state/easl/easl.sock")
+        #expect(xdg?.zmxDir == "/srv/state/easl/zmx")
     }
 
     @Test func aSupportDirectoryOverridesTheHostsOwn() {
@@ -150,11 +152,35 @@ struct RemoteHostTests {
         #expect(result.output == "attached present in \(dir.path)/zmx with /tmp\n")
     }
 
+    @Test func aRemoteTerminalRetriesMissingSessionsAfterAnAttachAndLinkFailure() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("rh-\(UUID().uuidString.prefix(8)) retry")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = dir.appendingPathComponent("attempts").path
+        try "".write(toFile: log, atomically: true, encoding: .utf8)
+        let attach = dir.appendingPathComponent("attach").path
+        try """
+        #!/bin/sh
+        n=$(wc -l < "$1")
+        case "$((n))" in
+          0) status=0 ;;
+          1|2) status=75 ;;
+          3) status=255 ;;
+          *) printf '0\\n' >> "$1"; kill -TERM "$PPID"; exit 0 ;;
+        esac
+        printf '%s\\n' "$status" >> "$1"
+        exit "$status"
+        """.write(toFile: attach, atomically: true, encoding: .utf8)
+        chmod(attach, 0o755)
+        _ = try await RemoteHost.run("/bin/sh", ["-c", RemoteHost.terminalCommand([attach, log])], timeout: 30)
+        #expect(try String(contentsOfFile: log, encoding: .utf8) == "0\n75\n75\n255\n0\n")
+    }
+
     @Test func recentHostsAreNewestFirstOncePerTargetAndCapped() throws {
         let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("rh-\(UUID().uuidString.prefix(8))/remote-hosts.json")
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         func host(_ target: String, tmpdir: String = "/tmp") -> RemoteHost {
-            RemoteHost(name: target, sshTarget: target, socketPath: "/s", tmpdir: tmpdir, easlBin: "easl")
+            RemoteHost(name: target, sshTarget: target, socketPath: "/s", tmpdir: tmpdir, easlBin: "easl", zmxDir: "/state/\(target)/zmx")
         }
         #expect(RemoteHost.Recents.load(url).isEmpty)
         for index in 0..<10 { RemoteHost.Recents.remember(host("h\(index)"), in: url) }
@@ -162,6 +188,21 @@ struct RemoteHostTests {
         let recents = RemoteHost.Recents.load(url)
         #expect(recents.map(\.sshTarget) == ["h5", "h9", "h8", "h7", "h6", "h4", "h3", "h2"])
         #expect(recents.first?.tmpdir == "/var/folders/new/T/", "the newest discovery replaces the old")
+        #expect(recents.first?.zmxDir == "/state/h5/zmx")
+    }
+
+    @Test func rememberingAnEasldHostPreservesOlderMacEntriesWithoutAZmxDirectory() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("rh-\(UUID().uuidString.prefix(8))/remote-hosts.json")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try """
+        [{"name":"work","sshTarget":"work","socketPath":"/s","tmpdir":"/var/folders/T/","easlBin":"easl","zmxBin":"zmx","ncShutdown":false}]
+        """.write(to: url, atomically: true, encoding: .utf8)
+        let host = try #require(RemoteHost.parseDiscovery("os=Linux\nhome=/home/tim\ntmpdir=/tmp\n", name: "deckbox", sshTarget: "deckbox"))
+        RemoteHost.Recents.remember(host, in: url)
+        let hosts = RemoteHost.Recents.load(url)
+        #expect(hosts.map(\.sshTarget) == ["deckbox", "work"])
+        #expect(hosts.map(\.zmxDir) == ["/home/tim/.local/state/easl/zmx", nil])
     }
 
     @Test func boardsListOpenOnesFirstWithTheirAgents() {

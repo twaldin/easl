@@ -20,6 +20,8 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     public var easlBin: String
     /// The host's zmx: a non-interactive ssh session's PATH may lack Homebrew's directory.
     public var zmxBin: String
+    /// easld's session directory; nil for a Mac app, whose sessions use the GUI TMPDIR.
+    public var zmxDir: String?
     /// The app bundle that owns `socketPath`, which `startCommand` opens; nil when the viewer
     /// can't tell (a development instance's launcher isn't discoverable) or the host isn't a Mac.
     public var appBundle: String?
@@ -29,13 +31,14 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     public var ncShutdown: Bool
 
     public init(name: String, sshTarget: String, socketPath: String, tmpdir: String, easlBin: String, zmxBin: String = "zmx",
-                appBundle: String? = nil, ncShutdown: Bool = false) {
+                appBundle: String? = nil, ncShutdown: Bool = false, zmxDir: String? = nil) {
         self.name = name
         self.sshTarget = sshTarget
         self.socketPath = socketPath
         self.tmpdir = tmpdir
         self.easlBin = easlBin
         self.zmxBin = zmxBin
+        self.zmxDir = zmxDir
         self.appBundle = appBundle
         self.ncShutdown = ncShutdown
     }
@@ -70,7 +73,30 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         let zmx = Self.quote(zmxBin)
         let script = "\(zmx) get \"$1\" >/dev/null 2>&1 || { echo \"no session $1 yet\" >&2; exit \(Self.noSessionStatus); }; exec \(zmx) attach \"$1\""
         return [Self.ssh, "-t", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", sshTarget,
-                "env", "TMPDIR=" + Self.quote(tmpdir), "sh", "-c", Self.quote(script), "sh", Self.quote(session)]
+                "env", "TMPDIR=" + Self.quote(tmpdir)] + (zmxDir.map { ["ZMX_DIR=" + Self.quote($0)] } ?? []) +
+                ["sh", "-c", Self.quote(script), "sh", Self.quote(session)]
+    }
+
+    /// A remote terminal's command: the host's attach, again until the tile closes. An attach that
+    /// ends cleanly (a detach, or the session's shell exited) attaches again after a second, as a
+    /// local tile's detach reattaches (`surfaceClosed`). The host having no such session
+    /// (`RemoteHost.noSessionStatus`) before the first attach means its own tile hasn't started it
+    /// yet; after one, that the session ended: the command exits, and the host's delete of the
+    /// tile arrives. Any other failure (the link dropped) is retried every 2 s.
+    public static func terminalCommand(_ attach: [String]) -> String {
+        let loop = #"""
+        attached=
+        while :; do
+          "$@"
+          case $? in
+            0) attached=1; sleep 1; continue ;;
+            \#(RemoteHost.noSessionStatus)) [ -z "$attached" ] || exit 0 ;;
+          esac
+          printf '\r\033[2K[easl] waiting for the host…'
+          sleep 2
+        done
+        """#
+        return ShellWords.quote(["/bin/sh", "-c", loop, "easl-remote"] + attach)
     }
 
     /// Starts the easl whose socket `socketPath` is, without bringing it forward there. Needs a
@@ -130,7 +156,7 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         let directory = support ?? (mac ? home + "/Library/Application Support/Easl" : ((values["state"].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/.local/state") + "/easl"))
         let easl = mac ? macEaslBin : (values["easl"] ?? "easl")
         return RemoteHost(name: name, sshTarget: sshTarget, socketPath: directory + "/easl.sock", tmpdir: tmpdir, easlBin: easl, zmxBin: values["zmx"] ?? "zmx",
-                          appBundle: mac && support == nil ? macApp : nil, ncShutdown: values["ncshutdown"] == "1")
+                          appBundle: mac && support == nil ? macApp : nil, ncShutdown: values["ncshutdown"] == "1", zmxDir: mac ? nil : directory + "/zmx")
     }
 
     /// The installed easl app on a Mac.
