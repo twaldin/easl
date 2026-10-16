@@ -140,8 +140,9 @@ final class DelegatedCalls {
                 throw ApiRouter.Failure("unavailable", "terminal \(terminal.id) has no attached surface")
             }
             let aligned = mark?.aligned(to: tail)
-            result = request.shown(tail, after: aligned)
-            if mark != nil, aligned == nil { result["truncated"] = .bool(true) }
+            let lost = mark != nil && aligned == nil
+            result = request.shown(lost ? tail.suffix(request.lines) : tail, after: aligned)
+            if lost { result["truncated"] = .bool(true) }
         }
         result["agent"] = agentEntry(board.objects[terminal.id] ?? terminal)
         return .object(result)
@@ -189,6 +190,7 @@ final class DelegatedCalls {
             for (index, row) in now.rows.enumerated() {
                 while matched > 0, row != tail.rows[matched] { matched = prefix[matched - 1] }
                 if row == tail.rows[matched] { matched += 1 }
+                if matched > 0, now.positions[index - matched + 1] > tail.positions[0] { break }
                 if matched > best {
                     best = matched
                     end = index

@@ -651,6 +651,10 @@ final class TerminalTile: NSView, TileContent {
         return (row, column)
     }
 
+    private var commandIsRunning: Bool {
+        isRemote ? commands.running != nil : program != nil
+    }
+
     /// The finished command block whose output covers viewport cell (`row`, `column`): its
     /// output, as Ghostty selects it, and what ran. The terminal's command log names it by the
     /// clicked line in the terminal's text (`TerminalCommandLog.block(holding:)`: what ran, its
@@ -663,7 +667,7 @@ final class TerminalTile: NSView, TileContent {
         guard let surface, let grid, let output = selectOutput(row: row, column: column) else { return nil }
         let lines = TerminalExcerpt.lines(output.text)
         // The program still running: its output goes on to the cursor.
-        if program != nil, let cursor = cursorRow, let last = lines.last,
+        if commandIsRunning, let cursor = cursorRow, let last = lines.last,
            (max(0, cursor - 2)...cursor).contains(where: { row in activeRow(row).map { !$0.isEmpty && last.hasSuffix($0) } ?? false }) { return nil }
         if let text = textToCursor(), let cursor = cursorRow, let below = read(viewport(0, row), active(grid.columns - 1, cursor)) {
             let clicked = text.count - below.split(separator: "\n", omittingEmptySubsequences: false).count
@@ -688,7 +692,7 @@ final class TerminalTile: NSView, TileContent {
             stride(from: cursor - 1, through: max(0, cursor - TerminalBlocks.promptRows - 1), by: -1).first { !shown($0).isEmpty && last.hasSuffix(shown($0)) }
         } ?? output.top.map { $0 + TerminalBlocks.rows(of: output.text, columns: grid.columns) - 1 } ?? grid.rows
         let command = TerminalBlocks.command(promptRow: promptRow, outputEnd: end, cursorRow: cursor,
-                                             atPrompt: shell != nil && program == nil, last: lastCommand?.command)
+                                             atPrompt: (isRemote || shell != nil) && !commandIsRunning, last: lastCommand?.command)
         guard command?.exit != nil || command?.durationMs != nil else {
             // Starting at the very top of everything the terminal holds, with no prompt above:
             // text from before easl reattached to the session, which carries no marks.
@@ -792,7 +796,7 @@ final class TerminalTile: NSView, TileContent {
     /// The last command's block as Ghostty selects it on the rows just above the prompt (its
     /// output exactly), while the view shows the active screen; nil when it can't be selected.
     private func selectedLastBlock() -> (command: TerminalCommand, output: String)? {
-        guard let last = lastCommand?.command, program == nil, scrolledBack == 0, surface?.readSelection()?.isEmpty ?? true, let cursorRow else { return nil }
+        guard let last = lastCommand?.command, !commandIsRunning, scrolledBack == 0, surface?.readSelection()?.isEmpty ?? true, let cursorRow else { return nil }
         for row in stride(from: cursorRow - 1, through: max(0, cursorRow - TerminalBlocks.promptRows - 1), by: -1) {
             guard let block = commandBlock(row: row, column: 0) else { continue }
             // An older block nearest the prompt: the last command printed nothing.
@@ -817,10 +821,10 @@ final class TerminalTile: NSView, TileContent {
             throw ApiRouter.Failure("not_found", "terminal \(objectID) has \(log.entries.count) finished command\(log.entries.count == 1 ? "" : "s") since easl attached to it: block goes back to -\(log.entries.count)")
         }
         guard surface?.handle != nil, grid != nil else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) isn't shown in a window") }
-        if !isRemote, index == -1, let selected = selectedLastBlock() { return selected }
+        if index == -1, let selected = selectedLastBlock() { return selected }
         guard var text = textToCursor() else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) isn't shown in a window") }
         // A command still running: its line ends the last finished one's output.
-        if (isRemote || program != nil), let running = commands.running, let line = text.lastIndex(where: { TerminalBlocks.isCommandLine($0, of: running) }) {
+        if commandIsRunning, let running = commands.running, let line = text.lastIndex(where: { TerminalBlocks.isCommandLine($0, of: running) }) {
             text = Array(text[...line])
         }
         guard let lines = log.output(index, in: text, promptAbove: promptAbove ?? 0) else {
