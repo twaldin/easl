@@ -27,7 +27,7 @@ protocol BoardHost: AnyObject {
 /// A board another easl hosts, mirrored over that easl's API (docs/design.md "Client mode").
 ///
 /// `load` subscribes to the board's events, then reads it (`board.get`, and `object.get` for the
-/// notes it cut), into a `Board` marked remote that nothing stores. The host's events replace
+/// HTML and notes it cut), into a `Board` marked remote that nothing stores. The host's events replace
 /// objects with the host's (`rev` included) unless a newer host revision is already here. The
 /// user's writes on that board are previews sent here (`send`): one at a time per object, a props
 /// write carrying the host `rev` the user's change was based on; while an object has writes in
@@ -302,11 +302,22 @@ public final class BoardMirror: BoardHost {
         for event in waiting { received(event) }
     }
 
-    /// `board.get`'s objects whole: a note it cut at 400 characters is read with `object.get`.
+    /// `board.get` summarizes every HTML page and cuts long notes; read their content whole.
     private func whole(_ objects: JSONValue?) async throws -> [CanvasObject] {
         var result: [CanvasObject] = []
         for value in objects?.array ?? [] {
             var object = try value.decode(CanvasObject.self)
+            if object.type == .html {
+                do {
+                    let full = try await connection.request("object.get", .object(["id": .string(object.id)]))
+                    guard let value = full["object"] else {
+                        throw EaslConnection.Failure("unavailable", "the host returned no HTML object")
+                    }
+                    object = try value.decode(CanvasObject.self)
+                } catch let failure as EaslConnection.Failure where failure.code == "not_found" {
+                    continue
+                }
+            }
             if object.type == .note, let markdown = object.props["markdown"]?.string, markdown.count == 401, markdown.hasSuffix("…"),
                let full = try? await connection.request("object.get", .object(["id": .string(object.id)]))["object"]?.decode(CanvasObject.self) {
                 object = full

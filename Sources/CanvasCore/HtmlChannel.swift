@@ -12,12 +12,19 @@ public enum HtmlChannel {
     /// against the board's root.
     /// A page with a `ref` reads its excerpts where the ref is now (`Board.linkSource`): the live
     /// worktree, else git objects at the ref's commit.
-    public static func handle(_ message: HtmlMessage, tile: ObjectID, board: Board) async throws -> JSONValue {
+    public static func handle(_ message: HtmlMessage, tile: ObjectID, board: Board, files: HostFiles? = nil) async throws -> JSONValue {
         let object = board.objects[tile]
-        let reading = if let object, RefSource.ref(of: object.props) != nil { await board.linkSource(of: object) } else { LinkReading(root: object.map(board.linkRoot(of:)) ?? board.root) }
-        let root = reading.root
+        if board.isRemote, files == nil { throw HtmlError.unavailable("host file reader is unavailable") }
         switch message {
         case .excerpt(let path, let lines, let symbol):
+            if let files {
+                let relative = try HtmlKit.boardRelative(path)
+                let excerpt = try await hostExcerpt(path: relative, lines: lines, symbol: symbol, source: board.hostSource(props: object?.props ?? .object([:]), objects: true), files: files)
+                try Task.checkCancellation()
+                return try JSONValue.encode(excerpt)
+            }
+            let reading = await localReading(object: object, board: board)
+            let root = reading.root
             let file = try HtmlKit.boardFile(path, root: root)
             let excerpt: SourceExcerpt
             if let commit = reading.commit {
@@ -35,6 +42,11 @@ public enum HtmlChannel {
             return try JSONValue.encode(excerpt)
 
         case .openCode(let path, let lines, let symbol):
+            if let files {
+                return try await hostOpen(path: path, lines: lines, symbol: symbol, object: object, tile: tile, board: board, files: files)
+            }
+            let reading = await localReading(object: object, board: board)
+            let root = reading.root
             let file = try HtmlKit.boardFile(path, root: root)
             let ref = object.flatMap { RefSource.ref(of: $0.props) }
             if ref != nil, reading.commit != nil {
@@ -66,6 +78,56 @@ public enum HtmlChannel {
         case .rendered:
             return .object([:])
         }
+    }
+
+    private static func localReading(object: CanvasObject?, board: Board) async -> LinkReading {
+        if let object, RefSource.ref(of: object.props) != nil { return await board.linkSource(of: object) }
+        return LinkReading(root: object.map(board.linkRoot(of:)) ?? board.root)
+    }
+
+    private static func hostExcerpt(path: String, lines: LineRange?, symbol: String?, source: HostFileRequest.Source, files: HostFiles) async throws -> SourceExcerpt {
+        do {
+            let file = try await files.read(HostFileRequest(source: source, policy: .boardFile(path)))
+            return await offMain { SourceExcerpt.from(file, path: path, lines: lines, symbol: symbol) }
+        } catch let error as HostFileError {
+            let reason: String
+            switch error {
+            case .refused: throw HtmlError.outsideRoot(path)
+            case .notFound(let commit): reason = "\(path) not found" + (commit.map { " at \($0.prefix(7))" } ?? "")
+            case .tooLarge(let limit): reason = "\(path) is larger than \(limit / 1024 / 1024) MB"
+            case .unreadable: reason = "\(path) is unreadable"
+            case .ref(let why): reason = why
+            case .unavailable(let why): reason = "couldn't read \(path) on \(files.hostName): \(why)"
+            }
+            return SourceExcerpt.failed(path: path, symbol: symbol, reason: reason)
+        }
+    }
+
+    private static func hostOpen(path: String, lines: LineRange?, symbol: String?, object: CanvasObject?, tile: ObjectID, board: Board, files: HostFiles) async throws -> JSONValue {
+        let relative = try HtmlKit.boardRelative(path)
+        let props = object?.props ?? .object([:])
+        let source = board.hostSource(props: props, objects: true)
+        let ref = RefSource.ref(of: props)
+        let checked: HostFile
+        do {
+            checked = try await files.read(HostFileRequest(source: source, policy: .boardFile(relative), bytes: false))
+        } catch let error as HostFileError {
+            switch error {
+            case .refused: throw HtmlError.outsideRoot(path)
+            case .ref where ref != nil:
+                try Task.checkCancellation()
+                return openCode(path: board.boardPath(relative, linkRoot: board.root), range: lines, symbol: symbol, ref: ref, beside: tile, on: board)
+            case .unavailable(let reason): throw HtmlError.unavailable("couldn't read \(relative) on \(files.hostName): \(reason)")
+            default: throw HtmlError.notFound(relative)
+            }
+        }
+        var range = lines
+        if checked.commit == nil, range == nil, let symbol {
+            let excerpt = try await hostExcerpt(path: relative, lines: nil, symbol: symbol, source: source, files: files)
+            if !excerpt.stale { range = LineRange(start: excerpt.start, end: excerpt.end) }
+        }
+        try Task.checkCancellation()
+        return openCode(path: board.boardPath(relative, linkRoot: URL(fileURLWithPath: checked.root)), range: range, symbol: symbol, ref: ref, beside: tile, on: board)
     }
 
     /// The `state.get` reply for a tile with `props`: one key's value, or the whole state.

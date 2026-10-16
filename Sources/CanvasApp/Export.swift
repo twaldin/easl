@@ -100,7 +100,7 @@ extension CanvasView {
 
     /// Save as HTML…: the HTML tile's page as it renders, in one file (`HtmlTile.exportDocument`).
     func saveHTML(_ id: ObjectID) {
-        guard let tile = tiles[id]?.content as? HtmlTile else { return }
+        guard !board.isRemote, let tile = tiles[id]?.content as? HtmlTile else { return }
         saveExport("Save as HTML", .html, ext: "html", logging: "HTML tile \(id)") { Data(try await tile.exportDocument().utf8) }
     }
 
@@ -108,7 +108,7 @@ extension CanvasView {
     /// A development instance that may not activate other apps (`EASL_NO_ACTIVATE`) only logs
     /// the file it would open.
     func openHTMLInBrowser(_ id: ObjectID) {
-        guard let tile = tiles[id]?.content as? HtmlTile else { return }
+        guard !board.isRemote, let tile = tiles[id]?.content as? HtmlTile else { return }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("easl-exports", isDirectory: true)
         let url = directory.appendingPathComponent("\(id)-\(exportName("html"))")
         Task { @MainActor [weak self] in

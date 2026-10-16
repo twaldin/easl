@@ -1,7 +1,7 @@
 import AppKit
 import CanvasCore
 
-/// A remote board's code, changes, HTML, browser, image or diagram tile (docs/design.md "Client
+/// A remote board's code, changes, browser, image or diagram tile (docs/design.md "Client
 /// mode"): the host's own drawing of it (`view.render` `inline`, the body below the title bar),
 /// redrawn when the host changes the object and on demand (the badge's ↻), with a badge saying
 /// it is read-only and drawn by the host. It reads no files, loads no page and keeps nothing on disk.

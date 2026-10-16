@@ -1117,7 +1117,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return true
         case #selector(clearAttentionMarkers(_:)): return !board.attention.isEmpty
         case #selector(copyAsImage(_:)), #selector(saveAsPNG(_:)): return !selection.isEmpty
-        case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selected(.html) != nil
+        case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selected(.html) != nil && !board.isRemote
         case #selector(openPageInBrowser(_:)): return selected(.browser) != nil
         case #selector(copyNoteAsMarkdown(_:)), #selector(saveNoteAsMarkdown(_:)): return selected(.note) != nil
         case #selector(toggleWebInspector(_:)):

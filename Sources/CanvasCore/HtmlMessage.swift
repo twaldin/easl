@@ -112,6 +112,7 @@ public enum HtmlError: Error, Equatable, CustomStringConvertible {
     case invalidField(String, String)
     case outsideRoot(String)
     case notFound(String)
+    case unavailable(String)
     /// Too much outstanding work from this page; retry after earlier replies arrive.
     case busy
     /// The tile detached before the work finished.
@@ -126,6 +127,7 @@ public enum HtmlError: Error, Equatable, CustomStringConvertible {
         case .invalidField(let field, let why): "invalid \(field): \(why)"
         case .outsideRoot(let path): "\(path) is outside the board root"
         case .notFound(let path): "\(path) not found"
+        case .unavailable(let reason): reason
         case .busy: "too many outstanding requests"
         case .cancelled: "cancelled"
         }

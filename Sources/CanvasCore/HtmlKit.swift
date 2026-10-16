@@ -16,10 +16,11 @@ public enum HtmlKit {
     /// The served page: the kit head, then the tile's html as written. Elements before an
     /// author's own `<html>`/`<head>` land in the implied head, so both fragments and full
     /// documents work. The kit script runs first so its Tailwind theme exists when Tailwind starts.
-    public static func document(html: String) -> String {
+    public static func document(html: String, policy: String? = nil) -> String {
         """
         <!doctype html>
         <meta charset="utf-8">
+        \(policy.map { "<meta http-equiv=\"Content-Security-Policy\" content=\"\($0)\">" } ?? "")
         <meta name="viewport" content="width=device-width">
         <meta name="color-scheme" content="light dark">
         <link rel="stylesheet" href="/kit/canvas-kit.css">
@@ -39,11 +40,15 @@ public enum HtmlKit {
 
     /// The board file a page asks for. Paths are board-relative and must stay inside the root even
     /// after symlinks resolve; absolute paths, `~`, and `..` components are rejected outright.
-    public static func boardFile(_ path: String, root: URL) throws -> (relative: String, url: URL) {
+    public static func boardRelative(_ path: String) throws -> String {
         guard !path.isEmpty, !path.contains("\0"), !path.hasPrefix("/"), !path.hasPrefix("~") else { throw HtmlError.outsideRoot(path) }
         let components = path.split(separator: "/", omittingEmptySubsequences: true).filter { $0 != "." }
         guard !components.isEmpty, !components.contains("..") else { throw HtmlError.outsideRoot(path) }
-        let relative = components.joined(separator: "/")
+        return components.joined(separator: "/")
+    }
+
+    public static func boardFile(_ path: String, root: URL) throws -> (relative: String, url: URL) {
+        let relative = try boardRelative(path)
         let rootPath = root.standardizedFileURL.resolvingSymlinksInPath().path
         let url = root.appendingPathComponent(relative).standardizedFileURL.resolvingSymlinksInPath()
         guard url.path.hasPrefix(rootPath + "/") else { throw HtmlError.outsideRoot(path) }
@@ -134,6 +139,22 @@ public enum HtmlKit {
             if port == 80 { patterns += ["^http://\(host)/", "^ws://\(host)/"] }
         }
         return patterns
+    }
+
+    public static func contentSecurityPolicy(allow entries: [String]) -> String {
+        var sources = [scheme + ":", "data:", "blob:"]
+        for entry in Set(entries.compactMap(allowedHost)).sorted() {
+            let wildcard = entry.hasPrefix("*.")
+            let hostPort = wildcard ? String(entry.dropFirst(2)) : entry
+            let parts = hostPort.split(separator: ":", maxSplits: 1)
+            let host = String(parts[0])
+            let port = parts.count == 2 ? String(parts[1]) : "*"
+            for name in wildcard ? [host, "*." + host] : [host] {
+                sources += ["http", "https", "ws", "wss"].map { "\($0)://\(name):\(port)" }
+            }
+        }
+        let allowed = sources.joined(separator: " ")
+        return "default-src \(allowed); script-src \(allowed) 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; style-src \(allowed) 'unsafe-inline'"
     }
 
     /// WKContentRuleList JSON: block every http(s)/ws(s)/file load, then let allowlisted hosts through.

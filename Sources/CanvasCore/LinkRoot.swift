@@ -12,9 +12,32 @@ extension Board {
     /// With a `ref`, the board root's place in the worktree that has it checked out, else the
     /// board root (whose repository holds the ref's objects; `linkSource` reads them).
     public func linkRoot(props: JSONValue) -> URL {
+        if isRemote {
+            if RefSource.ref(of: props) != nil { return root }
+            return URL(fileURLWithPath: Self.hostPath(props["root"]?.string ?? root.path, under: root.path))
+        }
         if let ref = RefSource.ref(of: props) { return RefSource.liveRoot(ref: ref, boardRoot: root) ?? root }
         guard let value = props["root"]?.string, !value.isEmpty else { return root }
         return absoluteURL(value).standardizedFileURL
+    }
+
+    public func hostSource(props: JSONValue, objects: Bool) -> HostFileRequest.Source {
+        if let ref = RefSource.ref(of: props) {
+            return objects ? .ref(ref, lastKnownSha: props["refSha"]?.string, boardRoot: root.path)
+                : .liveRoot(ref: ref, boardRoot: root.path)
+        }
+        return .directory(Self.hostPath(props["root"]?.string ?? root.path, under: root.path))
+    }
+
+    static func hostPath(_ path: String, under root: String) -> String {
+        let absolute = path.hasPrefix("/") ? path : root + "/" + path
+        var parts: [Substring] = []
+        for part in absolute.split(separator: "/") {
+            if part == "." { continue }
+            if part == ".." { if !parts.isEmpty { parts.removeLast() } }
+            else { parts.append(part) }
+        }
+        return "/" + parts.joined(separator: "/")
     }
 
     /// A note or HTML tile's `root` must be an existing directory in the board's checkout or in

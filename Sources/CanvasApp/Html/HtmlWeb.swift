@@ -34,6 +34,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     private static var kitCache: [String: Data] = [:]
     /// Image requests still being read; a task WebKit stopped meanwhile gets no reply.
     private var reading: Set<ObjectIdentifier> = []
+    private var hostReads: [ObjectIdentifier: Task<Void, Never>] = [:]
 
     init(tile: HtmlTile?) {
         self.tile = tile
@@ -44,11 +45,26 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
             return task.didFailWithError(URLError(.fileDoesNotExist))
         }
         if url.path == HtmlKit.pageURL(tile: tile.objectID).path {
-            respond(task, url: url, data: Data(HtmlKit.document(html: tile.html).utf8), type: "text/html", cache: "no-store")
+            respond(task, url: url, data: Data(tile.document.utf8), type: "text/html", cache: "no-store")
         } else if let kitRoot = Self.kitRoot, let file = HtmlKit.kitFile(requestPath: url.path, kitRoot: kitRoot),
                   let data = Self.kitCache[file.path] ?? (try? Data(contentsOf: file, options: .alwaysMapped)) {
             Self.kitCache[file.path] = data
             respond(task, url: url, data: data, type: HtmlKit.mimeType(file), cache: "max-age=31536000, immutable")
+        } else if tile.isRemote {
+            guard let files = tile.files,
+                  let request = LocalImage.hostPageFile(requestPath: url.path, source: tile.hostImageSource, temps: files.temps) else {
+                return notFound(task, url: url)
+            }
+            let key = ObjectIdentifier(task)
+            hostReads[key] = Task { @MainActor [weak self] in
+                let file = try? await files.read(request)
+                guard let self, self.hostReads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
+                if let file {
+                    self.respond(task, url: url, data: file.data, type: file.mimeType, cache: "no-store")
+                } else {
+                    self.notFound(task, url: url)
+                }
+            }
         } else if let file = LocalImage.pageFile(requestPath: url.path, root: tile.boardRoot) {
             let key = ObjectIdentifier(task)
             reading.insert(key)
@@ -75,6 +91,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
         reading.remove(ObjectIdentifier(task))
+        hostReads.removeValue(forKey: ObjectIdentifier(task))?.cancel()
     }
 
     private func respond(_ task: any WKURLSchemeTask, url: URL, data: Data, type: String, cache: String) {

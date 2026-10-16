@@ -254,6 +254,74 @@ final class BoardMirrorTests {
         try await eventually { board.objects[added.id] != nil }
     }
 
+    @Test func htmlArrivesWholeWithoutChangingTheHostAndFollowsUpdates() async throws {
+        let pages = ["", "(12 bytes, use object.get)", "<main>" + String(repeating: "live page ", count: 100) + "</main>"]
+        let objects = pages.map { html in
+            host.create(type: .html, props: .object(["html": .string(html), "state": .object(["choice": .string("kept")])]),
+                        frame: Frame(x: 0, y: 0, w: 600, h: 400))
+        }
+        let original = host.objects
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        #expect(host.objects == original)
+        for object in objects { #expect(board.objects[object.id] == object) }
+        let page = objects[2]
+        _ = try host.update(page.id, props: .object(["html": .string("<h1>Changed on the host</h1>")]))
+        try await eventually { board.objects[page.id] == host.objects[page.id] }
+        #expect(board.objects[page.id]?.props["state"]?["choice"] == .string("kept"))
+
+        server.stop()
+        try await eventually { mirror.state != .online }
+        _ = try host.update(page.id, props: .object(["html": .string("<h1>Changed while disconnected</h1>")]))
+        server = Self.serve(router, at: socket)
+        try server.start()
+        try await eventually { board.objects[page.id] == host.objects[page.id] }
+        #expect(board.objects[page.id]?.type == .html)
+    }
+
+    @Test func htmlDeletedBetweenTheManifestAndContentReadIsNotShown() async throws {
+        let page = host.create(type: .html, props: .object(["html": .string("<h1>Deleted during load</h1>")]),
+                               frame: Frame(x: 0, y: 0, w: 600, h: 400))
+        server.stop()
+        let once = Once()
+        once.body = { [unowned self] in try? host.delete(page.id) }
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            if request["method"]?.string == "board.get" { await once.run() }
+            return reply
+        }
+        try server.start()
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        #expect(board.objects[page.id] == nil)
+        #expect(host.objects[page.id] == nil)
+    }
+
+    @Test func unreadableHtmlFailsTheReadRatherThanShowingItsSummary() async throws {
+        _ = host.create(type: .html, props: .object(["html": .string("<h1>Must arrive whole</h1>")]),
+                        frame: Frame(x: 0, y: 0, w: 600, h: 400))
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "object.get" {
+                return .object(["id": request["id"] ?? .null, "ok": .bool(false),
+                                "error": .object(["code": .string("unavailable"), "message": .string("content read failed")])])
+            }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        do {
+            _ = try await mirror()
+            Issue.record("a failed content read must not install summarized HTML")
+        } catch let failure as ApiRouter.Failure {
+            #expect(failure.code == "unavailable")
+            #expect(failure.message == "content read failed")
+        }
+        #expect(mirrors.last?.board == nil)
+        for mirror in mirrors { mirror.close() }
+    }
+
     @Test func aMoveShowsAtOnceAndTheHostsVersionReplacesIt() async throws {
         let moved = note("drag me")
         let (mirror, board) = try await mirror()
@@ -618,7 +686,8 @@ final class BoardMirrorTests {
     }
 
     @Test func whatTheHostChangesWhileTheViewerReadsItAgainStays() async throws {
-        let edited = note("before")
+        let edited = host.create(type: .html, props: .object(["html": .string("<p>Before</p>")]),
+                                 frame: Frame(x: 0, y: 0, w: 600, h: 400))
         let doomed = note("doomed", at: 400)
         let (mirror, board) = try await mirror()
         defer { mirror.close() }
@@ -629,7 +698,7 @@ final class BoardMirrorTests {
         var created: ObjectID?
         let once = Once()
         once.body = { [unowned self] in
-            _ = try? host.update(edited.id, props: .object(["markdown": .string("changed during the read")]))
+            _ = try? host.update(edited.id, props: .object(["html": .string("<p>Changed during the read</p>")]))
             try? host.delete(doomed.id)
             created = note("created during the read", at: 800).id
         }
@@ -650,7 +719,7 @@ final class BoardMirrorTests {
         try await eventually {
             board.objects[edited.id] == host.objects[edited.id] && board.objects[doomed.id] == nil && board.objects[added] == host.objects[added]
         }
-        #expect(board.objects[edited.id]?.props["markdown"]?.string == "changed during the read")
+        #expect(board.objects[edited.id]?.props["html"]?.string == "<p>Changed during the read</p>")
     }
 
     @Test func queuedWritesKeepTheHostRevisionTheyWereBasedOn() async throws {

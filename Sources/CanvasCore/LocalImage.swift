@@ -28,19 +28,8 @@ public enum LocalImage {
     /// after symlinks resolve, with an image extension. Nil for anything else (other schemes,
     /// `..` escapes, files elsewhere on disk).
     public static func sandboxed(_ source: String, root: URL, tempDirectories: [String] = FollowFilter.tempDirectories) -> URL? {
-        let decoded = source.removingPercentEncoding ?? source
-        guard !decoded.isEmpty, !decoded.contains("\0") else { return nil }
-        let candidate: URL
-        if let url = URL(string: source), let scheme = url.scheme {
-            guard scheme == "file" else { return nil }
-            candidate = url
-        } else if decoded.hasPrefix("/") {
-            candidate = URL(fileURLWithPath: decoded)
-        } else {
-            guard !decoded.hasPrefix("~") else { return nil }
-            candidate = root.appendingPathComponent(decoded)
-        }
-        let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
+        guard let path = candidate(source, root: root.path) else { return nil }
+        let resolved = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
         guard extensions.contains(resolved.pathExtension.lowercased()) else { return nil }
         let allowed = [root.path] + tempDirectories
         guard allowed.contains(where: { contains(URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path, resolved.path) }) else { return nil }
@@ -53,6 +42,28 @@ public enum LocalImage {
         let relative = String(requestPath.drop(while: { $0 == "/" }))
         if let file = sandboxed(relative, root: root), FileManager.default.fileExists(atPath: file.path) { return file }
         return sandboxed(requestPath, root: root)
+    }
+
+    static func candidate(_ source: String, root: String) -> String? {
+        let decoded = source.removingPercentEncoding ?? source
+        guard !decoded.isEmpty, !decoded.contains("\0") else { return nil }
+        if let url = URL(string: source), let scheme = url.scheme {
+            guard scheme == "file" else { return nil }
+            return url.path
+        }
+        if decoded.hasPrefix("/") { return decoded }
+        guard !decoded.hasPrefix("~") else { return nil }
+        return root + "/" + decoded
+    }
+
+    public static func hostPageFile(requestPath: String, source: HostFileRequest.Source, temps: [String]) -> HostFileRequest? {
+        let relative = String(requestPath.drop(while: { $0 == "/" }))
+        let relativePath = candidate(relative, root: "/")
+        let absolute = candidate(requestPath, root: "/")
+        guard relativePath != nil || absolute != nil else { return nil }
+        return HostFileRequest(source: source, policy: .pageImage(
+            relative: relativePath.map { String($0.drop(while: { $0 == "/" })) },
+            absolute: absolute, temps: temps))
     }
 
     /// Natural size in points: one point per pixel for bitmaps (a 1280×960 chart is 1280×960 pt),

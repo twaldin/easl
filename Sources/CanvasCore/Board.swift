@@ -694,6 +694,7 @@ public final class Board {
     /// directory keep the default size.
     public func newCodeSize(_ props: JSONValue) -> (w: Double, h: Double) {
         let size = Self.defaultSize(.code)
+        guard !isRemote else { return size }
         guard let aim = CodeAim(props: props), aim.ref == nil, aim.pinnedCommit == nil, props["followOf"]?.string == nil else { return size }
         let url = absoluteURL(aim.path).resolvingSymlinksInPath()
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
@@ -1522,7 +1523,12 @@ public final class Board {
     /// through a symlink: git, language servers and shells report resolved paths (/private/tmp
     /// for a /tmp root), so a path outside the root as written is compared resolved as well.
     public func relativePath(_ path: String) -> String {
-        Self.relativePath(path, root: root)
+        if isRemote {
+            let absolute = Self.hostPath(path, under: root.path)
+            let base = Self.hostPath(root.path, under: "/")
+            return absolute.hasPrefix(base + "/") ? String(absolute.dropFirst(base.count + 1)) : absolute
+        }
+        return Self.relativePath(path, root: root)
     }
 
     /// `path` (absolute, or relative to `root`) relative to `root` when it lies under it, else absolute.

@@ -35,6 +35,24 @@ public struct SourceExcerpt: Codable, Equatable, Sendable {
         return resolve(text: String(decoding: data, as: UTF8.self), path: path, lines: lines, symbol: symbol)
     }
 
+    public static func from(_ file: HostFile, path: String, lines: LineRange?, symbol: String?) -> SourceExcerpt {
+        if let commit = file.commit {
+            guard let text = String(data: file.data, encoding: .utf8) else {
+                return failed(path: path, symbol: symbol, reason: "\(path) not found at \(commit.prefix(7))")
+            }
+            return resolve(text: text, path: path, lines: lines, symbol: symbol)
+        }
+        guard !file.data.prefix(8192).contains(0) else {
+            return failed(path: path, symbol: symbol, reason: "\(path) is a binary file")
+        }
+        guard !Task.isCancelled else { return failed(path: path, symbol: symbol, reason: "cancelled") }
+        return resolve(text: String(decoding: file.data, as: UTF8.self), path: path, lines: lines, symbol: symbol)
+    }
+
+    static func failed(path: String, symbol: String?, reason: String) -> SourceExcerpt {
+        SourceExcerpt(path: path, start: 0, end: 0, lines: [], symbol: symbol, language: language(for: path), stale: true, reason: reason, truncated: false)
+    }
+
     public static func resolve(text: String, path: String, lines range: LineRange?, symbol: String?) -> SourceExcerpt {
         var fileLines = text.split(separator: "\n", omittingEmptySubsequences: false).map { $0.hasSuffix("\r") ? String($0.dropLast()) : String($0) }
         if text.hasSuffix("\n") { fileLines.removeLast() }
