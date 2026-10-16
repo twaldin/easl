@@ -817,10 +817,10 @@ final class TerminalTile: NSView, TileContent {
             throw ApiRouter.Failure("not_found", "terminal \(objectID) has \(log.entries.count) finished command\(log.entries.count == 1 ? "" : "s") since easl attached to it: block goes back to -\(log.entries.count)")
         }
         guard surface?.handle != nil, grid != nil else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) isn't shown in a window") }
-        if index == -1, let selected = selectedLastBlock() { return selected }
+        if !isRemote, index == -1, let selected = selectedLastBlock() { return selected }
         guard var text = textToCursor() else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) isn't shown in a window") }
         // A command still running: its line ends the last finished one's output.
-        if program != nil, let running = commands.running, let line = text.lastIndex(where: { TerminalBlocks.isCommandLine($0, of: running) }) {
+        if (isRemote || program != nil), let running = commands.running, let line = text.lastIndex(where: { TerminalBlocks.isCommandLine($0, of: running) }) {
             text = Array(text[...line])
         }
         guard let lines = log.output(index, in: text, promptAbove: promptAbove ?? 0) else {

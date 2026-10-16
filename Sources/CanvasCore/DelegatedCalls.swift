@@ -62,8 +62,8 @@ final class DelegatedCalls {
 
     let board: Board
     let window: ViewerWindow
-    /// Each terminal's text just before this viewer last typed an `agent.prompt` into it.
-    private var promptMarks: [ObjectID: TerminalTail.Tail] = [:]
+    /// Surface positions restart when Ghostty trims scrollback, unlike zmx history's positions.
+    private var promptMarks: [ObjectID: PromptMark] = [:]
 
     init(board: Board, window: ViewerWindow) {
         self.board = board
@@ -111,7 +111,7 @@ final class DelegatedCalls {
         guard let text = p["text"]?.string else { throw ApiRouter.Failure("invalid_params", "missing text") }
         let before = window.surfaceTail(terminal.id, ApiRouter.promptMarkLines)
         guard await window.submit(terminal.id, text) else { throw ApiRouter.Failure("unavailable", "terminal \(terminal.id) has no attached surface") }
-        promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
+        promptMarks[terminal.id] = PromptMark(before ?? TerminalTail.Tail(rows: [], positions: []))
         let current = board.objects[terminal.id] ?? terminal
         return .object([
             "agent": agentEntry(current),
@@ -129,7 +129,7 @@ final class DelegatedCalls {
         if let block = request.block {
             result = ApiRouter.blockResult(try window.block(terminal.id, block), lines: request.lines)
         } else {
-            var mark: TerminalTail.Tail?
+            var mark: PromptMark?
             if request.sincePrompt {
                 guard let found = promptMarks[terminal.id] else {
                     throw ApiRouter.Failure("not_found", "no agent.prompt has reached terminal \(terminal.id) through this board's viewer since it attached; read with lines instead")
@@ -139,7 +139,9 @@ final class DelegatedCalls {
             guard let tail = window.surfaceTail(terminal.id, request.reading) else {
                 throw ApiRouter.Failure("unavailable", "terminal \(terminal.id) has no attached surface")
             }
-            result = request.shown(tail, after: mark)
+            let aligned = mark?.aligned(to: tail)
+            result = request.shown(tail, after: aligned)
+            if mark != nil, aligned == nil { result["truncated"] = .bool(true) }
         }
         result["agent"] = agentEntry(board.objects[terminal.id] ?? terminal)
         return .object(result)
@@ -158,6 +160,49 @@ final class DelegatedCalls {
     /// are the host's).
     private func agentEntry(_ terminal: CanvasObject) -> JSONValue {
         ApiRouter.agentEntry(terminal, on: board, among: [board], status: window.status(terminal.id))
+    }
+
+    private struct PromptMark {
+        let tail: TerminalTail.Tail
+        let prefix: [Int]
+
+        init(_ tail: TerminalTail.Tail) {
+            self.tail = tail
+            var prefix = Array(repeating: 0, count: tail.rows.count)
+            if tail.rows.count > 1 {
+                for index in 1..<tail.rows.count {
+                    var matched = prefix[index - 1]
+                    while matched > 0, tail.rows[index] != tail.rows[matched] { matched = prefix[matched - 1] }
+                    if tail.rows[index] == tail.rows[matched] { matched += 1 }
+                    prefix[index] = matched
+                }
+            }
+            self.prefix = prefix
+        }
+
+        /// Find retained context in linear time. Missing or ambiguous context cannot establish
+        /// a complete reply, so the caller returns the available tail marked truncated.
+        func aligned(to now: TerminalTail.Tail) -> TerminalTail.Tail? {
+            guard !tail.rows.isEmpty else { return tail }
+            var matched = 0, best = 0, end = 0
+            var ambiguous = false
+            for (index, row) in now.rows.enumerated() {
+                while matched > 0, row != tail.rows[matched] { matched = prefix[matched - 1] }
+                if row == tail.rows[matched] { matched += 1 }
+                if matched > best {
+                    best = matched
+                    end = index
+                    ambiguous = false
+                } else if matched > 0, matched == best {
+                    ambiguous = true
+                }
+                if matched == tail.rows.count { matched = prefix[matched - 1] }
+            }
+            guard best > 0, !ambiguous else { return nil }
+            let shift = now.positions[end - best + 1] - tail.positions[0]
+            guard tail.end + shift <= now.end else { return nil }
+            return TerminalTail.Tail(rows: tail.rows, positions: tail.positions.map { $0 + shift })
+        }
     }
 
     // MARK: text.measure
