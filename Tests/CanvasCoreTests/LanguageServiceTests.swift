@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 import Testing
-import CanvasCore
+@testable import CanvasCore
 
 struct LSPFramerTests {
     func framed(_ json: String) -> Data { LSPFramer.frame(Data(json.utf8)) }
