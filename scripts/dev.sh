@@ -156,9 +156,15 @@ launch() {
   fi
   target="$(test_space)"
   wait_window
+  wid="$(window_id)"
+  if [ -z "$wid" ]; then
+    echo "easl did not open a window; see $home/app.log" >&2
+    quit
+    "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
+    exit 1
+  fi
   if [ "$target" != "$park" ]; then
-    wid="$(window_id)"
-    [ -n "$wid" ] && "$yabai" -m window "$wid" --space "$target" && "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
+    "$yabai" -m window "$wid" --space "$target" && "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
   fi
   "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
   echo "easl pid $(cat "$home/pid") on Space $target, EASL_SOCKET=$EASL_SOCKET"

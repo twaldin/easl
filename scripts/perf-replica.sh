@@ -56,13 +56,24 @@ EOF
     i=0; while [ ! -S "$home/easl.sock" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
     lsof -t "$home/easl.sock" | head -n 1 > "$home/pid"
     i=0; while [ -z "$(window)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+    wid="$(window)"
+    if [ -z "$wid" ]; then
+      echo "replica did not open a window; see $home/app.log" >&2
+      p="$(pid || true)"
+      if [ -n "$p" ]; then
+        kill "$p"
+        while kill -0 "$p" 2>/dev/null; do sleep 0.1; done
+      fi
+      "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
+      exit 1
+    fi
     space="${EASL_DEV_SPACE:-$park}"
     if [ "$space" != "$park" ]; then
-      "$yabai" -m window "$(window)" --space "$space"
-      "$yabai" -m window "$(window)" --grid 1:1:0:0:1:1
+      "$yabai" -m window "$wid" --space "$space"
+      "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
     fi
     "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-    echo "replica pid $(pid) window $(window) on Space $space, EASL_SOCKET=$home/easl.sock"
+    echo "replica pid $(pid) window $wid on Space $space, EASL_SOCKET=$home/easl.sock"
     ;;
   stop)
     p="$(pid || true)"; [ -n "$p" ] && kill "$p" && while kill -0 "$p" 2>/dev/null; do sleep 0.1; done
