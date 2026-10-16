@@ -13,8 +13,8 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     public var sshTarget: String
     /// The host's easl socket.
     public var socketPath: String
-    /// The host's GUI session TMPDIR, where zmx keeps its sessions; an ssh session's differs on
-    /// a Mac (`getconf DARWIN_USER_TEMP_DIR` finds the GUI's).
+    /// The host's temporary directory. A Mac app's zmx uses its GUI session's TMPDIR,
+    /// found with `getconf DARWIN_USER_TEMP_DIR`, rather than an ssh session's.
     public var tmpdir: String
     /// The host's `easl` CLI.
     public var easlBin: String
@@ -77,8 +77,8 @@ public struct RemoteHost: Codable, Hashable, Sendable {
                 ["sh", "-c", Self.quote(script), "sh", Self.quote(session)]
     }
 
-    /// Retries until the host deletes the tile and the viewer disposes its surface. A missing
-    /// session can be the gap in agent.restart, even after an earlier attach succeeded.
+    /// Retries until the viewer disposes the terminal surface. A missing session can be the
+    /// gap in agent.restart, even after an earlier attach succeeded.
     public static func terminalCommand(_ attach: [String]) -> String {
         let loop = #"""
         while :; do
