@@ -77,20 +77,14 @@ public struct RemoteHost: Codable, Hashable, Sendable {
                 ["sh", "-c", Self.quote(script), "sh", Self.quote(session)]
     }
 
-    /// A remote terminal's command: the host's attach, again until the tile closes. An attach that
-    /// ends cleanly (a detach, or the session's shell exited) attaches again after a second, as a
-    /// local tile's detach reattaches (`surfaceClosed`). The host having no such session
-    /// (`RemoteHost.noSessionStatus`) before the first attach means its own tile hasn't started it
-    /// yet; after one, that the session ended: the command exits, and the host's delete of the
-    /// tile arrives. Any other failure (the link dropped) is retried every 2 s.
+    /// Retries until the host deletes the tile and the viewer disposes its surface. A missing
+    /// session can be the gap in agent.restart, even after an earlier attach succeeded.
     public static func terminalCommand(_ attach: [String]) -> String {
         let loop = #"""
-        attached=
         while :; do
           "$@"
           case $? in
-            0) attached=1; sleep 1; continue ;;
-            \#(RemoteHost.noSessionStatus)) [ -z "$attached" ] || exit 0 ;;
+            0) sleep 1; continue ;;
           esac
           printf '\r\033[2K[easl] waiting for the host…'
           sleep 2
