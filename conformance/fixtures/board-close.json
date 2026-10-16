@@ -1,7 +1,7 @@
 {
   "scenario": "board-close",
   "description": "Close keeps terminal objects and sessions, catalogs the stored board as closed, rejects closed targets and malformed params, and reopens the same board. A second board avoids the Mac last-board guard. Reopen before terminal teardown.",
-  "recordedOn": "board.close candidate with strict target boundary, scratch easld; Mac recording pending",
+  "recordedOn": "Mac app 4140e6b, isolated dev instance",
   "steps": [
     {
       "step": "board.open",
