@@ -32,7 +32,7 @@ struct TerminalPasteDestination: Sendable {
             result = try await RemoteHost.run("/bin/sh", ["-c", TerminalPaste.script, "easl"] + arguments, input: input, timeout: 60)
         case .hosted(let route):
             let script = "TMPDIR=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || printf '%s' \"${TMPDIR:-/tmp}\"); export TMPDIR\n" + TerminalPaste.script
-            result = try await RemoteHost.run(RemoteHost.ssh, route.ssh(HostedTerminal.remote(script, arguments)), input: input, timeout: 60)
+            result = try await RemoteHost.run("/usr/bin/ssh", route.ssh(HostedTerminal.remote(script, arguments)), input: input, timeout: 60)
         case .remote(let host):
             result = try await RemoteHost.run(RemoteHost.ssh, host.scriptArguments(TerminalPaste.script, arguments), input: input, timeout: 60)
         }
@@ -41,12 +41,49 @@ struct TerminalPasteDestination: Sendable {
         }
         return result.output
     }
+    private static func encodedImage(_ data: Data) throws -> (data: Data, ext: String) {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            throw EaslConnection.Failure("invalid", "The pasted image couldn't be read")
+        }
+        let ext: String?
+        switch CGImageSourceGetType(source) as String? {
+        case UTType.png.identifier: ext = "png"
+        case UTType.jpeg.identifier: ext = "jpg"
+        case UTType.gif.identifier: ext = "gif"
+        case "org.webmproject.webp": ext = "webp"
+        default: ext = nil
+        }
+        if let ext { return (data, ext) }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        guard let width = properties?[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties?[kCGImagePropertyPixelHeight] as? Int,
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: max(width, height),
+              ] as CFDictionary) else {
+            throw EaslConnection.Failure("invalid", "The pasted image couldn't be read")
+        }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else {
+            throw EaslConnection.Failure("invalid", "The pasted image couldn't be converted to PNG")
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw EaslConnection.Failure("invalid", "The pasted image couldn't be converted to PNG")
+        }
+        return (output as Data, "png")
+    }
+
 
     func stage(_ images: [Data]) async throws -> String {
         var paths: [String] = []
-        for image in images {
+        for bytes in images {
             try Task.checkCancellation()
-            let output = try await run(TerminalPaste.stageArguments(instance: instance, session: session, name: UUID().uuidString + ".png", size: image.count), input: image)
+            let encoded = await offPool { Result { try Self.encodedImage(bytes) } }
+            let image = try encoded.get()
+            try Task.checkCancellation()
+            let output = try await run(TerminalPaste.stageArguments(instance: instance, session: session, name: UUID().uuidString + "." + image.ext, size: image.data.count), input: image.data)
             guard let path = TerminalPaste.stagedPath(output) else {
                 throw EaslConnection.Failure("unavailable", "The terminal's host returned an invalid image path")
             }
@@ -87,12 +124,15 @@ final class CanvasTerminalView: TerminalView {
     private enum Input {
         case key(NSEvent)
         case text(String)
+        case paste
         case images([Data], TerminalPasteDestination)
         case problem(String)
     }
     private var pendingInput: [Input] = []
     private var inputIndex = 0
     private var imageTask: Task<Void, Never>?
+    private var pasteKeyUp: UInt16?
+    private static var imageUploads: [String: [UUID: Task<Void, Never>]] = [:]
 
     private static let imageDragTypes: [NSPasteboard.PasteboardType] = {
         let images = CGImageSourceCopyTypeIdentifiers() as! [String]
@@ -108,13 +148,33 @@ final class CanvasTerminalView: TerminalView {
 
     deinit { imageTask?.cancel() }
 
-    func cancelImageInput() -> Task<Void, Never>? {
-        let task = imageTask
-        task?.cancel()
+    func cancelImageInput() {
+        imageTask?.cancel()
         imageTask = nil
         pendingInput.removeAll()
         inputIndex = 0
-        return task
+    }
+
+    static func cancelImageUploads(for key: String) -> [Task<Void, Never>] {
+        let tasks = imageUploads[key].map { Array($0.values) } ?? []
+        for task in tasks { task.cancel() }
+        return tasks
+    }
+
+    func afterImageInput(_ body: () -> Bool) async -> Bool {
+        while let task = imageTask {
+            await task.value
+            guard !Task.isCancelled else { return false }
+        }
+        return body()
+    }
+
+    @discardableResult
+    func pasteOrdered(_ text: String) -> Bool {
+        guard imageTask != nil else { return paste(text: text) }
+        guard !text.isEmpty else { return false }
+        enqueue(.text(text))
+        return true
     }
 
     private static func imageFile(_ item: NSPasteboardItem) -> URL? {
@@ -129,33 +189,18 @@ final class CanvasTerminalView: TerminalView {
     }
 
     private static func hasImages(_ pasteboard: NSPasteboard) -> Bool {
-        pasteboard.pasteboardItems?.contains { imageFile($0) != nil || imageType($0) != nil } == true
+        guard let items = pasteboard.pasteboardItems,
+              !items.contains(where: { $0.types.contains(.fileURL) && imageFile($0) == nil }) else { return false }
+        return items.contains { imageFile($0) != nil || imageType($0) != nil }
     }
 
-    private static func png(_ data: Data) throws -> Data {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
-            throw EaslConnection.Failure("invalid", "The pasted image couldn't be read")
-        }
-        if CGImageSourceGetType(source) as String? == UTType.png.identifier { return data }
-        guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
-            throw EaslConnection.Failure("invalid", "The pasted image couldn't be read")
-        }
-        let output = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else {
-            throw EaslConnection.Failure("invalid", "The pasted image couldn't be converted to PNG")
-        }
-        CGImageDestinationAddImage(destination, image, nil)
-        guard CGImageDestinationFinalize(destination) else {
-            throw EaslConnection.Failure("invalid", "The pasted image couldn't be converted to PNG")
-        }
-        return output as Data
-    }
 
     @discardableResult
     func pasteImages(from pasteboard: NSPasteboard, imageOnly: Bool = false, dropping: Bool = false) -> Bool {
+        let hasText = pasteboard.types?.contains(.string) == true
+        if !dropping, imageOnly, hasText { return false }
         let items = pasteboard.pasteboardItems ?? []
-        let hasText = pasteboard.string(forType: .string).map { !$0.isEmpty } ?? false
-        if !dropping, hasText, imageOnly || !items.contains(where: { Self.imageFile($0) != nil }) { return false }
+        if !dropping, hasText, !items.contains(where: { Self.imageFile($0) != nil }) { return false }
         guard Self.hasImages(pasteboard) else { return false }
         do {
             var images: [Data] = []
@@ -163,12 +208,12 @@ final class CanvasTerminalView: TerminalView {
                 if let url = Self.imageFile(item) {
                     let scoped = url.startAccessingSecurityScopedResource()
                     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    images.append(try Self.png(Data(contentsOf: url)))
+                    images.append(try Data(contentsOf: url))
                 } else if let type = Self.imageType(item) {
                     guard let data = item.data(forType: type) else {
                         throw EaslConnection.Failure("invalid", "The pasted image couldn't be read")
                     }
-                    images.append(try Self.png(data))
+                    images.append(data)
                 }
             }
             guard let destination = imageDestination?() else {
@@ -181,18 +226,11 @@ final class CanvasTerminalView: TerminalView {
         return true
     }
 
-    private static func pasteText(from pasteboard: NSPasteboard) -> String? {
-        let urls = (pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL]) ?? []
-        if !urls.isEmpty {
-            return urls.map { $0.isFileURL ? RemoteHost.quote($0.path) : $0.absoluteString }.joined(separator: " ")
-        }
-        return pasteboard.string(forType: .string)
-    }
 
     @IBAction override func paste(_ sender: Any?) {
         if pasteImages(from: .general) { return }
-        if imageTask != nil, let text = Self.pasteText(from: .general) {
-            enqueue(.text(text))
+        if imageTask != nil {
+            enqueue(.paste)
         } else {
             super.paste(sender)
         }
@@ -232,10 +270,18 @@ final class CanvasTerminalView: TerminalView {
                 }
             case .text(let text):
                 if !super.paste(text: text) { onImageProblem?("The terminal isn't ready to receive pasted text") }
+            case .paste:
+                super.paste(nil)
             case .problem(let problem):
                 onImageProblem?(problem)
             case .images(let images, let destination):
-                imageTask = Task { [weak self] in
+                let ticket = UUID()
+                let key = destination.key
+                let task = Task { [weak self] in
+                    defer {
+                        Self.imageUploads[key]?[ticket] = nil
+                        if Self.imageUploads[key]?.isEmpty == true { Self.imageUploads[key] = nil }
+                    }
                     do {
                         let text = try await destination.stage(images)
                         guard !Task.isCancelled else { return }
@@ -249,6 +295,8 @@ final class CanvasTerminalView: TerminalView {
                     self?.imageTask = nil
                     self?.drainInput()
                 }
+                imageTask = task
+                Self.imageUploads[key, default: [:]][ticket] = task
                 return
             }
         }
@@ -380,9 +428,13 @@ final class CanvasTerminalView: TerminalView {
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
         if event.charactersIgnoringModifiers?.lowercased() == "v" {
             if modifiers == [.command] || modifiers == [.control] {
-                if pasteImages(from: .general, imageOnly: modifiers == [.control]) { return }
-                if modifiers == [.command], imageTask != nil, let text = Self.pasteText(from: .general) {
-                    enqueue(.text(text))
+                if pasteImages(from: .general, imageOnly: modifiers == [.control]) {
+                    pasteKeyUp = event.keyCode
+                    return
+                }
+                if modifiers == [.command], imageTask != nil {
+                    pasteKeyUp = event.keyCode
+                    enqueue(.paste)
                     return
                 }
             }
@@ -399,6 +451,10 @@ final class CanvasTerminalView: TerminalView {
     }
 
     override func keyUp(with event: NSEvent) {
+        if pasteKeyUp == event.keyCode {
+            pasteKeyUp = nil
+            return
+        }
         if imageTask != nil { enqueue(.key(event)) } else { super.keyUp(with: event) }
     }
 

@@ -119,6 +119,7 @@ final class TerminalTile: NSView, TileContent {
         }
         let machine: TerminalPasteDestination.Machine
         if let target = pasteHostTarget {
+            guard RemoteHost.problem(withHost: target) == nil else { return nil }
             machine = .hosted(TerminalHost.named(target).route)
         } else if let remoteHost {
             machine = .remote(remoteHost)
@@ -131,8 +132,10 @@ final class TerminalTile: NSView, TileContent {
     }
 
     private static func stopPasteInput(_ destination: TerminalPasteDestination) -> [Task<Void, Never>] {
-        pasteTiles.allObjects.filter { $0.pasteDestination?.key == destination.key }
-            .compactMap { $0.terminal.cancelImageInput() }
+        for tile in pasteTiles.allObjects where tile.pasteDestination?.key == destination.key {
+            tile.terminal.cancelImageInput()
+        }
+        return CanvasTerminalView.cancelImageUploads(for: destination.key)
     }
 
     private static func discardPaste(_ destination: TerminalPasteDestination, after tasks: [Task<Void, Never>]) async {
@@ -295,16 +298,23 @@ final class TerminalTile: NSView, TileContent {
     /// zmx keeps forever. Never another instance's session or log (`ownerGuard`). A hosted
     /// terminal's session is ended by its host's easld (`session.kill`).
     static func killSession(_ object: CanvasObject) {
-        let machine: TerminalPasteDestination.Machine = HostedTerminal.host(of: object)
+        let target = HostedTerminal.host(of: object)
+        guard target.map({ RemoteHost.problem(withHost: $0) == nil }) ?? true else { return }
+        let machine: TerminalPasteDestination.Machine = target
             .map { .hosted(TerminalHost.named($0).route) } ?? .local
         let destination = TerminalPasteDestination(machine: machine, instance: homeLabel, session: sessionName(object.id))
         let tasks = stopPasteInput(destination)
-        if let target = HostedTerminal.host(of: object) {
+        if let target {
             let host = TerminalHost.named(target)
             Task {
                 do {
                     _ = try await host.call("session.kill", .object(["tile": .string(object.id), "home": .string(homeLabel)]))
-                    guard await host.hasSession(object.id) == false else { return }
+                    var waited = 0
+                    while await host.hasSession(object.id) != false {
+                        waited += 1
+                        guard waited <= 30 else { return }
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
                     await discardPaste(destination, after: tasks)
                 } catch {
                     NSLog("easl: couldn't end %@'s session on %@: %@", object.id, target, "\(error)")
@@ -312,19 +322,15 @@ final class TerminalTile: NSView, TileContent {
             }
             return
         }
-        guard let arguments = killArguments(tile: object.id, refusal: "exit 0") else {
+        guard let arguments = killArguments(tile: object.id, refusal: "exit \(notOurs)") else {
             Task { await discardPaste(destination, after: tasks) }
             return
         }
         Task {
-            do {
-                _ = try await RemoteHost.run("/bin/sh", arguments, timeout: 20)
-                let ended = await offPool {
-                    Zmx.list().map { !Housekeeping.sessionNames(zmxList: $0).contains(sessionName(object.id)) } ?? false
-                }
-                if ended { await discardPaste(destination, after: tasks) }
-            } catch {
-                NSLog("easl: couldn't end %@'s session: %@", object.id, error.localizedDescription)
+            if let problem = await offPool({ endSession(tile: object.id, arguments: arguments) }) {
+                NSLog("easl: couldn't end %@'s session: %@", object.id, problem)
+            } else {
+                await discardPaste(destination, after: tasks)
             }
         }
     }
@@ -443,7 +449,7 @@ final class TerminalTile: NSView, TileContent {
     /// Paste text honoring bracketed-paste mode.
     @discardableResult
     func paste(_ text: String) -> Bool {
-        terminal.paste(text: text)
+        terminal.pasteOrdered(text)
     }
 
     /// How long a submitted prompt waits between its paste and Enter. TUIs take an Enter that
@@ -455,15 +461,16 @@ final class TerminalTile: NSView, TileContent {
     /// its prompt a one-line command is typed instead (`ShellTyping`), so no bracketed-paste
     /// marker can reach its line editor in pieces.
     func submit(_ text: String) async -> Bool {
-        refreshProgram()
-        if shell != nil, program == nil, let typing = ShellTyping.action(text) {
-            guard terminal.performBindingAction(typing) else { return false }
-        } else {
-            guard terminal.paste(text: text) else { return false }
+        let pasted = await terminal.afterImageInput { [self] in
+            refreshProgram()
+            if shell != nil, program == nil, let typing = ShellTyping.action(text) {
+                return terminal.performBindingAction(typing)
+            }
+            return terminal.paste(text: text)
         }
+        guard pasted else { return false }
         try? await Task.sleep(for: Self.submitDelay)
-        terminal.sendKey(.enter)
-        return true
+        return await terminal.afterImageInput { [self] in terminal.sendKey(.enter) }
     }
 
     func focus() {
