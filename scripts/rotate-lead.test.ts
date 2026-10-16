@@ -30,7 +30,11 @@ const scratch: string[] = [];
 const processes = new Set<Subprocess>();
 const watchers = new Set<FSWatcher>();
 afterEach(async () => {
-  for (const child of processes) child.kill("SIGKILL");
+  for (const child of processes) {
+    try { child.kill("SIGKILL"); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
   await Promise.all([...processes].map((child) => child.exited));
   processes.clear();
   for (const watcher of watchers) watcher.close();
@@ -294,9 +298,59 @@ test("SIGTERM kills a real owned CLI child and records an interrupted unsent rot
   child.kill("SIGTERM");
   const { result, evidence, state } = await pending;
   expect(result.code).toBe(143);
+  expect(result.stderr).toBe("");
   refused(evidence, /rotation interrupted by SIGTERM/, "not-started");
   expect(evidence.steps.at(-1)?.args[0]).toBe("agent.wait");
   expect(evidence.steps.at(-1)?.timedOut).toBe(false);
   expect(state.tells).toBeUndefined();
   expect(() => process.kill(pid!, 0)).toThrow();
+}, TEST_TIMEOUT_MS);
+
+test("SIGTERM after the owned CLI exits still records a clean interrupted rotation", async () => {
+  const f = fixture({ scenario: "hung-cli" });
+  f.preload = join(f.dir, "exit-during-shutdown.ts");
+  // Hold stdout after reaping the CLI and expose the native ESRCH instead of Bun's exited-handle no-op.
+  writeFileSync(f.preload, `
+    import type { Subprocess } from "bun";
+    import { readFileSync, watch } from "node:fs";
+    const spawn = Bun.spawn;
+    let owned: Subprocess;
+    Bun.spawn = function (...args: Parameters<typeof spawn>) {
+      const child = spawn(...args);
+      owned = child;
+      child.kill = (signal) => { process.kill(child.pid, signal); };
+      return child;
+    } as typeof spawn;
+    const text = Response.prototype.text;
+    let first = true;
+    Response.prototype.text = function () {
+      if (!first) return text.call(this);
+      first = false;
+      return (async () => {
+        const stateFile = process.env.ROTATION_FIXTURE_STATE!;
+        const hung = () => JSON.parse(readFileSync(stateFile, "utf8")).hungPid;
+        if (!hung()) await new Promise<void>((resolve) => {
+          const watcher = watch(stateFile, () => {
+            if (hung()) { watcher.close(); resolve(); }
+          });
+          if (hung()) { watcher.close(); resolve(); }
+        });
+        process.kill(owned.pid, "SIGKILL");
+        await owned.exited;
+        const terminated = new Promise<void>((resolve) => process.once("SIGTERM", () => resolve()));
+        process.kill(process.pid, "SIGTERM");
+        await terminated;
+        return text.call(this);
+      })();
+    };
+  `);
+  const { result, evidence, state } = await start(f).result;
+  expect(result.code).toBe(143);
+  expect(result.stderr).toBe("");
+  refused(evidence, /rotation interrupted by SIGTERM/, "not-started");
+  expect(evidence.steps.at(-1)?.args[0]).toBe("agent.wait");
+  expect(evidence.steps.at(-1)?.timedOut).toBe(false);
+  expect(state.tells).toBeUndefined();
+  expect(state.hungPid).toBeDefined();
+  expect(() => process.kill(state.hungPid!, 0)).toThrow();
 }, TEST_TIMEOUT_MS);
