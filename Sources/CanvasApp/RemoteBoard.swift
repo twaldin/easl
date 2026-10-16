@@ -2,8 +2,8 @@ import AppKit
 import CanvasCore
 
 /// A remote board's window (docs/design.md "Client mode"): the host it mirrors, and how its tiles
-/// reach that host. Terminals attach to the host's zmx sessions over ssh; tiles drawn from the
-/// host's files or pages show the host's rendering (`RemoteImageTile`).
+/// reach their sessions or drawings. Terminals attach over ssh where they run; tiles drawn from
+/// the board host's files or pages show its rendering (`RemoteImageTile`).
 @MainActor
 final class RemoteSource {
     let host: RemoteHost
