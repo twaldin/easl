@@ -32,14 +32,9 @@ need_yabai() {
 }
 # The unviewed Space a launch's first window is parked on until it's placed.
 park="${EASL_DEV_PARK_SPACE:-7}"
-# The testing Space: EASL_DEV_SPACE, else the first Space of the BetterDisplay virtual screen
-# named EASL_DEV_DISPLAY (default "CanvasTest"; a headless monitor, so the window renders while
-# nobody looks at it), else Space 8. Parallel agents each get their own screen (CanvasTest2, …).
+# Without a testing Space, leave the window parked.
 test_space() {
-  if [ -n "${EASL_DEV_SPACE:-}" ]; then echo "$EASL_DEV_SPACE"; return; fi
-  id="$(betterdisplaycli get --name="${EASL_DEV_DISPLAY:-CanvasTest}" --identifiers 2>/dev/null | sed -n 's/.*"displayID" : "\([0-9]*\)".*/\1/p' | head -n 1)"
-  space="$([ -n "$id" ] && "$yabai" -m query --displays 2>/dev/null | python3 -c "import json,sys; print(next((d['spaces'][0] for d in json.load(sys.stdin) if d['id']==$id), ''))" 2>/dev/null)"
-  echo "${space:-8}"
+  echo "${EASL_DEV_SPACE:-$park}"
 }
 
 window_id() {
@@ -119,9 +114,7 @@ launch() {
   [ -z "${EASL_DEV_DOWNLOADS:-}" ] || set -- "$@" EASL_DEV_DOWNLOADS="$EASL_DEV_DOWNLOADS"
   [ -z "${EASL_DEV_SSH:-}" ] || set -- "$@" EASL_DEV_SSH="$EASL_DEV_SSH"
   [ -z "${EASL_DEV_REMOTE_HOME:-}" ] || set -- "$@" EASL_DEV_REMOTE_HOME="$EASL_DEV_REMOTE_HOME"
-  # EASL_DEV_FRAME="x y w h" (AppKit screen coordinates): where the board window opens, e.g.
-  # on a headless virtual screen, so it never shows on a viewed Space before a launcher's guard
-  # moves it (DevInput.frame; docs/testing.md).
+  # EASL_DEV_FRAME="x y w h" sets explicit window geometry in AppKit screen coordinates.
   [ -z "${EASL_DEV_FRAME:-}" ] || set -- "$@" EASL_DEV_FRAME="$EASL_DEV_FRAME"
   # EASL_UPDATE_URL: the latest.json easl › Check for Updates… reads instead of easl.sh's, e.g. a
   # local server's to test the updater (Updater.swift; docs/testing.md). A development instance
@@ -141,11 +134,8 @@ launch() {
     # shellcheck disable=SC2086
     $EASL_DEV_LAUNCHER "$@" > "$home/launcher.log" 2>&1 &
   else
-    # yabai can't place a new window on another display's Space (it lands on the Space being
-    # viewed), so a one-shot rule parks this launch's first window on an unviewed Space of the
-    # built-in display, and it moves to the testing Space once it exists. One-shot and removed
-    # afterwards: a standing rule on app=easl also grabbed every later window (tabs, other
-    # instances, the user's own boards) and hid them on the parking Space.
+    # Park the first window before it appears, then move it to the testing Space if set.
+    # One-shot and removed afterwards so later windows and other instances aren't grabbed.
     rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
     if [ -x "$yabai" ]; then
       "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
@@ -165,8 +155,8 @@ launch() {
     return
   fi
   target="$(test_space)"
+  wait_window
   if [ "$target" != "$park" ]; then
-    wait_window
     wid="$(window_id)"
     [ -n "$wid" ] && "$yabai" -m window "$wid" --space "$target" && "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
   fi
@@ -189,7 +179,7 @@ case "${1:-}" in
     [ -n "$wid" ] || { echo "no easl window" >&2; exit 1; }
     # Only a displayed Space is composited; anything else would be a stale frame.
     visible="$("$yabai" -m query --windows --window "$wid" | python3 -c "import json,sys; print(json.load(sys.stdin)['is-visible'])")"
-    [ "$visible" = "True" ] || { echo "window $wid is not on a displayed Space; its pixels would be stale (scripts/dev.sh move)" >&2; exit 1; }
+    [ "$visible" = "True" ] || { echo "window $wid is not on a displayed Space; show its Space (for example, gui show <owner> on twaldin-home), then capture again" >&2; exit 1; }
     screencapture -x -o -l "$wid" "$out" && echo "$out"
     ;;
   move)

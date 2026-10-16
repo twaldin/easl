@@ -4,7 +4,7 @@
 # the original's zmx sessions.
 #
 #   scripts/perf-replica.sh start <board-id|file> [app]   copy .easl-home/boards/<id>.json (or a board file) and launch
-#   PERF_HOME (default /tmp/canvas-perf-home) and EASL_DEV_DISPLAY keep parallel replicas apart.
+#   PERF_HOME (default /tmp/canvas-perf-home) and EASL_DEV_SPACE keep parallel replicas apart.
 #   scripts/perf-replica.sh stop
 #   scripts/perf-replica.sh pid | window
 set -eu
@@ -41,8 +41,7 @@ json.dump(board, open(sys.argv[2], "w"))
 print(f"{len(kept)} objects ({len(drop)} terminals dropped)")
 EOF
     root="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['root'])" "$home/boards/$board.json")"
-    # The testing Space lives on the virtual screen; park the first window on an unviewed Space
-    # with a one-shot rule, removed once placed (see scripts/dev.sh launch).
+    # Park the first window before moving it to EASL_DEV_SPACE, if set.
     rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
     "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
     "$yabai" -m rule --add --one-shot label="$rule" app="^easl$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
@@ -57,9 +56,11 @@ EOF
     i=0; while [ ! -S "$home/easl.sock" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
     lsof -t "$home/easl.sock" | head -n 1 > "$home/pid"
     i=0; while [ -z "$(window)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
-    space="$(EASL_DEV_SPACE= sh -c ". /dev/null; $(sed -n '/^test_space()/,/^}/p' "$repo/scripts/dev.sh"); yabai=$yabai; test_space")"
-    "$yabai" -m window "$(window)" --space "$space"
-    "$yabai" -m window "$(window)" --grid 1:1:0:0:1:1
+    space="${EASL_DEV_SPACE:-$park}"
+    if [ "$space" != "$park" ]; then
+      "$yabai" -m window "$(window)" --space "$space"
+      "$yabai" -m window "$(window)" --grid 1:1:0:0:1:1
+    fi
     "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
     echo "replica pid $(pid) window $(window) on Space $space, EASL_SOCKET=$home/easl.sock"
     ;;
