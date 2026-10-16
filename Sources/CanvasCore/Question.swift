@@ -436,7 +436,7 @@ extension Board {
     /// remote board's questions expire on their host.
     @discardableResult
     public func expireQuestions(now: Date = Date()) -> [ObjectID] {
-        guard !isRemote else { return [] }
+        guard !isRemote, !isClosed else { return [] }
         let due = objects.values.filter { object in
             guard object.type == .question else { return false }
             let spec = QuestionSpec(object.props)
@@ -456,7 +456,7 @@ extension Board {
     public func scheduleQuestionExpiry(now: Date = Date()) {
         questionExpiry?.cancel()
         questionExpiry = nil
-        guard !isRemote else { return }
+        guard !isRemote, !isClosed else { return }
         let next = objects.values.compactMap { object -> Date? in
             guard object.type == .question else { return nil }
             let spec = QuestionSpec(object.props)

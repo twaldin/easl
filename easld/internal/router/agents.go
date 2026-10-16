@@ -65,6 +65,14 @@ func stateOf(terminal model.Object) string {
 // `name@board`) on the open boards; a bare name on caller's board first, when caller is a
 // terminal on one ("" for none). Fails not_found and ambiguous.
 func (r *Router) agentTile(target, caller string) (*board.Board, model.Object, error) {
+	b, terminal, err := r.resolveAgentTile(target, caller)
+	if err == nil && b != nil {
+		_, err = r.availableBoard(b)
+	}
+	return b, terminal, err
+}
+
+func (r *Router) resolveAgentTile(target, caller string) (*board.Board, model.Object, error) {
 	boards := r.reg.SortedBoards()
 	for _, b := range boards {
 		if o, ok := b.Objects()[target]; ok && o.Type == model.Terminal {

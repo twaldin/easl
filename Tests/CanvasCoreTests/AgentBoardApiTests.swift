@@ -147,7 +147,7 @@ final class AgentBoardApiTests {
         doomed.create(type: .note, props: .object(["markdown": .string("a")]))
         doomed.create(type: .note, props: .object(["markdown": .string("b")]))
         registry.store.flush([doomed])
-        registry.close(doomed.id)
+        try registry.close(doomed.id)
         try FileManager.default.removeItem(at: worktree)
         let sub = dir.appendingPathComponent("root/sub", isDirectory: true)
         try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
@@ -178,7 +178,7 @@ final class AgentBoardApiTests {
         #expect(original.root.path == repo.path, "rooted at the main checkout")
         original.create(type: .note, props: .object(["markdown": .string("n")]))
         registry.store.flush([original])
-        registry.close(original.id)
+        try registry.close(original.id)
         let savedAt = try #require(registry.store.list().first { $0.id == original.id }?.updatedAt)
 
         try git("-C", repo.path, "worktree", "move", before.path, after.path)

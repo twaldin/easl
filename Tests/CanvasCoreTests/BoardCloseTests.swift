@@ -1,0 +1,196 @@
+import Foundation
+import Testing
+import CanvasCore
+
+extension ApiRouterTests {
+    @Test func closeKeepsTerminalsAndReopensTheirLatestObjects() async throws {
+        let named = board.create(type: .terminal, props: .object(["name": "worker", "title": "ignored"]))
+        let titled = board.create(type: .terminal, props: .object(["name": "", "title": "review"]))
+        let unnamed = board.create(type: .terminal, props: .object([:]))
+        let note = board.create(type: .note, props: .object(["markdown": "latest unsaved text"]))
+        var killed: [ObjectID] = []
+        registry.onTerminalsEnded = { _, terminals in killed += terminals.map(\.id) }
+        let client = try connect()
+        let result = try await call(client, "board.close", ["board": .string(board.id)])["result"]
+        let names = [(named.id, "worker"), (titled.id, "review"), (unnamed.id, "Terminal")].sorted { $0.0 < $1.0 }
+        #expect(result == .object([
+            "board": .string(board.id), "root": .string(board.root.path),
+            "kept": .array(names.map { .object(["id": .string($0.0), "name": .string($0.1)]) }), "ended": .array([]),
+        ]))
+        #expect(killed == [])
+        #expect(try await call(client, "board.get", ["board": .string(board.id)])["error"]?["code"] == "not_found")
+        let listed = try await call(client, "board.list", [:])["result"]?["boards"]?.array
+        #expect(listed?.first { $0["board"] == .string(board.id) }?["open"] == .bool(false))
+        #expect(try await call(client, "board.open", ["root": .string(board.root.path)])["result"]?["board"] == .string(board.id))
+        let reopened = try #require(registry.boards[board.id])
+        #expect(reopened !== board)
+        #expect(Set(reopened.objects.keys) == [named.id, titled.id, unnamed.id, note.id])
+        #expect(reopened.objects[note.id]?.props["markdown"] == "latest unsaved text")
+        #expect(reopened.objects[named.id]?.props["name"] == "worker")
+        #expect(killed == [])
+    }
+
+    @Test func closeUsesTheCanonicalDefaultAndExplicitFalseKeepsSessions() async throws {
+        board.repo = RepoRecord(commonDir: dir.appendingPathComponent("common.git").path, merged: ["brd_old"])
+        let terminal = terminal()
+        let client = try connect()
+        let result = try await call(client, "board.close", ["board": "brd_old", "endSessions": .bool(false)])["result"]
+        #expect(result?["board"] == .string(board.id))
+        #expect(result?["kept"] == .array([.object(["id": .string(terminal), "name": "Terminal"])]))
+        #expect(registry.boards[board.id] == nil)
+        #expect(registry.frontmost == nil)
+        _ = try await call(client, "board.open", ["root": .string(board.root.path)])
+        #expect(try await call(client, "board.close", [:])["result"]?["board"] == .string(board.id))
+        #expect(try await call(client, "system.ping", [:])["ok"] == .bool(true), "headless close of its last board never stops the server")
+    }
+
+    @Test func closeRefusesMalformedParamsAndCannotPretendToEndHeadlessSessions() async throws {
+        let tile = terminal()
+        let client = try connect()
+        let invalid: [JSONValue] = [.null, .string("false"), .number(0), .array([]), .object([:])]
+        for value in invalid {
+            #expect(try await call(client, "board.close", ["endSessions": value])["error"]?["code"] == "invalid_params")
+        }
+        #expect(try await call(client, "board.close", ["caller": .string(tile)])["error"]?["code"] == "invalid_params")
+        #expect(try await call(client, "board.close", ["endSessions": .bool(true)])["error"]?["code"] == "unsupported")
+        #expect(try await call(client, "board.get", [:])["result"]?["objects"]?.array?.first { $0["id"] == .string(tile) }?["id"] == .string(tile))
+        #expect(registry.boards[board.id] === board)
+    }
+
+    @Test func failedBoardSaveLeavesTheBoardOpenAndRetryClosesIt() async throws {
+        let note = board.create(type: .note, props: .object(["markdown": "must survive"]))
+        let blocked = registry.store.url(for: board.id)
+        try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: true)
+        let client = try connect()
+        #expect(try await call(client, "board.close", [:])["error"]?["code"] == "unavailable")
+        #expect(registry.boards[board.id] === board)
+        #expect(!board.isClosed)
+        #expect(board.objects[note.id]?.props["markdown"] == "must survive")
+        try FileManager.default.removeItem(at: blocked)
+        #expect(try await call(client, "board.close", [:])["result"]?["board"] == .string(board.id))
+        #expect(registry.open(root: board.root).objects[note.id]?.props["markdown"] == "must survive")
+    }
+
+    @Test func failedReopenListWriteLeavesTheBoardOpen() throws {
+        let note = board.create(type: .note, props: .object(["markdown": "saved before eviction"]))
+        let blocked = dir.appendingPathComponent("open-boards.json")
+        try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: true)
+        do {
+            try registry.close(board.id) { try Data("[]".utf8).write(to: blocked, options: .atomic) }
+            Issue.record("close accepted a failed reopen-list write")
+        } catch let failure as ApiRouter.Failure {
+            #expect(failure.code == "unavailable")
+        }
+        #expect(registry.boards[board.id] === board)
+        #expect(!board.isClosed)
+        #expect(board.objects[note.id]?.props["markdown"] == "saved before eviction")
+        try FileManager.default.removeItem(at: blocked)
+        try registry.close(board.id) { try Data("[]".utf8).write(to: blocked, options: .atomic) }
+        #expect(try String(contentsOf: blocked, encoding: .utf8) == "[]")
+        #expect(registry.open(root: board.root).objects[note.id]?.props["markdown"] == "saved before eviction")
+    }
+
+    @Test func closedBoardCannotOverwriteItsReopenedReplacement() async throws {
+        let note = board.create(type: .note, props: .object(["markdown": "before close"]))
+        let client = try connect()
+        _ = try await call(client, "board.close", [:])
+        _ = try await call(client, "board.open", ["root": .string(board.root.path)])
+        let reopened = try #require(registry.boards[board.id])
+        _ = try reopened.update(note.id, props: .object(["markdown": "new board owns this file"]))
+        try registry.store.saveChecked(reopened)
+        _ = try board.update(note.id, props: .object(["markdown": "stale board"]))
+        registry.store.scheduleSave(board)
+        registry.store.save(board)
+        try await Task.sleep(for: .milliseconds(650))
+        let data = try Data(contentsOf: registry.store.url(for: board.id))
+        let snapshot = try JSONDecoder().decode(JSONValue.self, from: data)
+        #expect(snapshot["objects"]?.array?.first { $0["id"] == .string(note.id) }?["props"]?["markdown"] == "new board owns this file")
+        #expect(board.isClosed)
+        #expect(!reopened.isClosed)
+        #expect(try await call(client, "board.close", ["board": "brd_missing"])["error"]?["code"] == "not_found")
+        #expect(try Data(contentsOf: registry.store.url(for: board.id)) == data)
+    }
+
+    @Test func closeAnswersWaitsAndInboxButKeepsEventSubscriptionsConnected() async throws {
+        let tile = terminal()
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
+        let wait = try connect(), inbox = try connect(), subscriber = try connect(), client = try connect()
+        wait.send(#"{"id":"wait","method":"agent.wait","params":{"target":"\#(tile)"}}"#)
+        wait.send(#"{"id":"ready","method":"system.ping","params":{}}"#)
+        #expect(try await wait.next()["id"] == "ready")
+        inbox.send(#"{"id":"inbox","method":"agent.inbox","params":{"tile":"\#(tile)","waitMs":60000}}"#)
+        inbox.send(#"{"id":"ready","method":"system.ping","params":{}}"#)
+        #expect(try await inbox.next()["id"] == "ready")
+        #expect(try await call(subscriber, "events.subscribe", ["board": .string(board.id)])["ok"] == .bool(true))
+        #expect(try await call(client, "board.close", [:])["ok"] == .bool(true))
+        #expect(try await wait.next()["error"]?["code"] == "not_found")
+        #expect(try await inbox.next()["error"]?["code"] == "not_found")
+        #expect(try await call(subscriber, "system.ping", [:])["result"]?["version"] == .number(1))
+        _ = try await call(client, "board.open", ["root": .string(board.root.path)])
+        let created = try await call(client, "object.create", ["type": "note", "props": .object(["markdown": "after reopen"])])
+        let event = try await subscriber.next()
+        #expect(event["event"] == "object.created")
+        #expect(event["board"] == .string(board.id))
+        #expect(event["data"]?["id"] == created["result"]?["object"]?["id"])
+        #expect(event["data"]?["props"]?["markdown"] == "after reopen")
+    }
+
+    @Test func aSecondCloseIsNotFoundAndLeavesTheStoredBoardAlone() async throws {
+        _ = terminal()
+        let client = try connect()
+        #expect(try await call(client, "board.close", [:])["ok"] == .bool(true))
+        let saved = try Data(contentsOf: registry.store.url(for: board.id))
+        #expect(try await call(client, "board.close", ["board": .string(board.id)])["error"]?["code"] == "not_found")
+        #expect(try Data(contentsOf: registry.store.url(for: board.id)) == saved)
+        #expect(try await call(client, "board.open", ["root": .string(board.root.path)])["result"]?["objects"] == .number(1))
+    }
+}
+
+extension QuestionTests {
+    @Test func closingStopsExpiryOnAHeldBoardAndReopeningResumesIt() async throws {
+        let deadline = Date().addingTimeInterval(3600)
+        let question = try await question(["expiresAt": .string(deadline.formatted(.iso8601))])
+        #expect(try await call("board.close", .object(["board": .string(board.id)]))["ok"] == .bool(true))
+        let future = deadline.addingTimeInterval(1)
+        board.scheduleQuestionExpiry(now: future)
+        #expect(board.expireQuestions(now: future) == [])
+        #expect(board.objects[question.id]?.props["status"] == "open")
+        let reopened = registry.open(root: board.root)
+        #expect(reopened.expireQuestions(now: future) == [question.id])
+        #expect(reopened.objects[question.id]?.props["status"] == "expired")
+    }
+}
+
+extension AgentControlTests {
+    @Test func closeDuringRestartIsRefusedBeforeEviction() async throws {
+        let worker = terminal(name: "worker", command: ["omp"])
+        router.restartTerminal = { [unowned self] _, tile, argv, killing, ended in
+            let refused = try await call("board.close", ["board": .string(board.id)])
+            #expect(refused["error"]?["code"] == "conflict")
+            #expect(registry.boards[board.id] === board)
+            try killing()
+            try ended()
+            restarted.append((tile, argv))
+        }
+        #expect(try await call("agent.restart", ["target": "worker", "mode": "fresh", "force": .bool(true)])["ok"] == .bool(true))
+        #expect(restarted.map(\.0) == [worker])
+        #expect(try await call("board.close", ["board": .string(board.id)])["result"]?["kept"] == .array([.object(["id": .string(worker), "name": "worker"])]))
+    }
+
+    @Test func restartCannotBeginWhileAnAsyncCloseOwnsTheBoard() async throws {
+        let worker = terminal(name: "worker", command: ["omp"])
+        router.closeBoard = { [unowned self] id, _ in
+            let refused = try await call("agent.restart", ["target": "worker", "mode": "fresh", "force": .bool(true)])
+            #expect(refused["error"]?["code"] == "conflict")
+            #expect(refused["error"]?["message"]?.string?.contains("closing") == true)
+            let duplicate = try await call("board.close", ["board": .string(id)])
+            #expect(duplicate["error"]?["code"] == "conflict")
+            let result = BoardCloseResult(board: board)
+            try registry.close(id)
+            return result
+        }
+        #expect(try await call("board.close", ["board": .string(board.id)])["result"]?["kept"] == .array([.object(["id": .string(worker), "name": "worker"])]))
+        #expect(restarted.isEmpty)
+        #expect(try await call("board.get", ["board": .string(board.id)])["error"]?["code"] == "not_found")
+    }
+}

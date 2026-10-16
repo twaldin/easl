@@ -37,6 +37,8 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 		return r.boardList(), nil
 	case "board.open":
 		return r.boardOpen(p)
+	case "board.close":
+		return r.boardClose(p)
 	case "board.open_remote":
 		// The Mac app opens another Mac's board in a window of its own (docs/contracts.md
 		// "Remote boards"); easld has no windows.
@@ -436,6 +438,14 @@ func (r *Router) boardOpen(p map[string]any) (any, error) {
 	root := store.Standardized(expanded)
 	if !store.IsDirectory(root) {
 		return nil, board.NotFound("no directory at %s", root)
+	}
+	if len(r.closing) > 0 {
+		id, _ := store.Identify(root)
+		if b, ok := r.reg.Board(id); ok {
+			if _, err := r.availableBoard(b); err != nil {
+				return nil, err
+			}
+		}
 	}
 	b, err := r.reg.Open(root)
 	if err != nil {

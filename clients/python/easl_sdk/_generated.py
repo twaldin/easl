@@ -436,6 +436,11 @@ class BoardApi:
         params = {"host": host, "board": board, "select": select}
         return self._call("board.open_remote", params, [])
 
+    def close(self, *, board: "Id" | None = None, end_sessions: bool | None = None) -> dict[str, Any]:
+        """Close an open board without quitting the server. Save its latest state and remove it from the open set and open-boards.json, but keep its stored board file and board.list entry with open:false. By default terminals and their sessions stay running; board.open of the same root restores them. The Mac app refuses its last shown board with conflict. A remote tab closes only this viewer and never changes the host; any explicit endSessions, including false, is invalid_params there. Unknown or already closed boards are not_found. An affected agent.restart is conflict. Persistence or session-ending failure is unavailable and leaves the board open, with any partial session effects reported. No new event is emitted and subscriptions stay connected."""
+        params = {"board": board, "endSessions": end_sessions}
+        return self._call("board.close", params, ["board"])
+
     def export(self, *, board: "Id" | None = None, path: str | None = None) -> dict[str, Any]:
         """Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller."""
         params = {"board": board, "path": path}
@@ -718,7 +723,7 @@ class GeneratedApi:
         self.client = ClientApi(call)
         self.text = TextApi(call)
 
-METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"]
+METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

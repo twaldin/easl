@@ -14,6 +14,7 @@ public final class BoardRegistry {
     var routerHook: ((Board, BoardEvent) -> Void)?
     /// The router's handler of messages that bounced on any open board (`Board.onMessagesBounced`).
     var messagesBounced: ((Board, MessageBounce) -> Void)?
+    var didClose: ((Board) -> Void)?
     /// Terminal tiles deleted for good on any open board (`Board.onTerminalsEnded`), as they last
     /// were: the app ends their sessions.
     public var onTerminalsEnded: ((Board, [CanvasObject]) -> Void)?
@@ -71,8 +72,8 @@ public final class BoardRegistry {
         guard !tiles.isEmpty else { return }
         Task { @MainActor [weak board] in
             let entries = await offPool { AgentReportSpool.read(from: directory, tiles: tiles) }
-            guard !entries.isEmpty else { return }
-            board?.replay(entries)
+            guard let board, self.boards[board.id] === board, !entries.isEmpty else { return }
+            board.replay(entries)
             await offPool { AgentReportSpool.remove(entries) }
         }
     }
@@ -84,9 +85,20 @@ public final class BoardRegistry {
         boards[id] ?? boards.values.first { $0.repo?.merged?.contains(id) == true }
     }
 
-    public func close(_ id: BoardID) {
-        if let board = boards.removeValue(forKey: id) { store.save(board) }
-        if frontmost == id { frontmost = boards.keys.first }
+    public func close(_ id: BoardID, beforeEviction: () throws -> Void = {}) throws {
+        guard let board = board(id: id) else { throw ApiRouter.Failure("not_found", "board \(id)") }
+        do {
+            try store.saveChecked(board)
+            try beforeEviction()
+        } catch let failure as ApiRouter.Failure {
+            throw failure
+        } catch {
+            throw ApiRouter.Failure("unavailable", "cannot save board \(board.id) before closing: \(error.localizedDescription)")
+        }
+        boards.removeValue(forKey: board.id)
+        board.deactivate()
+        if frontmost == board.id { frontmost = boards.keys.sorted().first }
+        didClose?(board)
     }
 
     public func board(containing object: ObjectID) -> Board? {
@@ -191,6 +203,9 @@ public final class ApiRouter {
     public var refreshDiagram: ((Board, ObjectID) async throws -> JSONValue)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
     public var openBoard: ((URL, _ select: Bool) -> Board)?
+    /// Closes a local board or a remote viewer tab without showing the manual close sheet.
+    /// Nil preserves sessions; a remote tab refuses any explicit sessions choice.
+    public var closeBoard: ((BoardID, _ endSessions: Bool?) async throws -> BoardCloseResult)?
     /// Opens `board` on another Mac in the UI as File › Open Remote… does, `host` found among the
     /// picker's hosts (`RemoteHost.target`): a tab of the frontmost board window, selected when
     /// asked; a tab open already is answered (and selected when asked), never opened twice.
@@ -240,6 +255,7 @@ public final class ApiRouter {
     /// Terminals agent.restart is killing and relaunching: until it is done nothing else reaches
     /// them (agent.prompt is refused, agent.inbox offers nothing, another restart is refused).
     var restarting: Set<ObjectID> = []
+    var closingBoards: Set<BoardID> = []
     /// Terminals `agent.prompt` is typing into now (its checks, the screen reads, the paste and
     /// Enter), with how many prompts: an unforced restart waits for them (`promptPending`).
     private var typing: [ObjectID: Int] = [:]
@@ -288,6 +304,7 @@ public final class ApiRouter {
         self.registry = registry
         registry.routerHook = { [weak self] board, event in self?.observe(event, on: board) }
         registry.messagesBounced = { [weak self] board, bounce in self?.bounce(bounce, on: board) }
+        registry.didClose = { [weak self] board in self?.closed(board) }
     }
 
     /// Entry point for SocketServer. Returns the response line, or nil when the reply is deferred
@@ -320,6 +337,7 @@ public final class ApiRouter {
             if method == "object.find" { return Self.ok(id, try await find(params)) }
             switch method {
             case "board.open_remote": return Self.ok(id, try await openRemote(params))
+            case "board.close": return Self.ok(id, try await close(params))
             case "object.measure": return Self.ok(id, try await measure(params))
             case "object.reload": return Self.ok(id, try await reload(params))
             case "object.batch": return Self.ok(id, try await batch(params))
@@ -493,6 +511,12 @@ public final class ApiRouter {
             tile = id
             pendingPrompts.removeValue(forKey: id)
             promptMarks.removeValue(forKey: id)
+            inboxWaiters.removeAll { waiter in
+                guard waiter.tile == id else { return !waiter.connection.isOpen }
+                waiter.connection.send(Self.error(waiter.id, Failure("not_found", "terminal \(id) was closed")))
+                return true
+            }
+            messageHolds = messageHolds.filter { $0.key.tile != id }
         default:
             return
         }
@@ -528,6 +552,61 @@ public final class ApiRouter {
         guard let index = waiters.firstIndex(where: { $0.token == token }) else { return }
         let waiter = waiters.remove(at: index)
         waiter.connection.send(Self.error(waiter.id, Failure("timeout", "\(waiter.tile) did not reach \(waiter.until.sorted().joined(separator: "|")) in time")))
+    }
+
+    private func closed(_ board: Board) {
+        let tiles = Set(board.objects.values.filter { $0.type == .terminal }.map(\.id))
+        waiters.removeAll { waiter in
+            guard tiles.contains(waiter.tile) else { return !waiter.connection.isOpen }
+            waiter.connection.send(Self.error(waiter.id, Failure("not_found", "board \(board.id) was closed")))
+            return true
+        }
+        inboxWaiters.removeAll { waiter in
+            guard tiles.contains(waiter.tile) else { return !waiter.connection.isOpen }
+            waiter.connection.send(Self.error(waiter.id, Failure("not_found", "board \(board.id) was closed")))
+            return true
+        }
+        messageHolds = messageHolds.filter { !tiles.contains($0.key.tile) }
+        for tile in tiles { forgetPrompts(to: tile) }
+    }
+
+    private func close(_ p: JSONValue) async throws -> JSONValue {
+        guard p.object != nil else { throw Failure("invalid_params", "board.close params must be an object") }
+        let endSessions: Bool?
+        if let value = p["endSessions"] {
+            guard let choice = value.bool else { throw Failure("invalid_params", "endSessions must be a boolean") }
+            endSessions = choice
+        } else {
+            endSessions = nil
+        }
+        let id: BoardID
+        if let value = p["board"] {
+            guard let requested = value.string, !requested.isEmpty else { throw Failure("invalid_params", "board must be a board id") }
+            id = registry.board(id: requested)?.id ?? requested
+        } else {
+            id = try board(p).id
+        }
+        guard !closingBoards.contains(id) else { throw Failure("conflict", "board \(id) is already closing") }
+        if let board = registry.boards[id],
+           let tile = board.objects.values.first(where: { $0.type == .terminal && restarting.contains($0.id) }) {
+            throw Self.restartingFailure(tile.id)
+        }
+        closingBoards.insert(id)
+        defer { closingBoards.remove(id) }
+        if let closeBoard {
+            do {
+                return try await closeBoard(id, endSessions).json
+            } catch let failure as Failure {
+                throw failure
+            } catch {
+                throw Failure("unavailable", "cannot close board \(id): \(error.localizedDescription)")
+            }
+        }
+        guard let board = registry.boards[id] else { throw Failure("not_found", "board \(id)") }
+        if endSessions == true { throw Failure("unsupported", "ending sessions needs the app UI") }
+        let result = BoardCloseResult(board: board)
+        try registry.close(board.id)
+        return result.json
     }
 
     // MARK: Agents

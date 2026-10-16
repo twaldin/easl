@@ -1,0 +1,416 @@
+{
+  "scenario": "board-close",
+  "description": "Close keeps terminal objects and sessions, catalogs the stored board as closed, rejects closed targets and malformed params, and reopens the same board. A second board avoids the Mac last-board guard. Reopen before terminal teardown.",
+  "recordedOn": "board.close candidate, scratch easld; Mac replay and recording pending",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>/keeper"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "board": "<brd:1>",
+          "objects": 0,
+          "root": "<root>/keeper"
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>",
+          "name": "kept"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "kept"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "kept"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>",
+        "endSessions": null
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "endSessions must be a boolean"
+        },
+        "id": "r4",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>",
+        "endSessions": "true"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "endSessions must be a boolean"
+        },
+        "id": "r5",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>",
+        "endSessions": 1
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "endSessions must be a boolean"
+        },
+        "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>",
+        "extra": true
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown param extra; board.close takes board, endSessions"
+        },
+        "id": "r7",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "brd_missing"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "board brd_missing"
+        },
+        "id": "r8",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "ended": [],
+          "kept": [
+            {
+              "id": "<obj:1>",
+              "name": "kept"
+            }
+          ],
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "board.list",
+      "method": "board.list",
+      "request": {},
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "boards": [
+            {
+              "archived": false,
+              "board": "<board>",
+              "objects": 1,
+              "open": false,
+              "root": "<root>"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.result.boards.*.updatedAt": "board save time"
+      }
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "board <board>"
+        },
+        "id": "r11",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "board <board>"
+        },
+        "id": "r12",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 1,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "kept"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>",
+        "endSessions": false
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "ended": [],
+          "kept": [
+            {
+              "id": "<obj:1>",
+              "name": "kept"
+            }
+          ],
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 1,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "kept"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      }
+    }
+  ]
+}
