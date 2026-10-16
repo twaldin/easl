@@ -30,7 +30,11 @@ const scratch: string[] = [];
 const processes = new Set<Subprocess>();
 const watchers = new Set<FSWatcher>();
 afterEach(async () => {
-  for (const child of processes) child.kill("SIGKILL");
+  for (const child of processes) {
+    try { child.kill("SIGKILL"); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
   await Promise.all([...processes].map((child) => child.exited));
   processes.clear();
   for (const watcher of watchers) watcher.close();
@@ -277,26 +281,79 @@ test("a rejected stdout read kills the owned CLI child", async () => {
 
 test("SIGTERM kills a real owned CLI child and records an interrupted unsent rotation", async () => {
   const f = fixture({ scenario: "hung-cli" });
-  let watcher: FSWatcher;
-  const hung = new Promise<number>((resolve) => {
-    watcher = watch(f.dir, () => {
-      const pid = JSON.parse(readFileSync(f.state, "utf8")).hungPid;
-      if (pid) resolve(pid);
-    });
-    watchers.add(watcher);
-  });
   const { child, result: pending } = start(f);
-  const pid = await Promise.race([hung, pending.then(() => { throw new Error("controller exited before its CLI child hung"); })]);
-  watcher!.close();
-  watchers.delete(watcher!);
+  const completed = pending.then(() => true, () => true);
+  let pid: number | undefined;
+  // Poll the external CLI's durable state. Linux can notify before its rename, and fake time cannot advance that process.
+  while (pid === undefined) {
+    pid = JSON.parse(readFileSync(f.state, "utf8")).hungPid;
+    if (pid === undefined && await Promise.race([Bun.sleep(5), completed])) {
+      throw new Error("controller exited before its CLI child hung");
+    }
+  }
   expect(pid).toBeDefined();
   expect(() => process.kill(pid!, 0)).not.toThrow();
   child.kill("SIGTERM");
   const { result, evidence, state } = await pending;
   expect(result.code).toBe(143);
+  expect(result.stderr).toBe("");
   refused(evidence, /rotation interrupted by SIGTERM/, "not-started");
   expect(evidence.steps.at(-1)?.args[0]).toBe("agent.wait");
   expect(evidence.steps.at(-1)?.timedOut).toBe(false);
   expect(state.tells).toBeUndefined();
   expect(() => process.kill(pid!, 0)).toThrow();
+}, TEST_TIMEOUT_MS);
+
+test("SIGTERM after the owned CLI exits still records a clean interrupted rotation", async () => {
+  const f = fixture({ scenario: "hung-cli" });
+  f.preload = join(f.dir, "exit-during-shutdown.ts");
+  // Replay native ESRCH from a signal-0 probe after reaping, without signaling a possibly reused PID.
+  writeFileSync(f.preload, `
+    import type { Subprocess } from "bun";
+    import { readFileSync } from "node:fs";
+    const spawn = Bun.spawn;
+    let owned: Subprocess;
+    let missing: unknown;
+    Bun.spawn = function (...args: Parameters<typeof spawn>) {
+      const child = spawn(...args);
+      owned = child;
+      const kill = child.kill.bind(child);
+      child.kill = (signal) => {
+        if (missing !== undefined) throw missing;
+        kill(signal);
+      };
+      return child;
+    } as typeof spawn;
+    const text = Response.prototype.text;
+    let first = true;
+    Response.prototype.text = function () {
+      if (!first) return text.call(this);
+      first = false;
+      return (async () => {
+        const stateFile = process.env.ROTATION_FIXTURE_STATE!;
+        // Fake time cannot advance this external CLI, and a rename notification can precede readiness.
+        while (!JSON.parse(readFileSync(stateFile, "utf8")).hungPid) await Bun.sleep(5);
+        owned.kill("SIGKILL");
+        await owned.exited;
+        try { process.kill(owned.pid, 0); } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          missing = error;
+        }
+        if (missing === undefined) throw new Error("fixture PID was reused before the absent-child probe");
+        const terminated = new Promise<void>((resolve) => process.once("SIGTERM", () => resolve()));
+        process.kill(process.pid, "SIGTERM");
+        await terminated;
+        return text.call(this);
+      })();
+    };
+  `);
+  const { result, evidence, state } = await start(f).result;
+  expect(result.code).toBe(143);
+  expect(result.stderr).toBe("");
+  refused(evidence, /rotation interrupted by SIGTERM/, "not-started");
+  expect(evidence.steps.at(-1)?.args[0]).toBe("agent.wait");
+  expect(evidence.steps.at(-1)?.timedOut).toBe(false);
+  expect(state.tells).toBeUndefined();
+  expect(state.hungPid).toBeDefined();
+  expect(() => process.kill(state.hungPid!, 0)).toThrow();
 }, TEST_TIMEOUT_MS);
