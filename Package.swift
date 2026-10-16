@@ -26,7 +26,7 @@ func toolOutput(_ executable: String, _ arguments: [String]) -> String {
 // CLT does not discover these suites through `swift test`, so keep an executable runner.
 // Resolve Testing and its macros from the same selected Apple compiler.
 let swiftCompiler = URL(fileURLWithPath:
-    Context.environment["SWIFT_EXEC"] ?? toolOutput("/usr/bin/xcrun", ["--find", "swiftc"])
+    Context.environment["SWIFT_EXEC"] ?? toolOutput("/usr/bin/xcrun", ["--no-cache", "--find", "swiftc"])
 ).resolvingSymlinksInPath()
 let toolchain = swiftCompiler.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 let testingFrameworks = toolchain.pathExtension == "xctoolchain"
@@ -37,7 +37,6 @@ let testingLibraries = toolchain.pathExtension == "xctoolchain"
     ? testingFrameworks.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("usr/lib")
     : toolchain.appendingPathComponent("Library/Developer/usr/lib")
 let testingMacros = toolchain.appendingPathComponent("usr/lib/swift/host/plugins/testing/libTestingMacros.dylib")
-
 
 for requiredPath in [
     testingFrameworks.appendingPathComponent("Testing.framework"),

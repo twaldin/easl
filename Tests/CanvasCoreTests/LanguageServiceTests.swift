@@ -291,6 +291,33 @@ final class LanguageServiceTests: Sendable {
                 }
             }
         }
+        if buildSystem == "swiftbuild" {
+            let buildServer = LSPConnection(
+                executable: URL(fileURLWithPath: "/usr/bin/swift"),
+                arguments: ["package", "experimental-build-server", "--build-system", "swiftbuild",
+                            "--experimental-skip-acquiring-lock", "--force-resolved-versions"],
+                environment: LoginShell.shared.environment,
+                directory: dir,
+                onExit: { _, reason in print("Swift BSP diagnostic exit: \(reason)") }
+            )
+            do {
+                try buildServer.start()
+                let response = try await buildServer.request("build/initialize", .object([
+                    "displayName": .string("easl index probe"),
+                    "version": .string("1"),
+                    "bspVersion": .string("2.2.0"),
+                    "rootUri": .string(dir.absoluteString),
+                    "capabilities": .object(["languageIds": .array([.string("swift")])]),
+                ]), timeout: .seconds(60))
+                print("Swift BSP diagnostic initialize: \(String(decoding: try JSONEncoder().encode(response), as: UTF8.self))")
+                buildServer.notify("build/initialized", .object([:]))
+                _ = try? await buildServer.request("build/shutdown", .null, timeout: .seconds(2))
+                buildServer.notify("build/exit", nil)
+            } catch {
+                print("Swift BSP diagnostic error: \(error)")
+            }
+            await buildServer.terminate(grace: .seconds(2))
+        }
 
         let service = LanguageService()
         let area = LSPPosition(line: 2, character: 14)
