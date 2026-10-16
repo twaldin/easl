@@ -57,6 +57,11 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         note.isRichText = false
         note.allowsUndo = true
         note.drawsBackground = false
+        note.textColor = .labelColor
+        note.isAutomaticQuoteSubstitutionEnabled = false
+        note.isAutomaticDashSubstitutionEnabled = false
+        note.isAutomaticTextReplacementEnabled = false
+        note.isAutomaticSpellingCorrectionEnabled = false
         note.isVerticallyResizable = true
         note.isHorizontallyResizable = false
         note.autoresizingMask = [.width]
@@ -106,8 +111,8 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         noteScroll.isHidden = painter.noteRect == nil
         if let rect = painter.noteRect {
             noteScroll.frame = rect
-            note.font = ChromeText.font(QuestionPainter.noteFont)
-            note.textColor = .labelColor
+            let font = ChromeText.font(QuestionPainter.noteFont)
+            if note.font != font { note.font = font }
             let width = noteScroll.contentSize.width
             note.minSize = NSSize(width: width, height: rect.height)
             note.maxSize = NSSize(width: width, height: .greatestFiniteMagnitude)
@@ -336,9 +341,22 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
     }
 
     private func revealNote() {
-        guard window?.firstResponder === note else { return }
+        guard window?.firstResponder === note, note.selectedRange().length == 0 else { return }
         note.scrollRangeToVisible(note.selectedRange())
-        page.scrollToVisible(noteScroll.frame.insetBy(dx: 0, dy: -4))
+        let box = noteScroll.frame.insetBy(dx: 0, dy: -4)
+        if box.height <= scroll.contentSize.height {
+            page.scrollToVisible(box)
+        } else if let layout = note.layoutManager, let container = note.textContainer {
+            layout.ensureLayout(for: container)
+            let length = (note.string as NSString).length
+            var line = layout.extraLineFragmentRect
+            if length > 0, note.selectedRange().location < length || line.isEmpty {
+                let glyph = layout.glyphIndexForCharacter(at: min(note.selectedRange().location, length - 1))
+                line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            }
+            line = line.offsetBy(dx: note.textContainerOrigin.x, dy: note.textContainerOrigin.y)
+            page.scrollToVisible(page.convert(line, from: note).insetBy(dx: 0, dy: -4))
+        }
     }
 
     // MARK: TileContent
@@ -583,7 +601,6 @@ struct QuestionPainter {
     private let width: CGFloat
     private let picked: String?
     private let noting: Bool
-    /// Drawn in the note field's place by renders (live, the field draws itself).
     private let noteText: String
     private let editing: Bool
     private var items: [(rect: NSRect, draw: () -> Void)] = []
@@ -883,9 +900,6 @@ struct QuestionPainter {
         controls.last { $0.enabled && $0.clickable.contains { $0.contains(point) } }?.hit
     }
 
-    /// Draws the page; a cancelled or expired question dimmed. `noteDrawn`: the note field is
-    /// drawn here (renders), not by its own view. `selection`: the question's text selected
-    /// (live only), highlighted as a text view highlights it.
     func draw(in bounds: NSRect, noteDrawn: Bool, selection: NSRange? = nil) {
         let dimmed = spec.status == .cancelled || spec.status == .expired
         let context = NSGraphicsContext.current?.cgContext
