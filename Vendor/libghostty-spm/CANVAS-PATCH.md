@@ -66,4 +66,10 @@ this one):
   protocol (OSC 5522) write reaches the confirmation delegate like an OSC 52 write, instead of
   being denied as an unrecognized request.
 
+### Paste override
+
+`AppTerminalView+Input.swift` makes the `paste(_:)` action `open`, like `copy(_:)`.
+easl overrides it to copy pasted images to the terminal's host before pasting their paths.
+The default Ghostty paste action is unchanged for other hosts and ordinary text.
+
 To update, copy the new tag's files as above, reapply the patches, and drop the test target again.

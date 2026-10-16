@@ -42,6 +42,9 @@ final class TerminalTile: NSView, TileContent {
     /// Shown over the top of a hosted terminal while its host is offline or its session couldn't
     /// start, with Reconnect.
     private var hostBanner: HostBanner?
+    private let pasteHostTarget: String?
+    private var pasteDestination: TerminalPasteDestination?
+    private static let pasteTiles = NSHashTable<TerminalTile>.weakObjects()
 
     /// `attach`: a remote board's terminal, shown by running that command (`RemoteHost.terminalAttachCommand`).
     init(object: CanvasObject, board: Board, attach: [String]? = nil) {
@@ -50,6 +53,7 @@ final class TerminalTile: NSView, TileContent {
         self.board = board
         isRemote = attach != nil
         host = attach == nil ? HostedTerminal.host(of: object).map(TerminalHost.named) : nil
+        pasteHostTarget = HostedTerminal.host(of: object)
         terminal = CanvasTerminalView(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         super.init(frame: terminal.frame)
         terminal.autoresizingMask = [.width, .height]
@@ -84,6 +88,10 @@ final class TerminalTile: NSView, TileContent {
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.updateSurfaceFocus() } }
         }
         terminal.hasScrollback = { [weak self] in self?.scrollbar.map { $0.total > $0.len } ?? false }
+        terminal.imageDestination = { [weak self] in self?.resolvePasteDestination() }
+        terminal.onImageProblem = { [weak self] in self?.onNotice?($0) }
+        Self.pasteTiles.add(self)
+        if !isRemote { _ = resolvePasteDestination() }
         addSubview(terminal)
         underline.frame = bounds
         underline.autoresizingMask = [.width, .height]
@@ -95,6 +103,43 @@ final class TerminalTile: NSView, TileContent {
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    private func resolvePasteDestination() -> TerminalPasteDestination? {
+        if let pasteDestination { return pasteDestination }
+        let instance: String
+        var remoteHost: RemoteHost?
+        if isRemote {
+            var ancestor = superview
+            while let view = ancestor, !(view is CanvasView) { ancestor = view.superview }
+            guard let remote = (ancestor as? CanvasView)?.remote else { return nil }
+            remoteHost = remote.host
+            instance = Self.label(URL(fileURLWithPath: remote.host.socketPath).deletingLastPathComponent().path)
+        } else {
+            instance = Self.homeLabel
+        }
+        let machine: TerminalPasteDestination.Machine
+        if let target = pasteHostTarget {
+            machine = .hosted(TerminalHost.named(target).route)
+        } else if let remoteHost {
+            machine = .remote(remoteHost)
+        } else {
+            machine = .local
+        }
+        let destination = TerminalPasteDestination(machine: machine, instance: instance, session: sessionName)
+        pasteDestination = destination
+        return destination
+    }
+
+    private static func stopPasteInput(_ destination: TerminalPasteDestination) -> [Task<Void, Never>] {
+        pasteTiles.allObjects.filter { $0.pasteDestination?.key == destination.key }
+            .compactMap { $0.terminal.cancelImageInput() }
+    }
+
+    private static func discardPaste(_ destination: TerminalPasteDestination, after tasks: [Task<Void, Never>]) async {
+        // A cancelled writer must finish before discard, or it could recreate the directory.
+        for task in tasks { await task.value }
+        await destination.discard()
+    }
 
     // MARK: Launch
 
@@ -250,12 +295,38 @@ final class TerminalTile: NSView, TileContent {
     /// zmx keeps forever. Never another instance's session or log (`ownerGuard`). A hosted
     /// terminal's session is ended by its host's easld (`session.kill`).
     static func killSession(_ object: CanvasObject) {
-        if let host = HostedTerminal.host(of: object) { return TerminalHost.named(host).kill(object.id) }
-        guard let arguments = killArguments(tile: object.id, refusal: "exit 0") else { return }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = arguments
-        try? process.run()
+        let machine: TerminalPasteDestination.Machine = HostedTerminal.host(of: object)
+            .map { .hosted(TerminalHost.named($0).route) } ?? .local
+        let destination = TerminalPasteDestination(machine: machine, instance: homeLabel, session: sessionName(object.id))
+        let tasks = stopPasteInput(destination)
+        if let target = HostedTerminal.host(of: object) {
+            let host = TerminalHost.named(target)
+            Task {
+                do {
+                    _ = try await host.call("session.kill", .object(["tile": .string(object.id), "home": .string(homeLabel)]))
+                    guard await host.hasSession(object.id) == false else { return }
+                    await discardPaste(destination, after: tasks)
+                } catch {
+                    NSLog("easl: couldn't end %@'s session on %@: %@", object.id, target, "\(error)")
+                }
+            }
+            return
+        }
+        guard let arguments = killArguments(tile: object.id, refusal: "exit 0") else {
+            Task { await discardPaste(destination, after: tasks) }
+            return
+        }
+        Task {
+            do {
+                _ = try await RemoteHost.run("/bin/sh", arguments, timeout: 20)
+                let ended = await offPool {
+                    Zmx.list().map { !Housekeeping.sessionNames(zmxList: $0).contains(sessionName(object.id)) } ?? false
+                }
+                if ended { await discardPaste(destination, after: tasks) }
+            } catch {
+                NSLog("easl: couldn't end %@'s session: %@", object.id, error.localizedDescription)
+            }
+        }
     }
 
     /// `/bin/sh` arguments that kill `tile`'s session unless another instance owns it
@@ -1059,6 +1130,12 @@ final class TerminalTile: NSView, TileContent {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if window != nil {
+            _ = resolvePasteDestination()
+        } else if isRemote, board.objects[objectID] == nil, let destination = pasteDestination {
+            let tasks = Self.stopPasteInput(destination)
+            Task { await Self.discardPaste(destination, after: tasks) }
+        }
         for observer in windowObservers { observer.center.removeObserver(observer.token) }
         windowObservers = []
         if let window {
