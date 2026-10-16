@@ -115,6 +115,8 @@ final class BrowserTile: NSView, TileContent {
     private var pageWatch: (directory: URL, watch: LocalPageWatch)?
     /// A counted file change arrived while the page loaded: it reloads once that load ends.
     private var reloadPending = false
+    /// When the page last finished loading (`reloadIfFileChanged`).
+    private var loadedAt: Date?
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
@@ -1076,6 +1078,18 @@ final class BrowserTile: NSView, TileContent {
         track(webView.reload())
     }
 
+    /// A terminal's ⌘-click found this tile showing its page: a file page whose file changed
+    /// since it loaded (an agent wrote the report again) loads again; otherwise the page, its
+    /// scroll and its state stay. A released page loads the file afresh when it comes back.
+    func reloadIfFileChanged() {
+        guard let webView, !webView.isLoading, let loadedAt, let url = webView.url, url.isFileURL,
+              let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+              modified > loadedAt else { return }
+        NSLog("easl: browser %@ reloading: %@ changed since it loaded", objectID, url.path)
+        credit.user()
+        track(webView.reload())
+    }
+
     // MARK: Print, find
 
     var canPrint: Bool { webView?.url != nil && window != nil }
@@ -1251,6 +1265,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        loadedAt = Date()
         finished(navigation)
         commitURL()
         scheduleSnapshotRefresh()

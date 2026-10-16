@@ -16,9 +16,17 @@ public enum WebLink {
     }
 
     /// The address as browser tiles are compared (`Board.openLink`): scheme and host lowercased,
-    /// a default port dropped, an empty path `/`. The query and the fragment stay as written (a
-    /// single-page app's `#/route` is another page). Nil for a URL that isn't http(s).
+    /// a default port dropped, an empty path `/`; a `file:` URL's path standardized (`./`, `..`)
+    /// and `file://localhost/` as `file:///`. The query and the fragment stay as written (a
+    /// single-page app's `#/route` is another page). Nil for a URL that is neither http(s) nor `file:`.
     public static func address(_ url: URL) -> String? {
+        if url.isFileURL {
+            guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+            parts.scheme = "file"
+            parts.host = ""
+            parts.path = url.standardizedFileURL.path
+            return parts.string
+        }
         guard isWeb(url), var parts = URLComponents(url: url, resolvingAgainstBaseURL: false), let scheme = parts.scheme?.lowercased() else { return nil }
         parts.scheme = scheme
         parts.host = parts.host?.lowercased()
@@ -112,8 +120,8 @@ extension Board {
     /// tile's `props.url`; a tile in another browser profile, `props.profile` against the
     /// `profile` in `props`, is another page) is returned as it is (`existing`) and nothing is
     /// created; otherwise a browser tile with that `url` and `props` is placed beside `source`
-    /// (`place`) and credited to `caller`. Only http(s) addresses are matched: the caller hands
-    /// anything else to the system.
+    /// (`place`) and credited to `caller`. Only http(s) and `file:` addresses are matched: the
+    /// caller hands anything else to the system.
     @discardableResult
     public func openLink(_ url: URL, near source: ObjectID?, caller: ObjectID?, props: [String: JSONValue] = [:]) -> (object: CanvasObject, existing: Bool) {
         let address = WebLink.address(url)

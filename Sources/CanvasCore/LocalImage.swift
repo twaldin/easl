@@ -40,8 +40,16 @@ public enum LocalImage {
             guard !decoded.hasPrefix("~") else { return nil }
             candidate = root.appendingPathComponent(decoded)
         }
-        let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
-        guard extensions.contains(resolved.pathExtension.lowercased()) else { return nil }
+        guard let resolved = confined(candidate, root: root, tempDirectories: tempDirectories),
+              extensions.contains(resolved.pathExtension.lowercased()) else { return nil }
+        return resolved
+    }
+
+    /// `file` with `..` and symlinks resolved, when that is inside the board root or a temp
+    /// directory (resolved too); nil anywhere else. `sandboxed` and a terminal's ⌘-clicked page
+    /// (`Board.referencePage`) share it.
+    public static func confined(_ file: URL, root: URL, tempDirectories: [String] = FollowFilter.tempDirectories) -> URL? {
+        let resolved = file.standardizedFileURL.resolvingSymlinksInPath()
         let allowed = [root.path] + tempDirectories
         guard allowed.contains(where: { contains(URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path, resolved.path) }) else { return nil }
         return resolved
