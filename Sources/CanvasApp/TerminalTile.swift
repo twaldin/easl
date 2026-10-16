@@ -843,6 +843,18 @@ final class TerminalTile: NSView, TileContent {
         return read(active(0, 0), active(grid.columns - 1, grid.rows - 1))
     }
 
+    /// The last `lines` lines of the terminal's text as its surface has it, from the top of
+    /// Ghostty's scrollback through the active screen, soft-wrapped rows joined (`TerminalTail`):
+    /// `agent.read` of a remote board's terminal, whose session is on its host. Nil without a surface.
+    func surfaceTail(lines: Int) -> TerminalTail.Tail? {
+        guard let grid else { return nil }
+        let top = ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0)
+        guard let text = read(top, active(grid.columns - 1, grid.rows - 1)) else { return nil }
+        var tail = TerminalTail(limit: lines)
+        tail.append(Data(text.utf8))
+        return tail.finish()
+    }
+
     /// What a mention of the whole terminal quotes: the rows its view shows while the user has
     /// scrolled back (`scrolledBack` rows above the live screen), else the current screen.
     func shownText() -> (text: String, scrolledBack: Int)? {

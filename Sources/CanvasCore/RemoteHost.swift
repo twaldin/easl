@@ -27,9 +27,17 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     /// FreeBSD's; Apple's `-N` takes a probe count). Without it `nc -U` outlives a closed stdin, so
     /// a relay the viewer ended could stay on the host.
     public var ncShutdown: Bool
+    /// What answers at `socketPath`: the Mac app, which answers a viewer's delegated calls itself
+    /// and takes no `client.attach`, or easld, whose viewers attach as its clients. Nil for a host
+    /// remembered before easl recorded it (`Recents`): every board opens from a fresh discovery.
+    public var server: Server?
+
+    public enum Server: String, Codable, Sendable {
+        case app, easld
+    }
 
     public init(name: String, sshTarget: String, socketPath: String, tmpdir: String, easlBin: String, zmxBin: String = "zmx",
-                appBundle: String? = nil, ncShutdown: Bool = false) {
+                appBundle: String? = nil, ncShutdown: Bool = false, server: Server? = nil) {
         self.name = name
         self.sshTarget = sshTarget
         self.socketPath = socketPath
@@ -38,6 +46,7 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         self.zmxBin = zmxBin
         self.appBundle = appBundle
         self.ncShutdown = ncShutdown
+        self.server = server
     }
 
     /// The ssh client every remote command runs: `/usr/bin/ssh`, or `EASL_DEV_SSH` (a wrapper
@@ -130,7 +139,7 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         let directory = support ?? (mac ? home + "/Library/Application Support/Easl" : ((values["state"].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/.local/state") + "/easl"))
         let easl = mac ? macEaslBin : (values["easl"] ?? "easl")
         return RemoteHost(name: name, sshTarget: sshTarget, socketPath: directory + "/easl.sock", tmpdir: tmpdir, easlBin: easl, zmxBin: values["zmx"] ?? "zmx",
-                          appBundle: mac && support == nil ? macApp : nil, ncShutdown: values["ncshutdown"] == "1")
+                          appBundle: mac && support == nil ? macApp : nil, ncShutdown: values["ncshutdown"] == "1", server: mac ? .app : .easld)
     }
 
     /// The installed easl app on a Mac.

@@ -508,6 +508,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
         controller.onClose = { [weak self] in self?.remoteControllers.removeValue(forKey: key) }
         show(controller, select: select)
+        controller.serveHost()
         return controller
     }
 
