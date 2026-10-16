@@ -16,9 +16,9 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
           swift --version
       - name: Build
-        run: swift build
+        run: swift build -j 2
       - name: Test
-        run: swift run CanvasCoreTests
+        run: swift run -j 4 CanvasCoreTests --no-parallel
       - name: Generated clients are current
         run: bun scripts/gen-clients.ts --check
       - name: Python client tests
