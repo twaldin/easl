@@ -809,6 +809,40 @@ final class BoardMirrorTests {
                      block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") }, status: { _ in nil })
     }
 
+    @Test func aFocusDuringAttachIsKeptAfterTheWindowResigns() async throws {
+        let attaches = Locked<[JSONValue]>([])
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            guard request["method"]?.string == "client.attach" else { return await router.handle(request, connection: connection) }
+            let first = attaches.withLock { log in
+                log.append(request["params"] ?? .null)
+                return log.count == 1
+            }
+            let response: JSONValue = .object(["id": request["id"] ?? .null, "ok": .bool(true),
+                                               "result": .object(["client": "cli_1", "version": 1, "schema": .string(ApiParams.schemaHash)])])
+            if first {
+                pending.withLock { $0 = { connection.send(response) } }
+                return nil
+            }
+            return response
+        }
+        try server.start()
+        let (mirror, _) = try await mirror()
+        defer { mirror.close() }
+        var key = false
+        mirror.serve(window(focused: { key }), as: identity)
+        try await eventually { pending.withLock { $0 != nil } }
+        key = true
+        mirror.userFocused()
+        key = false
+        pending.withLock { $0 }?()
+        try await eventually { attaches.withLock { $0.count == 2 } }
+        #expect(attaches.withLock { $0[0]["focused"] } == nil)
+        #expect(attaches.withLock { $0[1]["focused"] } == .string(host.id))
+    }
+
     @Test func theViewerAttachesOnceOnEachLinkAndAgainWhenTheUserFocusesTheBoard() async throws {
         let easld = Easld()
         try serveEasld(easld)
