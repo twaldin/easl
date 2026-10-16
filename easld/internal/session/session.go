@@ -247,14 +247,36 @@ func (m *Manager) Spawn(req SpawnRequest) (session string, created bool, err err
 		path, probed = m.interactivePath(env, cwd), true
 	}
 	defer m.mu.Unlock()
-	// `zmx attach` with no terminal on stdin creates the session (its daemon detaches from
-	// easld, staying in its cgroup) and returns at once.
+	// zmx 8bab1f0 can drop Init at stdin EOF. Preload Detach and set tracking
+	// empty, not unset, to keep both in one socket read. The creator needs no
+	// controlling TTY so its Init uses the daemon's headless size.
+	input, held, err := os.Pipe()
+	if err != nil {
+		return "", false, failure("unavailable", "can't open zmx creator input: %v", err)
+	}
+	defer input.Close()
+	defer held.Close()
+	if _, err := held.Write([]byte{0x1c}); err != nil {
+		return "", false, failure("unavailable", "can't prepare zmx creator input: %v", err)
+	}
+	command := []string{"/usr/bin/env", "-u", "ZMX_TRACK_ENV"}
+	creatorEnv := env[:0]
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if key == "ZMX_NO_DETACH_KEY" || key == "ZMX_TRACK_ENV" {
+			command = append(command, entry)
+		} else {
+			creatorEnv = append(creatorEnv, entry)
+		}
+	}
+	env = append(creatorEnv, "ZMX_TRACK_ENV=")
+	command = append(command, m.loginCommand(req.Command, path, req.Env["PATH"])...)
 	args := []string{"attach"}
 	if labels != "" {
 		args = append(args, "--labels", labels)
 	}
-	args = append(append(args, name), m.loginCommand(req.Command, path, req.Env["PATH"])...)
-	if out, err := m.run(cwd, env, args...); err != nil {
+	args = append(append(args, name), command...)
+	if out, err := m.runInput(m.timeout(), cwd, env, input, args...); err != nil {
 		return "", false, failure("unavailable", "zmx couldn't start %s: %s", name, describe(err, out))
 	}
 	// The daemon lists the session once its socket is up.
@@ -509,10 +531,18 @@ func (m *Manager) timeout() time.Duration {
 
 // runWithin is run, for at most `timeout`.
 func (m *Manager) runWithin(timeout time.Duration, dir string, env []string, args ...string) ([]byte, error) {
+	return m.runInput(timeout, dir, env, nil, args...)
+}
+
+func (m *Manager) runInput(timeout time.Duration, dir string, env []string, input *os.File, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, m.Zmx, args...)
 	cmd.Dir = dir
+	if input != nil {
+		cmd.Stdin = input
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	}
 	// The last of a duplicated variable wins (exec.Cmd.Env).
 	cmd.Env = append(env[:len(env):len(env)], "ZMX_DIR="+m.Dir)
 	var out bytes.Buffer
