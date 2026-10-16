@@ -196,6 +196,23 @@ func (f *fixture) found(key string) string {
 	return idOf(reply["result"].(map[string]any))
 }
 
+func TestHTMLMeasurementNeedsAnApp(t *testing.T) {
+	f := newFixture(t)
+	for _, method := range []string{"object.measure", "object.create", "object.upsert"} {
+		params := map[string]any{"type": "html", "props": map[string]any{"html": "<p>Hello</p>"}}
+		if method != "object.measure" {
+			params["size"] = "fit"
+		}
+		if method == "object.upsert" {
+			params["key"] = "html"
+		}
+		code, message := errorOf(f.call(method, params))
+		if code != "unavailable" || message != "an html page is measured by the app" {
+			t.Errorf("%s: %s: %s", method, code, message)
+		}
+	}
+}
+
 func TestUnknownAndMissingParamsNameWhatTheMethodTakes(t *testing.T) {
 	f := newFixture(t)
 	code, message := errorOf(f.call("layout.translate", map[string]any{"ids": []any{"x"}, "delta": 3.0}))

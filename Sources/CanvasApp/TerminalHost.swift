@@ -83,7 +83,7 @@ final class TerminalHost {
     }
 
     /// `gethostname`, without the name service lookups `ProcessInfo.hostName` may wait on.
-    nonisolated private static func localHostname() -> String {
+    nonisolated static func localHostname() -> String {
         var buffer = [CChar](repeating: 0, count: 256)
         guard gethostname(&buffer, buffer.count) == 0 else { return "mac" }
         return String(cString: buffer)

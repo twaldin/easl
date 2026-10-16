@@ -18,7 +18,7 @@ struct RemoteHostTests {
         let host = RemoteHost.parseDiscovery(output, name: "work", sshTarget: "work")
         #expect(host == RemoteHost(name: "work", sshTarget: "work", socketPath: "/Users/tim/Library/Application Support/Easl/easl.sock",
                                    tmpdir: "/var/folders/3b/x/T/", easlBin: "/Applications/easl.app/Contents/Resources/bin/easl", zmxBin: "/opt/homebrew/bin/zmx",
-                                   appBundle: "/Applications/easl.app"))
+                                   appBundle: "/Applications/easl.app", server: .app))
     }
 
     @Test func linuxKeepsEasldsHomeUnderXDGState() {
@@ -28,6 +28,7 @@ struct RemoteHostTests {
         #expect(plain?.tmpdir == "/tmp")
         #expect(plain?.easlBin == "/home/tim/.local/bin/easl")
         #expect(plain?.zmxBin == "zmx", "not installed: the PATH's, if any")
+        #expect(plain?.server == .easld, "its viewers attach as easld's clients")
         let xdg = RemoteHost.parseDiscovery("os=Linux\nhome=/home/tim\ntmpdir=/tmp\nstate=/srv/state\n", name: "deckbox", sshTarget: "deckbox")
         #expect(xdg?.socketPath == "/srv/state/easl/easl.sock")
         #expect(xdg?.zmxDir == "/srv/state/easl/zmx")
@@ -36,6 +37,7 @@ struct RemoteHostTests {
     @Test func aSupportDirectoryOverridesTheHostsOwn() {
         let host = RemoteHost.parseDiscovery("os=Darwin\nhome=/Users/tim\ntmpdir=/var/folders/T/\n", name: "localhost", sshTarget: "localhost", support: "/tmp/easl-dev-host")
         #expect(host?.socketPath == "/tmp/easl-dev-host/easl.sock")
+        #expect(host?.server == .app, "a development instance on a Mac is the app too, without a bundle to start")
     }
 
     @Test func startOpensTheInstalledBundleOnlyForTheInstanceWhoseSocketWasFound() {
@@ -283,6 +285,20 @@ struct RemoteHostTests {
         let hosts = RemoteHost.Recents.load(url)
         #expect(hosts.map(\.sshTarget) == ["deckbox", "work"])
         #expect(hosts.map(\.zmxDir) == ["/home/tim/.local/state/easl/zmx", nil])
+    }
+
+    /// A host remembered by an easl that didn't record `server` yet still loads, beside one that did.
+    @Test func hostsRememberedBeforeTheServerWasRecordedStillLoad() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("rh-\(UUID().uuidString.prefix(8))/remote-hosts.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let written = #"[{"name":"work","sshTarget":"work","socketPath":"/Users/tim/Library/Application Support/Easl/easl.sock","tmpdir":"/var/folders/T/","easlBin":"easl","zmxBin":"zmx","appBundle":"/Applications/easl.app","ncShutdown":false}]"#
+        try written.write(to: url, atomically: true, encoding: .utf8)
+        let deckbox = try #require(RemoteHost.parseDiscovery("os=Linux\nhome=/home/tim\ntmpdir=/tmp\n", name: "deckbox", sshTarget: "deckbox"))
+        RemoteHost.Recents.remember(deckbox, in: url)
+        let recents = RemoteHost.Recents.load(url)
+        #expect(recents.map(\.sshTarget) == ["deckbox", "work"])
+        #expect(recents.map(\.server) == [.easld, nil])
     }
 
     @Test func boardsListOpenOnesFirstWithTheirAgents() {

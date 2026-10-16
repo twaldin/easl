@@ -174,6 +174,12 @@ public enum ObjectMeasure {
         let document = NoteMarkdown.parse(props["markdown"]?.string ?? "")
         let excerpts = await NoteSource.excerpts(for: NoteMarkdown.anchoredFences(in: document), root: root)
         let images = await NoteImages.load(NoteImages.sources(in: document), root: root)
+        return note(document, width: width, excerpts: excerpts, images: images)
+    }
+
+    /// `note(_:width:root:)` once its fences' `excerpts` (by fence key) and its `images` (by
+    /// destination) are read.
+    static func note(_ document: Document, width: CGFloat?, excerpts: [String: NoteExcerpt], images: [String: NSImage]) -> (size: CGSize, tableShortfall: CGFloat) {
         let width = width ?? defaultNoteWidth
         let textWidth = width - 2 * noteInset.width
         let renderer = NoteRenderer(excerpts: excerpts, images: images, width: textWidth)
@@ -203,14 +209,12 @@ public enum ObjectMeasure {
         let text = spec.text ?? ""
         switch spec.kind {
         case .text:
-            let label = DrawingStyle.text(text, size: DrawingStyle.textPointSize * spec.textSize, color: .labelColor)
-            let bounds = textBounds(label, width: width)
+            let bounds = shapeTextBounds(text, textSize: spec.textSize, width: width)
             return CGSize(width: width ?? bounds.width, height: bounds.height)
         case .rect, .ellipse:
             // The label wraps 16 points inside the frame (DrawnItem.shape) and sits centered.
-            let label = DrawingStyle.text(text, size: DrawingStyle.labelSize, color: .labelColor, alignment: .center)
             let inner = width.map { $0 - 16 - shapeLabelPadding.width }
-            let bounds = textBounds(label, width: inner)
+            let bounds = labelBounds(text, width: inner)
             let box = CGSize(width: (inner ?? bounds.width) + 16 + shapeLabelPadding.width, height: bounds.height + 2 * shapeLabelPadding.height)
             guard spec.kind == .ellipse else { return box }
             let scale = 2.0.squareRoot()
@@ -224,6 +228,17 @@ public enum ObjectMeasure {
     static func textBounds(_ text: NSAttributedString, width: CGFloat?) -> CGSize {
         let size = text.boundingRect(with: NSSize(width: width ?? .greatestFiniteMagnitude, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).size
         return CGSize(width: ceil(size.width) + 2, height: ceil(size.height) + 2)
+    }
+
+    /// A text shape's text at `textSize` times the drawing's text size, wrapped at `width` or
+    /// unwrapped (`textBounds`).
+    static func shapeTextBounds(_ text: String, textSize: CGFloat, width: CGFloat?) -> CGSize {
+        textBounds(DrawingStyle.text(text, size: DrawingStyle.textPointSize * textSize, color: .labelColor), width: width)
+    }
+
+    /// A rect's or an ellipse's label, centered, wrapped at `width` or unwrapped (`textBounds`).
+    static func labelBounds(_ text: String, width: CGFloat?) -> CGSize {
+        textBounds(DrawingStyle.text(text, size: DrawingStyle.labelSize, color: .labelColor, alignment: .center), width: width)
     }
 }
 

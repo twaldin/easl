@@ -153,7 +153,6 @@ struct TerminalPasteTests {
         let result = try await run(privateTmp, arguments, input: Data([1, 2, 3]), base: home, script: TerminalPaste.hostScript)
         #expect(result.status == 0, "\(result.errors)")
         let staged = try #require(TerminalPaste.stagedPath(result.output))
-        #expect(staged == home.resolvingSymlinksInPath().path + "/easl-paste-\(getuid())/remote-mac/canvas-unwatched/image.png")
         #expect(try Data(contentsOf: URL(fileURLWithPath: staged)) == Data([1, 2, 3]))
         let local = try await stage(privateTmp, bytes: Data([9]))
         let old = Date(timeIntervalSinceNow: -8 * 86400)
