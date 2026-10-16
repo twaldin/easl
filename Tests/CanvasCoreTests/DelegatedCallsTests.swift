@@ -92,6 +92,20 @@ final class DelegatedCallsTests {
         let lost = try await answer(calls, "agent.read", .object(["target": .string(terminal), "since": "prompt"])).get()
         #expect(lost["text"] == .string("new first\nnew second\nnew third"))
         #expect(lost["truncated"] == .bool(true))
+        let cut = try await answer(calls, "agent.read", .object(["target": .string(terminal), "since": "prompt", "lines": 1])).get()
+        #expect(cut["text"] == .string("new third"))
+        #expect(cut["lines"] == .number(1))
+        #expect(cut["truncated"] == .bool(true))
+    }
+
+    @Test func aRewrittenPromptNeverAlignsOntoTheNextPrompt() async throws {
+        screen = ["~/repo", "❯"]
+        let calls = delegated()
+        _ = try await answer(calls, "agent.prompt", .object(["target": .string(terminal), "text": "go"])).get()
+        screen = ["~/repo", "❯ go", "out", "~/repo", "❯"]
+        let read = try await answer(calls, "agent.read", .object(["target": .string(terminal), "since": "prompt"])).get()
+        #expect(read["text"] == .string("❯ go\nout\n~/repo\n❯"))
+        #expect(read["truncated"] == .bool(false))
     }
 
     @Test func aPromptWithNowhereToTypeTypesNothingAndSaysWhy() async {
