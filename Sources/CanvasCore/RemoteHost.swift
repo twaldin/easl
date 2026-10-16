@@ -257,17 +257,25 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         return named.first.map { ($0.name, $0.sshTarget) } ?? typed(text)
     }
 
-    /// Why `text` can't be a host File › Open Remote… connects to, or nil: a host is one word (a
-    /// tailnet name, an ssh config alias, `user@host`, both parts there), and one starting with
-    /// `-` would be an option to ssh.
+    private static let shellHostCharacters = CharacterSet(charactersIn: "\"'`$\\;&<>|(){}")
+
+    /// An ssh target must be one word, not an option, with both parts of `user@host` present.
+    /// Older ssh clients expand hostnames into shell commands in the user's ssh configuration.
     public static func problem(withHost text: String) -> String? {
         if text.isEmpty { return "host is empty: pass a tailnet name, an ssh config alias or user@host" }
         if text.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) }) {
             return "host \(text.debugDescription) isn't one host: a tailnet name, an ssh config alias or user@host has no spaces"
         }
+        if text.rangeOfCharacter(from: shellHostCharacters) != nil {
+            return "host \(text.debugDescription) contains shell metacharacters"
+        }
         if text.hasPrefix("-") { return "host \(text) starts with -, which ssh would take for an option" }
-        if let at = text.lastIndex(of: "@"), at == text.startIndex || text.index(after: at) == text.endIndex {
-            return "host \(text) needs both parts of user@host"
+        if let at = text.lastIndex(of: "@") {
+            let host = text[text.index(after: at)...]
+            if at == text.startIndex || host.isEmpty {
+                return "host \(text) needs both parts of user@host"
+            }
+            if host.hasPrefix("-") { return "host \(text) has a host part starting with -" }
         }
         return nil
     }
