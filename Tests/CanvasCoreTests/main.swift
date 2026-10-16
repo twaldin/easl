@@ -5,7 +5,7 @@ do {
     let applications = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: "/Applications"), includingPropertiesForKeys: nil)
     for application in applications.sorted(by: { $0.path < $1.path })
         where application.lastPathComponent.hasPrefix("Xcode") && application.pathExtension == "app" {
-        let compiler = application.appendingPathComponent("Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc")
+        let compiler = application.appendingPathComponent("Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift")
         guard FileManager.default.isExecutableFile(atPath: compiler.path) else { continue }
         let process = Process()
         let output = Pipe()
