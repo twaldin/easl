@@ -52,7 +52,7 @@ public final class BoardMirror: BoardHost {
     public var state: EaslConnection.State { refreshFailure != nil && linkState == .online ? .offline : linkState }
     private var linkState: EaslConnection.State = .connecting
     private var refreshFailure: String?
-    /// Each state change, after the board was loaded.
+    /// The board's availability or refresh problem changed, after it loaded.
     public var onState: ((EaslConnection.State) -> Void)?
     /// Something to tell the user (a write the host refused, a create that failed).
     public var onNotice: ((String) -> Void)?
@@ -287,9 +287,9 @@ public final class BoardMirror: BoardHost {
     }
 
     private func setRefreshFailure(_ failure: String?) {
-        let previous = state
+        guard refreshFailure != failure else { return }
         refreshFailure = failure
-        if state != previous { onState?(state) }
+        onState?(state)
     }
 
     /// Applies a read of the whole board: what the read has, unless newer is here already

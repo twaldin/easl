@@ -328,31 +328,40 @@ final class BoardMirrorTests {
         let other = note("before")
         let (mirror, board) = try await mirror()
         defer { mirror.close() }
+        var shownProblem: String?
+        mirror.onState = { [weak mirror] _ in shownProblem = mirror?.problem }
         server.stop()
         try await eventually { mirror.state != .online }
         _ = try host.update(page.id, props: .object(["html": .string("<p>After reconnect</p>")]))
         _ = try host.update(other.id, props: .object(["markdown": .string("after reconnect")]))
-        let refuse = Locked(true)
+        let refuse = Locked<String?>("HTML refresh failed")
         let router = router
         server = SocketServer(path: socket) { request, connection in
-            if request["method"]?.string == "object.get", refuse.withLock({ value in
-                if !value { return false }
-                value = false
-                return true
+            if request["method"]?.string == "object.get", let message = refuse.withLock({ value in
+                defer { value = nil }
+                return value
             }) {
                 return .object(["id": request["id"] ?? .null, "ok": .bool(false),
-                                "error": .object(["code": .string("unavailable"), "message": .string("HTML refresh failed")])])
+                                "error": .object(["code": .string("unavailable"), "message": .string(message)])])
             }
             return await router.handle(request, connection: connection)
         }
         try server.start()
-        try await eventually { !refuse.withLock { $0 } && mirror.reading == nil }
+        try await eventually { refuse.withLock { $0 == nil } && mirror.reading == nil }
         #expect(mirror.connection.state == .online)
         #expect(mirror.state == .offline)
         #expect(mirror.problem?.contains("HTML refresh failed") == true)
+        #expect(shownProblem?.contains("HTML refresh failed") == true)
+        refuse.withLock { $0 = "HTML retry failed differently" }
+        mirror.reconnect()
+        try await eventually { refuse.withLock { $0 == nil } && mirror.reading == nil }
+        #expect(mirror.connection.state == .online)
+        #expect(mirror.state == .offline)
+        #expect(shownProblem?.contains("HTML retry failed differently") == true)
         mirror.reconnect()
         try await eventually { board.objects[page.id] == host.objects[page.id] && board.objects[other.id] == host.objects[other.id] }
         #expect(mirror.state == .online)
+        #expect(shownProblem == nil)
     }
 
     @Test func aMoveShowsAtOnceAndTheHostsVersionReplacesIt() async throws {
