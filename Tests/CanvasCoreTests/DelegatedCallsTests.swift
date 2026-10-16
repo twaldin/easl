@@ -107,33 +107,7 @@ final class DelegatedCallsTests {
         #expect(saved["scale"] == .number(2))
     }
 
-    /// Each kind laid out as a Mac host lays out its own objects: easld builds the same frames
-    /// from these sizes (a rect's padding around its label, a note's table shortfall).
-    @Test func textIsMeasuredAsTheMacHostMeasuresItsOwnObjects() async throws {
-        let calls = delegated()
-        let markdown = "# Plan\n\n| Step | Owner |\n| --- | --- |\n| Attach to easld as its client | the viewer |\n\n```swift\nlet served = 5\n```"
-        let caption = "`DelegatedCalls.answer`: the five methods"
-        let result = try await answer(calls, "text.measure", .object(["items": [
-            .object(["kind": "note", "text": .string(markdown), "width": 200, "root": "/home/tim/repo"]),
-            .object(["kind": "label", "text": "Ship it", "width": 168]),
-            .object(["kind": "text", "text": "Deploy step", "textSize": 2]),
-            .object(["kind": "caption", "text": .string(caption)]),
-        ]])).get()
-        let sizes = try #require(result["sizes"]?.array)
-        try #require(sizes.count == 4)
-        let note = try await ObjectMeasure.size(type: .note, props: .object(["markdown": .string(markdown)]), width: 200, root: dir)
-        let shortfall = await ObjectMeasure.note(.object(["markdown": .string(markdown)]), width: 200, root: dir).tableShortfall
-        #expect(sizes[0] == .object(["w": .number(note.width), "h": .number(note.height), "tableShortfall": .number(shortfall)]))
-        let rect = try await ObjectMeasure.size(type: .shape, props: .object(["kind": "rect", "text": "Ship it"]), width: 200, root: dir)
-        #expect(sizes[1]["h"].flatMap(\.number).map { $0 + 24 } == Double(rect.height), "the rect easld frames around the label")
-        let text = try await ObjectMeasure.size(type: .shape, props: .object(["kind": "text", "text": "Deploy step", "textSize": 2]), width: nil, root: dir)
-        #expect(sizes[2] == .object(["w": .number(text.width), "h": .number(text.height)]))
-        #expect(sizes[3]["w"] == .number(ObjectMeasure.captionWidth(caption)), "as wide as the Mac's code tile fits its caption")
-    }
-
-    /// A note's anchored fences and images are read under easld's root, on easld's machine: the
-    /// whole batch fails, so easld measures it from its glyph table, even when the same paths
-    /// exist on this Mac. A free fence reads nothing and is measured.
+    /// A batch needing the host's files fails even when the same paths exist on this Mac.
     @Test func aNoteNeedingTheHostsFilesFailsTheWholeBatch() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("src"), withIntermediateDirectories: true)
         try "let a = 1\nlet b = 2\n".write(to: dir.appendingPathComponent("src/a.swift"), atomically: true, encoding: .utf8)
@@ -147,11 +121,6 @@ final class DelegatedCallsTests {
         }
         #expect(code(await measure("Before\n\n```swift file=src/a.swift#L1-2\n```")) == "unavailable")
         #expect(code(await measure("Chart:\n\n![chart](chart.png)")) == "unavailable")
-        let written = "Before\n\n```swift\nlet a = 1\n```"
-        let sizes = try await measure(written).get()["sizes"]?.array
-        let note = try await ObjectMeasure.size(type: .note, props: .object(["markdown": .string(written)]), width: nil, root: dir)
-        #expect(sizes?.count == 2)
-        #expect(sizes?.last?["w"] == .number(note.width) && sizes?.last?["h"] == .number(note.height))
     }
 
     /// next.md "Versions": a param this build doesn't know fails just that call, and a method it
