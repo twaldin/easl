@@ -79,6 +79,21 @@ final class DelegatedCallsTests {
         #expect(tail["text"] == .string("● Looking at the build\n● Fixed: a missing import"))
     }
 
+    @Test func sincePromptSurvivesScrollbackTrimmingAndMarksLostContext() async throws {
+        screen = (0..<500).map { "history \($0)" }
+        let calls = delegated()
+        reply = ["reply one", "reply two"]
+        _ = try await answer(calls, "agent.prompt", .object(["target": .string(terminal), "text": "go"])).get()
+        screen.removeFirst(10)
+        let shifted = try await answer(calls, "agent.read", .object(["target": .string(terminal), "since": "prompt"])).get()
+        #expect(shifted["text"] == .string("> go\nreply one\nreply two"))
+        #expect(shifted["truncated"] == .bool(false))
+        screen = ["new first", "new second", "new third"]
+        let lost = try await answer(calls, "agent.read", .object(["target": .string(terminal), "since": "prompt"])).get()
+        #expect(lost["text"] == .string("new first\nnew second\nnew third"))
+        #expect(lost["truncated"] == .bool(true))
+    }
+
     @Test func aPromptWithNowhereToTypeTypesNothingAndSaysWhy() async {
         let calls = delegated(surface: false)
         let prompt = await answer(calls, "agent.prompt", .object(["target": .string(terminal), "text": "hi"]))
