@@ -19,7 +19,7 @@ enum TileFactory {
     static func make(_ object: CanvasObject, board: Board, remote: RemoteSource? = nil) -> any TileContent {
         if let remote {
             switch object.type {
-            case .terminal: return TerminalTile(object: object, board: board, attach: remote.attachCommand(for: object.id))
+            case .terminal: return TerminalTile(object: object, board: board, attach: remote.attachCommand(for: object))
             case .note: return NoteTile(object: object, board: board)
             case .question: return QuestionTile(object: object, board: board)
             case .code, .changes, .html, .browser, .image, .diagram: return RemoteImageTile(object: object, remote: remote)

@@ -19,9 +19,9 @@ final class RemoteSource {
         "\(board.root.lastPathComponent) @ \(host.name)"
     }
 
-    /// What a terminal tile runs to show the host's session for `tile`.
-    func attachCommand(for tile: ObjectID) -> [String] {
-        host.terminalAttachCommand(tile: tile, board: mirror.sessionBoardID, merged: mirror.mergedBoards)
+    /// Attaches where the terminal runs, checking the board host's ownership labels.
+    func attachCommand(for terminal: CanvasObject) -> [String] {
+        host.terminalAttachCommand(for: terminal, board: mirror.sessionBoardID, merged: mirror.mergedBoards)
     }
 }
 

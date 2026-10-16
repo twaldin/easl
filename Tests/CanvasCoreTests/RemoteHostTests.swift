@@ -104,8 +104,13 @@ struct RemoteHostTests {
         #expect(try await remoteWords(host.relayArguments, after: "work") == ["nc", "-U", "/Users/tim/Library/Application Support/Easl/easl.sock"])
     }
 
+    func terminal(_ tile: ObjectID, host: String? = nil) -> CanvasObject {
+        CanvasObject(id: tile, type: .terminal, frame: Frame(x: 0, y: 0, w: 640, h: 480), z: 0,
+                     createdBy: .user, createdAt: .distantPast, props: .object(host.map { ["host": .string($0)] } ?? [:]))
+    }
+
     func runAttach(_ host: RemoteHost, home: URL, tile: ObjectID, board: BoardID, merged: [BoardID]) async throws -> (status: Int32, output: String, errors: String) {
-        let command = host.terminalAttachCommand(tile: tile, board: board, merged: merged)
+        let command = host.terminalAttachCommand(for: terminal(tile), board: board, merged: merged)
         let index = try #require(command.firstIndex(of: host.sshTarget))
         return try await RemoteHost.run("/usr/bin/env", ["-u", "ZMX_DIR", "HOME=" + home.path, "/bin/sh", "-c", command[(index + 1)...].joined(separator: " ")], timeout: 10)
     }
@@ -181,6 +186,48 @@ struct RemoteHostTests {
         }
     }
 
+    @Test func aHostedRemoteTerminalChecksTheBoardOwnersLabelsOnItsOwnHost() async throws {
+        let hosted = HostedTerminalTests()
+        let home = try hosted.scratch()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let owner = RemoteHost(name: "work", sshTarget: "work", socketPath: "/board owner's home/easl.sock",
+                               tmpdir: "/board-tmp", easlBin: "easl", zmxBin: "/board-zmx")
+        let command = owner.terminalAttachCommand(for: terminal(hosted.tile, host: "deckbox"), board: "brd_current", merged: ["brd_old"])
+        let index = try #require(command.firstIndex(of: "deckbox"))
+        let remote = command[(index + 1)...].joined(separator: " ")
+        for (labels, accepted) in [
+            ("canvas.home=_board_owner_s_home\tcanvas.board=brd_current\tcanvas.tile=\(hosted.tile)", true),
+            ("canvas.home=_board_owner_s_home\tcanvas.board=brd_old\tcanvas.tile=\(hosted.tile)", true),
+            ("canvas.home=_board_owner_s_home\tcanvas.board=brd_copy\tcanvas.tile=\(hosted.tile)", false),
+            ("canvas.home=_viewer\tcanvas.board=brd_current\tcanvas.tile=\(hosted.tile)", false),
+            ("canvas.home=_board_owner_s_home\tcanvas.board=brd_current\tcanvas.tile=obj_other", false),
+        ] {
+            try hosted.fakeZmx(home: home, lists: [hosted.listed(labels)])
+            let result = try await hosted.sh(remote, env: ["HOME": home.path])
+            let output = String(decoding: result.output, as: UTF8.self)
+            #expect(result.status == (accepted ? 0 : HostedTerminal.refused))
+            if accepted {
+                #expect(output == "attach \(hosted.session) SHELL=/bin/false ZMX_DIR=\(home.path)/.local/state/easl/zmx\n")
+            } else {
+                for label in labels.split(separator: "\t") { #expect(output.contains(label)) }
+                #expect(!output.contains("attach "))
+            }
+        }
+    }
+
+    @Test func anInvalidHostedTargetCannotBecomeAnSshOption() async throws {
+        let hosted = HostedTerminalTests()
+        let home = try hosted.scratch()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let marker = home.appendingPathComponent("executed")
+        let owner = RemoteHost(name: "work", sshTarget: "work", socketPath: "/owner/easl.sock", tmpdir: "/tmp", easlBin: "easl")
+        let command = owner.terminalAttachCommand(for: terminal(hosted.tile, host: "-oProxyCommand=touch${IFS}\(marker.path)"),
+                                                 board: "brd_b", merged: [])
+        let result = try await RemoteHost.run(command[0], Array(command.dropFirst()), timeout: 0.2)
+        #expect(result.output.contains("Not attaching: host"))
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
+
     // Keep the Process lifecycle on one thread without blocking Swift's cooperative pool.
     @Test func aCopiedTileRefusalHoldsItsOwnerNoticeWithoutReattaching() async throws {
         let hosted = HostedTerminalTests()
@@ -189,7 +236,7 @@ struct RemoteHostTests {
         let host = RemoteHost(name: "work", sshTarget: "work", socketPath: "/original/easl.sock", tmpdir: "/tmp", easlBin: "easl",
                               zmxBin: try fixtureZmx(home: home), zmxDir: "/original/zmx")
         try hosted.fakeZmx(home: home, lists: [hosted.listed("canvas.board=brd_original\tcanvas.home=_original\tcanvas.tile=\(hosted.tile)")])
-        let command = host.terminalAttachCommand(tile: hosted.tile, board: "brd_copy", merged: [])
+        let command = host.terminalAttachCommand(for: terminal(hosted.tile), board: "brd_copy", merged: [])
         let remote = try #require(command.last)
         let attempts = home.appendingPathComponent("attempts")
         let ssh = home.appendingPathComponent("ssh")
