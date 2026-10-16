@@ -317,6 +317,11 @@ final class LanguageServiceTests: Sendable {
                 print("Swift BSP diagnostic error: \(error)")
             }
             await buildServer.terminate(grace: .seconds(2))
+            try FileManager.default.createSymbolicLink(
+                at: buildDirectory.appendingPathComponent("index-store"),
+                withDestinationURL: buildDirectory.appendingPathComponent("out")
+            )
+            print("Swift BSP diagnostic: scratch-only index-store -> out symlink installed to test the advertised-path mismatch.")
         }
 
         let service = LanguageService()
