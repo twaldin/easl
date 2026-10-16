@@ -248,15 +248,15 @@ public final class BoardMirror: BoardHost {
     /// naming it, one still out goes again once it is accepted. A refused link asks nothing.
     public func userFocused() {
         switch attachment {
-        case .attached?: attach()
+        case .attached?: attach(focused: true)
         case .attaching?: refocused = true
         default: break
         }
     }
 
-    /// `client.attach` on the board's link: this build's schema, this Mac, the five calls it
-    /// answers, this board, and the board as `focused` while its window is key.
-    private func attach() {
+    /// `client.attach` on the board's link, preserving a focus event even if the user has
+    /// already moved to another window while the previous attach was outstanding.
+    private func attach(focused: Bool = false) {
         guard let calls, let identity else { return }
         attaches += 1
         refocused = false
@@ -268,7 +268,7 @@ public final class BoardMirror: BoardHost {
             "boards": .array([.string(boardID)]),
         ]
         if let app = identity.app { fields["app"] = .string(app) }
-        if calls.window.focused() { fields["focused"] = .string(boardID) }
+        if focused || calls.window.focused() { fields["focused"] = .string(boardID) }
         let params = JSONValue.object(fields)
         Task {
             do {
@@ -277,7 +277,7 @@ public final class BoardMirror: BoardHost {
                 let client = reply["client"]?.string ?? "", version = reply["version"]?.int ?? ApiParams.schemaVersion
                 attachment = .attached(client: client, version: version)
                 NSLog("easl: %@ on %@: attached to its easld as %@ (schema version %ld)", boardID, hostName, client, version)
-                if refocused, calls.window.focused() { attach() }
+                if refocused { attach(focused: true) }
             } catch {
                 // A link that dropped refused nothing (the next one attaches); nor did a closed one.
                 guard number == attaches, attachment == .attaching, connection.state == .online else { return }

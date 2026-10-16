@@ -839,6 +839,7 @@ final class BoardMirrorTests {
         key = false
         pending.withLock { $0 }?()
         try await eventually { attaches.withLock { $0.count == 2 } }
+        try #require(attaches.withLock { $0.count } == 2)
         #expect(attaches.withLock { $0[0]["focused"] } == nil)
         #expect(attaches.withLock { $0[1]["focused"] } == .string(host.id))
     }
