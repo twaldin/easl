@@ -44,6 +44,40 @@ private final class HostFileFixture: @unchecked Sendable {
         return HostFiles(hostName: "fixture", route: HostRoute(target: "fixture", controlPath: directory.appendingPathComponent("control").path, executable: executable.path), temps: [temp.path])
     }
 
+    func readerSwappingDirectory(containing relative: String, afterCanonicalization: Int) throws -> HostFiles {
+        let file = root.appendingPathComponent(relative)
+        let outside = directory.appendingPathComponent("outside")
+        let parked = directory.appendingPathComponent("parked")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data("outside bytes\n".utf8).write(to: outside.appendingPathComponent(file.lastPathComponent))
+        let paths = String(decoding: try JSONEncoder().encode([file.path, outside.path, parked.path]), as: UTF8.self)
+        let injection = """
+        (() => {
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const [file, outside, parked] = \(paths);
+          const target = fs.realpathSync(file);
+          const parent = path.dirname(target);
+          const destination = fs.realpathSync(outside);
+          const realpath = fs.realpathSync;
+          let canonicalizations = 0;
+          fs.realpathSync = (...args) => {
+            const canonical = realpath(...args);
+            if (canonical === target && ++canonicalizations === \(afterCanonicalization)) {
+              fs.renameSync(parent, parked);
+              fs.symlinkSync(destination, parent, 'dir');
+            }
+            return canonical;
+          };
+        })();
+
+        """
+        return try reader(body: """
+        eval "set -- $command"
+        exec "$1" "$2" "$3" "$4" \(RemoteHost.quote(injection))"$5" "$6"
+        """)
+    }
+
     func request(_ path: String, source: HostFileRequest.Source? = nil, bytes: Bool = true) -> HostFileRequest {
         HostFileRequest(source: source ?? .directory(root.path), policy: .boardFile(path), bytes: bytes)
     }
@@ -91,6 +125,46 @@ struct HostFilesTests {
         await #expect(throws: HostFileError.refused) { try await files.read(fixture.request("sibling/file.txt")) }
         try FileManager.default.createSymbolicLink(atPath: fixture.root.appendingPathComponent("inside.txt").path, withDestinationPath: "safe.txt")
         #expect(try await files.read(fixture.request("inside.txt")).data == Data("safe\n".utf8))
+    }
+
+    @Test func excerptBytesRefuseAnIntermediateDirectorySwap() async throws {
+        let fixture = try HostFileFixture()
+        try fixture.write("pkg/file.txt", Data("allowed excerpt\n".utf8))
+        let files = try fixture.readerSwappingDirectory(containing: "pkg/file.txt", afterCanonicalization: 2)
+        await #expect(throws: HostFileError.refused) {
+            try await files.read(fixture.request("pkg/file.txt"))
+        }
+        #expect(try FileManager.default.attributesOfItem(atPath: fixture.root.appendingPathComponent("pkg").path)[.type] as? FileAttributeType == .typeSymbolicLink)
+    }
+
+    @Test func imageBytesRefuseAnIntermediateDirectorySwap() async throws {
+        let fixture = try HostFileFixture()
+        try fixture.write("pkg/chart.png", Data("allowed image\n".utf8))
+        let files = try fixture.readerSwappingDirectory(containing: "pkg/chart.png", afterCanonicalization: 1)
+        let request = try #require(LocalImage.hostPageFile(requestPath: "/pkg/chart.png", source: .directory(fixture.root.path), temps: files.temps))
+        await #expect(throws: HostFileError.refused) {
+            try await files.read(request)
+        }
+        #expect(try FileManager.default.attributesOfItem(atPath: fixture.root.appendingPathComponent("pkg").path)[.type] as? FileAttributeType == .typeSymbolicLink)
+    }
+
+    @Test func codeOpenMetadataRefusesAnIntermediateDirectorySwap() async throws {
+        let fixture = try HostFileFixture()
+        try fixture.write("pkg/file.swift", Data("func allowed() {}\n".utf8))
+        let files = try fixture.readerSwappingDirectory(containing: "pkg/file.swift", afterCanonicalization: 2)
+        await #expect(throws: HostFileError.refused) {
+            try await files.read(fixture.request("pkg/file.swift", bytes: false))
+        }
+        #expect(try FileManager.default.attributesOfItem(atPath: fixture.root.appendingPathComponent("pkg").path)[.type] as? FileAttributeType == .typeSymbolicLink)
+    }
+
+    @Test func filesystemRootAllowsDescendantExcerptBytes() async throws {
+        let fixture = try HostFileFixture()
+        try fixture.write("file.txt", Data("root excerpt\n".utf8))
+        let file = fixture.root.appendingPathComponent("file.txt").resolvingSymlinksInPath()
+        let files = try fixture.reader()
+        let result = try await files.read(fixture.request(String(file.path.dropFirst()), source: .directory("/")))
+        #expect(result.data == Data("root excerpt\n".utf8))
     }
 
     @Test func imagesUseHostTempDirectoriesAndResolvedExtensions() async throws {

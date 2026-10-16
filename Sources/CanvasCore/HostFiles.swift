@@ -212,21 +212,71 @@ public struct HostFiles: Sendable {
       }
       return { root, commit };
     }
-    function readRegular(p, root, limit) {
-      let fd;
-      try {
-        fd = fs.openSync(p, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-        const st = fs.fstatSync(fd);
-        if (!st.isFile()) fail('not_found');
-        if (!req.bytes) return { ok: true, root, path: p, data: '' };
-        if (limit != null && st.size > limit) fail('too_large', { limit });
-        const data = fs.readFileSync(fd);
-        if (limit != null && data.length > limit) fail('too_large', { limit });
-        return { ok: true, root, path: p, data: data.toString('base64') };
-      } catch (e) {
-        if (e.code && !['ENOENT', 'ENOTDIR', 'ELOOP', 'EACCES', 'EPERM'].includes(e.code)) throw e;
-        fail(['ENOENT', 'ENOTDIR'].includes(e.code) ? 'not_found' : 'unreadable');
-      } finally { if (fd !== undefined) fs.closeSync(fd); }
+    function readRegular(p, root, roots, limit) {
+      const python = String.raw`
+    import base64
+    import errno
+    import json
+    import os
+    import stat
+    import sys
+
+    def read_regular(request):
+        directory = None
+        fd = None
+        try:
+            p = os.path.normpath(request['path'])
+            if not any(d == '/' or p == d or p.startswith(d + '/') for d in request['roots']):
+                return {'ok': False, 'code': 'refused'}
+            capability = getattr(os, 'O_SEARCH', getattr(os, 'O_PATH', None))
+            if capability is None or os.open not in os.supports_dir_fd:
+                return {'ok': False, 'code': 'unavailable', 'message': 'Python3 descriptor-relative file access is unavailable'}
+            flags = capability | os.O_DIRECTORY | os.O_NOFOLLOW
+            directory = os.open('/', flags)
+            components = p.split('/')[1:]
+            for component in components[:-1]:
+                previous = directory
+                directory = None
+                try:
+                    directory = os.open(component, flags, dir_fd=previous)
+                finally:
+                    os.close(previous)
+            fd = os.open(components[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                return {'ok': False, 'code': 'not_found'}
+            if not request['bytes']:
+                return {'ok': True, 'path': p, 'data': ''}
+            limit = request['limit']
+            if limit is not None and st.st_size > limit:
+                return {'ok': False, 'code': 'too_large', 'limit': limit}
+            with os.fdopen(fd, 'rb', closefd=False) as stream:
+                data = stream.read() if limit is None else stream.read(limit + 1)
+            if limit is not None and len(data) > limit:
+                return {'ok': False, 'code': 'too_large', 'limit': limit}
+            return {'ok': True, 'path': p, 'data': base64.b64encode(data).decode('ascii')}
+        except OSError as error:
+            code = 'refused' if error.errno in (errno.ELOOP, errno.ENOTDIR) else 'not_found' if error.errno == errno.ENOENT else 'unreadable'
+            return {'ok': False, 'code': code}
+        finally:
+            try:
+                if fd is not None:
+                    os.close(fd)
+            finally:
+                if directory is not None:
+                    os.close(directory)
+
+    print(json.dumps(read_regular(json.loads(sys.argv[1]))))
+    `;
+      const result = cp.spawnSync('python3', ['-I', '-S', '-B', '-c', python, JSON.stringify({ path: p, roots, bytes: req.bytes, limit })], {
+        encoding: 'utf8', maxBuffer: Infinity, stdio: ['ignore', 'pipe', 'pipe']
+      });
+      if (result.error?.code === 'ENOENT') fail('unavailable', { message: 'python3 is required for secure host file reads but is not installed on the host' });
+      if (result.error || result.status !== 0) fail('unavailable', { message: 'Python3 host descriptor reader failed' });
+      let reply;
+      try { reply = JSON.parse(result.stdout); }
+      catch { fail('unavailable', { message: 'invalid host descriptor reply' }); }
+      return { root, ...reply };
     }
     function read() {
       const { root, commit } = resolveSource();
@@ -234,7 +284,7 @@ public struct HostFiles: Sendable {
         const rel = policy.relative;
         if (!rel || rel.includes('\0') || rel.startsWith('/') || rel.startsWith('~') || rel.split('/').includes('..')) fail('refused');
         const base = resolved(root), candidate = resolved(path.join(root, rel));
-        if (!candidate.startsWith(base + '/')) fail('refused');
+        if (candidate === base || !inside(base, candidate)) fail('refused');
         if (commit) {
           if (!req.bytes) return { ok: true, root, commit, data: '' };
           const data = git(root, ['show', '--end-of-options', commit + ':./' + rel], \#(NoteSource.maxOutput));
@@ -243,20 +293,20 @@ public struct HostFiles: Sendable {
         }
         const p = real(candidate);
         if (!p) fail('not_found');
-        return readRegular(p, root, \#(SourceExcerpt.maxFileBytes));
+        return readRegular(p, root, [base], \#(SourceExcerpt.maxFileBytes));
       }
       const extensions = new Set(\#(String(decoding: try! JSONEncoder().encode(LocalImage.extensions.sorted()), as: UTF8.self)));
       const dirs = [root, ...policy.temps].map(d => real(d) || path.resolve(d));
       const allowed = p => p && extensions.has(path.extname(p).slice(1).toLowerCase()) && dirs.some(d => inside(d, p));
       if (policy.relative != null) {
         const p = real(path.resolve(root, policy.relative));
-        if (allowed(p)) return readRegular(p, root, null);
+        if (allowed(p)) return readRegular(p, root, dirs, null);
       }
       if (policy.absolute == null) fail('refused');
       const p = real(policy.absolute);
       if (!p) fail('not_found');
       if (!allowed(p)) fail('refused');
-      return readRegular(p, root, null);
+      return readRegular(p, root, dirs, null);
     }
     let reply;
     try { reply = read(); }
