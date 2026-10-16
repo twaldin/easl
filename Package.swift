@@ -38,23 +38,6 @@ let testingLibraries = toolchain.pathExtension == "xctoolchain"
     : toolchain.appendingPathComponent("Library/Developer/usr/lib")
 let testingMacros = toolchain.appendingPathComponent("usr/lib/swift/host/plugins/testing/libTestingMacros.dylib")
 
-// Temporary CI inventory. Remove after the CLT 27 macro-loading run.
-print("Testing compiler: \(swiftCompiler.path)")
-print("Testing compiler version: \(toolOutput(swiftCompiler.path, ["--version"]))")
-print("Testing SDK: \(toolOutput("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"]))")
-print("Testing frameworks: \(testingFrameworks.path)")
-print("Testing runtime libraries: \(testingLibraries.path)")
-print("Testing macro plugin: \(testingMacros.path)")
-let applications = try FileManager.default.contentsOfDirectory(
-    at: URL(fileURLWithPath: "/Applications"), includingPropertiesForKeys: nil
-)
-for application in applications.sorted(by: { $0.path < $1.path })
-    where application.lastPathComponent.hasPrefix("Xcode") && application.pathExtension == "app" {
-    let compiler = application.appendingPathComponent("Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc")
-    if FileManager.default.isExecutableFile(atPath: compiler.path) {
-        print("Testing candidate \(compiler.path): \(toolOutput(compiler.path, ["--version"]))")
-    }
-}
 
 for requiredPath in [
     testingFrameworks.appendingPathComponent("Testing.framework"),
