@@ -370,23 +370,32 @@ public final class ApiRouter {
             default: break
             }
             return Self.ok(id, try dispatch(method, params))
-        } catch let failure as Failure {
-            return Self.error(id, failure)
-        } catch let error as BoardError {
-            switch error {
-            case .notFound(let message): return Self.error(id, Failure("not_found", message))
-            case .conflict(let message): return Self.error(id, Failure("conflict", message))
-            case .invalidParams(let message): return Self.error(id, Failure("invalid_params", message))
-            }
-        } catch let failure as ObjectMeasure.Failure {
-            switch failure {
-            case .unsupported(let message): return Self.error(id, Failure("unsupported", message))
-            case .unavailable(let message): return Self.error(id, Failure("unavailable", message))
-            case .notFound(let message): return Self.error(id, Failure("not_found", message))
-            case .invalidParams(let message): return Self.error(id, Failure("invalid_params", message))
-            }
         } catch {
-            return Self.error(id, Failure("invalid_params", String(describing: error)))
+            return Self.error(id, Self.failure(for: error))
+        }
+    }
+
+    /// What a method's error answers: a `Failure` as it is, a board's or a measurement's under
+    /// its code, anything else `invalid_params`.
+    static func failure(for error: Error) -> Failure {
+        switch error {
+        case let failure as Failure:
+            return failure
+        case let error as BoardError:
+            switch error {
+            case .notFound(let message): return Failure("not_found", message)
+            case .conflict(let message): return Failure("conflict", message)
+            case .invalidParams(let message): return Failure("invalid_params", message)
+            }
+        case let failure as ObjectMeasure.Failure:
+            switch failure {
+            case .unsupported(let message): return Failure("unsupported", message)
+            case .unavailable(let message): return Failure("unavailable", message)
+            case .notFound(let message): return Failure("not_found", message)
+            case .invalidParams(let message): return Failure("invalid_params", message)
+            }
+        default:
+            return Failure("invalid_params", String(describing: error))
         }
     }
 
@@ -629,12 +638,17 @@ public final class ApiRouter {
     }
 
     func agentEntry(_ terminal: CanvasObject, on board: Board) -> JSONValue {
+        Self.agentEntry(terminal, on: board, among: Array(registry.boards.values), status: terminalStatus?(board, terminal.id))
+    }
+
+    /// A terminal's `agent` entry: `status` is what its tile knows now, `boards` what its address
+    /// is told apart among.
+    static func agentEntry(_ terminal: CanvasObject, on board: Board, among boards: [Board], status: TerminalStatus?) -> JSONValue {
         let agent = terminal.props["agent"]
-        let status = terminalStatus?(board, terminal.id)
         let aliases = board.aliases(of: terminal.id)
         let entry: [String: JSONValue] = [
             "tile": .string(terminal.id), "board": .string(board.id), "root": .string(board.root.path),
-            "address": .string(AgentAddress.address(of: terminal, on: board, among: Array(registry.boards.values))),
+            "address": .string(AgentAddress.address(of: terminal, on: board, among: boards)),
             "kind": agent?["kind"] ?? .string("unknown"),
             "name": terminal.props["name"] ?? .null,
             "aliases": aliases.isEmpty ? .null : .array(aliases.map(JSONValue.string)),
@@ -645,7 +659,7 @@ public final class ApiRouter {
             "lifecycle": terminal.props["lifecycle"] ?? .object(["state": .string(LifecycleState.unknown.rawValue)]),
             "lastCommand": status?.lastCommand.map { $0.command.json(finishedAt: $0.finishedAt) } ?? .null,
         ]
-        return .object(entry.merging(agentControlFields(terminal, status: status)) { _, new in new }.filter { $0.value != .null })
+        return .object(entry.merging(agentControlFields(terminal, on: board, status: status)) { _, new in new }.filter { $0.value != .null })
     }
 
     /// `agent.read`: the tail of the session text, or with `since: "prompt"` what the terminal
@@ -656,55 +670,89 @@ public final class ApiRouter {
     private func read(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"), caller: p["caller"]?.string)
         if p["final"]?.bool == true { return try finalAnswer(of: terminal, on: board, p) }
-        let since = p["since"]?.string
-        guard since == nil || since == "prompt" else { throw Failure("invalid_params", "since must be \"prompt\"") }
-        var block: Int?
-        if let value = p["block"], value != .null {
-            if value.string == "last" {
-                block = -1
-            } else if let number = value.number, number <= -1, number == number.rounded(), number >= -Double(TerminalCommandLog.capacity) {
-                block = Int(number)
-            } else {
-                throw Failure("invalid_params", "block must be \"last\" or a whole number from -1 (the last command) to -\(TerminalCommandLog.capacity): -2 is the one before the last")
-            }
-        }
-        guard block == nil || since == nil else { throw Failure("invalid_params", "since and block don't combine: block reads a command's output, since the reply to the last agent.prompt") }
-        let requested = p["lines"]?.int ?? (since == nil && block == nil ? Self.readLinesDefault : Self.readLinesMax)
-        guard requested >= 1 else { throw Failure("invalid_params", "lines must be at least 1") }
-        if let block { return try await readBlock(board, terminal, block, lines: min(requested, Self.readLinesMax)) }
+        let request = try ReadRequest(p)
+        if let block = request.block { return try await readBlock(board, terminal, block, lines: request.lines) }
         guard let readTerminal else { throw Failure("unsupported", "reading terminals needs the app UI") }
         var mark: TerminalTail.Tail?
-        if since != nil {
+        if request.sincePrompt {
             guard let found = promptMarks[terminal.id] else {
                 throw Failure("not_found", "no agent.prompt has reached terminal \(terminal.id) since easl started; read with lines instead")
             }
             mark = found
         }
-        // A reply is compared against the screen it followed, so it reads the most there is.
-        guard let tail = await readTerminal(board, terminal.id, mark == nil ? min(requested, Self.readLinesMax) : Self.readLinesMax) else {
+        guard let tail = await readTerminal(board, terminal.id, request.reading) else {
             throw Failure("unavailable", "terminal \(terminal.id) has no running session")
         }
-        var result: [String: JSONValue] = [:]
-        var shown = tail
-        if let mark {
-            let boundary = tail.boundary(after: mark)
-            let reply = tail.rows(from: boundary)
-            shown = reply.suffix(min(requested, Self.readLinesMax))
-            // Cut by `lines`, or the reply is longer than the tail reaches.
-            result["truncated"] = .bool(shown.lines < reply.lines || (tail.positions.first ?? 0) > boundary)
-        }
+        var result = request.shown(tail, after: mark)
         let current = board.objects[terminal.id] ?? terminal
         result["agent"] = agentEntry(current, on: board)
-        result["text"] = .string(shown.text)
-        result["lines"] = .number(Double(shown.lines))
         return .object(result)
+    }
+
+    /// `agent.read`'s screen modes as asked (`lines`, `since: "prompt"`, `block`), checked.
+    @MainActor
+    struct ReadRequest {
+        /// How many lines to answer with, at most `readLinesMax`.
+        var lines: Int
+        /// What followed the last `agent.prompt` (`since: "prompt"`).
+        var sincePrompt: Bool
+        /// A finished command's output instead, counted back from the last (-1).
+        var block: Int?
+
+        init(_ p: JSONValue) throws {
+            let since = p["since"]?.string
+            guard since == nil || since == "prompt" else { throw Failure("invalid_params", "since must be \"prompt\"") }
+            var block: Int?
+            if let value = p["block"], value != .null {
+                if value.string == "last" {
+                    block = -1
+                } else if let number = value.number, number <= -1, number == number.rounded(), number >= -Double(TerminalCommandLog.capacity) {
+                    block = Int(number)
+                } else {
+                    throw Failure("invalid_params", "block must be \"last\" or a whole number from -1 (the last command) to -\(TerminalCommandLog.capacity): -2 is the one before the last")
+                }
+            }
+            guard block == nil || since == nil else { throw Failure("invalid_params", "since and block don't combine: block reads a command's output, since the reply to the last agent.prompt") }
+            let requested = p["lines"]?.int ?? (since == nil && block == nil ? ApiRouter.readLinesDefault : ApiRouter.readLinesMax)
+            guard requested >= 1 else { throw Failure("invalid_params", "lines must be at least 1") }
+            lines = min(requested, ApiRouter.readLinesMax)
+            sincePrompt = since != nil
+            self.block = block
+        }
+
+        /// How many of the session's last lines to read: a reply is compared against the screen it
+        /// followed, so it reads the most there is.
+        var reading: Int { sincePrompt ? ApiRouter.readLinesMax : lines }
+
+        /// The answer's `text` and `lines` from `tail`: what followed `mark` (the terminal's text
+        /// just before the last prompt), with `truncated`, when given.
+        func shown(_ tail: TerminalTail.Tail, after mark: TerminalTail.Tail?) -> [String: JSONValue] {
+            var result: [String: JSONValue] = [:]
+            var shown = tail
+            if let mark {
+                let boundary = tail.boundary(after: mark)
+                let reply = tail.rows(from: boundary)
+                shown = reply.suffix(lines)
+                // Cut by `lines`, or the reply is longer than the tail reaches.
+                result["truncated"] = .bool(shown.lines < reply.lines || (tail.positions.first ?? 0) > boundary)
+            }
+            result["text"] = .string(shown.text)
+            result["lines"] = .number(Double(shown.lines))
+            return result
+        }
     }
 
     /// `agent.read` `block`: a finished command's output (its last `lines` lines) with what ran,
     /// its exit status and duration.
     private func readBlock(_ board: Board, _ terminal: CanvasObject, _ index: Int, lines limit: Int) async throws -> JSONValue {
         guard let readTerminalBlock else { throw Failure("unsupported", "reading terminals needs the app UI") }
-        let block = try await readTerminalBlock(board, terminal.id, index)
+        var result = Self.blockResult(try await readTerminalBlock(board, terminal.id, index), lines: limit)
+        result["agent"] = agentEntry(board.objects[terminal.id] ?? terminal, on: board)
+        return .object(result)
+    }
+
+    /// `agent.read` `block`'s answer for `block`, its output cut to the last `limit` lines.
+    static func blockResult(_ block: (command: TerminalCommand, output: String), lines limit: Int) -> [String: JSONValue] {
         let output = TerminalExcerpt.lines(block.output)
         let shown = output.suffix(limit)
         var result: [String: JSONValue] = [
@@ -713,8 +761,7 @@ public final class ApiRouter {
             "command": block.command.json(),
         ]
         if shown.count < output.count { result["truncated"] = .bool(true) }
-        result["agent"] = agentEntry(board.objects[terminal.id] ?? terminal, on: board)
-        return .object(result)
+        return result
     }
 
     /// `agent.prompt`: to a terminal whose integration takes messages (`PromptTarget.takesMessages`)
@@ -1043,10 +1090,9 @@ public final class ApiRouter {
         // still in its turn as the text lands takes it into that turn (omp as a steering message
         // before the turn ends; Codex before its next tool call, or right after its last answer,
         // with one Stop for both): no report may come until that turn ends, which answers it.
-        let notifying = NotifyingAgent.reports(current)
-        let waitable = notifying || Self.state(of: current) != LifecycleState.unknown.rawValue
+        let waitable = Self.waitable(current)
         let midTurn = board.objects[terminal.id].map(Self.state) == LifecycleState.working.rawValue
-        if notifying { board.notifyingAgentSubmitted(terminal.id) } else if waitable, !midTurn { pendingPrompts[terminal.id] = Date() }
+        if NotifyingAgent.reports(current) { board.notifyingAgentSubmitted(terminal.id) } else if waitable, !midTurn { pendingPrompts[terminal.id] = Date() }
         promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
         var result: [String: JSONValue] = [
             "agent": agentEntry(current, on: board),
@@ -1056,6 +1102,12 @@ public final class ApiRouter {
         ]
         if !handed.isEmpty { result["mentions"] = try JSONValue.encode(handed) }
         return .object(result)
+    }
+
+    /// Whether `agent.wait` can tell when a prompt typed into `terminal` is done: its agent reports
+    /// its turns, by lifecycle or by notification.
+    static func waitable(_ terminal: CanvasObject) -> Bool {
+        NotifyingAgent.reports(terminal) || state(of: terminal) != LifecycleState.unknown.rawValue
     }
 
     /// `agent.read` `final`: the answer the terminal's integration reported when its last turn
@@ -1132,10 +1184,10 @@ public final class ApiRouter {
         let timeout = min(max(p["timeoutMs"]?.int ?? 8000, 0), 60_000)
         let request = RenderRequest(target: target, scale: scale, full: p["full"]?.bool ?? false, exclude: exclude,
                                     padding: max(0, p["padding"]?.number ?? 0), timeout: .milliseconds(timeout))
-        let (format, out) = try imageDestination(p, name: "render")
+        let (format, out) = try Self.imageDestination(p, name: "render")
         guard let renderView else { throw Failure("unsupported", "rendering needs the app UI") }
         let output = try await renderView(board, request, format)
-        var result = inline ? Self.inlined(output) : try await deliver(output, to: out)
+        var result = inline ? Self.inlined(output) : try await Self.deliver(output, to: out)
         result["canvasRect"] = RenderMath.json(output.canvasRect)
         result["scale"] = .number(output.scale)
         result["objects"] = .array(output.objects.map(\.json))
@@ -1153,9 +1205,14 @@ public final class ApiRouter {
     /// `view.snapshot`: the window as shown, with the viewport it shows.
     private func snapshot(_ p: JSONValue) async throws -> JSONValue {
         let board = try board(p)
-        let (format, out) = try imageDestination(p, name: "snapshot")
+        let (format, out) = try Self.imageDestination(p, name: "snapshot")
         guard let snapshotBoard else { throw Failure("unsupported", "snapshots need the app UI") }
         guard let shot = await snapshotBoard(board, format) else { throw Failure("unavailable", "board \(board.id) has no window") }
+        return try await Self.snapshotResult(shot, to: out)
+    }
+
+    /// `view.snapshot`'s answer: `shot`'s picture written to `out`, with the viewport it shows.
+    static func snapshotResult(_ shot: (output: RenderOutput, viewport: Viewport), to out: String) async throws -> JSONValue {
         var result = try await deliver(shot.output, to: out)
         result["viewport"] = shot.viewport.json
         result["scale"] = .number(shot.output.scale)
@@ -1194,7 +1251,7 @@ public final class ApiRouter {
 
     /// Format and path from `out` (absolute, in an existing directory; format from its
     /// extension), else a new file `<name>-<ms>-<n>` in `scratchImages` in `format` (default png).
-    private func imageDestination(_ p: JSONValue, name: String) throws -> (ImageFormat, String) {
+    static func imageDestination(_ p: JSONValue, name: String) throws -> (ImageFormat, String) {
         if let out = p["out"]?.string {
             guard out.hasPrefix("/") else { throw Failure("invalid_params", "out must be an absolute path (clients resolve relative paths)") }
             guard let format = ImageFormat(path: out) else { throw Failure("invalid_params", "out must end in .png, .jpg, or .jpeg") }
@@ -1207,15 +1264,15 @@ public final class ApiRouter {
         }
         scratchCount += 1
         let file = "\(name)-\(Int(Date().timeIntervalSince1970 * 1000))-\(scratchCount).\(format == .png ? "png" : "jpg")"
-        return (format, Self.scratchImages.appendingPathComponent(file).path)
+        return (format, scratchImages.appendingPathComponent(file).path)
     }
 
     /// Numbers scratch images, so renders in the same millisecond never overwrite each other.
-    private var scratchCount = 0
+    private static var scratchCount = 0
 
-    private func deliver(_ output: RenderOutput, to out: String) async throws -> [String: JSONValue] {
+    private static func deliver(_ output: RenderOutput, to out: String) async throws -> [String: JSONValue] {
         let image = output.image
-        let scratch = Self.scratchImages
+        let scratch = scratchImages
         let failure: String? = await offPool {
             do {
                 let url = URL(fileURLWithPath: out)
@@ -1270,6 +1327,7 @@ public final class ApiRouter {
                 "board": .string(board.id), "root": .string(board.root.path),
                 "revision": .number(Double(board.revision)), "objects": .array(objects.map(JSONValue.init)),
             ]
+            if let merged = board.repo?.merged, !merged.isEmpty { result["merged"] = .array(merged.map(JSONValue.string)) }
             if let regions { result["regions"] = .array(regions.map(JSONValue.string)) }
             if let since = p["since"]?.int { result["changed"] = .array(board.changed(since: since).map(JSONValue.string)) }
             return .object(result)
@@ -1518,15 +1576,7 @@ public final class ApiRouter {
             let board = try board(p)
             guard let viewState else { throw Failure("unsupported", "the viewport needs the app UI") }
             guard let state = viewState(board) else { throw Failure("unavailable", "board \(board.id) has no window") }
-            var result: [String: JSONValue] = [
-                "board": .string(board.id), "viewport": state.viewport.json,
-                "selection": .array(state.selection.map(JSONValue.string)), "visible": .bool(state.visible),
-                "appearance": .string(state.appearance),
-            ]
-            if let target = state.promptTarget { result["promptTarget"] = .string(target) }
-            if let focused = state.focused { result["focused"] = .string(focused) }
-            if let group = state.enteredGroup { result["enteredGroup"] = .string(group) }
-            return .object(result)
+            return Self.viewResult(state, board: board.id)
 
         case "session.spawn", "session.list", "session.kill", "relay.open":
             // A hosted terminal's session runs under the host's easld, which relays its way back
@@ -1536,6 +1586,19 @@ public final class ApiRouter {
         default:
             throw Failure("invalid_params", "unknown method \(method)")
         }
+    }
+
+    /// `view.get`'s answer for the window showing `board`.
+    static func viewResult(_ state: ViewState, board: BoardID) -> JSONValue {
+        var result: [String: JSONValue] = [
+            "board": .string(board), "viewport": state.viewport.json,
+            "selection": .array(state.selection.map(JSONValue.string)), "visible": .bool(state.visible),
+            "appearance": .string(state.appearance),
+        ]
+        if let target = state.promptTarget { result["promptTarget"] = .string(target) }
+        if let focused = state.focused { result["focused"] = .string(focused) }
+        if let group = state.enteredGroup { result["enteredGroup"] = .string(group) }
+        return .object(result)
     }
 
     // MARK: Layout

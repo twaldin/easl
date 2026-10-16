@@ -535,7 +535,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         // The API's default board is one of this app's own, never a mirror of another's.
-        if remote == nil { registry.frontmost = board.id }
+        if let remote { remote.mirror.userFocused() } else { registry.frontmost = board.id }
+    }
+
+    /// On an easld host, this window answers the board's delegated calls and attaches as easld's
+    /// client (`BoardMirror.serve`). A Mac host answers them itself: nothing attaches there.
+    func serveHost() {
+        guard let remote, remote.host.server == .easld else { return }
+        let identity = ClientIdentity(app: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String, host: TerminalHost.localHostname())
+        remote.mirror.serve(ViewerWindow(self), as: identity)
     }
 
     /// The board's tab or window closed (not app quit, which closes nothing).

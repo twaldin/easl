@@ -21,7 +21,26 @@ final class RemoteSource {
 
     /// What a terminal tile runs to show the host's session for `tile`.
     func attachCommand(for tile: ObjectID) -> [String] {
-        host.terminalAttachCommand(session: TerminalTile.sessionName(tile))
+        host.terminalAttachCommand(tile: tile, board: mirror.sessionBoardID, merged: mirror.mergedBoards)
+    }
+}
+
+extension ViewerWindow {
+    /// `controller`'s window as its board's easld asks it (`CanvasWindowController.serveHost`).
+    init(_ controller: CanvasWindowController) {
+        let terminal = { [weak controller] (id: ObjectID) -> TerminalTile? in controller?.canvas.tiles[id]?.content as? TerminalTile }
+        self.init(
+            focused: { [weak controller] in controller?.window?.isKeyWindow == true },
+            viewState: { [weak controller] in controller?.canvas.viewState },
+            snapshot: { [weak controller] format in await controller?.snapshot(format: format) },
+            submit: { id, text in await terminal(id)?.submit(text) ?? false },
+            surfaceTail: { id, lines in terminal(id)?.surfaceTail(lines: lines) },
+            block: { id, index in
+                guard let tile = terminal(id) else { throw ApiRouter.Failure("unavailable", "terminal \(id) isn't shown in a window") }
+                return try tile.block(index)
+            },
+            // Gemini CLI pads its title to a fixed width. The terminal's program and pid are its host's.
+            status: { id in terminal(id).map { TerminalStatus(title: $0.oscTitle?.trimmingCharacters(in: .whitespaces), lastCommand: $0.lastCommand, focused: $0.isWatched) } })
     }
 }
 

@@ -66,7 +66,7 @@ func (o Owner) Labels(board, tile string) map[string]string {
 }
 
 // Label is a path as a zmx label value, which allows only `[A-Za-z0-9._-]`: every other UTF-8
-// byte becomes `_` (TerminalTile.label).
+// byte becomes `_` (HostedTerminal.homeLabel).
 func Label(path string) string {
 	out := []byte(path)
 	for i, c := range out {

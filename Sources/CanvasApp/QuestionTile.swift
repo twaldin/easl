@@ -11,15 +11,17 @@ import CanvasCore
 /// web links open beside the tile on a click (`PaintedText`, `TextPress`). VoiceOver reads the
 /// whole question (`accessibleText`) and presses its painted controls (`QuestionControlElement`).
 @MainActor
-final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
+final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
     private var object: CanvasObject
     private let board: Board
     private var spec: QuestionSpec
     /// The option picked with a click or its number key, waiting for Return or Answer.
     private var picked: String?
-    private let scroll = NSScrollView()
+    private let scroll = OverlayScrollView()
     private let page = QuestionPage()
-    private let note = NSTextField()
+    private let noteScroll = OverlayScrollView()
+    private let note = QuestionNoteText(usingTextLayoutManager: false)
+    private let noteUndo = UndoManager()
     private var painter: QuestionPainter?
     /// The question's text selected by a drag, for ⌘C and the context menu's Copy; kept while
     /// the tile has the keyboard.
@@ -52,11 +54,33 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
         scroll.documentView = page
         addSubview(scroll)
         page.tile = self
-        note.placeholderString = "Add a note (optional)"
-        note.bezelStyle = .roundedBezel
+        note.isRichText = false
+        note.allowsUndo = true
+        note.drawsBackground = false
+        note.textColor = .labelColor
+        note.isAutomaticQuoteSubstitutionEnabled = false
+        note.isAutomaticDashSubstitutionEnabled = false
+        note.isAutomaticTextReplacementEnabled = false
+        note.isAutomaticSpellingCorrectionEnabled = false
+        note.isVerticallyResizable = true
+        note.isHorizontallyResizable = false
+        note.autoresizingMask = [.width]
+        note.textContainer?.widthTracksTextView = true
+        note.textContainer?.lineFragmentPadding = 0
+        note.textContainerInset = QuestionPainter.notePadding
         note.delegate = self
-        note.cell?.sendsActionOnEndEditing = false
-        page.addSubview(note)
+        note.setAccessibilityLabel("Note")
+        note.setAccessibilityPlaceholderValue("Add a note (optional)")
+        note.onFocusChange = { [weak self] in
+            self?.relayout()
+            self?.revealNote()
+        }
+        noteScroll.drawsBackground = false
+        noteScroll.hasVerticalScroller = true
+        noteScroll.autohidesScrollers = true
+        noteScroll.scrollerStyle = .overlay
+        noteScroll.documentView = note
+        page.addSubview(noteScroll)
         NotificationCenter.default.addObserver(self, selector: #selector(relayout), name: ChromeText.didChange, object: nil)
         relayout()
     }
@@ -75,7 +99,7 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
     @objc private func relayout() {
         let width = max(120, scroll.contentSize.width)
         let painter = QuestionPainter(spec: spec, object: object, board: board, width: width, scale: ChromeText.scale, picked: picked,
-                                      noting: !note.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                      note: note.string, editing: window?.firstResponder === note)
         self.painter = painter
         let previous = controlElements
         controlElements = painter.controls.map { control in
@@ -84,11 +108,21 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
             return element
         }
         page.frame = NSRect(x: 0, y: 0, width: width, height: max(painter.height, scroll.contentSize.height))
-        note.isHidden = painter.noteRect == nil
+        noteScroll.isHidden = painter.noteRect == nil
         if let rect = painter.noteRect {
-            note.frame = rect
-            note.font = ChromeText.font(QuestionPainter.noteFont)
-        } else if window?.firstResponder === note.currentEditor() {
+            noteScroll.frame = rect
+            let font = ChromeText.font(QuestionPainter.noteFont)
+            if note.font != font { note.font = font }
+            let width = noteScroll.contentSize.width
+            note.minSize = NSSize(width: width, height: rect.height)
+            note.maxSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+            note.setFrameSize(NSSize(width: width, height: max(rect.height, note.frame.height)))
+            note.sizeToFit()
+            if note.frame.height <= rect.height {
+                noteScroll.contentView.scroll(to: .zero)
+                noteScroll.reflectScrolledClipView(noteScroll.contentView)
+            }
+        } else if window?.firstResponder === note {
             window?.makeFirstResponder(self)
         }
         // The pointing hand follows the controls and the links in the text as they move.
@@ -111,12 +145,13 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
 
     /// Answers with the picked option and the note; nothing until one of them is given.
     private func confirm() {
-        let text = note.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = note.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard spec.status == .open, picked != nil || !text.isEmpty else { return }
         do {
             try board.answerQuestion(object.id, option: picked, note: text.isEmpty ? nil : text)
             picked = nil
-            note.stringValue = ""
+            note.string = ""
+            noteUndo.removeAllActions()
             leave()
         } catch {
             NSSound.beep()
@@ -137,7 +172,7 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
 
     /// The keyboard back to the canvas, the tile still selected.
     private func leave() {
-        guard window?.firstResponder === self || window?.firstResponder === note.currentEditor() else { return }
+        guard window?.firstResponder === self || window?.firstResponder === note else { return }
         (enclosingCanvas)?.leaveTile(object.id)
     }
 
@@ -279,10 +314,11 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
         }
     }
 
-    /// In the note: Return answers, Esc goes back to the options.
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+    /// Return answers; modified Return inserts a line. Esc and Tab return to the options.
+    func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
         case #selector(NSResponder.insertNewline(_:)):
+            if !(NSApp.currentEvent?.modifierFlags.intersection([.shift, .option]) ?? []).isEmpty { return false }
             confirm()
             return true
         case #selector(NSResponder.cancelOperation(_:)), #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertBacktab(_:)):
@@ -293,9 +329,34 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
         }
     }
 
-    func controlTextDidChange(_ obj: Notification) {
-        // The Answer button turns on with the first character of a note.
+    func undoManager(for view: NSTextView) -> UndoManager? { noteUndo }
+
+    func textDidChange(_ notification: Notification) {
         relayout()
+        revealNote()
+    }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+        revealNote()
+    }
+
+    private func revealNote() {
+        guard window?.firstResponder === note, note.selectedRange().length == 0 else { return }
+        note.scrollRangeToVisible(note.selectedRange())
+        let box = noteScroll.frame.insetBy(dx: 0, dy: -4)
+        if box.height <= scroll.contentSize.height {
+            page.scrollToVisible(box)
+        } else if let layout = note.layoutManager, let container = note.textContainer {
+            layout.ensureLayout(for: container)
+            let length = (note.string as NSString).length
+            var line = layout.extraLineFragmentRect
+            if length > 0, note.selectedRange().location < length || line.isEmpty {
+                let glyph = layout.glyphIndexForCharacter(at: min(note.selectedRange().location, length - 1))
+                line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            }
+            line = line.offsetBy(dx: note.textContainerOrigin.x, dy: note.textContainerOrigin.y)
+            page.scrollToVisible(page.convert(line, from: note).insetBy(dx: 0, dy: -4))
+        }
     }
 
     // MARK: TileContent
@@ -303,8 +364,7 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
     func setLive(_ live: Bool) {}
 
     func render(_ request: TileRenderRequest) async -> TileRender {
-        let painter = QuestionPainter(spec: spec, object: object, board: board, width: request.size.width, scale: 1, picked: picked,
-                                      noting: !note.stringValue.isEmpty, note: note.stringValue)
+        let painter = QuestionPainter(spec: spec, object: object, board: board, width: request.size.width, scale: 1, picked: picked, note: note.string)
         let content = CGSize(width: request.size.width, height: painter.height)
         let size = request.full ? CGSize(width: request.size.width, height: max(request.size.height, content.height)) : request.size
         let image = request.image(size: size) { bounds in
@@ -353,6 +413,25 @@ final class QuestionTile: NSView, TileContent, NSTextFieldDelegate {
         // canvas takes the keyboard back, so a Return meant to answer never archives instead.
         if closing { leave() }
         relayout()
+    }
+}
+
+@MainActor
+private final class QuestionNoteText: NSTextView {
+    var onFocusChange: (() -> Void)?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        guard super.becomeFirstResponder() else { return false }
+        DispatchQueue.main.async { [weak self] in self?.onFocusChange?() }
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        guard super.resignFirstResponder() else { return false }
+        DispatchQueue.main.async { [weak self] in self?.onFocusChange?() }
+        return true
     }
 }
 
@@ -514,14 +593,16 @@ struct QuestionPainter {
     static let metaFont = NSFont.systemFont(ofSize: 11)
     static let keyFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
     static let noteFont = NSFont.systemFont(ofSize: 13)
+    static let notePadding = NSSize(width: 6, height: 4)
+    private static let noteLayout = NSLayoutManager()
 
     private let spec: QuestionSpec
     private let scale: CGFloat
     private let width: CGFloat
     private let picked: String?
     private let noting: Bool
-    /// Drawn in the note field's place by renders (live, the field draws itself).
     private let noteText: String
+    private let editing: Bool
     private var items: [(rect: NSRect, draw: () -> Void)] = []
     private(set) var controls: [Control] = []
     private(set) var noteRect: NSRect?
@@ -532,13 +613,14 @@ struct QuestionPainter {
 
     var clickable: [NSRect] { controls.filter(\.enabled).flatMap(\.clickable) }
 
-    init(spec: QuestionSpec, object: CanvasObject, board: Board, width: CGFloat, scale: Double, picked: String?, noting: Bool, note: String = "") {
+    init(spec: QuestionSpec, object: CanvasObject, board: Board, width: CGFloat, scale: Double, picked: String?, note: String, editing: Bool = false) {
         self.spec = spec
         self.scale = CGFloat(scale)
         self.width = width
         self.picked = picked
-        self.noting = noting
+        noting = !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         noteText = note
+        self.editing = editing
         layout(object: object, board: board)
     }
 
@@ -620,16 +702,12 @@ struct QuestionPainter {
                 y = placeOption(option, index: index, x: inset, y: y, width: inner) + points(6)
             }
             y = placeContext(x: inset, y: y + points(2), width: inner, board: board)
-            let field = NSRect(x: inset, y: y + points(2), width: inner, height: points(24))
+            let line = ceil(Self.noteLayout.defaultLineHeight(for: font(Self.noteFont)))
+            let measured = noteText.isEmpty || noteText.hasSuffix("\n") ? noteText + " " : noteText
+            let height = Self.measure(text(measured, Self.noteFont, .labelColor), width: inner - 2 * Self.notePadding.width).height
+            let field = NSRect(x: inset, y: y + points(2), width: inner,
+                               height: min(max(line, height), line * 8) + 2 * Self.notePadding.height)
             noteRect = field
-            if !noteText.isEmpty {
-                let note = text(noteText, Self.noteFont, .labelColor, truncating: true)
-                items.append((field, {
-                    NSColor.separatorColor.setStroke()
-                    NSBezierPath(roundedRect: field.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5).stroke()
-                    note.draw(with: field.insetBy(dx: 6, dy: 4), options: [.usesLineFragmentOrigin])
-                }))
-            }
             y = field.maxY + points(10)
             y = placeFooter(x: inset, y: y, width: inner)
         } else {
@@ -822,9 +900,6 @@ struct QuestionPainter {
         controls.last { $0.enabled && $0.clickable.contains { $0.contains(point) } }?.hit
     }
 
-    /// Draws the page; a cancelled or expired question dimmed. `noteDrawn`: the note field is
-    /// drawn here (renders), not by its own view. `selection`: the question's text selected
-    /// (live only), highlighted as a text view highlights it.
     func draw(in bounds: NSRect, noteDrawn: Bool, selection: NSRange? = nil) {
         let dimmed = spec.status == .cancelled || spec.status == .expired
         let context = NSGraphicsContext.current?.cgContext
@@ -834,17 +909,23 @@ struct QuestionPainter {
             context?.beginTransparencyLayer(auxiliaryInfo: nil)
         }
         for (index, item) in items.enumerated() where item.rect.intersects(bounds) {
-            if !noteDrawn, item.rect == noteRect { continue }
             if index == questionItem, let question {
                 question.draw(selected: selection)
             } else {
                 item.draw()
             }
         }
-        if noteDrawn, let noteRect, noteText.isEmpty {
-            NSColor.separatorColor.setStroke()
-            NSBezierPath(roundedRect: noteRect.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5).stroke()
-            text("Add a note (optional)", Self.noteFont, .placeholderTextColor).draw(at: NSPoint(x: noteRect.minX + 6, y: noteRect.minY + 4))
+        if let noteRect, noteRect.intersects(bounds) {
+            (editing ? NSColor.controlAccentColor : .separatorColor).setStroke()
+            let border = NSBezierPath(roundedRect: noteRect.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5)
+            border.lineWidth = editing ? 2 : 1
+            border.stroke()
+            if noteText.isEmpty || noteDrawn {
+                let content = noteText.isEmpty ? "Add a note (optional)" : noteText
+                text(content, Self.noteFont, noteText.isEmpty ? .placeholderTextColor : .labelColor)
+                    .draw(with: noteRect.insetBy(dx: Self.notePadding.width, dy: Self.notePadding.height),
+                          options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+            }
         }
         if dimmed {
             context?.endTransparencyLayer()

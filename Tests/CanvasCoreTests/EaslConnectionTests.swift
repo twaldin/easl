@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 import Testing
-import CanvasCore
+@testable import CanvasCore
 
 /// The client connection remote boards use: a Unix socket, or a relay process's stdio (the tests
 /// relay with `nc -U`, as `ssh <host> nc -U` does on the host).
@@ -14,7 +14,8 @@ final class EaslConnectionTests {
     deinit { try? FileManager.default.removeItem(at: dir) }
 
     /// A stand-in for easl's socket: `system.ping`, `events.subscribe` (remembered, so the test
-    /// can push events), `echo` (its params), `later` (answered after `ms`, out of order), `fail`.
+    /// can push events), `echo` (its params), `later` (answered after `ms`, out of order), `fail`;
+    /// and easld's own calls to the client (`call`), whose answers it keeps.
     final class FakeServer: @unchecked Sendable {
         /// What the server was asked, shared with its handler.
         final class Log: @unchecked Sendable {
@@ -22,6 +23,10 @@ final class EaslConnectionTests {
             var subscribers: [(SocketServer.Connection, JSONValue)] = []
             var methods: [String] = []
             var boardLists = 0
+            /// Each link, by its ping.
+            var links: [SocketServer.Connection] = []
+            /// The client's answers to `call`s, in the order they came.
+            var answers: [JSONValue] = []
         }
 
         let server: SocketServer
@@ -31,10 +36,16 @@ final class EaslConnectionTests {
             let log = log
             server = SocketServer(path: path) { request, connection in
                 let id = request["id"] ?? .null
-                let method = request["method"]?.string ?? ""
+                guard let method = request["method"]?.string else {
+                    log.lock.withLock { log.answers.append(request) }
+                    return nil
+                }
                 let params = request["params"] ?? .object([:])
                 log.lock.withLock { log.methods.append(method) }
                 switch method {
+                case "system.ping":
+                    log.lock.withLock { log.links.append(connection) }
+                    return .object(["id": id, "ok": .bool(true), "result": params])
                 case "events.subscribe":
                     log.lock.withLock { log.subscribers.append((connection, params)) }
                     return .object(["id": id, "ok": .bool(true), "result": .object([:])])
@@ -67,6 +78,18 @@ final class EaslConnectionTests {
         }
 
         func stop() { server.stop() }
+
+        /// Sends the client a call of easld's on the latest link.
+        func call(_ id: String, _ method: String, _ params: JSONValue) {
+            log.lock.withLock { log.links.last }?.send(.object(["id": .string(id), "method": .string(method), "params": params]))
+        }
+
+        /// The client's answers once there are `count` (or what came within 30 s).
+        func answers(_ count: Int) async -> [JSONValue] {
+            let deadline = Date().addingTimeInterval(30)
+            while log.lock.withLock({ log.answers.count }) < count, Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+            return log.lock.withLock { log.answers }
+        }
 
         var calls: [String] { log.lock.withLock { log.methods } }
         var subscriptions: [JSONValue] { log.lock.withLock { log.subscribers.map(\.1) } }
@@ -346,5 +369,90 @@ final class EaslConnectionTests {
     @Test func backoffDoublesUpToItsMaximum() {
         let backoff = EaslConnection.Backoff(initial: .milliseconds(500), maximum: .seconds(30))
         #expect((1...8).map { backoff.delay(after: $0) } == [.milliseconds(500), .seconds(1), .seconds(2), .seconds(4), .seconds(8), .seconds(16), .seconds(30), .seconds(30)])
+    }
+
+    // MARK: easld's calls (client.attach)
+
+    /// easld writes its calls on the client's own link; each is answered with its id as it
+    /// finishes, in any order, while the link's own requests go on.
+    @Test func easldsCallsAreAnsweredWithTheirIdsAsEachFinishesAndTheLinkGoesOn() async throws {
+        let server = try FakeServer(path: path)
+        defer { server.stop() }
+        let connection = EaslConnection.unixSocket(path, backoff: fast)
+        defer { connection.close() }
+        let (held, release) = AsyncStream.makeStream(of: Void.self)
+        connection.serve { call in
+            switch call.method {
+            case "view.snapshot":
+                for await _ in held {}
+                return .success(.object(["path": "/tmp/easl-renders/snapshot.png"]))
+            case "agent.prompt":
+                return .failure(EaslConnection.Failure("conflict", "obj_t is blocked"))
+            default:
+                return .success(call.params)
+            }
+        }
+        #expect(await reach(.online, connection))
+        server.call("easld-1", "view.snapshot", .object(["board": "brd_a"]))
+        server.call("easld-2", "view.get", .object(["board": "brd_a"]))
+        server.call("easld-3", "agent.prompt", .object(["target": "obj_t", "text": "hi"]))
+        let first = await server.answers(2)
+        let echoed = try await connection.request("echo", .object(["n": 4]))
+        #expect(echoed["n"] == .number(4), "a call still out holds up none of the link's own requests")
+        release.finish()
+        let all = await server.answers(3)
+        let viewGet: JSONValue = .object(["id": "easld-2", "ok": .bool(true), "result": .object(["board": "brd_a"])])
+        let refused: JSONValue = .object(["id": "easld-3", "ok": .bool(false), "error": .object(["code": "conflict", "message": "obj_t is blocked"])])
+        #expect(first.count == 2 && first.contains(viewGet) && first.contains(refused))
+        #expect(all.count == 3)
+        #expect(all.last == .object(["id": "easld-1", "ok": .bool(true), "result": .object(["path": "/tmp/easl-renders/snapshot.png"])]))
+    }
+
+    /// An answer whose link dropped goes nowhere: a new link's ids start again, so the old answer
+    /// would answer another call there.
+    @Test func anAnswerWhoseLinkDroppedIsNotWrittenOnTheNextLink() async throws {
+        var server = try FakeServer(path: path)
+        let connection = EaslConnection.unixSocket(path, backoff: fast)
+        defer { connection.close() }
+        let (held, release) = AsyncStream.makeStream(of: Void.self)
+        let started = Locked(false), finished = Locked(false)
+        connection.serve { call in
+            if call.method == "agent.read" {
+                started.withLock { $0 = true }
+                for await _ in held {}
+                finished.withLock { $0 = true }
+            }
+            return .success(.object(["answers": .string(call.method)]))
+        }
+        #expect(await reach(.online, connection))
+        server.call("easld-1", "agent.read", .object(["target": "obj_t"]))
+        let deadline = Date().addingTimeInterval(30)
+        while !started.withLock({ $0 }), Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        server.stop()
+        #expect(await reach(.offline, connection))
+        server = try FakeServer(path: path)
+        defer { server.stop() }
+        #expect(await reach(.online, connection))
+        release.finish()
+        while !finished.withLock({ $0 }), Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(200))
+        server.call("easld-1", "view.get", .object(["board": "brd_a"]))
+        #expect(await server.answers(1) == [.object(["id": "easld-1", "ok": .bool(true), "result": .object(["answers": "view.get"])])])
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await server.answers(1).count == 1, "the dropped link's agent.read answer never reached the new link")
+    }
+
+    /// Before anything serves easld's calls (a viewer that hasn't attached), one is refused at once
+    /// rather than left to easld's deadline.
+    @Test func aCallNothingServesIsAnsweredUnavailable() async throws {
+        let server = try FakeServer(path: path)
+        defer { server.stop() }
+        let connection = EaslConnection.unixSocket(path, backoff: fast)
+        defer { connection.close() }
+        #expect(await reach(.online, connection))
+        server.call("easld-7", "view.get", .object(["board": "brd_a"]))
+        let answers = await server.answers(1)
+        #expect(answers.map { $0["id"] } == [.string("easld-7")])
+        #expect(answers.first?["ok"] == .bool(false) && answers.first?["error"]?["code"] == .string("unavailable"))
     }
 }

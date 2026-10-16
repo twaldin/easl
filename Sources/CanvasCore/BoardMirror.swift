@@ -36,12 +36,16 @@ protocol BoardHost: AnyObject {
 /// takes the host's id when its create is answered (`Board.rekeyHost`). Back online after a drop,
 /// the board is read again and the difference applied; the host's events wait while it is read
 /// and follow it, so none is undone by the read. Once both links are back, `onRedraw` tells the
-/// tiles that show the host's drawings to ask for new ones.
+/// tiles that show the host's drawings to ask for new ones. On an easld host the board's window
+/// answers easld's delegated calls, attached as its client on the board's link (`serve`).
 @MainActor
 public final class BoardMirror: BoardHost {
     /// The host as the user knows it, for titles and notices.
     public let hostName: String
     public let boardID: BoardID
+    /// The canonical owner of sessions and events; `boardID` remains the requested window address.
+    public private(set) var sessionBoardID: BoardID
+    public private(set) var mergedBoards: [BoardID] = []
     /// Subscriptions, reads, writes and prompts.
     public let connection: EaslConnection
     /// `view.render`'s own link: the host answers one link's requests in order, and a render may
@@ -59,6 +63,30 @@ public final class BoardMirror: BoardHost {
     /// announces only objects that changed, so a drawing that failed or went stale while a link
     /// was down would otherwise stay as it is until the object changes.
     public var onRedraw: (() -> Void)?
+    /// This viewer as the board's easld's client (docs/design/next.md "The client protocol");
+    /// nil until `serve`, and on a Mac host, which answers those calls itself.
+    public private(set) var attachment: Attachment?
+
+    /// Where this viewer's `client.attach` stands on the board's link.
+    public enum Attachment: Equatable, Sendable {
+        /// The link isn't online: the next one attaches.
+        case waiting
+        /// Sent on this link and not answered yet.
+        case attaching
+        /// easld's name for this viewer and the schema version easld speaks.
+        case attached(client: String, version: Int)
+        /// easld refused it on this link (one without the client protocol, a newer schema version,
+        /// a board it closed): the board works as it did before, and only the next link asks again.
+        case refused(String)
+    }
+
+    /// The board's delegated calls, answered from its window; nil until `serve`.
+    private var calls: DelegatedCalls?
+    private var identity: ClientIdentity?
+    /// The latest attach's number: an older one's answer changes nothing.
+    private var attaches = 0
+    /// The user focused the board while an attach was out: once it is accepted, attach again.
+    private var refocused = false
 
     /// The host's objects as last heard (a reply, an event, a read), by host id.
     private var known: [ObjectID: CanvasObject] = [:]
@@ -104,6 +132,7 @@ public final class BoardMirror: BoardHost {
     public init(hostName: String, board: BoardID, connection: EaslConnection, renders: EaslConnection, renderTimeout: Duration = .seconds(30)) {
         self.hostName = hostName
         boardID = board
+        sessionBoardID = board
         self.connection = connection
         self.renders = renders
         self.renderTimeout = renderTimeout
@@ -122,8 +151,10 @@ public final class BoardMirror: BoardHost {
         } catch let failure as EaslConnection.Failure {
             throw ApiRouter.Failure(failure.code, failure.message)
         }
+        if let current = manifest["board"]?.string, ApiRouter.isBoardID(current) { sessionBoardID = current }
         let board = Board(remote: boardID, root: URL(fileURLWithPath: manifest["root"]?.string ?? "/"), host: self)
         self.board = board
+        mergedBoards = manifest["merged"]?.array?.compactMap(\.string).filter(ApiRouter.isBoardID) ?? []
         install(objects, on: board)
         reading = nil
         // The tiles are made now: they ask over a render link that is offline and fail at once, and
@@ -133,11 +164,13 @@ public final class BoardMirror: BoardHost {
         return board
     }
 
-    /// Ends both links; the board stays as last seen. Asks for drawings not sent yet are answered
-    /// `unavailable`.
+    /// Ends both links, and with the board's link this viewer's attachment; the board stays as
+    /// last seen. Asks for drawings not sent yet are answered `unavailable`.
     public func close() {
         for task in listeners { task.cancel() }
         listeners = []
+        calls = nil
+        attachment = nil
         connection.close()
         renders.close()
         queue.close()
@@ -164,6 +197,9 @@ public final class BoardMirror: BoardHost {
             stale = true
             drops += 1
             redrawDue = true
+        }
+        if calls != nil {
+            if state == .online { attach() } else { attachment = .waiting }
         }
         onState?(state)
         if state == .online, stale { Task { await reread() } }
@@ -197,11 +233,72 @@ public final class BoardMirror: BoardHost {
         renders.reconnect()
     }
 
+    // MARK: The client protocol
+
+    /// Answers the board's delegated calls from `window` (`DelegatedCalls`) and attaches to the
+    /// board's easld as its client: now if the link is online, then once on each link after, and
+    /// again when the user focuses the board (`userFocused`). Only for an easld host (a Mac host
+    /// answers those calls itself), once the board is loaded and its window shows it.
+    public func serve(_ window: ViewerWindow, as identity: ClientIdentity) {
+        guard let board else { return }
+        let calls = DelegatedCalls(board: board, window: window)
+        self.calls = calls
+        self.identity = identity
+        connection.serve { [weak calls] call in
+            await calls?.answer(call) ?? .failure(EaslConnection.Failure("unavailable", "\(call.method): this board's window closed"))
+        }
+        if state == .online { attach() } else { attachment = .waiting }
+    }
+
+    /// The user is looking at this board (its window became key): an accepted attach goes again
+    /// naming it, one still out goes again once it is accepted. A refused link asks nothing.
+    public func userFocused() {
+        switch attachment {
+        case .attached?: attach(focused: true)
+        case .attaching?: refocused = true
+        default: break
+        }
+    }
+
+    /// `client.attach` on the board's link, preserving a focus event even if the user has
+    /// already moved to another window while the previous attach was outstanding.
+    private func attach(focused: Bool = false) {
+        guard let calls, let identity else { return }
+        attaches += 1
+        refocused = false
+        let number = attaches
+        attachment = .attaching
+        var fields: [String: JSONValue] = [
+            "version": .number(Double(ApiParams.schemaVersion)), "schema": .string(ApiParams.schemaHash),
+            "host": .string(identity.host), "serves": .array(DelegatedCalls.served.map(JSONValue.string)),
+            "boards": .array([.string(boardID)]),
+        ]
+        if let app = identity.app { fields["app"] = .string(app) }
+        if focused || calls.window.focused() { fields["focused"] = .string(boardID) }
+        let params = JSONValue.object(fields)
+        Task {
+            do {
+                let reply = try await connection.request("client.attach", params)
+                guard number == attaches, attachment == .attaching else { return }
+                let client = reply["client"]?.string ?? "", version = reply["version"]?.int ?? ApiParams.schemaVersion
+                attachment = .attached(client: client, version: version)
+                NSLog("easl: %@ on %@: attached to its easld as %@ (schema version %ld)", boardID, hostName, client, version)
+                if refocused { attach(focused: true) }
+            } catch {
+                // A link that dropped refused nothing (the next one attaches); nor did a closed one.
+                guard number == attaches, attachment == .attaching, connection.state == .online else { return }
+                let reason = Self.reason(error)
+                attachment = .refused(reason)
+                NSLog("easl: %@ on %@: its easld refused this viewer as a client: %@", boardID, hostName, reason)
+            }
+        }
+    }
+
     // MARK: The host's changes
 
     private func received(_ event: EaslConnection.Event) {
         if reading != nil || creating > 0 { return held.append(event) }
-        guard event.board == nil || event.board == boardID else { return }
+        guard event.board == nil || event.board == sessionBoardID else { return }
         switch event.name {
         case "object.created", "object.updated":
             guard let object = try? event.data.decode(CanvasObject.self) else { return }
@@ -265,7 +362,10 @@ public final class BoardMirror: BoardHost {
             stale = false
             do {
                 let manifest = try await connection.request("board.get", .object(["board": .string(boardID)]))
-                install(try await whole(manifest["objects"]), on: board)
+                let objects = try await whole(manifest["objects"])
+                if let current = manifest["board"]?.string, ApiRouter.isBoardID(current) { sessionBoardID = current }
+                mergedBoards = manifest["merged"]?.array?.compactMap(\.string).filter(ApiRouter.isBoardID) ?? []
+                install(objects, on: board)
             } catch {
                 // Down again: the next `online` reads it.
                 stale = true

@@ -1,8 +1,9 @@
 // bun test extensions/agent-hooks — lifecycle reports while easl is away (report.ts).
+import type { UnixSocketListener } from "bun";
 import { afterEach, expect, jest, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { CanvasClient, CanvasError } from "../../clients/ts/src/index";
 import { release, report, spoolDirectory, watchCanvasReturn } from "./report";
 
@@ -108,15 +109,53 @@ test("an integration hears easl come back after a quit, and after a restart betw
     server = listen();
     jest.advanceTimersByTime(1000);
     expect(returns).toBe(1);
-    // Restarted faster than a check: the socket file is a new one.
+    jest.advanceTimersByTime(3000);
+    expect(returns).toBe(1);
+    // Restarted faster than a check: retaining the old inode prevents Linux from reusing it.
     server.stop(true);
     rmSync(socket, { force: true });
     server = listen();
     jest.advanceTimersByTime(1000);
     expect(returns).toBe(2);
+    jest.advanceTimersByTime(3000);
+    expect(returns).toBe(2);
+    stop();
+    server.stop(true);
+    rmSync(socket, { force: true });
+    server = listen();
+    jest.advanceTimersByTime(3000);
+    expect(returns).toBe(2);
   } finally {
     stop();
     jest.useRealTimers();
     server.stop(true);
+  }
+});
+
+test("return checks tolerate a missing socket directory and notice it once it appears", () => {
+  const socket = join(home(), "later", "easl.sock");
+  let returns = 0;
+  let server: UnixSocketListener<undefined> | undefined;
+  const listen = () => Bun.listen({ unix: socket, socket: { data() {} } });
+  jest.useFakeTimers();
+  const stop = watchCanvasReturn(socket, () => returns++, 1000);
+  try {
+    jest.advanceTimersByTime(3000);
+    expect(returns).toBe(0);
+    mkdirSync(dirname(socket));
+    server = listen();
+    jest.advanceTimersByTime(1000);
+    expect(returns).toBe(1);
+    server!.stop(true);
+    rmSync(socket, { force: true });
+    server = listen();
+    jest.advanceTimersByTime(1000);
+    expect(returns).toBe(2);
+    jest.advanceTimersByTime(3000);
+    expect(returns).toBe(2);
+  } finally {
+    stop();
+    jest.useRealTimers();
+    server?.stop(true);
   }
 });

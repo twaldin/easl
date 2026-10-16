@@ -297,6 +297,9 @@ func (r *Router) boardGet(p map[string]any) (any, error) {
 		objects = append(objects, objectJSON(summarized(o)))
 	}
 	result := map[string]any{"board": b.ID(), "root": b.Root(), "revision": float64(b.Revision()), "objects": objects}
+	if b.Repo != nil && len(b.Repo.Merged) > 0 {
+		result["merged"] = b.Repo.Merged
+	}
 	if hasBranch {
 		list := []any{}
 		for _, id := range regions {

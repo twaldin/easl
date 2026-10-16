@@ -26,9 +26,9 @@ scripts/perf-board.py, shows it at 100% over the densest html area, then runs th
 A row per scenario run records the app's CPU from the burst's start until it is quiet again
 (`ps`), the burst's wall time and RPC latencies, and the `DevPerf` spans over it (main thread
 busy time, the longest stretch it didn't sleep, and `route.board` routings), plus `app.metrics`
-where the bundle has it. Needs yabai and a virtual screen (`EASL_DEV_DISPLAY`) like scripts/dev.sh,
-or `--headless`: the window then stays on the parking Space nobody views, where it is always
-occluded (it renders but composites nothing), so `visible-*` means not minimized.
+where the bundle has it. Needs yabai and a displayed testing Space (`EASL_DEV_SPACE`) like
+scripts/dev.sh, or `--headless`. Headless windows stay on the unviewed parking Space, where they
+are always occluded (they render but composite nothing), so `visible-*` means not minimized.
 """
 import argparse
 import json
@@ -124,44 +124,23 @@ def cost(r0, r1, events=None):
     return out
 
 
-def birth_frame(display_id):
-    """`EASL_DEV_FRAME` for a 1492×926 window on the display with yabai id `display_id` (10 pt in
-    from its left, 50 pt down from its top), in AppKit's screen coordinates (origin at the primary
-    display's bottom left; yabai's frames are top-down): AppKit opens a window on the Space of the
-    display holding its frame, so a window born on a headless virtual screen never shows on the
-    user's display before the launcher's guard moves it (docs/testing.md). The id (the Core
-    Graphics display id) names the same screen whatever else is plugged in; an index shifts."""
-    displays = json.loads(sh(YABAI, "-m", "query", "--displays"))
-    primary = next((d["frame"] for d in displays if d["frame"]["x"] == 0 and d["frame"]["y"] == 0), None)
-    frame = next((d["frame"] for d in displays if d["id"] == display_id), None)
-    if primary is None or frame is None:
-        raise SystemExit(f"--birth-display {display_id}: yabai lists display ids {[d['id'] for d in displays]}; "
-                         "no launch on a display that isn't there")
-    sx, sw, sh_ = frame["x"], frame["w"], frame["h"]
-    sy = primary["h"] - (frame["y"] + frame["h"])
-    w, h = min(1492, sw - 20), min(926, sh_ - 60)
-    return f"{int(sx + 10)} {int(sy + sh_ - 50 - h)} {int(w)} {int(h)}"
-
-
 class Instance:
-    def __init__(self, label, app, tmp, board, display, headless=False, birth_display=None):
+    def __init__(self, label, app, tmp, board, headless=False):
         self.label, self.app, self.board = label, app, board
         # Created here and owned by this run: the only directory `stop` deletes.
         self.scratch = tempfile.mkdtemp(prefix="easl-perf-loop-", dir=tmp)
         self.home, self.root = os.path.join(self.scratch, "home"), os.path.join(self.scratch, "root")
         home = self.home
-        park = os.environ.get("EASL_DEV_PARK_SPACE", "9")
-        self.env = dict(os.environ, EASL_DEV_HOME=home, EASL_DEV_APP=app, EASL_DEV_DISPLAY=display,
+        park = os.environ.get("EASL_DEV_PARK_SPACE", "7")
+        self.env = dict(os.environ, EASL_DEV_HOME=home, EASL_DEV_APP=app,
                         EASL_DEV_PARK_SPACE=park, EASL_SOCKET=os.path.join(home, "easl.sock"))
         # Run from an easl tile, the CLI would address the tile's own board, which the instance
         # doesn't have (`not_found`): the instance's board is the one on its socket.
         for key in ("EASL_BOARD_ID", "EASL_TILE_ID"):
             self.env.pop(key, None)
-        # Headless: the window stays on the parking Space, which nobody views (no virtual screen).
+        # Headless windows stay on the unviewed parking Space.
         if headless:
             self.env["EASL_DEV_SPACE"] = park
-        if birth_display is not None:
-            self.env["EASL_DEV_FRAME"] = birth_frame(birth_display)
         self.headless = headless
         self.variant = 0
         self.pid = None
@@ -594,13 +573,8 @@ def main():
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--out", default="/tmp/easl-perf-loop.jsonl")
     ap.add_argument("--tmp", default="/tmp", help="where each bundle's scratch home is created (and deleted)")
-    ap.add_argument("--display", default=os.environ.get("EASL_DEV_DISPLAY", "CanvasTest"))
     ap.add_argument("--headless", action="store_true",
-                    help="no virtual screen: the window stays on the parking Space (EASL_DEV_PARK_SPACE, default 9), which nobody views")
-    ap.add_argument("--birth-display", type=int, default=None,
-                    help="yabai display id (`yabai -m query --displays`, stable across plug-ins where an index isn't) a new window "
-                         "opens on (EASL_DEV_FRAME), e.g. a headless virtual screen, so it never shows on the user's display before "
-                         "EASL_DEV_LAUNCHER's guard moves it to the parking Space")
+                    help="leave the window on an unviewed parking Space (EASL_DEV_PARK_SPACE, default 7)")
     ap.add_argument("--summarize", action="store_true", help="only print the table for --out's rows")
     args = ap.parse_args()
     apps = [a.split("=", 1) for a in args.app]
@@ -609,13 +583,15 @@ def main():
         rows = [json.loads(l) for l in open(args.out)]
         summarize(rows, [a for a, _ in apps], scenarios)
         return
+    if not args.headless and not os.environ.get("EASL_DEV_SPACE"):
+        ap.error("set EASL_DEV_SPACE to your displayed testing Space, or use --headless")
     rows = []
     with open(args.out, "a") as out:
         for run in range(args.runs):
             order = apps if run % 2 == 0 else list(reversed(apps))
             for label, app in order:
                 print(f"run {run + 1}/{args.runs} {label}", flush=True)
-                inst = Instance(label, app, args.tmp, args.board, args.display, headless=args.headless, birth_display=args.birth_display)
+                inst = Instance(label, app, args.tmp, args.board, headless=args.headless)
                 try:
                     inst.start()
                     for name in scenarios:

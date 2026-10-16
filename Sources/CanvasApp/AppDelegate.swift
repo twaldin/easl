@@ -619,6 +619,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.openedOrder.removeAll { $0 == key }
         }
         show(controller, select: select)
+        controller.serveHost()
         return controller
     }
 

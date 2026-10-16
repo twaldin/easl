@@ -40,11 +40,11 @@ final class BoardMirrorTests {
         SocketServer(path: path) { request, connection in await router.handle(request, connection: connection) }
     }
 
-    func mirror(rendersAt renderSocket: String? = nil, renderTimeout: Duration = .seconds(30)) async throws -> (BoardMirror, Board) {
+    func mirror(board: BoardID? = nil, rendersAt renderSocket: String? = nil, renderTimeout: Duration = .seconds(30)) async throws -> (BoardMirror, Board) {
         // The whole suite keeps the main actor (the router's) busy for seconds at a time.
         let fast = EaslConnection.Backoff(initial: .milliseconds(50), maximum: .milliseconds(200))
         func link(_ path: String) -> EaslConnection { .unixSocket(path, backoff: fast, handshakeTimeout: .seconds(60)) }
-        let mirror = BoardMirror(hostName: "home", board: host.id, connection: link(socket), renders: link(renderSocket ?? socket), renderTimeout: renderTimeout)
+        let mirror = BoardMirror(hostName: "home", board: board ?? host.id, connection: link(socket), renders: link(renderSocket ?? socket), renderTimeout: renderTimeout)
         mirrors.append(mirror)
         return (mirror, try await mirror.load())
     }
@@ -234,6 +234,42 @@ final class BoardMirrorTests {
         }
     }
 
+    @Test func theManifestReportsMergedBoardOwnersOnlyWhenPresent() async throws {
+        let client = try LineClient(path: socket)
+        func manifest(_ params: String = "{}") async throws -> JSONValue {
+            client.send(#"{"id":"get","method":"board.get","params":\#(params)}"#)
+            let reply = try await client.next()
+            #expect(reply["ok"] == .bool(true))
+            return try #require(reply["result"])
+        }
+        #expect(try await manifest()["merged"] == nil)
+        host.repo = RepoRecord(commonDir: dir.appendingPathComponent("root/.git").path)
+        #expect(try await manifest()["merged"] == nil)
+        host.repo?.merged = []
+        #expect(try await manifest()["merged"] == nil)
+        host.repo?.merged = ["brd_old", "brd_second"]
+        let current = try await manifest()
+        #expect(current["board"] == .string(host.id))
+        #expect(current["merged"] == .array(["brd_old", "brd_second"]))
+        let legacy = try await manifest(#"{"board":"brd_old","branch":"main"}"#)
+        #expect(legacy["board"] == .string(host.id))
+        #expect(legacy["merged"] == .array(["brd_old", "brd_second"]))
+    }
+
+    @Test func aLegacyBoardAddressUsesTheCurrentBoardForSessionOwnership() async throws {
+        host.repo = RepoRecord(commonDir: dir.appendingPathComponent("root/.git").path, merged: ["brd_old"])
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]))
+        let (mirror, board) = try await mirror(board: "brd_old")
+        defer { mirror.close() }
+        #expect(mirror.boardID == "brd_old")
+        #expect(board.id == "brd_old")
+        #expect(mirror.sessionBoardID == host.id)
+        #expect(mirror.mergedBoards == ["brd_old"])
+        #expect(board.objects[terminal.id] == host.objects[terminal.id])
+        let added = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]))
+        try await eventually { board.objects[added.id] == host.objects[added.id] }
+    }
+
     @Test func theViewerShowsTheHostsBoardWholeAndFollowsItsChanges() async throws {
         let long = String(repeating: "word ", count: 120)
         let first = note(long)
@@ -346,20 +382,48 @@ final class BoardMirrorTests {
     @Test func backOnlineTheViewerCatchesUpWithWhatChangedMeanwhile() async throws {
         let kept = note("kept")
         let gone = note("gone", at: 400)
+        host.repo = RepoRecord(commonDir: dir.appendingPathComponent("root/.git").path,
+                               merged: ["brd_old", "obj_other", "brd_bad_id", "brd_old\n", ""])
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]))
         let (mirror, board) = try await mirror()
         defer { mirror.close() }
+        #expect(mirror.boardID == host.id)
+        #expect(mirror.mergedBoards == ["brd_old"])
+        #expect(board.objects[terminal.id] == host.objects[terminal.id])
+        #expect(board.repo == nil, "a remote board must not acquire the host's local repository state")
+        var ownershipAtCreation: [ObjectID: [BoardID]] = [:]
+        board.onEvent = { [weak mirror] event in
+            guard let mirror else { return }
+            if case .objectCreated(let object) = event, object.type == .terminal {
+                ownershipAtCreation[object.id] = mirror.mergedBoards
+            }
+        }
         var states: [EaslConnection.State] = []
         mirror.onState = { states.append($0) }
         server.stop()
         try await eventually { mirror.state != .online }
         try host.delete(gone.id)
         _ = try host.update(kept.id, props: .object(["markdown": .string("changed while away")]))
-        let added = note("added while away", at: 800)
+        host.repo?.merged = ["brd_old", "brd_second"]
+        let added = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]), frame: Frame(x: 800, y: 0, w: 400, h: 300))
         server = Self.serve(router, at: socket)
         try server.start()
         try await eventually { mirror.state == .online }
         try await eventually { board.objects[gone.id] == nil && board.objects[added.id] != nil && board.objects[kept.id] == host.objects[kept.id] }
         #expect(states.last == .online && states.contains { $0 != .online })
+        #expect(mirror.mergedBoards == ["brd_old", "brd_second"])
+        #expect(ownershipAtCreation == [added.id: ["brd_old", "brd_second"]])
+        #expect(board.repo == nil)
+
+        server.stop()
+        try await eventually { mirror.state != .online }
+        host.repo?.merged = nil
+        let withoutHistory = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]), frame: Frame(x: 1300, y: 0, w: 400, h: 300))
+        server = Self.serve(router, at: socket)
+        try server.start()
+        try await eventually { board.objects[withoutHistory.id] == host.objects[withoutHistory.id] }
+        #expect(mirror.mergedBoards == [])
+        #expect(ownershipAtCreation == [added.id: ["brd_old", "brd_second"], withoutHistory.id: []])
     }
 
     // MARK: Host-drawn tiles on a big board (issue #82)
@@ -705,5 +769,241 @@ final class BoardMirrorTests {
         try await eventually { host.objects[id]?.props["markdown"]?.string == "typed before the host answered" && host.objects[id]?.frame.x == 40 }
         try await eventually { board.objects[id] == host.objects[id] }
         #expect(host.objects.values.filter { $0.type == .note }.count == 1)
+    }
+
+    // MARK: The viewer as easld's client
+
+    /// easld's side of the client protocol in front of the host's router: `client.attach`
+    /// (accepted as easld accepts it, or else left to the router, which has no such method), and
+    /// the composer's `agent.prompt` and, when `measuresWrites`, `object.update` sent on to the
+    /// attached client and answered once it answers. Its answers are taken as they come, ahead of
+    /// the link's requests, as easld's reader takes them.
+    final class Easld: @unchecked Sendable {
+        let accepts: Bool
+        let measuresWrites: Bool
+        private let lock = NSLock()
+        private var client: SocketServer.Connection?
+        private var sent = 0
+        private var waiting: [String: @Sendable (JSONValue) async -> Void] = [:]
+        private var attachLog: [JSONValue] = []
+        private var promptLog: [JSONValue] = []
+        private var answerLog: [JSONValue] = []
+
+        init(accepts: Bool = true, measuresWrites: Bool = false) {
+            self.accepts = accepts
+            self.measuresWrites = measuresWrites
+        }
+
+        /// Each `client.attach`'s params, in order.
+        var attaches: [JSONValue] { lock.withLock { attachLog } }
+        /// The viewer's own `agent.prompt`s' params.
+        var prompts: [JSONValue] { lock.withLock { promptLog } }
+        /// The client's answers to easld's calls, in order.
+        var answers: [JSONValue] { lock.withLock { answerLog } }
+
+        func attaching(_ params: JSONValue, on connection: SocketServer.Connection) {
+            lock.withLock {
+                attachLog.append(params)
+                if accepts { client = connection }
+            }
+        }
+
+        func prompted(_ params: JSONValue) {
+            lock.withLock { promptLog.append(params) }
+        }
+
+        /// Sends the attached client `method`; `then` gets its answer.
+        func call(_ method: String, _ params: JSONValue, then: @escaping @Sendable (JSONValue) async -> Void) {
+            let (client, id) = lock.withLock { () -> (SocketServer.Connection?, String) in
+                sent += 1
+                waiting["easld-\(sent)"] = then
+                return (self.client, "easld-\(sent)")
+            }
+            client?.send(.object(["id": .string(id), "method": .string(method), "params": params]))
+        }
+
+        func answered(_ answer: JSONValue) async {
+            let then = lock.withLock { () -> (@Sendable (JSONValue) async -> Void)? in
+                answerLog.append(answer)
+                return answer["id"]?.string.flatMap { waiting.removeValue(forKey: $0) }
+            }
+            await then?(answer)
+        }
+    }
+
+    /// The host's socket served as `easld` fronts it from now on.
+    func serveEasld(_ easld: Easld) throws {
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let id = request["id"] ?? .null
+            let params = request["params"] ?? .object([:])
+            switch request["method"]?.string {
+            case nil:
+                await easld.answered(request)
+                return nil
+            case "client.attach"?:
+                easld.attaching(params, on: connection)
+                guard easld.accepts else { return await router.handle(request, connection: connection) }
+                return .object(["id": id, "ok": .bool(true), "result": .object(["client": "cli_1", "version": 1, "schema": .string(ApiParams.schemaHash)])])
+            case "agent.prompt"?:
+                easld.prompted(params)
+                var forwarded = params.object ?? [:]
+                forwarded["mentions"] = nil
+                easld.call("agent.prompt", .object(forwarded)) { answer in connection.send(answer.merging(.object(["id": id]))) }
+                return nil
+            case "object.update"? where easld.measuresWrites:
+                let note: JSONValue = .object(["kind": "note", "text": params["props"]?["markdown"] ?? "", "width": 280, "root": "/home/tim/repo"])
+                easld.call("text.measure", .object(["items": [note]])) { _ in
+                    if let reply = await router.handle(request, connection: connection) { connection.send(reply) }
+                }
+                return nil
+            default:
+                return await router.handle(request, connection: connection)
+            }
+        }
+        try server.start()
+    }
+
+    let identity = ClientIdentity(app: "0.2.7", host: "studio")
+
+    /// A board's window for `serve`: key while `focused` says, its terminals typed into by `submit`.
+    func window(focused: @escaping () -> Bool = { false }, submit: @escaping (ObjectID, String) async -> Bool = { _, _ in false }) -> ViewerWindow {
+        ViewerWindow(focused: focused, viewState: { nil }, snapshot: { _ in nil }, submit: submit, surfaceTail: { _, _ in nil },
+                     block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") }, status: { _ in nil })
+    }
+
+    @Test func aFocusDuringAttachIsKeptAfterTheWindowResigns() async throws {
+        let attaches = Locked<[JSONValue]>([])
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            guard request["method"]?.string == "client.attach" else { return await router.handle(request, connection: connection) }
+            let first = attaches.withLock { log in
+                log.append(request["params"] ?? .null)
+                return log.count == 1
+            }
+            let response: JSONValue = .object(["id": request["id"] ?? .null, "ok": .bool(true),
+                                               "result": .object(["client": "cli_1", "version": 1, "schema": .string(ApiParams.schemaHash)])])
+            if first {
+                pending.withLock { $0 = { connection.send(response) } }
+                return nil
+            }
+            return response
+        }
+        try server.start()
+        let (mirror, _) = try await mirror()
+        defer { mirror.close() }
+        var key = false
+        mirror.serve(window(focused: { key }), as: identity)
+        try await eventually { pending.withLock { $0 != nil } }
+        key = true
+        mirror.userFocused()
+        key = false
+        pending.withLock { $0 }?()
+        try await eventually { attaches.withLock { $0.count == 2 } }
+        try #require(attaches.withLock { $0.count } == 2)
+        #expect(attaches.withLock { $0[0]["focused"] } == nil)
+        #expect(attaches.withLock { $0[1]["focused"] } == .string(host.id))
+    }
+
+    @Test func theViewerAttachesOnceOnEachLinkAndAgainWhenTheUserFocusesTheBoard() async throws {
+        let easld = Easld()
+        try serveEasld(easld)
+        let (mirror, _) = try await mirror()
+        defer { mirror.close() }
+        var key = false
+        mirror.serve(window(focused: { key }), as: identity)
+        try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
+        let attach: JSONValue = .object([
+            "version": 1, "schema": .string(ApiParams.schemaHash), "app": "0.2.7", "host": "studio",
+            "serves": ["view.get", "view.snapshot", "agent.prompt", "agent.read", "text.measure"], "boards": [.string(host.id)],
+        ])
+        #expect(easld.attaches == [attach], "never view.render or object.reload")
+        key = true
+        mirror.userFocused()
+        try await eventually { easld.attaches.count == 2 }
+        #expect(easld.attaches.last == attach.merging(.object(["focused": .string(host.id)])))
+        server.stop()
+        try await eventually { mirror.attachment == .waiting }
+        try serveEasld(easld)
+        try await eventually { easld.attaches.count == 3 && mirror.attachment == .attached(client: "cli_1", version: 1) }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(easld.attaches.count == 3, "one attach on the new link: \(easld.attaches)")
+        #expect(easld.attaches.last?["focused"] == .string(host.id))
+    }
+
+    /// An easl without the client protocol (the app's own router, as a Mac host's) refuses the
+    /// attach: the board goes on as before, and only the next link asks again.
+    @Test func aRefusedAttachLeavesTheBoardWorkingAndOnlyTheNextLinkAsksAgain() async throws {
+        let easld = Easld(accepts: false)
+        try serveEasld(easld)
+        let edited = note("before")
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        mirror.serve(window(focused: { true }), as: identity)
+        try await eventually { mirror.attachment == .refused("unknown method client.attach") }
+        _ = try host.update(edited.id, frame: Frame(x: 50, y: 60, w: 280, h: 200))
+        try await eventually { board.objects[edited.id]?.frame.x == 50 }
+        _ = try board.update(edited.id, props: .object(["markdown": "the viewer's"]))
+        try await eventually { host.objects[edited.id]?.props["markdown"]?.string == "the viewer's" }
+        mirror.userFocused()
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(easld.attaches.count == 1, "a refused link asks nothing more")
+        server.stop()
+        try await eventually { mirror.attachment == .waiting }
+        try serveEasld(easld)
+        try await eventually { easld.attaches.count == 2 && mirror.attachment == .refused("unknown method client.attach") }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(easld.attaches.count == 2, "the next link asks once")
+        #expect(mirror.state == .online)
+    }
+
+    /// On easld the composer's prompt comes back to this viewer, which types it into the
+    /// terminal's surface and answers: asked once, typed once, never sent on again.
+    @Test func theComposersPromptComesBackToThisViewerToTypeAndGoesOutOnce() async throws {
+        let easld = Easld()
+        try serveEasld(easld)
+        let agent = host.create(type: .terminal, props: .object(["cwd": .string(dir.path), "name": "worker"])).id
+        try host.reportLifecycle(tile: agent, kind: "omp", state: .idle, message: nil, seq: 1, source: nil, protocol: 1, pid: Int(getpid()))
+        let (mirror, _) = try await mirror()
+        defer { mirror.close() }
+        var pasted: [String] = []
+        mirror.serve(window(submit: { id, text in
+            pasted.append("\(id): \(text)")
+            return true
+        }), as: identity)
+        try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
+        try await mirror.prompt("fix the build", to: agent, mentions: [], answer: false)
+        #expect(pasted == ["\(agent): fix the build"])
+        #expect(easld.prompts == [.object(["target": .string(agent), "text": "fix the build", "composer": .bool(true)])], "typing it asked the host nothing")
+        #expect(easld.answers.count == 1)
+        let result = try #require(easld.answers.first?["result"])
+        #expect(result["delivery"] == .string("typed"))
+        #expect(result["waitable"] == .bool(true))
+        #expect(result["agent"]?["tile"] == .string(agent))
+        // The pid the agent reported is the host's: the app names it only for a terminal of its own.
+        #expect(result["agent"]?["pid"] == nil)
+        #expect(router.agentEntry(try #require(host.objects[agent]), on: host)["pid"] == .number(Double(getpid())))
+    }
+
+    /// easld measures a note through this viewer while the viewer's own write waits on the same
+    /// link: the measure is answered, and the write lands.
+    @Test func aWriteEasldMeasuresThroughThisViewerLands() async throws {
+        let easld = Easld(measuresWrites: true)
+        try serveEasld(easld)
+        let edited = note("before")
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        mirror.serve(window(), as: identity)
+        try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
+        let markdown = "# Plan\n\nShip the client protocol."
+        _ = try board.update(edited.id, props: .object(["markdown": .string(markdown)]))
+        try await eventually { host.objects[edited.id]?.props["markdown"]?.string == markdown }
+        let size = try await ObjectMeasure.size(type: .note, props: .object(["markdown": .string(markdown)]), width: 280, root: dir)
+        #expect(easld.answers.first == .object(["id": "easld-1", "ok": .bool(true), "result": .object(["sizes": [
+            .object(["w": .number(size.width), "h": .number(size.height), "tableShortfall": 0]),
+        ]])]))
     }
 }
