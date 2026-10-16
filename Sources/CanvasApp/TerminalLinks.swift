@@ -5,6 +5,11 @@ import GhosttyTerminal
 import ImageIO
 import UniformTypeIdentifiers
 
+enum TerminalImageInput: Sendable {
+    case bytes(Data)
+    case fileURL(URL)
+}
+
 struct TerminalPasteDestination: Sendable {
     enum Machine: Sendable {
         case local
@@ -31,17 +36,27 @@ struct TerminalPasteDestination: Sendable {
         case .local:
             result = try await RemoteHost.run("/bin/sh", ["-c", TerminalPaste.script, "easl"] + arguments, input: input, timeout: 60)
         case .hosted(let route):
-            let script = "TMPDIR=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || printf '%s' \"${TMPDIR:-/tmp}\"); export TMPDIR\n" + TerminalPaste.script
-            result = try await RemoteHost.run("/usr/bin/ssh", route.ssh(HostedTerminal.remote(script, arguments)), input: input, timeout: 60)
+            result = try await RemoteHost.run("/usr/bin/ssh", route.ssh(HostedTerminal.remote(TerminalPaste.hostScript, arguments)), input: input, timeout: 60)
         case .remote(let host):
-            result = try await RemoteHost.run(RemoteHost.ssh, host.scriptArguments(TerminalPaste.script, arguments), input: input, timeout: 60)
+            let base = ((host.zmxDir ?? host.socketPath) as NSString).deletingLastPathComponent
+            let script = "export EASL_PASTE_BASE=\(RemoteHost.quote(base))\n" + TerminalPaste.script
+            result = try await RemoteHost.run(RemoteHost.ssh, host.scriptArguments(script, arguments), input: input, timeout: 60)
         }
         guard result.status == 0 else {
             throw EaslConnection.Failure("unavailable", "Image copy failed on the terminal's host. \(result.errors.trimmingCharacters(in: .whitespacesAndNewlines))")
         }
         return result.output
     }
-    private static func encodedImage(_ data: Data) throws -> (data: Data, ext: String) {
+    private static func encodedImage(_ input: TerminalImageInput) throws -> (data: Data, ext: String) {
+        let data: Data
+        switch input {
+        case .bytes(let bytes):
+            data = bytes
+        case .fileURL(let url):
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            data = try Data(contentsOf: url)
+        }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             throw EaslConnection.Failure("invalid", "The pasted image couldn't be read")
         }
@@ -76,11 +91,11 @@ struct TerminalPasteDestination: Sendable {
     }
 
 
-    func stage(_ images: [Data]) async throws -> String {
+    func stage(_ images: [TerminalImageInput]) async throws -> String {
         var paths: [String] = []
-        for bytes in images {
+        for input in images {
             try Task.checkCancellation()
-            let encoded = await offPool { Result { try Self.encodedImage(bytes) } }
+            let encoded = await offPool { Result { try Self.encodedImage(input) } }
             let image = try encoded.get()
             try Task.checkCancellation()
             let output = try await run(TerminalPaste.stageArguments(instance: instance, session: session, name: UUID().uuidString + "." + image.ext, size: image.data.count), input: image.data)
@@ -125,7 +140,7 @@ final class CanvasTerminalView: TerminalView {
         case key(NSEvent)
         case text(String)
         case paste
-        case images([Data], TerminalPasteDestination)
+        case images([TerminalImageInput], TerminalPasteDestination)
         case problem(String)
     }
     private var pendingInput: [Input] = []
@@ -203,17 +218,15 @@ final class CanvasTerminalView: TerminalView {
         if !dropping, hasText, !items.contains(where: { Self.imageFile($0) != nil }) { return false }
         guard Self.hasImages(pasteboard) else { return false }
         do {
-            var images: [Data] = []
+            var images: [TerminalImageInput] = []
             for item in items {
                 if let url = Self.imageFile(item) {
-                    let scoped = url.startAccessingSecurityScopedResource()
-                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    images.append(try Data(contentsOf: url))
+                    images.append(.fileURL(url))
                 } else if let type = Self.imageType(item) {
                     guard let data = item.data(forType: type) else {
                         throw EaslConnection.Failure("invalid", "The pasted image couldn't be read")
                     }
-                    images.append(data)
+                    images.append(.bytes(data))
                 }
             }
             guard let destination = imageDestination?() else {

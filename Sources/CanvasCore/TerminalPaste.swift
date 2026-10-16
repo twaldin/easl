@@ -3,6 +3,51 @@ import Foundation
 /// The host-side storage protocol for images pasted into one terminal session.
 public enum TerminalPaste {
     public static let keepDays = 7
+    public static let sweepInterval: TimeInterval = 60 * 60
+
+    /// Hosted sessions use the same fixed home as HostedTerminal.easldRelay.
+    public static var hostScript: String {
+        "export EASL_PASTE_BASE=\"${EASL_PASTE_BASE:-$HOME/.local/state/easl}\"\n" + script
+    }
+
+    /// One app-owned timer, independent of windows, connections, and staged image count.
+    public final class Maintenance {
+        private let timer: DispatchSourceTimer
+        private let queue = DispatchQueue(label: "net.waldin.easl.terminal-paste", qos: .utility)
+
+        public init(baseDirectories: [URL], interval: TimeInterval = TerminalPaste.sweepInterval) {
+            let bases = Array(Set(baseDirectories.map { $0.path }))
+            let source = DispatchSource.makeTimerSource(queue: queue)
+            timer = source
+            source.setEventHandler {
+                for base in bases {
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+                    process.arguments = ["-c", TerminalPaste.script, "easl", "sweep"]
+                    var environment = ProcessInfo.processInfo.environment
+                    environment["EASL_PASTE_BASE"] = base
+                    process.environment = environment
+                    process.standardInput = FileHandle.nullDevice
+                    do {
+                        try process.run()
+                        process.waitUntilExit()
+                        if process.terminationStatus != 0 { NSLog("easl: terminal image expiration failed in %@", base) }
+                    } catch {
+                        NSLog("easl: terminal image expiration failed: %@", error.localizedDescription)
+                    }
+                }
+            }
+            source.schedule(deadline: .now(), repeating: interval, leeway: .nanoseconds(0))
+            source.resume()
+        }
+
+        public func stop() {
+            timer.cancel()
+            queue.sync {}
+        }
+
+        deinit { stop() }
+    }
 
     public static func stageArguments(instance: String, session: String, name: String, size: Int) -> [String] {
         ["stage", instance, session, name, String(size)]
@@ -29,7 +74,7 @@ public enum TerminalPaste {
         return path
     }
 
-    /// Session end is the primary cleanup. Pruning runs opportunistically after seven days.
+    /// Session end is primary cleanup. The host owner also runs sweep at launch and hourly.
     public static let script = #"""
         set -eu
         mode=${1:-} instance=${2:-} session=${3:-}
@@ -37,8 +82,7 @@ public enum TerminalPaste {
         component() {
           case $1 in ''|.*|*[!A-Za-z0-9._-]*) fail 'invalid staging name' ;; esac
         }
-        component "$instance"
-        component "$session"
+        case $mode in sweep) ;; *) component "$instance"; component "$session" ;; esac
         case $mode in
           stage)
             [ "$#" = 5 ] || fail 'invalid stage arguments'
@@ -46,12 +90,13 @@ public enum TerminalPaste {
             component "$name"
             case $size in ''|*[!0-9]*) fail 'invalid image size' ;; esac ;;
           discard) [ "$#" = 3 ] || fail 'invalid discard arguments' ;;
+          sweep) [ "$#" = 1 ] || fail 'invalid sweep arguments' ;;
           *) fail 'invalid staging operation' ;;
         esac
         umask 077
-        base=${TMPDIR:-/tmp}
-        case $base in /*) ;; *) fail 'temporary directory is not absolute' ;; esac
-        base=$(CDPATH= cd -P -- "$base" && pwd -P) || fail 'temporary directory is unavailable'
+        base=${EASL_PASTE_BASE:-${TMPDIR:-/tmp}}
+        case $base in /*) ;; *) fail 'staging base is not absolute' ;; esac
+        base=$(CDPATH= cd -P -- "$base" && pwd -P) || fail 'staging base is unavailable'
         uid=$(id -u)
         root="${base%/}/easl-paste-$uid"
         case $(uname -s) in Darwin) stat_owner() { stat -f '%u' "$1"; } ;; *) stat_owner() { stat -c '%u' "$1"; } ;; esac
@@ -60,12 +105,14 @@ public enum TerminalPaste {
           chmod 700 "$1" || fail 'cannot protect staging directory'
         }
         if [ ! -e "$root" ] && [ ! -L "$root" ]; then
-          [ "$mode" != discard ] || exit 0
+          [ "$mode" = stage ] || exit 0
           mkdir "$root" 2>/dev/null || [ -d "$root" ] || fail 'cannot create staging root'
         fi
         private_directory "$root"
-        find "$root" -mindepth 3 -type f -mtime +\#(keepDays - 1) -exec rm -f {} + 2>/dev/null || :
-        find "$root" -depth -mindepth 1 -type d -empty -mtime +\#(keepDays - 1) -exec rmdir {} + 2>/dev/null || :
+        if ! find "$root" -mindepth 3 -maxdepth 3 -type f -mtime +\#(keepDays - 1) -exec rm -f {} +; then
+          [ "$mode" != sweep ] || fail 'cannot expire image copies'
+        fi
+        [ "$mode" != sweep ] || exit 0
         instance_dir="$root/$instance"
         dir="$instance_dir/$session"
         for folder in "$instance_dir" "$dir"; do

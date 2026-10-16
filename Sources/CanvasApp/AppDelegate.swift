@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// tab group.
     private var heldTabs: [ObjectIdentifier: HeldTab] = [:]
     private var terminationSignal: DispatchSourceSignal?
+    private var pasteMaintenance: TerminalPaste.Maintenance?
     private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
         guard let self else { return nil }
@@ -57,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !DevPerf.enabled { Metrics.shared.sampleStalls(into: AppPaths.support.appendingPathComponent("stalls", isDirectory: true)) }
         // easl's own leftovers: dead sessions' zmx logs, read Ghostty configs, old renders.
         Housekeeping.pruneAtLaunch()
+        pasteMaintenance = TerminalPaste.Maintenance(baseDirectories: [AppPaths.support, FileManager.default.temporaryDirectory])
         if let url = AppPaths.asset(DrawingStyle.fontAsset) { DrawingStyle.registerFonts(url) }
         registry.onEvent = { [weak self] board, event in
             self?.controllers[board.id]?.apply(event)
@@ -251,6 +253,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        pasteMaintenance?.stop()
+        pasteMaintenance = nil
         for controller in controllers.values { controller.canvas.saveViewport() }
         registry.store.flush(Array(registry.boards.values))
         for controller in controllers.values { controller.saveComposer() }

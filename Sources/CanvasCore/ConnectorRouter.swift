@@ -1242,7 +1242,7 @@ public struct ConnectorRouter: Sendable {
                     let pieces = gaps.compactMap { gap -> Piece? in
                         let usableLow = max(lowBound, gap.low + borderClearance)
                         let usableHigh = min(highBound, gap.high - borderClearance)
-                        return usableLow <= usableHigh ? (gap, usableLow...usableHigh) : nil
+                        return usableLow <= usableHigh ? (gap: gap, usable: usableLow...usableHigh) : nil
                     }
                     func width(_ piece: Piece) -> CGFloat { piece.usable.upperBound - piece.usable.lowerBound }
                     func distance(_ piece: Piece) -> CGFloat { max(piece.usable.lowerBound - coord, coord - piece.usable.upperBound, 0) }

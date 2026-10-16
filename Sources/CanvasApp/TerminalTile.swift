@@ -58,7 +58,7 @@ final class TerminalTile: NSView, TileContent {
         super.init(frame: terminal.frame)
         terminal.autoresizingMask = [.width, .height]
         if let attach {
-            terminal.configuration = TerminalSurfaceOptions(backend: .exec, workingDirectory: NSHomeDirectory(), envVars: [:], command: Self.remoteCommand(attach))
+            terminal.configuration = TerminalSurfaceOptions(backend: .exec, workingDirectory: NSHomeDirectory(), envVars: [:], command: RemoteHost.terminalCommand(attach))
         } else {
             let environment = Self.environment(tile: object.id, board: board)
             terminal.configuration = TerminalSurfaceOptions(
@@ -113,7 +113,7 @@ final class TerminalTile: NSView, TileContent {
             while let view = ancestor, !(view is CanvasView) { ancestor = view.superview }
             guard let remote = (ancestor as? CanvasView)?.remote else { return nil }
             remoteHost = remote.host
-            instance = Self.label(URL(fileURLWithPath: remote.host.socketPath).deletingLastPathComponent().path)
+            instance = HostedTerminal.homeLabel(URL(fileURLWithPath: remote.host.socketPath).deletingLastPathComponent().path)
         } else {
             instance = Self.homeLabel
         }
@@ -219,23 +219,16 @@ final class TerminalTile: NSView, TileContent {
         """#
     }
 
-    /// The support directory as a zmx label value (`label(_:)`).
-    static let homeLabel = label(AppPaths.support.path)
+    /// The support directory as a zmx label value.
+    static let homeLabel = HostedTerminal.homeLabel(AppPaths.support.path)
     /// The default home's sessions from before a rename, labelled with an earlier name's support
     /// directory (Canvas's, Chalkwork's), which LegacyMigration moved here: this instance's own
     /// (attaching relabels them).
     static let legacyHomeLabels: [String] = {
         guard AppPaths.isDefaultHome else { return [] }
         let migration = LegacyMigration(home: FileManager.default.homeDirectoryForCurrentUser)
-        return migration.sources.map { TerminalTile.label(migration.support($0).path) }
+        return migration.sources.map { HostedTerminal.homeLabel(migration.support($0).path) }
     }()
-
-    /// A path as a zmx label value, which allows only `[A-Za-z0-9._-]`: every other UTF-8 byte
-    /// becomes `_` (what `tr -c` does in scripts/dev.sh).
-    static func label(_ path: String) -> String {
-        let legal = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-".utf8)
-        return String(decoding: path.utf8.map { legal.contains($0) ? $0 : UInt8(ascii: "_") }, as: UTF8.self)
-    }
 
     /// What a new session runs before dropping to a login shell (`AgentResume.initialArgv`: the
     /// recorded agent session resumed, else the tile's `command`) as one command line.
@@ -262,28 +255,6 @@ final class TerminalTile: NSView, TileContent {
         return HostedTerminal.spawnParams(tile: objectID, board: board.id, merged: merged ?? board.repo?.merged ?? [], argv: argv ?? AgentResume.initialArgv(object), cwd: object.props["cwd"]?.string,
                                           home: home, run: run, homeLabel: Self.homeLabel, cmuxPassword: AppPaths.cmuxPassword,
                                           ghosttyIntegration: TerminalConfig.shared.shellIntegration != nil)
-    }
-
-    /// A remote terminal's command: the host's attach, again until the tile closes. An attach that
-    /// ends cleanly (a detach, or the session's shell exited) attaches again after a second, as a
-    /// local tile's detach reattaches (`surfaceClosed`). The host having no such session
-    /// (`RemoteHost.noSessionStatus`) before the first attach means its own tile hasn't started it
-    /// yet; after one, that the session ended: the command exits, and the host's delete of the
-    /// tile arrives. Any other failure (the link dropped) is retried every 2 s.
-    static func remoteCommand(_ attach: [String]) -> String {
-        let loop = #"""
-        attached=
-        while :; do
-          "$@"
-          case $? in
-            0) attached=1; sleep 1; continue ;;
-            \#(RemoteHost.noSessionStatus)) [ -z "$attached" ] || exit 0 ;;
-          esac
-          printf '\r\033[2K[easl] waiting for the host…'
-          sleep 2
-        done
-        """#
-        return ShellWords.quote(["/bin/sh", "-c", loop, "easl-remote"] + attach)
     }
 
     /// Reports this hosted terminal's integration spooled on its host while it couldn't reach the

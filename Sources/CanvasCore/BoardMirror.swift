@@ -42,6 +42,9 @@ public final class BoardMirror: BoardHost {
     /// The host as the user knows it, for titles and notices.
     public let hostName: String
     public let boardID: BoardID
+    /// The canonical owner of sessions and events; `boardID` remains the requested window address.
+    public private(set) var sessionBoardID: BoardID
+    public private(set) var mergedBoards: [BoardID] = []
     /// Subscriptions, reads, writes and prompts.
     public let connection: EaslConnection
     /// `view.render`'s own link: the host answers one link's requests in order, and a render may
@@ -104,6 +107,7 @@ public final class BoardMirror: BoardHost {
     public init(hostName: String, board: BoardID, connection: EaslConnection, renders: EaslConnection, renderTimeout: Duration = .seconds(30)) {
         self.hostName = hostName
         boardID = board
+        sessionBoardID = board
         self.connection = connection
         self.renders = renders
         self.renderTimeout = renderTimeout
@@ -122,8 +126,10 @@ public final class BoardMirror: BoardHost {
         } catch let failure as EaslConnection.Failure {
             throw ApiRouter.Failure(failure.code, failure.message)
         }
+        if let current = manifest["board"]?.string, ApiRouter.isBoardID(current) { sessionBoardID = current }
         let board = Board(remote: boardID, root: URL(fileURLWithPath: manifest["root"]?.string ?? "/"), host: self)
         self.board = board
+        mergedBoards = manifest["merged"]?.array?.compactMap(\.string).filter(ApiRouter.isBoardID) ?? []
         install(objects, on: board)
         reading = nil
         // The tiles are made now: they ask over a render link that is offline and fail at once, and
@@ -201,7 +207,7 @@ public final class BoardMirror: BoardHost {
 
     private func received(_ event: EaslConnection.Event) {
         if reading != nil || creating > 0 { return held.append(event) }
-        guard event.board == nil || event.board == boardID else { return }
+        guard event.board == nil || event.board == sessionBoardID else { return }
         switch event.name {
         case "object.created", "object.updated":
             guard let object = try? event.data.decode(CanvasObject.self) else { return }
@@ -265,7 +271,10 @@ public final class BoardMirror: BoardHost {
             stale = false
             do {
                 let manifest = try await connection.request("board.get", .object(["board": .string(boardID)]))
-                install(try await whole(manifest["objects"]), on: board)
+                let objects = try await whole(manifest["objects"])
+                if let current = manifest["board"]?.string, ApiRouter.isBoardID(current) { sessionBoardID = current }
+                mergedBoards = manifest["merged"]?.array?.compactMap(\.string).filter(ApiRouter.isBoardID) ?? []
+                install(objects, on: board)
             } catch {
                 // Down again: the next `online` reads it.
                 stale = true

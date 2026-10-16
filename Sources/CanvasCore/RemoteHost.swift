@@ -13,13 +13,15 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     public var sshTarget: String
     /// The host's easl socket.
     public var socketPath: String
-    /// The host's GUI session TMPDIR, where zmx keeps its sessions; an ssh session's differs on
-    /// a Mac (`getconf DARWIN_USER_TEMP_DIR` finds the GUI's).
+    /// The host's temporary directory. A Mac app's zmx uses its GUI session's TMPDIR,
+    /// found with `getconf DARWIN_USER_TEMP_DIR`, rather than an ssh session's.
     public var tmpdir: String
     /// The host's `easl` CLI.
     public var easlBin: String
     /// The host's zmx: a non-interactive ssh session's PATH may lack Homebrew's directory.
     public var zmxBin: String
+    /// easld's session directory; nil for a Mac app, whose sessions use the GUI TMPDIR.
+    public var zmxDir: String?
     /// The app bundle that owns `socketPath`, which `startCommand` opens; nil when the viewer
     /// can't tell (a development instance's launcher isn't discoverable) or the host isn't a Mac.
     public var appBundle: String?
@@ -29,13 +31,14 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     public var ncShutdown: Bool
 
     public init(name: String, sshTarget: String, socketPath: String, tmpdir: String, easlBin: String, zmxBin: String = "zmx",
-                appBundle: String? = nil, ncShutdown: Bool = false) {
+                appBundle: String? = nil, ncShutdown: Bool = false, zmxDir: String? = nil) {
         self.name = name
         self.sshTarget = sshTarget
         self.socketPath = socketPath
         self.tmpdir = tmpdir
         self.easlBin = easlBin
         self.zmxBin = zmxBin
+        self.zmxDir = zmxDir
         self.appBundle = appBundle
         self.ncShutdown = ncShutdown
     }
@@ -64,18 +67,33 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         ["-T"] + Self.batchOptions + [sshTarget, "env", Self.quote("TMPDIR=" + tmpdir), HostedTerminal.remote(script, args)]
     }
 
-    /// Exit status of `terminalAttachCommand` when the host has no such session (yet).
-    public static let noSessionStatus: Int32 = 75
+    /// Attaches only to this tile's session in the discovered socket's home, on its board or a merged board.
+    /// The shared hosted attach waits through session restarts and refuses copies owned elsewhere.
+    public func terminalAttachCommand(tile: ObjectID, board: BoardID, merged: [BoardID]) -> [String] {
+        let home = (socketPath as NSString).deletingLastPathComponent
+        let setup = "export TMPDIR=\(Self.quote(tmpdir))\n"
+            + (zmxDir.map { "export ZMX_DIR=\(Self.quote($0))\n" } ?? "")
+            + "z=\(Self.quote(zmxBin))"
+        let command = HostedTerminal.ownershipAttach(session: "canvas-" + tile, home: HostedTerminal.homeLabel(home),
+                                                     board: board, tile: tile, merged: merged, setup: setup)
+        return [Self.ssh, "-t", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", sshTarget, command]
+    }
 
-    /// The command a terminal tile runs to show the host's zmx session `session`. It attaches
-    /// only to a session that exists, else exits `noSessionStatus`: `zmx attach` creates a
-    /// missing one (a bare shell without labels), and the host's own tile attaching later would
-    /// find it and never run its agent.
-    public func terminalAttachCommand(session: String) -> [String] {
-        let zmx = Self.quote(zmxBin)
-        let script = "\(zmx) get \"$1\" >/dev/null 2>&1 || { echo \"no session $1 yet\" >&2; exit \(Self.noSessionStatus); }; exec \(zmx) attach \"$1\""
-        return [Self.ssh, "-t", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", sshTarget,
-                "env", "TMPDIR=" + Self.quote(tmpdir), "sh", "-c", Self.quote(script), "sh", Self.quote(session)]
+    /// Retries transport failures and ended sessions until the viewer disposes the surface.
+    /// An ownership refusal holds the notice without retrying or repainting it.
+    public static func terminalCommand(_ attach: [String]) -> String {
+        let loop = #"""
+        while :; do
+          "$@"
+          case $? in
+            \#(HostedTerminal.refused)) exec sleep 2147483647 ;;
+            0) sleep 1; continue ;;
+          esac
+          printf '\r\033[2K[easl] waiting for the host…'
+          sleep 2
+        done
+        """#
+        return ShellWords.quote(["/bin/sh", "-c", loop, "easl-remote"] + attach)
     }
 
     /// Starts the easl whose socket `socketPath` is, without bringing it forward there. Needs a
@@ -135,7 +153,7 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         let directory = support ?? (mac ? home + "/Library/Application Support/Easl" : ((values["state"].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/.local/state") + "/easl"))
         let easl = mac ? macEaslBin : (values["easl"] ?? "easl")
         return RemoteHost(name: name, sshTarget: sshTarget, socketPath: directory + "/easl.sock", tmpdir: tmpdir, easlBin: easl, zmxBin: values["zmx"] ?? "zmx",
-                          appBundle: mac && support == nil ? macApp : nil, ncShutdown: values["ncshutdown"] == "1")
+                          appBundle: mac && support == nil ? macApp : nil, ncShutdown: values["ncshutdown"] == "1", zmxDir: mac ? nil : directory + "/zmx")
     }
 
     /// The installed easl app on a Mac.

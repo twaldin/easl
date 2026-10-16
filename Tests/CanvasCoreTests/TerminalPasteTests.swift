@@ -9,9 +9,10 @@ struct TerminalPasteTests {
         return directory
     }
 
-    func run(_ directory: URL, _ arguments: [String], input: Data? = nil) async throws -> (status: Int32, output: String, errors: String) {
-        try await RemoteHost.run("/usr/bin/env", ["TMPDIR=\(directory.path)", "/bin/sh", "-c", TerminalPaste.script, "easl"] + arguments,
-                                 input: input, timeout: 10)
+    func run(_ directory: URL, _ arguments: [String], input: Data? = nil, base: URL? = nil, script: String = TerminalPaste.script) async throws -> (status: Int32, output: String, errors: String) {
+        let environment = ["TMPDIR=\(directory.path)", "EASL_PASTE_BASE=\(base?.path ?? "")"]
+        return try await RemoteHost.run("/usr/bin/env", environment + ["/bin/sh", "-c", script, "easl"] + arguments,
+                                       input: input, timeout: 10)
     }
 
     func stage(_ directory: URL, instance: String = "mac-1234", session: String = "canvas-obj_1", name: String = "image.png", bytes: Data) async throws -> String {
@@ -76,6 +77,11 @@ struct TerminalPasteTests {
             defer { try? FileManager.default.removeItem(at: directory) }
             let outside = directory.appendingPathComponent("outside")
             try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+            let suffix = ["mac-1234/canvas-obj_1/private.png", "canvas-obj_1/private.png", "private.png", "private.png"][level]
+            let kept = outside.appendingPathComponent(suffix)
+            try FileManager.default.createDirectory(at: kept.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data([8]).write(to: kept)
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -8 * 86400)], ofItemAtPath: kept.path)
             let root = directory.appendingPathComponent("easl-paste-\(getuid())")
             let instance = root.appendingPathComponent("mac-1234")
             let session = instance.appendingPathComponent("canvas-obj_1")
@@ -85,7 +91,9 @@ struct TerminalPasteTests {
             let result = try await run(directory, TerminalPaste.stageArguments(instance: "mac-1234", session: "canvas-obj_1", name: "image.png", size: 1), input: Data([1]))
             #expect(result.status == 2)
             #expect(result.output == "")
-            #expect(try FileManager.default.contentsOfDirectory(atPath: outside.path) == [])
+            let swept = try await run(directory, ["sweep"])
+            #expect(swept.status == (level == 0 ? 2 : 0))
+            #expect(try Data(contentsOf: kept) == Data([8]))
             if level < 3 {
                 let discard = try await run(directory, TerminalPaste.discardArguments(instance: "mac-1234", session: "canvas-obj_1"))
                 #expect(discard.status == 2)
@@ -121,9 +129,73 @@ struct TerminalPasteTests {
         let root = directory.appendingPathComponent("easl-paste-\(getuid())")
         try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("foreign-link"), withDestinationURL: outside)
         let fresh = try await stage(directory, session: "fresh", bytes: bytes)
+        let expired = try await stage(directory, instance: "other-instance", session: "unwatched", bytes: bytes)
+        let boundary = try await stage(directory, session: "not-yet-expired", bytes: bytes)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -7 * 86400 + 60)], ofItemAtPath: boundary)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -7 * 86400 - 1)], ofItemAtPath: expired)
+        let swept = try await run(directory, ["sweep"])
+        #expect(swept.status == 0)
+        #expect(!FileManager.default.fileExists(atPath: expired))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: boundary)) == bytes)
         #expect(!FileManager.default.fileExists(atPath: old))
         #expect(try Data(contentsOf: kept) == bytes)
         #expect(try Data(contentsOf: URL(fileURLWithPath: fresh)) == bytes)
+    }
+
+    @Test func hostedStorageAndOwnerSweepIgnorePrivateTemporaryNamespaces() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let home = directory.appendingPathComponent("owner home")
+        let privateTmp = directory.appendingPathComponent("private tmp")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: privateTmp, withIntermediateDirectories: true)
+        let arguments = TerminalPaste.stageArguments(instance: "remote-mac", session: "canvas-unwatched", name: "image.png", size: 3)
+        let result = try await run(privateTmp, arguments, input: Data([1, 2, 3]), base: home, script: TerminalPaste.hostScript)
+        #expect(result.status == 0, "\(result.errors)")
+        let staged = try #require(TerminalPaste.stagedPath(result.output))
+        #expect(staged == home.resolvingSymlinksInPath().path + "/easl-paste-\(getuid())/remote-mac/canvas-unwatched/image.png")
+        #expect(try Data(contentsOf: URL(fileURLWithPath: staged)) == Data([1, 2, 3]))
+        let local = try await stage(privateTmp, bytes: Data([9]))
+        let old = Date(timeIntervalSinceNow: -8 * 86400)
+        for path in [staged, local] {
+            try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: path)
+        }
+        let swept = try await run(directory, ["sweep"], base: home)
+        #expect(swept.status == 0)
+        #expect(!FileManager.default.fileExists(atPath: staged))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: local)) == Data([9]))
+    }
+
+    @Test func ownerTimerExpiresWithoutInputAndStopsUntilRestart() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let startup = try await stage(directory, session: "startup", bytes: Data([1]))
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -8 * 86400)], ofItemAtPath: startup)
+        let owner = TerminalPaste.Maintenance(baseDirectories: [directory], interval: 0.02)
+        defer { owner.stop() }
+        for _ in 0..<500 where FileManager.default.fileExists(atPath: startup) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!FileManager.default.fileExists(atPath: startup))
+        let periodic = try await stage(directory, session: "periodic", bytes: Data([2]))
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -8 * 86400)], ofItemAtPath: periodic)
+        for _ in 0..<500 where FileManager.default.fileExists(atPath: periodic) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!FileManager.default.fileExists(atPath: periodic))
+        owner.stop()
+        let stopped = try await stage(directory, session: "stopped", bytes: Data([3]))
+        let fresh = try await stage(directory, session: "fresh", bytes: Data([4]))
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -8 * 86400)], ofItemAtPath: stopped)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: stopped)) == Data([3]))
+        let restarted = TerminalPaste.Maintenance(baseDirectories: [directory], interval: 3600)
+        defer { restarted.stop() }
+        for _ in 0..<500 where FileManager.default.fileExists(atPath: stopped) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!FileManager.default.fileExists(atPath: stopped))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: fresh)) == Data([4]))
     }
 
     @Test func onlyOneAbsoluteProtocolPathIsAcceptedAndPathsQuoteAsShellWords() async throws {
