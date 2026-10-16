@@ -448,6 +448,15 @@ struct RemoteHostTests {
         }
     }
 
+    @Test func aHostCannotExpandIntoAShellCommandInSshConfig() {
+        for bad in ["deckbox$(id)", "a`id`", "a;b", "a&b", "a|b", "a<b", "a>b", "a{b}", "a\\b", "a'b", "a\"b", "tim@-oX"] {
+            #expect(RemoteHost.problem(withHost: bad) != nil, "\(bad.debugDescription)")
+        }
+        for host in ["tim@deckbox", "alias.example", "tim@[fd7a:115c:a1e0::1]"] {
+            #expect(RemoteHost.problem(withHost: host) == nil)
+        }
+    }
+
     /// Polls for the pid a test script wrote to `file`: long, since a CI runner can stall every
     /// test for seconds.
     func pid(in file: String) async -> Int32? {
