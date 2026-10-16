@@ -22,6 +22,16 @@ attach)
   if [ "$1" = "--labels" ]; then labels="$2"; shift 2; fi
   name="$1"; shift
   [ -e "$state/$name" ] && exit 0
+  if [ "$1" = /usr/bin/env ]; then
+    shift
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -u) unset "$2"; shift 2 ;;
+        *=*) export "$1"; shift ;;
+        *) break ;;
+      esac
+    done
+  fi
   { printf 'labels=%s\n' "$labels"; printf 'cwd=%s\n' "$(pwd)"; printf 'socket=%s\n' "$EASL_SOCKET"; printf 'tile=%s\n' "$EASL_TILE_ID"; printf 'path=%s\n' "$PATH"; for a in "$@"; do printf 'arg=%s\n' "$a"; done; env | sed 's/^/env=/'; } > "$state/$name"
   ;;
 list)

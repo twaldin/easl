@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -15,7 +16,15 @@ func TestSpawnFirstAttachRestoresBracketedPaste(t *testing.T) {
 	if zmx == "" {
 		t.Skip("real zmx is not installed; the file-backed zmxtest fixture cannot retain terminal modes")
 	}
-	home := t.TempDir()
+	home, err := os.MkdirTemp("/tmp", "easl-zmx-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(home); err != nil {
+			t.Errorf("remove real zmx scratch: %v", err)
+		}
+	})
 	m := &Manager{Zmx: zmx, Dir: filepath.Join(home, "zmx"), Shell: "/bin/sh", Home: home,
 		Env: []string{"HOME=" + home, "PATH=/usr/bin:/bin", "TERM=xterm-256color", "ZMX_TRACK_ENV="}}
 	const tile = "first_view"
@@ -25,7 +34,8 @@ func TestSpawnFirstAttachRestoresBracketedPaste(t *testing.T) {
 		}
 	})
 	name, created, err := m.Spawn(SpawnRequest{Tile: tile,
-		Command: []string{"/bin/sh", "-c", "printf '\033[?2004h'; exec sleep 60"}})
+		Env:     map[string]string{"ZMX_NO_DETACH_KEY": "1", "ZMX_TRACK_ENV": "RETAINED"},
+		Command: []string{"/bin/sh", "-c", "test \"$ZMX_NO_DETACH_KEY:$ZMX_TRACK_ENV\" = 1:RETAINED && printf '\033[?2004h'; exec sleep 60"}})
 	if err != nil || !created {
 		t.Fatalf("spawn: created %v, error %v", created, err)
 	}
@@ -57,8 +67,7 @@ func TestSpawnFirstAttachRestoresBracketedPaste(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	cmd.Stderr = cmd.Stdout
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +85,7 @@ func TestSpawnFirstAttachRestoresBracketedPaste(t *testing.T) {
 			if err != io.EOF {
 				t.Logf("attach read: %v", err)
 			}
-			t.Fatalf("first attach did not restore bracketed paste: output %q, stderr %q", output.Bytes(), stderr.String())
+			t.Fatalf("first attach did not restore bracketed paste: output %q", output.Bytes())
 		}
 	}
 	t.Logf("first attach restored bracketed paste: %q", output.Bytes())
