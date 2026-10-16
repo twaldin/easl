@@ -1,27 +1,11 @@
 import AppKit
 import CanvasCore
 
-/// Where a hosted terminal's commands go: the ssh target and the app's control socket for it.
-/// What `Zmx` needs off the main actor.
-struct HostRoute: Sendable {
-    let target: String
-    let controlPath: String
-
-    /// ssh running `command` on the host, through the app's connection when it is up.
-    func ssh(_ command: String) -> [String] {
-        HostedTerminal.sshOptions(controlPath: controlPath) + ["-o", "ControlMaster=no", "-T", target, command]
-    }
-}
-
-/// The app's connection to a machine hosting terminal tiles (`props.host`; `HostedTerminal`):
-/// one ssh master per host and app instance, which the tiles' attaches and the app's calls to
-/// the host's easld multiplex over. It forwards a loopback port on the host to this instance's
-/// `RelayGate`, under a new token each connection, which the host's easld serves as this
-/// instance's sockets there (`relay.open`). While a hosted tile is open it reconnects after a
-/// loss, every 1 s, doubling to 30 s (Reconnect on the tile tries at once), and on each connect
-/// replays what the open tiles' integrations spooled there, then asks easld to start every open
-/// tile's session that isn't running (after a reboot of the host, with the agent's recorded
-/// session, as a local tile resumes).
+/// The terminal-specific connection to a host (`props.host`; `HostedTerminal`), over its shared
+/// `HostMaster`. It forwards a loopback port on the host to this instance's `RelayGate`, under a
+/// new token each connection, which easld serves as this instance's sockets (`relay.open`).
+/// While a hosted tile is open it reconnects after a loss, every 1 s, doubling to 30 s, replays
+/// spooled integrations and asks easld to start every open tile's session that isn't running.
 @MainActor
 final class TerminalHost {
     enum State: Equatable {
@@ -46,13 +30,18 @@ final class TerminalHost {
     /// Ends every connection (at quit). The tiles' attaches go with them; the sessions don't.
     static func closeAll() {
         for host in hosts.values {
-            host.master?.terminate()
+            host.closed = true
+            host.connecting?.cancel()
+            host.retry?.cancel()
+            host.keepAlive?.cancel()
             host.gate?.stop()
         }
+        HostMaster.closeAll()
     }
 
     let target: String
     nonisolated let route: HostRoute
+    private let master: HostMaster
     /// This instance on hosts (`HostedTerminal.instance`).
     nonisolated static let instance = HostedTerminal.instance(hostname: localHostname(), support: AppPaths.support.path)
 
@@ -69,7 +58,8 @@ final class TerminalHost {
     /// Why easld couldn't start a tile's session, by tile.
     private(set) var failures: [ObjectID: String] = [:]
 
-    private var master: Process?
+    private var masterGeneration: UInt = 0
+    private var closed = false
     private var connecting: Task<Void, Never>?
     private var retry: Task<Void, Never>?
     private var delay: Double = 1
@@ -77,9 +67,9 @@ final class TerminalHost {
 
     private init(target: String) {
         self.target = target
-        // Under the temporary directory, short enough for a socket path (104 bytes).
-        let key = HostedTerminal.instance(hostname: target, support: AppPaths.support.path + "\n" + target)
-        route = HostRoute(target: target, controlPath: FileManager.default.temporaryDirectory.appendingPathComponent("easl-ssh-\(key)").path)
+        master = HostMaster.named(target, support: AppPaths.support.path)
+        route = master.route
+        master.onEnded = { [weak self] message in self?.masterEnded(message) }
     }
 
     /// `gethostname`, without the name service lookups `ProcessInfo.hostName` may wait on.
@@ -117,7 +107,7 @@ final class TerminalHost {
     // MARK: Connection
 
     private func connect() {
-        guard connecting == nil, tiles.count > 0 else { return }
+        guard !closed, connecting == nil, tiles.count > 0 else { return }
         retry?.cancel()
         retry = nil
         state = .connecting
@@ -126,6 +116,7 @@ final class TerminalHost {
             guard let self else { return }
             let result = await self.establish()
             self.connecting = nil
+            guard !self.closed else { return }
             switch result {
             case .success(let found):
                 self.home = found.home
@@ -150,37 +141,14 @@ final class TerminalHost {
     /// old port was free for anyone on the host to listen on, while easld still dialed it.
     private func establish() async -> Result<(home: String, run: String), Failure> {
         let route = route
-        if master == nil {
-            // A new master forwards nothing yet.
-            port = nil
-            // A master a crashed run of the app left forwards nothing this run set up.
-            _ = await offPool { Self.ssh(["-S", route.controlPath, "-O", "exit", route.target]) }
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = HostedTerminal.sshOptions(controlPath: route.controlPath) + ["-M", "-N", "-o", "ControlPersist=no", "-o", "ExitOnForwardFailure=no", route.target]
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = FileHandle.nullDevice
-            let errors = Pipe()
-            process.standardError = errors
-            process.terminationHandler = { [weak self] ended in
-                let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                let status = ended.terminationStatus
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated { self?.masterEnded(ended, status: status, message: message) }
-                }
-            }
-            do { try process.run() } catch { return .failure(Failure(message: "ssh didn't start: \(error.localizedDescription)")) }
-            master = process
+        do {
+            try await master.ready()
+        } catch {
+            return .failure(Failure(message: error.localizedDescription))
         }
-        // Up once its control socket answers (ConnectTimeout bounds the wait).
-        let deadline = Date().addingTimeInterval(15)
-        while true {
-            guard let master, master.isRunning else { return .failure(Failure(message: lastError ?? "ssh to \(target) exited")) }
-            if await offPool({ Self.ssh(["-S", route.controlPath, "-O", "check", route.target]).status == 0 }) { break }
-            if Date() > deadline { return .failure(Failure(message: "ssh to \(target) didn't connect in 15 s")) }
-            try? await Task.sleep(for: .milliseconds(150))
-        }
+        let generation = masterGeneration
         let probe = await offPool { Self.ssh(route.ssh(HostedTerminal.probe)) }
+        guard generation == masterGeneration else { return .failure(Failure(message: "ssh to \(target) disconnected")) }
         guard probe.status == 0, let found = HostedTerminal.parseProbe(probe.output) else {
             return .failure(Failure(message: "\(target) didn't answer as expected: \(probe.errors.isEmpty ? probe.output : probe.errors)"))
         }
@@ -202,6 +170,7 @@ final class TerminalHost {
         // a failed attempt keeps its forward, which now takes only the new token.
         if port == nil {
             let forward = await offPool { Self.ssh(["-S", route.controlPath, "-O", "forward", "-R", "127.0.0.1:0:\(gate.path)", route.target]) }
+            guard generation == masterGeneration else { return .failure(Failure(message: "ssh to \(target) disconnected")) }
             guard forward.status == 0, let forwarded = Int(forward.output.trimmingCharacters(in: .whitespacesAndNewlines)) else {
                 return .failure(Failure(message: "ssh couldn't forward a port on \(target) back to easl: \(forward.errors)"))
             }
@@ -210,6 +179,7 @@ final class TerminalHost {
         guard let port else { return .failure(Failure(message: "no forwarded port")) }
         do {
             let relay = try await call("relay.open", .object(["instance": .string(Self.instance), "port": .number(Double(port)), "token": .string(gate.token)]))
+            guard generation == masterGeneration else { return .failure(Failure(message: "ssh to \(target) disconnected")) }
             guard let socket = relay["easl"]?.string else { return .failure(Failure(message: "\(target)'s easld didn't say where it relays easl's socket")) }
             return .success((found.home, (socket as NSString).deletingLastPathComponent))
         } catch {
@@ -217,16 +187,12 @@ final class TerminalHost {
         }
     }
 
-    /// What the master said when it last exited.
-    private var lastError: String?
-
-    private func masterEnded(_ process: Process, status: Int32, message: String) {
-        guard process === master else { return }
-        master = nil
-        lastError = message.isEmpty ? "ssh to \(target) exited (\(status))" : message
-        NSLog("easl: connection to %@ ended (%d): %@", target, status, message)
+    private func masterEnded(_ message: String) {
+        port = nil
+        masterGeneration &+= 1
+        NSLog("easl: connection to %@ ended: %@", target, message)
         // While connecting, `establish` sees it go.
-        if connecting == nil { lost(lastError ?? "") }
+        if connecting == nil { lost(message) }
     }
 
     /// While connected, opens the relay again every 30 s to re-arm a failed connection and fetch
@@ -248,6 +214,7 @@ final class TerminalHost {
     }
 
     private func lost(_ reason: String) {
+        guard !closed else { return }
         keepAlive?.cancel()
         keepAlive = nil
         state = .offline(reason)
@@ -386,7 +353,8 @@ final class TerminalHost {
     func call(_ method: String, _ params: JSONValue) async throws -> JSONValue {
         let request = try JSONValue.object(["id": .string("1"), "method": .string(method), "params": params]).encodedLine()
         let arguments = route.ssh(HostedTerminal.easldRelay)
-        let reply = await offPool { HostedTerminal.request("/usr/bin/ssh", arguments, line: request) }
+        let executable = route.executable
+        let reply = await offPool { HostedTerminal.request(executable, arguments, line: request) }
         guard let line = reply.line, let value = try? JSONDecoder().decode(JSONValue.self, from: line) else {
             throw ApiRouter.Failure("unavailable", "\(target)'s easld didn't answer \(method)\(reply.errors.isEmpty ? "" : ": " + reply.errors)")
         }
@@ -401,7 +369,7 @@ final class TerminalHost {
     /// Runs ssh to its end: its status, standard output and standard error.
     nonisolated private static func ssh(_ arguments: [String]) -> (status: Int32, output: String, errors: String) {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        process.executableURL = URL(fileURLWithPath: RemoteHost.ssh)
         process.arguments = arguments
         process.standardInput = FileHandle.nullDevice
         let output = Pipe(), errors = Pipe()
@@ -418,7 +386,7 @@ final class TerminalHost {
     nonisolated private static func fetch(_ arguments: [String], into directory: URL) -> Bool {
         guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)) != nil else { return false }
         let ssh = Process(), tar = Process(), pipe = Pipe()
-        ssh.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        ssh.executableURL = URL(fileURLWithPath: RemoteHost.ssh)
         ssh.arguments = arguments
         ssh.standardInput = FileHandle.nullDevice
         ssh.standardOutput = pipe
@@ -430,6 +398,7 @@ final class TerminalHost {
         guard (try? ssh.run()) != nil else { return false }
         guard (try? tar.run()) != nil else {
             ssh.terminate()
+            ssh.waitUntilExit()
             return false
         }
         // tar sees the end of the archive only once nothing here holds the pipe open.
