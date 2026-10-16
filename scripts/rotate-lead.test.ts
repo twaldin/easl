@@ -307,16 +307,21 @@ test("SIGTERM kills a real owned CLI child and records an interrupted unsent rot
 test("SIGTERM after the owned CLI exits still records a clean interrupted rotation", async () => {
   const f = fixture({ scenario: "hung-cli" });
   f.preload = join(f.dir, "exit-during-shutdown.ts");
-  // Hold stdout after reaping the CLI and expose the native ESRCH instead of Bun's exited-handle no-op.
+  // Replay native ESRCH from a signal-0 probe after reaping, without signaling a possibly reused PID.
   writeFileSync(f.preload, `
     import type { Subprocess } from "bun";
     import { readFileSync } from "node:fs";
     const spawn = Bun.spawn;
     let owned: Subprocess;
+    let missing: unknown;
     Bun.spawn = function (...args: Parameters<typeof spawn>) {
       const child = spawn(...args);
       owned = child;
-      child.kill = (signal) => { process.kill(child.pid, signal); };
+      const kill = child.kill.bind(child);
+      child.kill = (signal) => {
+        if (missing !== undefined) throw missing;
+        kill(signal);
+      };
       return child;
     } as typeof spawn;
     const text = Response.prototype.text;
@@ -328,8 +333,13 @@ test("SIGTERM after the owned CLI exits still records a clean interrupted rotati
         const stateFile = process.env.ROTATION_FIXTURE_STATE!;
         // Fake time cannot advance this external CLI, and a rename notification can precede readiness.
         while (!JSON.parse(readFileSync(stateFile, "utf8")).hungPid) await Bun.sleep(5);
-        process.kill(owned.pid, "SIGKILL");
+        owned.kill("SIGKILL");
         await owned.exited;
+        try { process.kill(owned.pid, 0); } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          missing = error;
+        }
+        if (missing === undefined) throw new Error("fixture PID was reused before the absent-child probe");
         const terminated = new Promise<void>((resolve) => process.once("SIGTERM", () => resolve()));
         process.kill(process.pid, "SIGTERM");
         await terminated;
