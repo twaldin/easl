@@ -1,11 +1,70 @@
 // swift-tools-version: 6.0
 import PackageDescription
+import Foundation
 
-// Command Line Tools ship swift-testing outside the default search and runtime paths, and
-// `swift test`'s helper does not discover tests with it. Tests therefore build as an executable
-// that calls swift-testing's entry point directly: `swift run CanvasCoreTests`.
-let cltFrameworks = "/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
-let cltLibs = "/Library/Developer/CommandLineTools/Library/Developer/usr/lib"
+func toolOutput(_ executable: String, _ arguments: [String]) -> String {
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    process.standardOutput = output
+    process.standardError = output
+    do {
+        try process.run()
+    } catch {
+        fatalError("Cannot run \(executable): \(error)")
+    }
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard process.terminationStatus == 0 else {
+        fatalError("\(executable) \(arguments.joined(separator: " ")) failed: \(text)")
+    }
+    return text
+}
+
+// CLT does not discover these suites through `swift test`, so keep an executable runner.
+// Resolve Testing and its macros from the same selected Apple compiler.
+let swiftCompiler = URL(fileURLWithPath:
+    Context.environment["SWIFT_EXEC"] ?? toolOutput("/usr/bin/xcrun", ["--find", "swiftc"])
+).resolvingSymlinksInPath()
+let toolchain = swiftCompiler.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+let testingFrameworks = toolchain.pathExtension == "xctoolchain"
+    ? toolchain.deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Platforms/MacOSX.platform/Developer/Library/Frameworks")
+    : toolchain.appendingPathComponent("Library/Developer/Frameworks")
+let testingLibraries = toolchain.pathExtension == "xctoolchain"
+    ? testingFrameworks.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("usr/lib")
+    : toolchain.appendingPathComponent("Library/Developer/usr/lib")
+let testingMacros = toolchain.appendingPathComponent("usr/lib/swift/host/plugins/testing/libTestingMacros.dylib")
+
+// Temporary CI inventory. Remove after the CLT 27 macro-loading run.
+print("Testing compiler: \(swiftCompiler.path)")
+print("Testing compiler version: \(toolOutput(swiftCompiler.path, ["--version"]))")
+print("Testing SDK: \(toolOutput("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"]))")
+print("Testing frameworks: \(testingFrameworks.path)")
+print("Testing runtime libraries: \(testingLibraries.path)")
+print("Testing macro plugin: \(testingMacros.path)")
+let applications = try FileManager.default.contentsOfDirectory(
+    at: URL(fileURLWithPath: "/Applications"), includingPropertiesForKeys: nil
+)
+for application in applications.sorted(by: { $0.path < $1.path })
+    where application.lastPathComponent.hasPrefix("Xcode") && application.pathExtension == "app" {
+    let compiler = application.appendingPathComponent("Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc")
+    if FileManager.default.isExecutableFile(atPath: compiler.path) {
+        print("Testing candidate \(compiler.path): \(toolOutput(compiler.path, ["--version"]))")
+    }
+}
+
+for requiredPath in [
+    testingFrameworks.appendingPathComponent("Testing.framework"),
+    testingLibraries,
+    testingMacros,
+] {
+    guard FileManager.default.fileExists(atPath: requiredPath.path) else {
+        fatalError("Selected Swift compiler \(swiftCompiler.path) is missing \(requiredPath.path)")
+    }
+}
 
 let package = Package(
     name: "Easl",
@@ -63,8 +122,15 @@ let package = Package(
             path: "Tests/CanvasCoreTests",
             // Recorded language-server answers the tests replay, read from the checkout.
             exclude: ["Fixtures"],
-            swiftSettings: [.unsafeFlags(["-F", cltFrameworks])],
-            linkerSettings: [.unsafeFlags(["-F", cltFrameworks, "-framework", "Testing", "-Xlinker", "-rpath", "-Xlinker", cltFrameworks, "-Xlinker", "-rpath", "-Xlinker", cltLibs])]
+            swiftSettings: [.unsafeFlags([
+                "-F", testingFrameworks.path,
+                "-load-plugin-library", testingMacros.path,
+            ])],
+            linkerSettings: [.unsafeFlags([
+                "-F", testingFrameworks.path, "-framework", "Testing",
+                "-Xlinker", "-rpath", "-Xlinker", testingFrameworks.path,
+                "-Xlinker", "-rpath", "-Xlinker", testingLibraries.path,
+            ])]
         ),
     ]
 )

@@ -264,14 +264,33 @@ final class LanguageServiceTests: Sendable {
         // own build, as it would for a repo someone works in.
         let build = Process()
         build.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
-        build.arguments = ["build", "-j", "2", "--package-path", dir.path]
-        build.standardOutput = FileHandle.nullDevice
-        build.standardError = FileHandle.nullDevice
+        build.arguments = ["build", "-v", "-j", "2", "--package-path", dir.path]
+        build.standardOutput = FileHandle.standardOutput
+        build.standardError = FileHandle.standardError
         let buildStatus = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, Error>) in
             build.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
             do { try build.run() } catch { continuation.resume(throwing: error) }
         }
         #expect(buildStatus == 0)
+
+        let swiftConfig = try #require(LanguageServerConfig.defaults.first { $0.language == "swift" })
+        let toolPaths = await offPool {
+            (LoginShell.shared.resolve("swift")?.resolvingSymlinksInPath().path,
+             LoginShell.shared.locate(swiftConfig)?.resolvingSymlinksInPath().path)
+        }
+        print("Swift references diagnostic. Build launcher \(build.executableURL!.path), login swift \(toolPaths.0 ?? "not found"), sourcekit-lsp \(toolPaths.1 ?? "not found").")
+        let buildDirectory = dir.appendingPathComponent(".build")
+        let buildSystem = try? String(contentsOf: buildDirectory.appendingPathComponent(".buildSystem_debug"), encoding: .utf8)
+        print("Swift references diagnostic. Build system \(buildSystem ?? "no marker").")
+        if let entries = FileManager.default.enumerator(at: buildDirectory, includingPropertiesForKeys: [.isDirectoryKey]) {
+            while let entry = entries.nextObject() as? URL {
+                guard (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+                if ["index", "Index.noindex", "DataStore", "store", "units", "records"].contains(entry.lastPathComponent) {
+                    let count = (try? FileManager.default.contentsOfDirectory(atPath: entry.path).count) ?? 0
+                    print("Swift references diagnostic. \(entry.path.replacingOccurrences(of: dir.path, with: ".")) has \(count) entries.")
+                }
+            }
+        }
 
         let service = LanguageService()
         let area = LSPPosition(line: 2, character: 14)
