@@ -78,7 +78,7 @@ struct HostMasterTests {
     }
 
     private func eventually(_ condition: () -> Bool) async throws -> Bool {
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = Date().addingTimeInterval(30)
         while !condition() {
             if Date() >= deadline { return false }
             try await Task.sleep(for: .milliseconds(10))

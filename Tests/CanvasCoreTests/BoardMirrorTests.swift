@@ -322,6 +322,39 @@ final class BoardMirrorTests {
         for mirror in mirrors { mirror.close() }
     }
 
+    @Test func failedHtmlRefreshIsVisibleAndRetryWorksWithoutDroppingTheLink() async throws {
+        let page = host.create(type: .html, props: .object(["html": .string("<p>Before</p>")]),
+                               frame: Frame(x: 0, y: 0, w: 600, h: 400))
+        let other = note("before")
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        server.stop()
+        try await eventually { mirror.state != .online }
+        _ = try host.update(page.id, props: .object(["html": .string("<p>After reconnect</p>")]))
+        _ = try host.update(other.id, props: .object(["markdown": .string("after reconnect")]))
+        let refuse = Locked(true)
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "object.get", refuse.withLock({ value in
+                if !value { return false }
+                value = false
+                return true
+            }) {
+                return .object(["id": request["id"] ?? .null, "ok": .bool(false),
+                                "error": .object(["code": .string("unavailable"), "message": .string("HTML refresh failed")])])
+            }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        try await eventually { !refuse.withLock { $0 } && mirror.reading == nil }
+        #expect(mirror.connection.state == .online)
+        #expect(mirror.state == .offline)
+        #expect(mirror.problem?.contains("HTML refresh failed") == true)
+        mirror.reconnect()
+        try await eventually { board.objects[page.id] == host.objects[page.id] && board.objects[other.id] == host.objects[other.id] }
+        #expect(mirror.state == .online)
+    }
+
     @Test func aMoveShowsAtOnceAndTheHostsVersionReplacesIt() async throws {
         let moved = note("drag me")
         let (mirror, board) = try await mirror()
