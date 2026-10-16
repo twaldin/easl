@@ -132,8 +132,13 @@ async function main() {
   await persist();
   let child: Subprocess | undefined;
   let interrupted: string | undefined;
-  const onInterrupt = () => { interrupted = "SIGINT"; child?.kill("SIGKILL"); };
-  const onTerminate = () => { interrupted = "SIGTERM"; child?.kill("SIGKILL"); };
+  function killOwnedChild(running: Subprocess | undefined) {
+    try { running?.kill("SIGKILL"); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
+  const onInterrupt = () => { interrupted = "SIGINT"; killOwnedChild(child); };
+  const onTerminate = () => { interrupted = "SIGTERM"; killOwnedChild(child); };
   process.on("SIGINT", onInterrupt);
   process.on("SIGTERM", onTerminate);
   const external = { ...process.env };
@@ -150,7 +155,7 @@ async function main() {
     });
     const running = child;
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; running.kill("SIGKILL"); }, remaining);
+    const timer = setTimeout(() => { timedOut = true; killOwnedChild(running); }, remaining);
     let code: number, stdout: string, stderr: string;
     try {
       [code, stdout, stderr] = await Promise.all([
@@ -159,7 +164,7 @@ async function main() {
     } finally {
       clearTimeout(timer);
       if (running.exitCode === null && running.signalCode === null) {
-        running.kill("SIGKILL");
+        killOwnedChild(running);
         await running.exited;
       }
       child = undefined;

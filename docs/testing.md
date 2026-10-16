@@ -10,9 +10,12 @@ bun test extensions/agent-hooks             # hook payload classification: which
 bun test clients/ts                         # TS client: the default socket's platform choice (the app's on macOS, easld's elsewhere)
 bun test cli/metrics-text.test.ts           # `easl metrics` text: the draws and keys lines show with values, not before, and the stalls line
 bun test scripts/rotate-lead.test.ts         # finite lead rotation against a stateful external easl CLI fixture
-(cd conformance && go test ./...)          # the conformance runner's normalisation and diff (Go 1.26)
+python3 -m unittest discover -s scripts     # Python script tests
+(cd conformance && go vet ./... && go test ./...) # the conformance runner's normalisation and diff (Go 1.26)
 (cd easld && go vet ./... && go test ./...)  # easld (Go 1.26): its packages' tests, and the conformance suite replayed in-process (cmd/easld, ~2 min; -short skips it)
 ```
+
+Run every Bun, Python, and Go command above on Linux as well as macOS. Only `CanvasCoreTests` needs macOS. The hook suite covers socket replacement even when Linux reuses the socket's inode and timestamps. The rotation suite covers SIGTERM both while its CLI child runs and after the child exits.
 
 `CanvasCoreTests` is an executable target, not a test target: with only the Command Line Tools installed, `swift test` doesn't discover swift-testing suites, so `main.swift` calls the swift-testing entry point. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.
 

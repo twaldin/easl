@@ -6,9 +6,9 @@
 // spooling ever throws or waits on anything but its own short IO: the agent carries on as if
 // there were no hook.
 import { randomBytes } from "node:crypto";
-import { statSync } from "node:fs";
+import { statSync, watch, type FSWatcher } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { CanvasError, type AgentReleaseParams, type AgentReportParams, type CanvasClient } from "../../clients/ts/src/index";
 
 /** Where reports for `tile` wait while easl is away: `agent-reports/<tile>/` beside the socket. */
@@ -42,22 +42,53 @@ async function deliver(client: CanvasClient, method: string, params: { tile: str
  * again, or restarted between two checks (it binds a new socket file each launch). A restarted
  * easl restores a `working` or `blocked` tile as `restored` and refuses prompts to a restored
  * `working` one until its agent reports again, so an integration that lives as long as its agent
- * (omp's extension, opencode's plugin) re-reports its state from here. Checks the socket file's
- * identity every `intervalMs`; the timer never keeps the process alive. Returns a stop function.
+ * (omp's extension, opencode's plugin) re-reports its state from here. Checks every `intervalMs`,
+ * watching the directory for replacements whose socket metadata is reused. Neither the timer
+ * nor the directory watch keeps the process alive. Returns a stop function.
  */
 export function watchCanvasReturn(socketPath: string, onReturn: () => void, intervalMs = 2000): () => void {
+  const directory = dirname(socketPath);
+  const filename = basename(socketPath);
   let seen = socketIdentity(socketPath);
+  let watcher: FSWatcher | undefined;
+  const observe = () => {
+    watcher?.close();
+    watcher = undefined;
+    try {
+      const current = watch(directory, { persistent: false }, (event, name) => {
+        if (watcher === current && event === "rename" && (name === null || name === filename)) seen = undefined;
+      });
+      current.on("error", () => {
+        if (watcher !== current) return;
+        watcher = undefined;
+        current.close();
+      });
+      watcher = current;
+    } catch {
+      // The directory can be missing while easl is away. A later check retries.
+    }
+  };
+  observe();
   const timer = setInterval(() => {
     const now = socketIdentity(socketPath);
-    if (now === seen) return;
+    if (now === seen) {
+      if (!watcher) observe();
+      return;
+    }
     seen = now;
+    // Drop queued notifications for the replacement this check already observed.
+    observe();
     if (now !== undefined) onReturn();
   }, intervalMs);
   timer.unref();
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    watcher?.close();
+    watcher = undefined;
+  };
 }
 
-/** Which socket file is at `path` (a new one each time easl binds it); undefined when none. */
+/** The socket file's metadata, which can be reused after a restart; undefined when none. */
 function socketIdentity(path: string): string | undefined {
   try {
     const stat = statSync(path);
