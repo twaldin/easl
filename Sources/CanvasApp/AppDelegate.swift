@@ -284,6 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func open(root: URL, select: Bool = true) -> Board {
         let board = registry.open(root: root)
         let controller = controllers[board.id] ?? CanvasWindowController(board: board, registry: registry)
+        controller.isBoardOpen = true
         controllers[board.id] = controller
         if !openedOrder.contains(board.id) { openedOrder.append(board.id) }
         controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
@@ -342,7 +343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             throw ApiRouter.Failure("invalid_params", "board \(id) is a remote tab: its host owns its sessions, so omit endSessions")
         }
         func refuseLastBoard() throws {
-            if target.controller?.isLastShownBoard == true {
+            if target.controller?.isLastOpenBoard == true {
                 throw ApiRouter.Failure("conflict", "board \(id) is easl's last open board: closing it would quit easl; open another board first")
             }
         }
@@ -353,44 +354,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch target {
         case .local(let board, let controller):
             var ended: [CanvasObject] = []
-            if endSessions == true {
-                let terminals = board.objects.values.filter { $0.type == .terminal }.sorted { $0.id < $1.id }
-                for terminal in terminals {
-                    guard board.objects[terminal.id] != nil else { continue }
-                    let shown = controller?.canvas.tiles[terminal.id]?.content as? TerminalTile
-                    shown?.endingSession = true
+            do {
+                if endSessions == true {
+                    let terminals = board.objects.values.filter { $0.type == .terminal }.sorted { $0.id < $1.id }
+                    for terminal in terminals {
+                        guard board.objects[terminal.id] != nil else { continue }
+                        let shown = controller?.canvas.tiles[terminal.id]?.content as? TerminalTile
+                        shown?.endingSession = true
+                        defer { shown?.endingSession = false }
+                        do {
+                            try await TerminalTile.endSession(terminal)
+                        } catch {
+                            let message = (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
+                            throw ApiRouter.Failure("unavailable", message)
+                        }
+                        ended.append(terminal)
+                        if board.objects[terminal.id] != nil {
+                            let callback = registry.onTerminalsEnded
+                            registry.onTerminalsEnded = nil
+                            defer { registry.onTerminalsEnded = callback }
+                            try board.atomically { try board.delete(terminal.id) }
+                        }
+                        shown?.discard()
+                        Self.removeSpooledReports([terminal])
+                    }
+                }
+                try refuseLastBoard()
+                guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
+                controller?.canvas.saveViewport()
+                controller?.saveComposer()
+                result = BoardCloseResult(board: board, ended: ended)
+                try registry.close(board.id) {
                     do {
-                        try await TerminalTile.endSession(terminal)
+                        try writeOpenBoards(openLocalBoards(excluding: controller?.window))
                     } catch {
-                        shown?.endingSession = false
-                        let failure = (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
-                        throw ApiRouter.Failure("unavailable", "cannot close board \(board.id): \(failure); \(ended.count) terminal sessions already ended and their tiles were removed; the board stays open")
+                        throw ApiRouter.Failure("unavailable", "cannot save open-boards.json before closing \(board.id): \(error.localizedDescription)")
                     }
-                    if board.objects[terminal.id] != nil {
-                        let callback = board.onTerminalsEnded
-                        board.onTerminalsEnded = nil
-                        defer { board.onTerminalsEnded = callback }
-                        try board.atomically { try board.delete(terminal.id) }
-                    }
-                    shown?.discard()
-                    ended.append(terminal)
-                    Self.removeSpooledReports([terminal])
                 }
+                controllers.removeValue(forKey: board.id)
+                openedOrder.removeAll { $0 == board.id }
+            } catch {
+                let failure = (error as? ApiRouter.Failure) ?? ApiRouter.Failure("unavailable", error.localizedDescription)
+                guard !ended.isEmpty else { throw failure }
+                let ids = ended.map(\.id).joined(separator: ", ")
+                throw ApiRouter.Failure(failure.code, "\(failure.message); ended terminal sessions [\(ids)]")
             }
-            try refuseLastBoard()
-            guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
-            controller?.canvas.saveViewport()
-            controller?.saveComposer()
-            result = BoardCloseResult(board: board, ended: ended)
-            try registry.close(board.id) {
-                do {
-                    try writeOpenBoards(shownLocalBoards(excluding: controller?.window))
-                } catch {
-                    throw ApiRouter.Failure("unavailable", "cannot save open-boards.json before closing \(board.id): \(error.localizedDescription)")
-                }
-            }
-            controllers.removeValue(forKey: board.id)
-            openedOrder.removeAll { $0 == board.id }
         case .remote(let key, let controller):
             result = BoardCloseResult(board: controller.board)
             remoteControllers.removeValue(forKey: key)
@@ -663,8 +671,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? writeOpenBoards(shown)
     }
 
-    private func shownLocalBoards(excluding closing: NSWindow?) -> [CanvasWindowController] {
-        controllers.values.filter { $0.window !== closing && ($0.window.map(isShown) ?? false) }
+    private func openLocalBoards(excluding closing: NSWindow?) -> [CanvasWindowController] {
+        controllers.values.filter { $0.window !== closing && $0.isBoardOpen }
     }
 
     private func writeOpenBoards(_ shown: [CanvasWindowController]) throws {

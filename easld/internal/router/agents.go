@@ -545,7 +545,7 @@ func (r *Router) recheck(w *waiter) {
 	if w.done {
 		return
 	}
-	b, _, err := r.agentTile(w.tile, "")
+	b, _, err := r.resolveAgentTile(w.tile, "")
 	if err != nil {
 		return
 	}
@@ -754,7 +754,7 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 	// Queued before the text goes in: the target's integration drains them with this prompt.
 	name, named := "", false
 	if caller != "" {
-		if _, tile, err := r.agentTile(caller, ""); err == nil {
+		if _, tile, err := r.resolveAgentTile(caller, ""); err == nil {
 			name, named = board.PromptLabel(tile), true
 		}
 	}

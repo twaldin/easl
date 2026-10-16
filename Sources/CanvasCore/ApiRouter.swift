@@ -15,6 +15,7 @@ public final class BoardRegistry {
     /// The router's handler of messages that bounced on any open board (`Board.onMessagesBounced`).
     var messagesBounced: ((Board, MessageBounce) -> Void)?
     var didClose: ((Board) -> Void)?
+    var terminalsEnded: (([CanvasObject]) -> Void)?
     /// Terminal tiles deleted for good on any open board (`Board.onTerminalsEnded`), as they last
     /// were: the app ends their sessions.
     public var onTerminalsEnded: ((Board, [CanvasObject]) -> Void)?
@@ -48,6 +49,7 @@ public final class BoardRegistry {
         }
         board.onTerminalsEnded = { [weak self, weak board] ended in
             guard let self, let board else { return }
+            self.terminalsEnded?(ended)
             self.onTerminalsEnded?(board, ended)
         }
         board.onMessagesBounced = { [weak self, weak board] bounce in
@@ -305,6 +307,7 @@ public final class ApiRouter {
         registry.routerHook = { [weak self] board, event in self?.observe(event, on: board) }
         registry.messagesBounced = { [weak self] board, bounce in self?.bounce(bounce, on: board) }
         registry.didClose = { [weak self] board in self?.closed(board) }
+        registry.terminalsEnded = { [weak self] ended in self?.terminalsEnded(ended) }
     }
 
     /// Entry point for SocketServer. Returns the response line, or nil when the reply is deferred
@@ -511,12 +514,6 @@ public final class ApiRouter {
             tile = id
             pendingPrompts.removeValue(forKey: id)
             promptMarks.removeValue(forKey: id)
-            inboxWaiters.removeAll { waiter in
-                guard waiter.tile == id else { return !waiter.connection.isOpen }
-                waiter.connection.send(Self.error(waiter.id, Failure("not_found", "terminal \(id) was closed")))
-                return true
-            }
-            messageHolds = messageHolds.filter { $0.key.tile != id }
         default:
             return
         }
@@ -552,6 +549,16 @@ public final class ApiRouter {
         guard let index = waiters.firstIndex(where: { $0.token == token }) else { return }
         let waiter = waiters.remove(at: index)
         waiter.connection.send(Self.error(waiter.id, Failure("timeout", "\(waiter.tile) did not reach \(waiter.until.sorted().joined(separator: "|")) in time")))
+    }
+
+    private func terminalsEnded(_ ended: [CanvasObject]) {
+        let tiles = Set(ended.lazy.map(\.id))
+        inboxWaiters.removeAll { waiter in
+            guard tiles.contains(waiter.tile) else { return !waiter.connection.isOpen }
+            waiter.connection.send(Self.error(waiter.id, Failure("not_found", "terminal \(waiter.tile) was closed")))
+            return true
+        }
+        messageHolds = messageHolds.filter { !tiles.contains($0.key.tile) }
     }
 
     private func closed(_ board: Board) {

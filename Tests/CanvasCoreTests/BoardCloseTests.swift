@@ -135,6 +135,26 @@ extension ApiRouterTests {
         #expect(event["data"]?["props"]?["markdown"] == "after reopen")
     }
 
+    @Test func rolledBackTerminalDeletionKeepsItsInboxWaitPending() async throws {
+        let tile = terminal()
+        let inbox = try connect(), client = try connect()
+        inbox.send(#"{"id":"inbox","method":"agent.inbox","params":{"tile":"\#(tile)","waitMs":60000}}"#)
+        inbox.send(#"{"id":"ready","method":"system.ping","params":{}}"#)
+        #expect(try await inbox.next()["id"] == "ready")
+        do {
+            try board.atomically {
+                try board.delete(tile)
+                throw CancellationError()
+            }
+            Issue.record("the transaction did not roll back")
+        } catch is CancellationError {}
+        #expect(board.objects[tile]?.type == .terminal)
+        inbox.send(#"{"id":"after","method":"system.ping","params":{}}"#)
+        #expect(try await inbox.next()["id"] == "after")
+        _ = try await call(client, "object.delete", ["id": .string(tile)])
+        #expect(try await inbox.next()["error"]?["code"] == "not_found")
+    }
+
     @Test func aSecondCloseIsNotFoundAndLeavesTheStoredBoardAlone() async throws {
         _ = terminal()
         let client = try connect()

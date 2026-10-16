@@ -978,7 +978,7 @@
       }
     },
     "board.close": {
-      "description": "Close an open board without quitting the server. Save its latest state and remove it from the open set and open-boards.json, but keep its stored board file and board.list entry with open:false. By default terminals and their sessions stay running; board.open of the same root restores them. The Mac app refuses its last shown board with conflict. A remote tab closes only this viewer and never changes the host; any explicit endSessions, including false, is invalid_params there. Unknown or already closed boards are not_found. An affected agent.restart is conflict. Persistence or session-ending failure is unavailable and leaves the board open, with any partial session effects reported. No new event is emitted and subscriptions stay connected.",
+      "description": "Close an open board without quitting the server. Save its latest state and remove it from the open set and open-boards.json, but keep its stored board file and board.list entry with open:false. By default terminals and their sessions stay running; board.open of the same root restores them. The Mac app refuses its last open board with conflict, including while hidden or minimized. A remote tab closes only this viewer and never changes the host; any explicit endSessions, including false, is invalid_params there. Unknown or already closed boards are not_found. An affected agent.restart is conflict. Persistence or session-ending failure is unavailable and leaves the board open, with any partial session effects reported. No new event is emitted and subscriptions stay connected.",
       "params": {
         "type": "object",
         "properties": {

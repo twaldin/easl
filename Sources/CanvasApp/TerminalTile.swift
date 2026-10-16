@@ -309,18 +309,18 @@ final class TerminalTile: NSView, TileContent {
         do {
             try process.run()
         } catch {
-            return "terminal \(tile)'s session couldn't be ended (\(error.localizedDescription)), so nothing was relaunched"
+            return "terminal \(tile)'s session couldn't be ended (\(error.localizedDescription))"
         }
         process.waitUntilExit()
         if process.terminationStatus == notOurs {
-            return "terminal \(tile)'s session belongs to another easl instance, which alone can end it, so nothing was relaunched"
+            return "terminal \(tile)'s session belongs to another easl instance, which alone can end it"
         }
         let session = sessionName(tile)
         for attempt in 0...30 {
             if Zmx.list().map({ Housekeeping.sessionNames(zmxList: $0).contains(session) }) == false { return nil }
             if attempt < 30 { usleep(100_000) }
         }
-        return "zmx still lists terminal \(tile)'s session (or can't list its sessions) 3 s after ending it, so it may still run and nothing was relaunched"
+        return "zmx still lists terminal \(tile)'s session (or can't list its sessions) 3 s after ending it, so it may still run"
     }
 
     // MARK: Restart
@@ -357,7 +357,7 @@ final class TerminalTile: NSView, TileContent {
         let tile = objectID
         if let failure = await offPool({ Self.endSession(tile: tile, arguments: arguments) }) {
             restartedAt = nil
-            throw ApiRouter.Failure("unavailable", failure)
+            throw ApiRouter.Failure("unavailable", "\(failure), so nothing was relaunched")
         }
         try ended()
         // The old session's shell and program are gone with it.

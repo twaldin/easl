@@ -359,6 +359,58 @@ func TestBoardCloseRequiresObservedSessionExit(t *testing.T) {
 	}
 }
 
+func TestBoardCloseDoesNotSuppressAnExistingWaitersGrace(t *testing.T) {
+	f, state := owning(t)
+	tile := f.agentTerminal("", map[string]any{"name": "silent"})
+	f.router.FirstReportGrace = time.Hour
+	waiting := &conn{}
+	if reply := f.on(waiting, "agent.wait", map[string]any{"target": tile}); reply != nil {
+		t.Fatalf("silent terminal answered before its grace: %v", reply)
+	}
+	wrapper := filepath.Join(t.TempDir(), "zmx")
+	script := "#!/bin/sh\nif [ \"$1\" = kill ]; then : > \"$ZMX_DIR/.grace-kill\"; while [ ! -e \"$ZMX_DIR/.grace-release\" ]; do sleep 0.01; done; exit 1; fi\nexec '" + f.router.Sessions.Zmx + "' \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.router.Sessions.Zmx = wrapper
+	release := filepath.Join(state, ".grace-release")
+	defer os.WriteFile(release, nil, 0o600)
+	closed := make(chan map[string]any, 1)
+	go func() {
+		closed <- f.router.HandleConn(map[string]any{"id": "close", "method": "board.close", "params": map[string]any{"endSessions": true}}, &conn{}).(map[string]any)
+	}()
+	waitCloseFile(t, filepath.Join(state, ".grace-kill"))
+	f.router.reg.Mu.Lock()
+	if len(f.router.waiters) != 1 {
+		f.router.reg.Mu.Unlock()
+		t.Fatal("the existing wait was lost before its grace")
+	}
+	w := f.router.waiters[0]
+	w.firstReportDeadline = time.Now().Add(-time.Second)
+	f.router.recheck(w)
+	f.router.reg.Mu.Unlock()
+	sent := waiting.messages()
+	if len(sent) != 1 {
+		t.Errorf("close suppressed the existing wait's expired grace: %v", sent)
+	} else if code, _ := errorOf(sent[0]); code != "unavailable" {
+		t.Errorf("silent terminal grace: %v", sent[0])
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case reply := <-closed:
+		if code, _ := errorOf(reply); code != "unavailable" {
+			t.Fatalf("the failed kill closed the board: %v", reply)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("failed close did not finish")
+	}
+	if got := f.result("object.get", map[string]any{"id": tile})["object"].(map[string]any); got["id"] != tile {
+		t.Fatalf("failed close lost the waiting terminal: %v", got)
+	}
+}
+
 func TestBoardCloseFinishesWaitsAndReleasesInboxHoldsWithoutClosingSubscriptions(t *testing.T) {
 	f := newFixture(t)
 	tile := f.agentTerminal("", map[string]any{"name": "worker"})
