@@ -42,7 +42,7 @@ Once, by the Account Holder, after enrolling in the Apple Developer Program:
 
 ## Release from this Mac
 
-Use Swift 6.3.3 from Command Line Tools 26 or Xcode 26.6, selected with `xcode-select` or `DEVELOPER_DIR` before building. The package resolves swift-testing's paths for the selected toolchain; it does not require a fixed Command Line Tools installation.
+Select the Apple toolchain with `xcode-select` or `DEVELOPER_DIR` before building. The package resolves swift-testing's paths for the selected toolchain; it does not require a fixed Command Line Tools installation.
 
 Bump `VERSION` first (above). `notarize.sh` builds into `.build/dist`, never `.build/easl.app` (a running dev instance's); `gh release create` makes the tag, and the Release workflow it starts leaves the release alone except for re-uploading the same libintl source and notices:
 
@@ -61,7 +61,7 @@ Drop `--generate-notes` while no earlier release is published (`gh release list 
 
 With the secrets set (One-time setup, step 6), bump `VERSION`, then push a `v*` tag.
 
-The release workflow selects Xcode 26.6 (Swift 6.3.3) on `macos-26`, as the CI build does. Command Line Tools 27's Swift 6.4 currently advertises a different SourceKit index-store path from the one its builds write, breaking references with background indexing off. Verify the logged `swift --version` before interpreting a build result.
+The release workflow selects the Command Line Tools on `macos-26`, as the CI build does. Verify the logged `swift --version` before interpreting a build result because the runner image can change.
 
 ## After every release
 

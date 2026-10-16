@@ -63,9 +63,9 @@ jobs:
           done
           echo "no gettext-0.24.tar.gz with SHA-256 $GETTEXT_SHA256" >&2
           exit 1
-      - name: Select Xcode 26.6
+      - name: Select Command Line Tools
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          sudo xcode-select -s /Library/Developer/CommandLineTools
           swift --version
       - name: Import the Developer ID certificate
         if: env.SIGNED == 'true'

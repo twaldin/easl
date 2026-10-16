@@ -11,14 +11,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
-      - name: Select Xcode 26.6
+      # The package builds with the Command Line Tools, like local development (see Package.swift
+      # for how the test executable finds swift-testing there).
+      - name: Select Command Line Tools
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          sudo xcode-select -s /Library/Developer/CommandLineTools
           swift --version
       - name: Build
-        run: swift build -j 2
+        run: swift build
       - name: Test
-        run: swift run -j 4 CanvasCoreTests
+        run: swift run CanvasCoreTests
       - name: Generated clients are current
         run: bun scripts/gen-clients.ts --check
       - name: Python client tests
