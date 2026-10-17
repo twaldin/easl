@@ -116,6 +116,7 @@ struct ChangesPainter {
     var discardAsked: (file: Int, hunk: Int?, hint: String)?
     /// The tile holds the keyboard: the header says which keys work.
     var focused = false
+    var undoable = true
     /// The filter's text; `drawsFilter` draws its box (cards and renders, where no field is).
     let filter: String
     var drawsFilter = true
@@ -232,7 +233,7 @@ struct ChangesPainter {
                     : "Click to compare with another base: the uncommitted changes, everything the branch changed, or a commit or ref"
                 return [set.baseDescription ?? set.lead, what].joined(separator: "\n")
             }
-            return [set.baseDescription, set.comparesCommits ? ChangesTile.readingTooltip : ChangesTile.tooltip].compactMap { $0 }.joined(separator: "\n")
+            return [set.baseDescription, set.comparesCommits ? ChangesTile.readingTooltip : undoable ? ChangesTile.tooltip : ChangesTile.remoteTooltip].compactMap { $0 }.joined(separator: "\n")
         }
         switch hit(at: point, width: width, scroll: scroll) {
         case .button(let action, let file, let hunk)?:

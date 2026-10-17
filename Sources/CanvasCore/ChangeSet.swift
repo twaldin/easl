@@ -776,6 +776,13 @@ public struct ChangeSet: Sendable {
         } else {
             diff = await engine.diff(file: url, base: diffBase, held: toplevel.path)
         }
+        return changed(entry, diff: diff, workingMode: Self.mode(of: url), unstaged: unstaged, staged: staged, head: head) {
+            Board.relativePath(toplevel.appendingPathComponent($0).path, root: root)
+        }
+    }
+
+    static func changed(_ entry: Entry, diff: FileDiff, workingMode: @autoclosure () -> String?, unstaged: [LineRangeMapping], staged: [LineRangeMapping],
+                        head: [LineRangeMapping]?, boardPath: (String) -> String) -> ChangedFile? {
         var notice: String?
         var status = entry.status
         switch diff.state {
@@ -788,9 +795,9 @@ public struct ChangeSet: Sendable {
         case .submodule: notice = "submodule"
         case .unstable: notice = "kept changing while diffing; waiting for the next write"
         case .missing, .ignored: return nil
-        case .notRepository, .noBase, .pinned, .pinUnavailable: notice = diff.baseLabel ?? "not comparable"
+        case .notRepository, .noBase, .pinned, .pinUnavailable, .unreadable: notice = diff.baseLabel ?? "not comparable"
         }
-        let newMode = entry.newMode ?? (status == .deleted ? nil : Self.mode(of: url))
+        let newMode = entry.newMode ?? (status == .deleted ? nil : workingMode())
         var ids: Set<String> = []
         let hunks: [ChangeHunk] = notice == nil ? diff.hunks.map { hunk -> ChangeHunk in
             var change = ChangeHunk(mappings: hunk.mappings, old: diff.old, new: diff.new,
@@ -806,29 +813,33 @@ public struct ChangeSet: Sendable {
             change.id = unique
             return change
         } : []
-        func boardPath(_ path: String) -> String { Board.relativePath(toplevel.appendingPathComponent(path).path, root: root) }
         return ChangedFile(path: entry.path, oldPath: entry.oldPath, boardPath: boardPath(entry.path), oldBoardPath: entry.oldPath.map(boardPath),
                            status: status, old: diff.old, new: diff.new, oldMode: status == .added ? nil : entry.oldMode ?? "100644", newMode: newMode,
                            tracked: entry.tracked, hunks: hunks, notice: notice)
     }
+
+    static let renameRecords = ["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "-M", "--diff-algorithm=histogram",
+                                "-U0", "--inter-hunk-context=0"]
 
     /// A file renamed since the base: `oldPath`'s base text against the working tree's `path`.
     private static func renamed(from oldPath: String, to path: String, base sha: String, in toplevel: URL, engine: GitDiffEngine) async -> FileDiff {
         let url = toplevel.appendingPathComponent(path)
         guard let old = await engine.text(of: toplevel.appendingPathComponent(oldPath), at: sha),
               let data = await offPool({ try? Data(contentsOf: url) }) else {
-            return FileDiff(state: .missing, base: sha, baseLabel: nil, old: SideText(""), new: SideText(""), hunks: [])
+            return await renamedDiff(old: nil, data: nil, patch: nil, base: sha, toplevel: toplevel.path)
         }
+        let patch = try? await GitRunner.shared.run(renameRecords + [sha, "--", oldPath, path], in: toplevel, maxOutput: 3 * GitDiffEngine.maxFileSize)
+        return await renamedDiff(old: old, data: data, patch: patch, base: sha, toplevel: toplevel.path)
+    }
+
+    static func renamedDiff(old: SideText?, data: Data?, patch: Data?, base sha: String, toplevel: String?) async -> FileDiff {
+        guard let old, let data else { return FileDiff(state: .missing, base: sha, baseLabel: nil, old: SideText(""), new: SideText(""), hunks: []) }
         let new = await offPool { SideText(String(decoding: data, as: UTF8.self)) }
-        let args = ["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "-M", "--diff-algorithm=histogram",
-                    "-U0", "--inter-hunk-context=0", sha, "--", oldPath, path]
-        guard let patch = try? await GitRunner.shared.run(args, in: toplevel, maxOutput: 3 * GitDiffEngine.maxFileSize) else {
-            return FileDiff(state: .tooLarge, base: sha, baseLabel: nil, old: old, new: new, hunks: [])
-        }
+        guard let patch else { return FileDiff(state: .tooLarge, base: sha, baseLabel: nil, old: old, new: new, hunks: []) }
         let parsed = await offPool { UnifiedDiff.parse(patch) }
         if parsed.binary { return FileDiff(state: .binary, base: sha, baseLabel: nil, old: old, new: new, hunks: []) }
         let state: FileDiff.State = parsed.mappings.isEmpty ? .unchanged : .modified
-        return FileDiff(state: state, base: sha, baseLabel: nil, old: old, new: new, hunks: UnifiedDiff.hunks(parsed.mappings), repository: toplevel.path)
+        return FileDiff(state: state, base: sha, baseLabel: nil, old: old, new: new, hunks: UnifiedDiff.hunks(parsed.mappings), repository: toplevel)
     }
 
     /// The git mode of a working-tree file: executable or not.

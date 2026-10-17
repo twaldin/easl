@@ -71,6 +71,19 @@ public enum HostFileError: Error, Equatable, Sendable {
     case unavailable(String)
 }
 
+extension HostFileError {
+    init(code: String?, message: String?, commit: String? = nil, limit: Int? = nil) {
+        switch code {
+        case "refused": self = .refused
+        case "not_found": self = .notFound(commit: commit)
+        case "too_large": self = .tooLarge(limit: limit ?? SourceExcerpt.maxFileBytes)
+        case "unreadable": self = .unreadable
+        case "ref": self = .ref(message ?? "unknown ref")
+        default: self = .unavailable(message ?? "host file read failed")
+        }
+    }
+}
+
 public struct HostFiles: Sendable {
     public let hostName: String
     public let temps: [String]
@@ -93,6 +106,20 @@ public struct HostFiles: Sendable {
 
     public func read(_ request: HostFileRequest) async throws -> HostFile {
         let payload = try payload(request)
+        let output = try await execute([Self.script, payload], what: "host file reader")
+        guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(output.utf8)) else {
+            throw HostFileError.unavailable("invalid host file reply")
+        }
+        guard reply.ok else {
+            throw HostFileError(code: reply.code, message: reply.message, commit: reply.commit, limit: reply.limit)
+        }
+        guard let root = reply.root, let encoded = reply.data, let bytes = Data(base64Encoded: encoded) else {
+            throw HostFileError.unavailable("invalid host file bytes")
+        }
+        return HostFile(root: root, path: reply.path, commit: reply.commit, data: bytes, stamp: reply.stamp)
+    }
+
+    func execute(_ arguments: [String], input: Data? = nil, timeout: TimeInterval = 20, what: String) async throws -> String {
         do {
             if let master {
                 try await master.ready()
@@ -105,7 +132,7 @@ public struct HostFiles: Sendable {
         }
         let result: (status: Int32, output: String, errors: String)
         do {
-            result = try await RemoteHost.run(route.executable, route.ssh(HostedTerminal.remote(Self.launcher, [Self.script, payload])), timeout: 20)
+            result = try await RemoteHost.run(route.executable, route.ssh(HostedTerminal.remote(Self.launcher, arguments)), input: input, timeout: timeout)
         } catch {
             if let master { await master.endFileSession() }
             throw error
@@ -113,25 +140,9 @@ public struct HostFiles: Sendable {
         if let master { await master.endFileSession() }
         try Task.checkCancellation()
         guard result.status == 0 else {
-            throw HostFileError.unavailable(RemoteHost.lastLine(result.errors) ?? "host file reader exited with status \(result.status)")
+            throw HostFileError.unavailable(RemoteHost.lastLine(result.errors) ?? "\(what) exited with status \(result.status)")
         }
-        guard let data = result.output.data(using: .utf8), let reply = try? JSONDecoder().decode(Reply.self, from: data) else {
-            throw HostFileError.unavailable("invalid host file reply")
-        }
-        guard reply.ok else {
-            switch reply.code {
-            case "refused": throw HostFileError.refused
-            case "not_found": throw HostFileError.notFound(commit: reply.commit)
-            case "too_large": throw HostFileError.tooLarge(limit: reply.limit ?? SourceExcerpt.maxFileBytes)
-            case "unreadable": throw HostFileError.unreadable
-            case "ref": throw HostFileError.ref(reply.message ?? "unknown ref")
-            default: throw HostFileError.unavailable(reply.message ?? "host file read failed")
-            }
-        }
-        guard let root = reply.root, let encoded = reply.data, let bytes = Data(base64Encoded: encoded) else {
-            throw HostFileError.unavailable("invalid host file bytes")
-        }
-        return HostFile(root: root, path: reply.path, commit: reply.commit, data: bytes, stamp: reply.stamp)
+        return result.output
     }
 
     private struct Reply: Decodable {
@@ -173,7 +184,7 @@ public struct HostFiles: Sendable {
         return String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
     }
 
-    private static let launcher = #"""
+    static let launcher = #"""
     for b in "$(command -v bun)" "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do
       if [ -n "$b" ] && [ -x "$b" ]; then exec "$b" -e "$1" -- "$2"; fi
     done
@@ -181,12 +192,10 @@ public struct HostFiles: Sendable {
     exit 127
     """#
 
-    private static let script = #"""
+    static let prelude = #"""
     const fs = require('node:fs');
     const path = require('node:path');
     const cp = require('node:child_process');
-    const req = JSON.parse(process.argv.at(-1));
-    const source = req.source, policy = req.policy;
     const fail = (code, extra = {}) => { throw { code, ...extra }; };
     const real = p => { try { return fs.realpathSync(p); } catch { return null; } };
     const resolved = p => {
@@ -210,7 +219,7 @@ public struct HostFiles: Sendable {
     };
     const text = (dir, args) => git(dir, args)?.toString('utf8').trim() || null;
     const commitOf = (dir, ref) => text(dir, ['rev-parse', '--verify', '--quiet', '--end-of-options', ref + '^{commit}']);
-    function resolveSource() {
+    function resolveSource(source) {
       const root = path.resolve(source.root);
       if (source.kind === 'directory') return { root };
       const top = text(root, ['rev-parse', '--show-toplevel']);
@@ -226,13 +235,15 @@ public struct HostFiles: Sendable {
         const entry = lines.find(l => l.startsWith('worktree '))?.slice(9);
         if (!entry || lines.some(l => l.startsWith('prunable')) || !real(entry)) continue;
         if (!lines.includes('branch refs/heads/' + branch)) continue;
-        if (source.kind === 'live' || commitOf(entry, 'HEAD')) return { root: path.join(entry, place) };
+        if (source.kind === 'live') return { root: path.join(entry, place) };
+        const sha = commitOf(entry, 'HEAD');
+        if (sha) return { root: path.join(entry, place), state: 'live', sha, worktree: entry };
       }
       if (source.kind === 'live') return { root };
-      let commit = commitOf(top, source.ref);
-      if (commit) return { root, commit };
-      commit = source.sha && commitOf(top, source.sha);
-      if (!commit) fail('ref', { message: 'unknown ref ' + source.ref });
+      let sha = commitOf(top, source.ref);
+      if (sha) return { root, commit: sha, state: 'objects', sha };
+      sha = source.sha && commitOf(top, source.sha);
+      if (!sha) fail('ref', { message: 'unknown ref ' + source.ref });
       let branchName = text(top, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])?.replace(/^refs\/remotes\//, '');
       if (!branchName) {
         for (const name of ['main', 'master']) {
@@ -240,14 +251,17 @@ public struct HostFiles: Sendable {
         }
       }
       const tip = branchName && commitOf(top, branchName);
-      if (tip && git(top, ['merge-base', '--is-ancestor', commit, tip]) !== null && commit !== tip) {
-        const first = text(top, ['rev-list', '--first-parent', '--ancestry-path', '--reverse', '--parents', commit + '..' + tip])?.split('\n')[0]?.split(' ');
-        if (first?.length && first[1] !== commit) commit = first[0];
+      if (tip && git(top, ['merge-base', '--is-ancestor', sha, tip]) !== null) {
+        if (sha === tip) return { root, commit: sha, state: 'merged', sha, merge: sha };
+        const first = text(top, ['rev-list', '--first-parent', '--ancestry-path', '--reverse', '--parents', sha + '..' + tip])?.split('\n')[0]?.split(' ');
+        if (first?.length) {
+          const merge = first[1] === sha ? sha : first[0];
+          return { root, commit: merge, state: 'merged', sha, merge };
+        }
       }
-      return { root, commit };
+      return { root, commit: sha, state: 'missing', sha };
     }
-    function readRegular(p, root, roots, limit) {
-      const python = String.raw`
+    const reader = String.raw`
     import base64
     import errno
     import json
@@ -255,7 +269,7 @@ public struct HostFiles: Sendable {
     import stat
     import sys
 
-    def read_regular(request):
+    def read_regular(request, budget):
         directory = None
         fd = None
         try:
@@ -280,16 +294,23 @@ public struct HostFiles: Sendable {
             if not stat.S_ISREG(st.st_mode):
                 return {'ok': False, 'code': 'not_found'}
             stamp = ':'.join(str(value) for value in (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns))
+            executable = bool(st.st_mode & 0o111)
             limit = request['limit']
             if limit is not None and st.st_size > limit and (request['bytes'] or request['metadataLimit']):
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
             if not request['bytes']:
-                return {'ok': True, 'path': p, 'stamp': stamp, 'data': ''}
+                return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'data': ''}
+            if budget is not None and st.st_size > budget[0]:
+                return {'ok': False, 'code': 'too_large', 'limit': limit}
             with os.fdopen(fd, 'rb', closefd=False) as stream:
                 data = stream.read() if limit is None else stream.read(limit + 1)
             if limit is not None and len(data) > limit:
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
-            return {'ok': True, 'path': p, 'stamp': stamp, 'data': base64.b64encode(data).decode('ascii')}
+            if budget is not None:
+                if len(data) > budget[0]:
+                    return {'ok': False, 'code': 'too_large', 'limit': limit}
+                budget[0] -= len(data)
+            return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'data': base64.b64encode(data).decode('ascii')}
         except OSError as error:
             code = 'refused' if error.errno in (errno.ELOOP, errno.ENOTDIR) else 'not_found' if error.errno == errno.ENOENT else 'unreadable'
             return {'ok': False, 'code': code}
@@ -301,20 +322,34 @@ public struct HostFiles: Sendable {
                 if directory is not None:
                     os.close(directory)
 
-    print(json.dumps(read_regular(json.loads(sys.argv[1]))))
+    batch = json.loads(sys.stdin.read())
+    budget = None if batch.get('budget') is None else [batch['budget']]
+    print(json.dumps([read_regular(request, budget) for request in batch['requests']]))
     `;
-      const result = cp.spawnSync('python3', ['-I', '-S', '-B', '-c', python, JSON.stringify({ path: p, roots, bytes: req.bytes, limit, metadataLimit: policy.kind === 'boardImage' })], {
-        encoding: 'utf8', maxBuffer: Infinity, stdio: ['ignore', 'pipe', 'pipe']
+    function readFiles(requests, budget = null) {
+      if (!requests.length) return [];
+      const result = cp.spawnSync('python3', ['-I', '-S', '-B', '-c', reader], {
+        input: JSON.stringify({ requests, budget }), encoding: 'utf8', maxBuffer: Infinity, stdio: ['pipe', 'pipe', 'pipe']
       });
       if (result.error?.code === 'ENOENT') fail('unavailable', { message: 'python3 is required for secure host file reads but is not installed on the host' });
       if (result.error || result.status !== 0) fail('unavailable', { message: 'Python3 host descriptor reader failed' });
-      let reply;
-      try { reply = JSON.parse(result.stdout); }
+      let replies;
+      try { replies = JSON.parse(result.stdout); }
       catch { fail('unavailable', { message: 'invalid host descriptor reply' }); }
-      return { root, ...reply };
+      if (!Array.isArray(replies) || replies.length !== requests.length) fail('unavailable', { message: 'invalid host descriptor reply' });
+      return replies;
+    }
+
+    """#
+
+    private static let script = prelude + #"""
+    const req = JSON.parse(process.argv.at(-1));
+    const source = req.source, policy = req.policy;
+    function readRegular(p, root, roots, limit) {
+      return { root, ...readFiles([{ path: p, roots, bytes: req.bytes, limit, metadataLimit: policy.kind === 'boardImage' }])[0] };
     }
     function read() {
-      const { root, commit } = resolveSource();
+      const { root, commit } = resolveSource(source);
       if (policy.kind === 'board') {
         const rel = policy.relative;
         if (!rel || rel.includes('\0') || rel.startsWith('/') || rel.startsWith('~') || rel.split('/').includes('..')) fail('refused');

@@ -7,18 +7,28 @@ import Foundation
 public struct ReviewPatch: Equatable, Sendable {
     public enum Target: String, Sendable { case worktree, index }
 
-    /// The repository's top level; git runs there and the patch names paths relative to it.
-    public var repository: URL
+    /// Where git applies it: a repository's top level on this Mac, or on a remote board's host
+    /// (`HostGit.apply`), whose path is never a directory here. The patch names paths relative to it.
+    public enum Checkout: Equatable, Sendable {
+        case local(URL)
+        case host(String)
+    }
+
+    public var checkout: Checkout
     public var text: String
     public var target: Target
     /// Applied reversed (`git apply -R`): a revert applies the base → working tree patch reversed.
     public var reverse: Bool
 
-    public init(repository: URL, text: String, target: Target, reverse: Bool) {
-        self.repository = repository
+    public init(checkout: Checkout, text: String, target: Target, reverse: Bool) {
+        self.checkout = checkout
         self.text = text
         self.target = target
         self.reverse = reverse
+    }
+
+    public init(repository: URL, text: String, target: Target, reverse: Bool) {
+        self.init(checkout: .local(repository), text: text, target: target, reverse: reverse)
     }
 
     /// The same change undone.
@@ -188,6 +198,15 @@ public struct ReviewPatch: Equatable, Sendable {
     /// deleted file are the file (deleted again, or brought back). A renamed file keeps its name.
     /// `lines`: only those rows (indices into the one hunk's `lines`) of the hunk.
     public static func revert(_ hunks: [ChangeHunk], of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil) throws -> ReviewPatch {
+        try revert(hunks, of: file, checkout: .local(repository), lines: lines)
+    }
+
+    /// `revert` of a remote board's file, applied on its host in `toplevel`.
+    public static func revert(_ hunks: [ChangeHunk], of file: ChangedFile, onHost toplevel: String, lines: Set<Int>? = nil) throws -> ReviewPatch {
+        try revert(hunks, of: file, checkout: .host(toplevel), lines: lines)
+    }
+
+    private static func revert(_ hunks: [ChangeHunk], of file: ChangedFile, checkout: Checkout, lines: Set<Int>?) throws -> ReviewPatch {
         if file.readOnly { throw ChangesFailure.readOnly }
         try checkPath(file.path)
         guard hunks.isEmpty || hunks.contains(where: \.status.discardable) else { throw ChangesFailure.committed }
@@ -197,7 +216,7 @@ public struct ReviewPatch: Equatable, Sendable {
         let text = text(path: file.path, old: file.status == .added ? nil : file.old, new: file.status == .deleted ? nil : file.new,
                         oldMode: file.oldMode, newMode: file.newMode, mappings: mappings, pick: pick, reverse: true)
         guard !text.isEmpty else { throw ChangesFailure("no changed line selected") }
-        return ReviewPatch(repository: repository, text: text, target: .worktree, reverse: true)
+        return ReviewPatch(checkout: checkout, text: text, target: .worktree, reverse: true)
     }
 
     /// The changed lines among `rows` (indices into the one hunk's `lines`), by side.
@@ -222,10 +241,20 @@ public struct ReviewPatch: Equatable, Sendable {
     /// `lines`: only those rows (indices into the one hunk's `lines`): added lines by their
     /// working-tree line, removed ones by the index line with the same text in the change there.
     public static func stage(_ hunks: [ChangeHunk]?, of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil) async throws -> ReviewPatch {
+        try await stage(hunks, of: file, reading: reads(file, in: repository), checkout: .local(repository), lines: lines)
+    }
+
+    /// `stage` of a remote board's file from the sides its listing read (`sides`), applied on its
+    /// host in `toplevel` only while those sides are still what the host has (`HostGit.apply`).
+    public static func stage(_ hunks: [ChangeHunk]?, of file: ChangedFile, sides: ReviewSides, onHost toplevel: String, lines: Set<Int>? = nil) async throws -> ReviewPatch {
+        try await stage(hunks, of: file, reading: reads(sides), checkout: .host(toplevel), lines: lines)
+    }
+
+    private static func stage(_ hunks: [ChangeHunk]?, of file: ChangedFile, reading: Reads, checkout: Checkout, lines: Set<Int>?) async throws -> ReviewPatch {
         if file.readOnly { throw ChangesFailure.readOnly }
-        let text = try await towardWorkingTree(hunks, of: file, from: .index, in: repository, lines: lines, reverse: false)
+        let text = try await towardWorkingTree(hunks, of: file, from: .index, reading: reading, lines: lines, reverse: false)
         guard !text.isEmpty else { throw ChangesFailure("already staged") }
-        return ReviewPatch(repository: repository, text: text, target: .index, reverse: false)
+        return ReviewPatch(checkout: checkout, text: text, target: .index, reverse: false)
     }
 
     /// Discard against a base older than HEAD (`ChangeSet.includesCommits`): only the work not
@@ -235,11 +264,21 @@ public struct ReviewPatch: Equatable, Sendable {
     /// deleted since HEAD comes back), and refused when the working tree is no longer what the
     /// tile shows or nothing of it is uncommitted. `lines`: only those rows of the one hunk.
     public static func discardUncommitted(_ hunks: [ChangeHunk]?, of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil) async throws -> ReviewPatch {
+        try await discardUncommitted(hunks, of: file, reading: reads(file, in: repository), checkout: .local(repository), lines: lines)
+    }
+
+    /// `discardUncommitted` of a remote board's file from the sides its listing read, applied on
+    /// its host in `toplevel` only while they are still what the host has.
+    public static func discardUncommitted(_ hunks: [ChangeHunk]?, of file: ChangedFile, sides: ReviewSides, onHost toplevel: String, lines: Set<Int>? = nil) async throws -> ReviewPatch {
+        try await discardUncommitted(hunks, of: file, reading: reads(sides), checkout: .host(toplevel), lines: lines)
+    }
+
+    private static func discardUncommitted(_ hunks: [ChangeHunk]?, of file: ChangedFile, reading: Reads, checkout: Checkout, lines: Set<Int>?) async throws -> ReviewPatch {
         if file.readOnly { throw ChangesFailure.readOnly }
         if let hunks, !hunks.contains(where: \.status.discardable) { throw ChangesFailure.committed }
-        let text = try await towardWorkingTree(hunks, of: file, from: .head, in: repository, lines: lines, reverse: true, expected: file.status == .deleted ? nil : file.new)
+        let text = try await towardWorkingTree(hunks, of: file, from: .head, reading: reading, lines: lines, reverse: true, expected: file.status == .deleted ? nil : file.new)
         guard !text.isEmpty else { throw ChangesFailure("nothing uncommitted to discard in \(file.boardPath)") }
-        return ReviewPatch(repository: repository, text: text, target: .worktree, reverse: true)
+        return ReviewPatch(checkout: checkout, text: text, target: .worktree, reverse: true)
     }
 
     /// Unstage: the index goes back to HEAD where it holds `file`'s changes over `hunks` (nil:
@@ -248,11 +287,21 @@ public struct ReviewPatch: Equatable, Sendable {
     /// leaves it, a deletion staged is taken back). `lines`: only those rows of the one hunk, by
     /// their text in the staged change. Refused when nothing there is staged.
     public static func unstage(_ hunks: [ChangeHunk]?, of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil) async throws -> ReviewPatch {
+        try await unstage(hunks, of: file, reading: reads(file, in: repository), checkout: .local(repository), lines: lines)
+    }
+
+    /// `unstage` of a remote board's file from the sides its listing read, applied on its host in
+    /// `toplevel` only while they are still what the host has.
+    public static func unstage(_ hunks: [ChangeHunk]?, of file: ChangedFile, sides: ReviewSides, onHost toplevel: String, lines: Set<Int>? = nil) async throws -> ReviewPatch {
+        try await unstage(hunks, of: file, reading: reads(sides), checkout: .host(toplevel), lines: lines)
+    }
+
+    private static func unstage(_ hunks: [ChangeHunk]?, of file: ChangedFile, reading: Reads, checkout: Checkout, lines: Set<Int>?) async throws -> ReviewPatch {
         if file.readOnly { throw ChangesFailure.readOnly }
         try checkPath(file.path)
         let picked = try lines.map { try Self.pick($0, of: hunks ?? []) }
-        let head = try await blob(file, at: .head, in: repository)
-        let index = try await blob(file, at: .index, in: repository)
+        let head = try await reading.blob(.head)
+        let index = try await reading.blob(.index)
         let text: String
         switch (head, index) {
         case (nil, nil):
@@ -264,13 +313,13 @@ public struct ReviewPatch: Equatable, Sendable {
             text = Self.text(path: file.path, old: head.text, new: nil, oldMode: head.mode, mappings: LineRangeMapping.whole(head.text, removed: true),
                              pick: picked.map { LinePick(removed: matching(texts($0.removed, of: file.old), among: Array(1..<head.text.lineCount + 1), in: head.text), added: []) }, reverse: true)
         case (let head?, let index?):
-            let staged = try await changes(of: file, between: .head, and: .index, in: repository)
+            let staged = try await reading.changes(.head, .index)
             guard await offPool({ UnifiedDiff.reconstructOld(new: index.text, parsed: staged) }) == head.text else {
                 throw ChangesFailure("\(file.boardPath) changed while unstaging; try again")
             }
             var selected = staged.mappings
             if let hunks {
-                let unstaged = try await changes(of: file, between: .index, and: .workingTree, in: repository).mappings
+                let unstaged = try await reading.changes(.index, .workingTree).mappings
                 let span = ChangeHunk.indexSpan(of: hunks.flatMap { $0.mappings.map(\.modified) }, unstaged: unstaged)
                 selected = selected.filter { ChangeHunk.touches(span, $0.modified) }
             }
@@ -282,12 +331,43 @@ public struct ReviewPatch: Equatable, Sendable {
             text = Self.text(path: file.path, old: head.text, new: index.text, mappings: selected, pick: pick, reverse: true)
         }
         guard !text.isEmpty else { throw ChangesFailure(lines == nil ? "not staged" : "none of the selected lines is staged") }
-        return ReviewPatch(repository: repository, text: text, target: .index, reverse: true)
+        return ReviewPatch(checkout: checkout, text: text, target: .index, reverse: true)
     }
 
     /// Where a file's text is read from.
     enum Side {
         case head, index, workingTree
+    }
+
+    struct Reads: Sendable {
+        var blob: @Sendable (Side) async throws -> (text: SideText, mode: String)?
+        var worktree: @Sendable () async -> SideText?
+        var workingMode: @Sendable () -> String?
+        var changes: @Sendable (Side, Side) async throws -> UnifiedDiff.Parsed
+    }
+
+    private static func reads(_ file: ChangedFile, in repository: URL) -> Reads {
+        let url = repository.appendingPathComponent(file.path)
+        return Reads(blob: { try await blob(file, at: $0, in: repository) },
+                     worktree: { await offPool { (try? Data(contentsOf: url)).map { SideText(String(decoding: $0, as: UTF8.self)) } } },
+                     workingMode: { ChangeSet.mode(of: url) },
+                     changes: { try await changes(of: file, between: $0, and: $1, in: repository) })
+    }
+
+    private static func reads(_ sides: ReviewSides) -> Reads {
+        Reads(blob: { side in
+            switch side {
+            case .head: return sides.head.map { (text: $0.text, mode: $0.mode) }
+            case .index: return sides.index.map { (text: $0.text, mode: $0.mode) }
+            case .workingTree: return nil
+            }
+        }, worktree: { sides.worktree?.text }, workingMode: { sides.worktree?.mode }, changes: { from, to in
+            switch (from, to) {
+            case (.head, .index): return sides.staged
+            case (.head, _): return sides.againstHead
+            default: return sides.unstaged
+            }
+        })
     }
 
     /// `file`'s text and git mode in HEAD or the index; nil where it has none (or there are no
@@ -339,26 +419,25 @@ public struct ReviewPatch: Equatable, Sendable {
     /// with only `lines` of the one hunk when picked (removed lines found by their text in the
     /// change there). `reverse`: how it will be applied (a discard), which decides what unpicked
     /// lines become.
-    private static func towardWorkingTree(_ hunks: [ChangeHunk]?, of file: ChangedFile, from side: Side, in repository: URL, lines: Set<Int>?, reverse: Bool,
+    private static func towardWorkingTree(_ hunks: [ChangeHunk]?, of file: ChangedFile, from side: Side, reading: Reads, lines: Set<Int>?, reverse: Bool,
                                           expected: SideText? = nil) async throws -> String {
         try checkPath(file.path)
         let picked = try lines.map { try Self.pick($0, of: hunks ?? []) }
-        let url = repository.appendingPathComponent(file.path)
-        let old = try await blob(file, at: side, in: repository)
-        let worktree = await offPool { (try? Data(contentsOf: url)).map { SideText(String(decoding: $0, as: UTF8.self)) } }
+        let old = try await reading.blob(side)
+        let worktree = await reading.worktree()
         if let expected, worktree != expected { throw ChangesFailure("\(file.boardPath) changed since the tile read it; try again") }
         if old == nil, side == .head, file.status == .renamed { throw ChangesFailure("\(file.boardPath) was renamed since HEAD; discard it against HEAD (Uncommitted changes)") }
         switch (old, worktree) {
         case (nil, nil):
             throw ChangesFailure("\(file.boardPath) is neither in \(side == .head ? "HEAD" : "the index") nor on disk")
         case (nil, let worktree?):
-            return Self.text(path: file.path, old: nil, new: worktree, newMode: ChangeSet.mode(of: url), mappings: LineRangeMapping.whole(worktree),
+            return Self.text(path: file.path, old: nil, new: worktree, newMode: reading.workingMode(), mappings: LineRangeMapping.whole(worktree),
                              pick: picked.map { LinePick(removed: [], added: $0.added) }, reverse: reverse)
         case (let old?, nil):
             return Self.text(path: file.path, old: old.text, new: nil, oldMode: old.mode, mappings: LineRangeMapping.whole(old.text, removed: true),
                              pick: picked.map { LinePick(removed: matching(texts($0.removed, of: file.old), among: Array(1..<old.text.lineCount + 1), in: old.text), added: []) }, reverse: reverse)
         case (let old?, let worktree?):
-            let parsed = try await changes(of: file, between: side, and: .workingTree, in: repository)
+            let parsed = try await reading.changes(side, .workingTree)
             // git read the file after we did: a patch that doesn't describe our text is stale.
             guard await offPool({ UnifiedDiff.reconstructOld(new: worktree, parsed: parsed) }) == old.text else {
                 throw ChangesFailure("\(file.boardPath) changed meanwhile; try again")
@@ -431,6 +510,12 @@ public struct ReviewPatch: Equatable, Sendable {
         "Discarded \(subject(of: entry)) from your files · ⌘Z undoes"
     }
 
+    /// A Discard on a remote board's host, which no ⌘Z here takes back: `Discarded src/a.rs,
+    /// lines 15–46 on deckbox`. The patch stays in the tile's `props.reviewed`.
+    public static func discardNotice(of entry: JSONValue, host: String) -> String {
+        "Discarded \(subject(of: entry)) on \(host)"
+    }
+
     /// What an entry acted on: `src/a.rs`, `src/a.rs, lines 15–46`, `2 lines of src/a.rs`.
     private static func subject(of entry: JSONValue) -> String {
         let path = entry["path"]?.string ?? "a file"
@@ -453,6 +538,29 @@ public struct ReviewPatch: Equatable, Sendable {
             throw ChangesFailure("refusing to patch \(path): outside the repository")
         }
     }
+}
+
+/// What a remote board's changes listing read of one file for Stage, Unstage, and Discard
+/// (`HostGit.changes`): its HEAD and index blobs and its working-tree bytes, each with the id
+/// its host compares again before applying a patch built from them (`HostGit.apply`), and the
+/// `-U0` diffs between them. Nothing is read again here.
+public struct ReviewSides: Sendable, Equatable {
+    public struct Side: Sendable, Equatable {
+        public var text: SideText
+        public var mode: String
+        /// The blob's object id; for the working tree, the SHA-256 of its bytes.
+        public var id: String
+    }
+
+    public var head: Side?
+    public var index: Side?
+    public var worktree: Side?
+    /// Index → working tree.
+    public var unstaged: UnifiedDiff.Parsed
+    /// HEAD → index.
+    public var staged: UnifiedDiff.Parsed
+    /// HEAD → working tree.
+    public var againstHead: UnifiedDiff.Parsed
 }
 
 extension Notification.Name {
@@ -482,16 +590,17 @@ public final class ReviewGit {
         let previous = tail
         let work = Task<ChangesFailure?, Never> {
             await previous?.value
+            guard case .local(let repository) = patch.checkout else { return ChangesFailure("this patch applies on its host, not on this Mac") }
             let failure: ChangesFailure?
             do {
-                _ = try await GitRunner.shared.run(patch.arguments, in: patch.repository, input: Data(patch.text.utf8))
+                _ = try await GitRunner.shared.run(patch.arguments, in: repository, input: Data(patch.text.utf8))
                 failure = nil
             } catch GitError.failed(_, let stderr) {
                 failure = ChangesFailure(Self.reason(stderr))
             } catch {
                 failure = ChangesFailure("git apply failed: \(error)")
             }
-            if failure == nil { NotificationCenter.default.post(name: .reviewPatchApplied, object: patch.repository.path) }
+            if failure == nil { NotificationCenter.default.post(name: .reviewPatchApplied, object: repository.path) }
             return failure
         }
         tail = Task { _ = await work.value }
@@ -509,7 +618,7 @@ public final class ReviewGit {
     }
 
     /// git's complaint, said for the user.
-    static func reason(_ stderr: String) -> String {
+    nonisolated static func reason(_ stderr: String) -> String {
         if stderr.contains("index.lock") { return "the index is locked by another git process; try again" }
         if stderr.contains("patch does not apply") || stderr.contains("does not match index") || stderr.contains("already exists") || stderr.contains("does not exist") {
             return "no longer applies: the lines changed since"
@@ -537,12 +646,17 @@ extension Board {
     /// A review action the tile already applied (`patch`), recorded as one undo step with an
     /// entry in the tile's `props.reviewed`: ⌘Z applies the patch the other way round (a revert
     /// comes back, a stage leaves the index) and drops the entry; redo applies it again. When
-    /// the lines moved on meanwhile, the undo is refused and `.reviewPatchFailed` says so.
+    /// the lines moved on meanwhile, the undo is refused and `.reviewPatchFailed` says so. A
+    /// patch applied on a remote board's host only logs the entry: no ⌘Z here reaches the host.
     public func recordReview(tile: ObjectID, entry: JSONValue, patch: ReviewPatch, git: ReviewGit = .shared) throws {
         let object = try object(tile)
         var reviewed = object.props["reviewed"]?.array ?? []
         reviewed.append(entry)
         if reviewed.count > Self.reviewedLimit { reviewed.removeFirst(reviewed.count - Self.reviewedLimit) }
+        guard case .local = patch.checkout else {
+            _ = try update(tile, props: .object(["reviewed": .array(reviewed)]))
+            return
+        }
         let what = [entry["action"]?.string, entry["path"]?.string, entry["header"]?.string].compactMap { $0 }.joined(separator: " ")
         transaction {
             _ = try? update(tile, props: .object(["reviewed": .array(reviewed)]))
