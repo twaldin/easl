@@ -183,10 +183,23 @@ case "${1:-}" in
     out="${2:-$home/shot.png}"
     wid="$(window_id)"
     [ -n "$wid" ] || { echo "no easl window" >&2; exit 1; }
-    # Only a displayed Space is composited; anything else would be a stale frame.
-    visible="$("$yabai" -m query --windows --window "$wid" | python3 -c "import json,sys; print(json.load(sys.stdin)['is-visible'])")"
-    [ "$visible" = "True" ] || { echo "window $wid is not on a displayed Space; show its Space (for example, gui show <owner> on twaldin-home), then capture again" >&2; exit 1; }
-    screencapture -x -o -l "$wid" "$out" && echo "$out"
+    if [ -n "${EASL_DEV_FORBIDDEN_SPACES:-}" ]; then
+      display="$("$yabai" -m query --windows --window "$wid" | python3 -c "import json,sys; print(json.load(sys.stdin)['display'])")"
+      showing="$("$yabai" -m query --spaces --display "$display" | python3 -c "import json,sys; print(next(s['index'] for s in json.load(sys.stdin) if s['is-visible']))")"
+      for forbidden in $EASL_DEV_FORBIDDEN_SPACES; do
+        [ "$showing" != "$forbidden" ] || { echo "display $display is showing forbidden Space $showing; capture refused without moving the window" >&2; exit 1; }
+      done
+    fi
+    [ ! -d "$out" ] || { echo "capture destination is a directory: $out" >&2; exit 1; }
+    capture_dir="$(mktemp -d "${out}.XXXXXX")"
+    trap 'rm -f "$capture_dir/shot.png"; rmdir "$capture_dir"' 0
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    screencapture -x -o -l "$wid" "$capture_dir/shot.png"
+    [ -s "$capture_dir/shot.png" ] || { echo "screencapture did not write an image" >&2; exit 1; }
+    mv -f "$capture_dir/shot.png" "$out"
+    echo "$out"
     ;;
   move)
     need_yabai move
