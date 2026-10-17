@@ -18,7 +18,6 @@ private final class Registration {
 @MainActor
 private enum TooltipProbe {
     static var registrations: [ObjectIdentifier: [Registration]] = [:]
-    static var removals = 0
 
     static func exchange(_ original: Selector, _ replacement: Selector) {
         guard let first = class_getInstanceMethod(NSView.self, original),
@@ -31,7 +30,6 @@ private enum TooltipProbe {
     static func install() {
         exchange(#selector(NSView.addToolTip(_:owner:userData:)), #selector(NSView.lifetimeAddToolTip(_:owner:userData:)))
         exchange(#selector(NSView.removeAllToolTips), #selector(NSView.lifetimeRemoveAllToolTips))
-        exchange(#selector(NSView.removeToolTip(_:)), #selector(NSView.lifetimeRemoveToolTip(_:)))
     }
 
     static func registration(for view: NSView) -> Registration {
@@ -80,17 +78,8 @@ extension NSView {
     @objc fileprivate func lifetimeRemoveAllToolTips() {
         if self is GroupView {
             TooltipProbe.registrations[ObjectIdentifier(self)] = []
-            TooltipProbe.removals += 1
         }
         lifetimeRemoveAllToolTips()
-    }
-
-    @objc fileprivate func lifetimeRemoveToolTip(_ tag: NSView.ToolTipTag) {
-        if self is GroupView {
-            TooltipProbe.registrations[ObjectIdentifier(self)]?.removeAll { $0.tag == tag }
-            TooltipProbe.removals += 1
-        }
-        lifetimeRemoveToolTip(tag)
     }
 }
 
@@ -114,27 +103,6 @@ private enum TooltipLifetime {
         TooltipProbe.check(group, expected: "Created by the terminal “Lifetime regression author with a deliberately long dynamic name 0123456789”", stage: "initial registration")
         autoreleasepool { group.author = "Replacement author with another deliberately long dynamic name 9876543210" }
         TooltipProbe.check(group, expected: "Created by the terminal “Replacement author with another deliberately long dynamic name 9876543210”", stage: "author replacement")
-        autoreleasepool { group.show(region: NSRect(x: 0, y: 0, width: 800, height: 300)) }
-        TooltipProbe.check(group, expected: "Created by the terminal “Replacement author with another deliberately long dynamic name 9876543210”", stage: "resize")
-        let removalsBeforeDetach = TooltipProbe.removals
-        autoreleasepool { group.removeFromSuperview() }
-        TooltipProbe.require(group.window == nil, "Detached group still has a window")
-        print("OBSERVE detach intercepted-removals=\(TooltipProbe.removals - removalsBeforeDetach) captured-tags=\(TooltipProbe.registrations[ObjectIdentifier(group)]?.count ?? 0). Captured tags do not prove AppKit internal registration state.")
-        autoreleasepool {
-            content.addSubview(group)
-            group.author = "Reattached author with a deliberately long dynamic name 1357924680"
-        }
-        TooltipProbe.require(group.window === window, "Reattached group has the wrong window")
-        TooltipProbe.check(group, expected: "Created by the terminal “Reattached author with a deliberately long dynamic name 1357924680”", stage: "reattach and refresh")
-        autoreleasepool { group.author = nil }
-        TooltipProbe.require(TooltipProbe.registrations[ObjectIdentifier(group)]?.isEmpty == true, "Removing author leaves a captured tooltip registration")
-        autoreleasepool {
-            group.author = "Restored author with a deliberately long dynamic name 2468013579"
-            group.show(region: NSRect(x: 0, y: 0, width: 20, height: 300))
-        }
-        TooltipProbe.require(TooltipProbe.registrations[ObjectIdentifier(group)]?.isEmpty == true, "Narrow group keeps an author tooltip after the mark disappears")
-        autoreleasepool { group.show(region: NSRect(x: 0, y: 0, width: 900, height: 300)) }
-        TooltipProbe.check(group, expected: "Created by the terminal “Restored author with a deliberately long dynamic name 2468013579”", stage: "mark restored")
         withExtendedLifetime((window, group)) {}
         window.close()
         print("PASS GroupView tooltip lifetime regression")

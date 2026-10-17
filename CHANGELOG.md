@@ -39,7 +39,7 @@ Each version's section is its GitHub release's notes.
 
 ### Fixed
 
-- Group author tooltips no longer reference a freed string while waiting to appear.
+- Hovering a group's author mark no longer crashes easl while its tooltip appears.
 
 ## 0.2.7
 

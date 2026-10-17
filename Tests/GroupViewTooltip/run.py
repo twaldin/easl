@@ -5,7 +5,6 @@ import pathlib
 import platform
 import shlex
 import subprocess
-import tempfile
 
 
 def main():
@@ -26,8 +25,7 @@ def main():
     missing = [str(p) for p in objects if not p.is_file()]
     if missing:
         parser.error(f"Missing compiled objects: {missing}")
-    scratch = pathlib.Path(tempfile.mkdtemp(prefix="easl-group-tooltip-"))
-    print(f"Scratch artifacts retained at {scratch}", flush=True)
+    executable = build / "GroupViewTooltip"
     compiler = subprocess.check_output(["xcrun", "--find", "swiftc"], text=True).strip()
     sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
     command = [compiler, "-swift-version", "6", "-parse-as-library", "-sdk", sdk,
@@ -43,10 +41,9 @@ def main():
                     str(root / "Sources/CanvasApp/DevPerf.swift"),
                     str(root / "Tests/GroupViewTooltip/TooltipLifetime.swift")])
     command.extend(str(p) for p in objects)
-    command.extend(["-o", str(scratch / "tooltip-lifetime")])
-    (scratch / "compile-command.txt").write_text(shlex.join(command) + "\n")
+    command.extend(["-o", str(executable)])
     subprocess.run(command, cwd=root, check=True)
-    subprocess.run([str(scratch / "tooltip-lifetime")], cwd=root, check=True)
+    subprocess.run([str(executable)], cwd=root, check=True)
 
 
 if __name__ == "__main__":
