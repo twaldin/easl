@@ -2,7 +2,11 @@
 
 Each version's section is its GitHub release's notes.
 
-## Unreleased
+## 0.2.7
+
+**Updating from 0.2.4.** The update still runs 0.2.4's own install helper. If Update in 0.2.4 stops with nothing replaced, quit easl and install 0.2.7 from its zip on [GitHub Releases](https://github.com/twaldin/easl/releases), or run `brew upgrade --cask easl` for a Homebrew install.
+
+**Host updates.** Preserving input modes in newly created easld sessions, `board.close` on easld, merged-board ownership metadata for terminal attaches, and unattended expiration of pasted images also need easld updated on the host. Re-run `scripts/offload-setup.sh <host>` on the Mac, then restart `easld@<user>` on the host (running sessions keep going). The corrected HTML-measurement error also needs the updated easld. The composer and delegated viewer calls, easld session-directory discovery and restart retries, direct attaches to a hosted terminal's own host, image staging itself, and live remote HTML work by updating the viewing Mac. Live HTML's host-file reads need Bun and Python 3 on the host, and git for refs. On a Mac app host, update that app for merged-board metadata and unattended image expiration.
 
 - Development: the host-file cancellation regression waits for a complete client-ready PID before cancelling, including delayed process startup during the full native suite.
 - Development: `dev.sh start` and `restart` launch unfocused on the current Space without yabai rules or window moves. Removed `dev.sh move` and the parking/testing Space controls.
