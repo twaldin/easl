@@ -4,6 +4,23 @@ import Testing
 @testable import CanvasCore
 
 final class HostFileFixture: @unchecked Sendable {
+    // Keep one executable beside the runner; per-fixture bodies are sourced as data.
+    private static let launcher = Result<URL, Error> {
+        let url = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+            .appendingPathComponent("CanvasCoreTests-host-files-ssh")
+        let script = """
+        #!/bin/sh
+        for command; do :; done
+        . "$2"
+
+        """
+        if (try? String(contentsOf: url, encoding: .utf8)) != script {
+            try script.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+        return url
+    }
+
     let directory: URL
     let root: URL
     let temp: URL
@@ -24,7 +41,7 @@ final class HostFileFixture: @unchecked Sendable {
     }
 
     func reader(body: String? = nil, request: JSONValue? = nil) throws -> HostFiles {
-        let executable = directory.appendingPathComponent("ssh-\(UUID().uuidString)")
+        let bodyFile = directory.appendingPathComponent("reader-\(UUID().uuidString)")
         let execution: String
         if let request {
             let json = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
@@ -34,13 +51,9 @@ final class HostFileFixture: @unchecked Sendable {
         } else {
             execution = body ?? "exec /bin/sh -c \"$command\""
         }
-        try """
-        #!/bin/sh
-        for command; do :; done
-        \(execution)
-        """.write(to: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-        return HostFiles(hostName: "fixture", route: HostRoute(target: "fixture", controlPath: directory.appendingPathComponent("control").path, executable: executable.path), temps: [temp.path])
+        try (execution + "\n").write(to: bodyFile, atomically: true, encoding: .utf8)
+        return HostFiles(hostName: "fixture", route: HostRoute(target: "fixture", controlPath: bodyFile.path,
+                         executable: try Self.launcher.get().path), temps: [temp.path])
     }
 
     func reader(running injection: String) throws -> HostFiles {

@@ -204,7 +204,7 @@ final class LayoutApiTests {
     }
 
     /// A prop the schema defines must never be reported as unknown.
-    @Test func knownPropsAreExactlyTheSchemas() throws {
+    @Test nonisolated func knownPropsAreExactlyTheSchemas() throws {
         let schema = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../schema/easl-api.json")
         let definitions = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: schema))["definitions"]
         for type in ObjectType.allCases {

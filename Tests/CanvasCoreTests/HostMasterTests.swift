@@ -144,6 +144,32 @@ struct HostMasterTests {
         #expect(kill(try #require(host.pid()), 0) == 0)
     }
 
+    @Test func exitedChildrenAreUntrackedBeforeTheirHandlersFinish() async throws {
+        let observed = try await offPool {
+            Result {
+                let processes = RemoteProcesses()
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/sh")
+                process.arguments = ["-c", "exit 0"]
+                let started = DispatchSemaphore(value: 0)
+                let finish = DispatchSemaphore(value: 0)
+                defer {
+                    finish.signal()
+                    processes.terminateAll(grace: 0.05)
+                }
+                process.terminationHandler = { _ in
+                    started.signal()
+                    finish.wait()
+                }
+                try processes.launch(process)
+                try #require(started.wait(timeout: .now() + 10) == .success)
+                return (running: process.isRunning, count: processes.count)
+            }
+        }.get()
+        #expect(!observed.running)
+        #expect(observed.count == 0)
+    }
+
     @Test func quittingReapsAMasterThatIgnoresTerminationAndRefusesAnotherStart() async throws {
         let host = try Host()
         defer { host.close() }

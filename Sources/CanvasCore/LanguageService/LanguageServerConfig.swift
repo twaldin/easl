@@ -309,7 +309,7 @@ public final class LoginShell: @unchecked Sendable {
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP))
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
         posix_spawnattr_setpgroup(&attributes, 0)
         let words: [String] = [shell, variables != nil ? "-lic" : "-lc", script]
         let argv: [UnsafeMutablePointer<CChar>?] = words.map { strdup($0) } + [nil]
