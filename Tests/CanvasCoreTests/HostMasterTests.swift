@@ -153,13 +153,16 @@ struct HostMasterTests {
                 process.arguments = ["-c", "exit 0"]
                 let started = DispatchSemaphore(value: 0)
                 let finish = DispatchSemaphore(value: 0)
-                defer { finish.signal() }
+                defer {
+                    finish.signal()
+                    processes.terminateAll(grace: 0.05)
+                }
                 process.terminationHandler = { _ in
                     started.signal()
                     finish.wait()
                 }
                 try processes.launch(process)
-                started.wait()
+                try #require(started.wait(timeout: .now() + 10) == .success)
                 return (running: process.isRunning, count: processes.count)
             }
         }.get()

@@ -153,7 +153,7 @@ final class LoginShellTests {
         try #require(pipe(&descriptors) == 0)
         defer { descriptors.forEach { close($0) } }
         let login = LoginShell(shell: try shell("""
-        if [ -e /dev/fd/\(descriptors[1]) ]; then exit 1; fi
+        if [ -p /dev/fd/\(descriptors[0]) ] || [ -p /dev/fd/\(descriptors[1]) ]; then exit 1; fi
         eval "$2"
         """))
         #expect(await offPool { login.resolve("ls") } == URL(fileURLWithPath: "/bin/ls"))
