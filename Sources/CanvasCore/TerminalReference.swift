@@ -30,7 +30,7 @@ public enum TerminalReferences {
     /// extension (checked after matching), so `localhost:3000` and `12:30` never match; the
     /// lookbehind keeps `https://example.com:443` out. A `file://` URL's path counts, with its
     /// scheme part of the reference.
-    private static let pathPattern = #"(?<![\w./@:~-])(?:file://)?((?:~|\.{1,2})?/?(?:[\w@.+-]+/)*[\w@+-][\w@.+-]*)"#
+    private static let pathPattern = #"(?<![\w./@:~-])(?:file://[^\s/]*(?=/))?((?:~|\.{1,2})?/?(?:[\w@.+-]+/)*[\w@+-][\w@.+-]*)"#
     /// A path, then `:line`, `:line:col`, `:start-end`, or `#Lstart`, `#Lstart-end`,
     /// `#Lstart-Lend`; a range's dash may be `-`, `–` or `—`.
     private static let pattern = try! NSRegularExpression(pattern:
@@ -212,6 +212,16 @@ extension TerminalReferences {
         }
     }
 
+    public struct Candidate: Equatable, Sendable {
+        public var reference: TerminalReference
+        public var runs: [TerminalTextRows.Run]
+
+        public init(reference: TerminalReference, runs: [TerminalTextRows.Run]) {
+            self.reference = reference
+            self.runs = runs
+        }
+    }
+
     /// How many rows above and below the clicked one a reference is followed onto.
     static let joinedRows = 2
 
@@ -229,6 +239,31 @@ extension TerminalReferences {
     /// longest run of joined rows is tried first, then shorter ones around the row, down to the
     /// row alone: the first reference under the cell that resolves wins.
     public static func hit(row: Int, column: Int, columns: Int, read: (Int) -> String?, resolve: (String) -> String?) -> Hit? {
+        var found: Hit?
+        visitCandidates(row: row, column: column, columns: columns, read: read) { reference, rows in
+            guard let file = resolve(reference.path) else { return false }
+            found = Hit(file: file, lines: reference.lines, runs: rows.runs(reference.range), test: reference.test)
+            return true
+        }
+        return found
+    }
+
+    /// Parsed viewport readings in resolution order, without consulting any filesystem.
+    public static func candidates(row: Int, column: Int, columns: Int, read: (Int) -> String?) -> [Candidate] {
+        var candidates: [Candidate] = []
+        visitCandidates(row: row, column: column, columns: columns, read: read) { reference, rows in
+            let candidate = Candidate(reference: reference, runs: rows.runs(reference.range))
+            if !candidates.contains(where: {
+                $0.reference.path == reference.path && $0.reference.lines == reference.lines &&
+                    $0.reference.test == reference.test && $0.runs == candidate.runs
+            }) { candidates.append(candidate) }
+            return false
+        }
+        return candidates
+    }
+
+    private static func visitCandidates(row: Int, column: Int, columns: Int, read: (Int) -> String?,
+                                        visit: (TerminalReference, TerminalTextRows) -> Bool) {
         var cache: [Int: String?] = [:]
         func line(_ index: Int) -> String? {
             if let cached = cache[index] { return cached }
@@ -236,7 +271,7 @@ extension TerminalReferences {
             cache[index] = text
             return text
         }
-        guard line(row) != nil else { return nil }
+        guard line(row) != nil else { return }
         // joins[r]: how row r goes on into row r + 1.
         var joins: [Int: TerminalTextRows.Join] = [:]
         for upper in stride(from: row - 1, through: row - joinedRows, by: -1) {
@@ -259,11 +294,9 @@ extension TerminalReferences {
                                          trailing: index < bottom ? joins[index]!.trailing : 0)
             })
             guard let offset = rows.offset(row: row, column: column),
-                  let reference = reference(in: rows.text, at: offset),
-                  let file = resolve(reference.path) else { continue }
-            return Hit(file: file, lines: reference.lines, runs: rows.runs(reference.range), test: reference.test)
+                  let reference = reference(in: rows.text, at: offset) else { continue }
+            if visit(reference, rows) { return }
         }
-        return nil
     }
 }
 

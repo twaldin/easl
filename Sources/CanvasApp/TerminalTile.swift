@@ -28,13 +28,14 @@ final class TerminalTile: NSView, TileContent {
     /// A web link the terminal's text activated (⌘-click on a URL) opened or found this browser
     /// tile; the canvas shows it.
     var onOpenedLink: ((ObjectID) -> Void)?
-    /// Something asked of this terminal can't happen on this Mac (a remote terminal's file
-    /// reference: the file is on the host); the canvas says `text` for a moment (`CanvasView.showNotice`).
     var onNotice: ((String) -> Void)?
     /// A remote board's terminal (docs/design.md "Client mode"): the host's session, attached
     /// over ssh; its programs, notifications and exit are the host's to watch, not this Mac's.
     let isRemote: Bool
     private(set) var discarded = false
+    private let references: HostReferences?
+    private var referenceTask: Task<Void, Never>?
+    private var referenceGeneration = UUID()
     var endingSession = false {
         didSet {
             if endingSession { terminal.cancelImageInput() }
@@ -44,6 +45,8 @@ final class TerminalTile: NSView, TileContent {
     func discard() {
         guard !discarded else { return }
         discarded = true
+        referenceTask?.cancel()
+        referenceGeneration = UUID()
         terminal.cancelImageInput()
         handler.tile = nil
         terminal.delegate = nil
@@ -66,10 +69,11 @@ final class TerminalTile: NSView, TileContent {
     private static let pasteTiles = NSHashTable<TerminalTile>.weakObjects()
 
     /// `attach`: a remote board's terminal, shown by running that command (`RemoteHost.terminalAttachCommand`).
-    init(object: CanvasObject, board: Board, attach: [String]? = nil) {
+    init(object: CanvasObject, board: Board, attach: [String]? = nil, references: HostReferences? = nil) {
         objectID = object.id
         sessionName = Self.sessionName(object.id)
         self.board = board
+        self.references = references
         isRemote = attach != nil
         host = attach == nil ? HostedTerminal.host(of: object).map(TerminalHost.named) : nil
         pasteHostTarget = HostedTerminal.host(of: object)
@@ -93,9 +97,13 @@ final class TerminalTile: NSView, TileContent {
         handler.tile = self
         terminal.delegate = handler
         if isRemote {
-            // Its paths are the host's: nothing here looks them up (on this Mac a reference would
-            // find, and open, a same-named file of its own).
-            terminal.onMissedLink = { [weak self] point, _ in self?.remoteReference(at: point) }
+            terminal.onClick = { [weak self] in
+                self?.referenceTask?.cancel()
+                self?.referenceGeneration = UUID()
+            }
+            terminal.onReferenceClick = { [weak self] point, newTile in
+                self?.remoteReference(at: point, newTile: newTile) ?? false
+            }
         } else {
             terminal.linkAt = { [weak self] point in self?.link(at: point) }
             terminal.onHover = { [weak self] hit in self?.showUnderline(hit) }
@@ -123,6 +131,12 @@ final class TerminalTile: NSView, TileContent {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
+    private var remoteSource: RemoteSource? {
+        var ancestor = superview
+        while let view = ancestor, !(view is CanvasView) { ancestor = view.superview }
+        return (ancestor as? CanvasView)?.remote
+    }
+
     private func resolvePasteDestination() -> TerminalPasteDestination? {
         guard !discarded, !endingSession, !board.isClosed else { return nil }
         if let pasteDestination { return pasteDestination }
@@ -130,9 +144,7 @@ final class TerminalTile: NSView, TileContent {
         let owner: BoardID
         var remoteHost: RemoteHost?
         if isRemote {
-            var ancestor = superview
-            while let view = ancestor, !(view is CanvasView) { ancestor = view.superview }
-            guard let remote = (ancestor as? CanvasView)?.remote else { return nil }
+            guard let remote = remoteSource else { return nil }
             remoteHost = remote.host
             owner = remote.mirror.sessionBoardID
             instance = HostedTerminal.homeLabel(URL(fileURLWithPath: remote.host.socketPath).deletingLastPathComponent().path)
@@ -1064,15 +1076,53 @@ final class TerminalTile: NSView, TileContent {
         }
     }
 
-    /// A ⌘-click in a remote terminal: on what reads as a file reference (`TerminalReferences`,
-    /// not looked up: the file is on the host), says where it opens instead.
-    private func remoteReference(at point: NSPoint) {
-        guard hit(at: point, resolve: { $0 }) != nil else { return }
-        onNotice?(Self.remoteReferenceNotice)
+    private func remoteReference(at point: NSPoint, newTile: Bool) -> Bool {
+        guard let surface, let grid, let cell = cell(at: point) else { return false }
+        let candidates = TerminalReferences.candidates(row: cell.row, column: cell.column, columns: grid.columns,
+            read: { $0 < grid.rows ? surface.viewportRow($0, columns: grid.columns) : nil })
+        guard !candidates.isEmpty else { return false }
+        resolveRemote(candidates, newTile: newTile)
+        return true
     }
 
-    /// What a remote terminal says to a ⌘-clicked file reference or path.
-    static let remoteReferenceNotice = "File references open on the host's own board"
+    private func resolveRemote(_ candidates: [TerminalReferences.Candidate], newTile: Bool) {
+        referenceTask?.cancel()
+        let generation = UUID()
+        referenceGeneration = generation
+        guard let references, let remote = remoteSource else {
+            onNotice?(HostReferenceOutcome.Failure.unavailable.message)
+            return
+        }
+        let props = board.objects[objectID]?.props
+        let request = HostReferenceRequest(boardRoot: board.root.path, board: remote.mirror.sessionBoardID, tile: objectID,
+            merged: remote.mirror.mergedBoards, reportedCwd: reportedCwd, cwd: props?["cwd"]?.string,
+            hosted: props?["host"]?.string != nil, candidates: candidates)
+        referenceTask = Task { [weak self] in
+            do {
+                let outcome = try await references.resolve(request)
+                guard let self, !Task.isCancelled, self.referenceGeneration == generation,
+                      !self.discarded, !self.board.isClosed else { return }
+                switch outcome {
+                case .failure(let failure):
+                    self.onNotice?(failure.message)
+                case .resolved(let resolved):
+                    let candidate = candidates[resolved.candidate]
+                    var lines = candidate.reference.lines
+                    if let test = candidate.reference.test, let bytes = resolved.pytestBytes {
+                        let line = await offPool { PytestNode.line(of: test, in: String(decoding: bytes, as: UTF8.self)) } ?? 1
+                        guard !Task.isCancelled, self.referenceGeneration == generation,
+                              !self.discarded, !self.board.isClosed else { return }
+                        lines = LineRange(start: line, end: line)
+                    }
+                    self.open(.init(file: resolved.path, lines: lines, runs: candidate.runs), newTile: newTile)
+                }
+            } catch {
+                guard let self, !Task.isCancelled, self.referenceGeneration == generation,
+                      !self.discarded, !self.board.isClosed else { return }
+                self.onNotice?(HostReferenceOutcome.Failure.unavailable.message)
+            }
+        }
+    }
 
     /// The cells `runs` cover in the underline's (flipped) coordinates, `height` tall at the
     /// bottom of each cell (the whole cell when nil).
@@ -1097,7 +1147,7 @@ final class TerminalTile: NSView, TileContent {
     }
 
     private func open(_ hit: TerminalReferences.Hit, newTile: Bool) {
-        if let test = hit.test {
+        if let test = hit.test, !isRemote {
             // A pytest node id: its line is the test's `def`, read off the main thread.
             let file = hit.file
             Task { [weak self] in
@@ -1110,8 +1160,10 @@ final class TerminalTile: NSView, TileContent {
             return
         }
         let opened = board.openCode(path: hit.file, lines: hit.lines, beside: objectID, newTile: newTile)
-        NSLog("easl: terminal %@ opened %@%@ as %@ (%@)", objectID, hit.file, hit.lines.map { ":\($0.start)-\($0.end)" } ?? "", opened.id,
-              opened.created ? (newTile ? "new tile" : "new preview") : opened.existing ? "existing" : "re-aimed preview")
+        if !isRemote {
+            NSLog("easl: terminal %@ opened %@%@ as %@ (%@)", objectID, hit.file, hit.lines.map { ":\($0.start)-\($0.end)" } ?? "", opened.id,
+                  opened.created ? (newTile ? "new tile" : "new preview") : opened.existing ? "existing" : "re-aimed preview")
+        }
         let source = grid.map { rects(hit.runs, grid: $0).reduce(NSRect.null) { $0.union($1) } } ?? .null
         onOpenedCode?(opened, source.isNull ? .null : underline.convert(source, to: nil))
     }
@@ -1121,16 +1173,23 @@ final class TerminalTile: NSView, TileContent {
     /// a browser tile beside this terminal (`Board.openLink`: a tile already showing it is
     /// reused); ⌥ held (a ⌥⌘-click, which `CanvasTerminalView` hands Ghostty as a ⌘-click: Ghostty
     /// finds no link under ⌥⌘) opens it in the default browser instead, and any other scheme or a
-    /// file path goes to the system, as `open` would. A remote terminal's text is its host's: a
-    /// path or `file:` URL there names the host's file, so nothing opens here (this Mac's file of
-    /// that name would) and the notice says so, and app.log never gets its links.
+    /// file path goes to the system, as `open` would. Remote file links use the host resolver
+    /// instead and are never logged.
     func openLink(_ text: String) {
+        if isRemote {
+            let url = URL(string: text)
+            let parsed = TerminalReferences.reference(in: text, at: 0)
+            if url?.isFileURL == true || url?.scheme == nil || parsed != nil {
+                var reference = parsed ?? TerminalReference(range: NSRange(location: 0, length: (text as NSString).length),
+                                                            path: text, lines: nil)
+                if parsed == nil, let url, url.isFileURL { reference.path = url.path }
+                resolveRemote([.init(reference: reference, runs: [])], newTile: terminal.openingNewTile ||
+                    NSApp.currentEvent?.modifierFlags.isDisjoint(with: [.option, .shift]) == false)
+                return
+            }
+        }
         let url = URL(string: text).flatMap { $0.scheme == nil ? nil : $0 }
             ?? URL(fileURLWithPath: (text as NSString).expandingTildeInPath)
-        if isRemote, url.isFileURL || TerminalReferences.reference(in: text, at: 0) != nil {
-            onNotice?(Self.remoteReferenceNotice)
-            return
-        }
         let forced = terminal.forcingDefaultBrowser || NSApp.currentEvent?.modifierFlags.contains(.option) == true
         guard WebLink.isWeb(url), !forced else {
             ExternalOpen.open(url, because: isRemote ? "remote terminal link" : "terminal \(objectID) link\(forced ? " (⌥-click)" : "")", naming: !isRemote)

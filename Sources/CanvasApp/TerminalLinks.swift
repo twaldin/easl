@@ -128,6 +128,9 @@ final class CanvasTerminalView: TerminalView {
     var onOpen: ((TerminalReferences.Hit, _ newTile: Bool) -> Void)?
     /// A ⌘-click that found no file to open (`linkAt` was nil) at a point in this view's coordinates.
     var onMissedLink: ((NSPoint, _ newTile: Bool) -> Void)?
+    var onReferenceClick: ((NSPoint, _ newTile: Bool) -> Bool)?
+    var onClick: (() -> Void)?
+    private(set) var openingNewTile = false
     /// Keyboard focus came or went: libghostty-spm has just told Ghostty the view is focused
     /// or not, without asking whether its window is key in an active app.
     var onFocusChange: (() -> Void)?
@@ -469,8 +472,15 @@ final class CanvasTerminalView: TerminalView {
     private(set) var forcingDefaultBrowser = false
 
     override func mouseDown(with event: NSEvent) {
+        onClick?()
         let flags = event.modifierFlags
         let point = convert(event.locationInWindow, from: nil)
+        openingNewTile = !flags.isDisjoint(with: [.option, .shift])
+        if flags.contains(.command), onReferenceClick?(point, openingNewTile) == true {
+            swallowedMouseUp = true
+            setHover(nil)
+            return
+        }
         if flags.contains(.command), let hit = linkAt?(point) {
             // Ghostty never sees this click, so it neither selects nor opens anything.
             swallowedMouseUp = true
@@ -492,7 +502,7 @@ final class CanvasTerminalView: TerminalView {
     }
 
     private static func commandOnly(_ event: NSEvent) -> NSEvent {
-        NSEvent.mouseEvent(with: event.type, location: event.locationInWindow, modifierFlags: event.modifierFlags.subtracting(.option),
+        NSEvent.mouseEvent(with: event.type, location: event.locationInWindow, modifierFlags: event.modifierFlags.subtracting([.option, .shift, .control]),
                            timestamp: event.timestamp, windowNumber: event.windowNumber, context: nil, eventNumber: event.eventNumber,
                            clickCount: event.clickCount, pressure: event.pressure) ?? event
     }
@@ -501,6 +511,7 @@ final class CanvasTerminalView: TerminalView {
     /// on a reference open it there too, and a ⌥⌘-click is always taken (it may be on a URL).
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         if let event, Self.isOptionCommand(event.modifierFlags) { return true }
+        if let event, event.modifierFlags.contains(.command), onReferenceClick != nil { return true }
         if let event, event.modifierFlags.contains(.command), linkAt?(convert(event.locationInWindow, from: nil)) != nil { return true }
         return super.acceptsFirstMouse(for: event)
     }
@@ -508,9 +519,13 @@ final class CanvasTerminalView: TerminalView {
     override func mouseUp(with event: NSEvent) {
         if swallowedMouseUp {
             swallowedMouseUp = false
+            openingNewTile = false
             return
         }
-        defer { forcingDefaultBrowser = false }
+        defer {
+            forcingDefaultBrowser = false
+            openingNewTile = false
+        }
         super.mouseUp(with: forcingDefaultBrowser ? Self.commandOnly(event) : event)
     }
 
