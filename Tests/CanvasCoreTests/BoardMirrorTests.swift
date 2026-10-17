@@ -58,6 +58,39 @@ final class BoardMirrorTests {
         host.create(type: .note, props: .object(["markdown": .string(markdown)]), frame: Frame(x: x, y: 0, w: 280, h: 200))
     }
 
+    @Test func terminalReferencesReaimTheHostPreviewAfterCanonicalCreate() async throws {
+        let terminal = host.create(type: .terminal, props: .object([:]))
+        let (_, view) = try await mirror()
+        let first = view.openCode(path: host.root.appendingPathComponent("a.swift").path, lines: LineRange(start: 1, end: 1), beside: terminal.id)
+        try await eventually { self.host.objects.values.contains { $0.type == .code } }
+        let canonical = try #require(host.objects.values.first { $0.type == .code }?.id)
+        try await eventually { view.objects[first.id] == nil && view.objects[canonical] != nil }
+        let second = view.openCode(path: host.root.appendingPathComponent("b.swift").path, lines: LineRange(start: 2, end: 2), beside: terminal.id)
+        #expect(second.id == canonical)
+        #expect(!second.created)
+        try await eventually { self.host.objects[canonical]?.props["path"]?.string == "b.swift" }
+        let third = view.openCode(path: host.root.appendingPathComponent("c.swift").path, lines: LineRange(start: 3, end: 3), beside: terminal.id)
+        #expect(third.id == canonical)
+        #expect(!third.created)
+        try await eventually { self.host.objects[canonical]?.props["path"]?.string == "c.swift" }
+        #expect(host.objects.values.filter { $0.type == .code }.count == 1)
+    }
+
+    @Test func movingAProvisionalTerminalPreviewKeepsItAfterCanonicalCreate() async throws {
+        let terminal = host.create(type: .terminal, props: .object([:]))
+        let (_, view) = try await mirror()
+        let first = view.openCode(path: host.root.appendingPathComponent("a.swift").path, lines: LineRange(start: 1, end: 1), beside: terminal.id)
+        let before = try #require(view.objects[first.id]?.frame)
+        let moved = Frame(x: before.x + 40, y: before.y, w: before.w, h: before.h)
+        try view.update(first.id, frame: moved)
+        try await eventually { view.objects[first.id] == nil && self.host.objects.values.contains { $0.type == .code && $0.frame == moved } }
+        let canonical = try #require(host.objects.values.first { $0.type == .code }?.id)
+        let second = view.openCode(path: host.root.appendingPathComponent("b.swift").path, lines: LineRange(start: 2, end: 2), beside: terminal.id)
+        #expect(second.created)
+        #expect(second.id != canonical)
+        #expect(host.objects[canonical]?.props["path"]?.string == "a.swift")
+    }
+
     // MARK: Host-drawn tiles
 
     /// How the fake host's render link answers `view.render`.

@@ -114,6 +114,10 @@ public enum NoteSource {
             let place = fence.commit.map { "\(path) at \($0)" } ?? path
             return failed("cannot read \(place)", missing: false)
         }
+        return interpret(text, for: fence, path: path, captured: captured, body: body)
+    }
+
+    public static func interpret(_ text: String, for fence: NoteFence, path: String, captured: [String]? = nil, body: [String] = []) -> NoteExcerpt {
         let source = lines(of: text)
         let resolution = NoteAnchor.resolve(fence, in: source, captured: captured, body: body)
         let shown = resolution.range.map { Array(source[($0.start - 1)..<$0.end]) }
@@ -187,12 +191,16 @@ public enum NoteSource {
         return text.allSatisfy { $0.isLetter || $0.isNumber || "._~^/-".contains($0) }
     }
 
+    static func symbolPattern(_ symbol: String) -> String? {
+        guard let name = symbol.split(separator: ".").last.map(String.init), !name.isEmpty,
+              name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }) else { return nil }
+        return "(^|[^[:alnum:]_.$])(\(DeclarationKeywords.alternation(DeclarationKeywords.kinds.keys)))[[:space:]]+([(][^)]*[)][[:space:]]*)?\(name.replacingOccurrences(of: "$", with: "\\$"))([^[:alnum:]_$]|$)"
+    }
+
     /// First tracked file that declares `symbol` (its last dotted component), found by `git grep`
     /// with the strongest declaration keywords.
     static func locate(symbol: String, root: URL) async -> String? {
-        guard let name = symbol.split(separator: ".").last.map(String.init), !name.isEmpty,
-              name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }) else { return nil }
-        let pattern = "(^|[^[:alnum:]_.$])(\(DeclarationKeywords.alternation(DeclarationKeywords.kinds.keys)))[[:space:]]+([(][^)]*[)][[:space:]]*)?\(name.replacingOccurrences(of: "$", with: "\\$"))([^[:alnum:]_$]|$)"
+        guard let pattern = symbolPattern(symbol) else { return nil }
         guard let data = try? await GitRunner.shared.run(["grep", "-l", "-I", "-E", "-e", pattern], in: root, allowedStatus: [0, 1], maxOutput: maxOutput, timeout: timeout),
               let output = String(data: data, encoding: .utf8) else { return nil }
         let candidates = output.split(separator: "\n").map(String.init)

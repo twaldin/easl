@@ -1128,6 +1128,10 @@ public final class Board {
     /// the user deleted it meanwhile (the delete follows to the host).
     func rekeyHost(_ provisional: ObjectID, as object: CanvasObject) {
         guard var shown = objects[provisional] else { return }
+        if let preview = codePreviews.first(where: { $0.value.tile == provisional }) {
+            codePreviews[preview.key] = preview.value.rev == shown.rev ? (object.id, object.rev) : nil
+        }
+        if let preview = codePreviews.removeValue(forKey: provisional) { codePreviews[object.id] = preview }
         onHostRekey?(provisional, object.id)
         removeHost(provisional)
         shown.id = object.id
