@@ -71,16 +71,29 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         ["-T"] + Self.batchOptions + [sshTarget, "nc", "-U"] + (ncShutdown ? ["-N"] : []) + [Self.quote(socketPath)]
     }
 
-    /// Attaches only to this tile's session in the discovered socket's home, on its board or a merged board.
-    /// The shared hosted attach waits through session restarts and refuses copies owned elsewhere.
-    public func terminalAttachCommand(tile: ObjectID, board: BoardID, merged: [BoardID]) -> [String] {
-        let home = (socketPath as NSString).deletingLastPathComponent
-        let setup = "export TMPDIR=\(Self.quote(tmpdir))\n"
-            + (zmxDir.map { "export ZMX_DIR=\(Self.quote($0))\n" } ?? "")
-            + "z=\(Self.quote(zmxBin))"
-        let command = HostedTerminal.ownershipAttach(session: "canvas-" + tile, home: HostedTerminal.homeLabel(home),
-                                                     board: board, tile: tile, merged: merged, setup: setup)
-        return [Self.ssh, "-t", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", sshTarget, command]
+    /// The session runs on `props.host` when hosted, otherwise on the board host. Its owner is
+    /// always the board host's home, with this tile and a current or merged board label.
+    public func terminalAttachCommand(for terminal: CanvasObject, board: BoardID, merged: [BoardID]) -> [String] {
+        let tile = terminal.id
+        let home = HostedTerminal.homeLabel((socketPath as NSString).deletingLastPathComponent)
+        let target: String
+        let command: String
+        if let hosted = HostedTerminal.host(of: terminal) {
+            if let problem = Self.problem(withHost: hosted) {
+                return ["/bin/sh", "-c", #"printf '%s\r\n' "$1"; exec sleep 2147483647"#,
+                        "easl-remote", "Not attaching: \(problem)"]
+            }
+            target = hosted
+            command = HostedTerminal.attach(session: "canvas-" + tile, home: home, board: board, tile: tile, merged: merged)
+        } else {
+            target = sshTarget
+            let setup = "export TMPDIR=\(Self.quote(tmpdir))\n"
+                + (zmxDir.map { "export ZMX_DIR=\(Self.quote($0))\n" } ?? "")
+                + "z=\(Self.quote(zmxBin))"
+            command = HostedTerminal.ownershipAttach(session: "canvas-" + tile, home: home,
+                                                    board: board, tile: tile, merged: merged, setup: setup)
+        }
+        return [Self.ssh, "-t"] + Self.batchOptions + [target, command]
     }
 
     /// Retries transport failures and ended sessions until the viewer disposes the surface.
@@ -244,17 +257,25 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         return named.first.map { ($0.name, $0.sshTarget) } ?? typed(text)
     }
 
-    /// Why `text` can't be a host File › Open Remote… connects to, or nil: a host is one word (a
-    /// tailnet name, an ssh config alias, `user@host`, both parts there), and one starting with
-    /// `-` would be an option to ssh.
+    private static let shellHostCharacters = CharacterSet(charactersIn: "\"'`$\\;&<>|(){}")
+
+    /// An ssh target must be one word, not an option, with both parts of `user@host` present.
+    /// Older ssh clients expand hostnames into shell commands in the user's ssh configuration.
     public static func problem(withHost text: String) -> String? {
         if text.isEmpty { return "host is empty: pass a tailnet name, an ssh config alias or user@host" }
         if text.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) }) {
             return "host \(text.debugDescription) isn't one host: a tailnet name, an ssh config alias or user@host has no spaces"
         }
+        if text.rangeOfCharacter(from: shellHostCharacters) != nil {
+            return "host \(text.debugDescription) contains shell metacharacters"
+        }
         if text.hasPrefix("-") { return "host \(text) starts with -, which ssh would take for an option" }
-        if let at = text.lastIndex(of: "@"), at == text.startIndex || text.index(after: at) == text.endIndex {
-            return "host \(text) needs both parts of user@host"
+        if let at = text.lastIndex(of: "@") {
+            let host = text[text.index(after: at)...]
+            if at == text.startIndex || host.isEmpty {
+                return "host \(text) needs both parts of user@host"
+            }
+            if host.hasPrefix("-") { return "host \(text) has a host part starting with -" }
         }
         return nil
     }
