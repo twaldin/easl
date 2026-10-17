@@ -89,25 +89,26 @@ func TestSourceOverrideDoesNotAuthorizeOutsideTheBoard(t *testing.T) {
 		t.Fatal(err)
 	}
 	git(t, repo, "init", "-q", "-b", "main")
-	if err := os.MkdirAll(outside, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	const marker = "DO_NOT_SHOW_OUTSIDE_HOST_68c1"
-	if err := os.WriteFile(filepath.Join(outside, "secret.rs"), []byte(marker+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(filepath.Join(repo, "src", "a.rs"), []byte("src line\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, repo, "add", ".")
 	git(t, repo, "commit", "-q", "-m", "one")
+	git(t, repo, "worktree", "add", "-q", "-b", "other", outside)
+	if err := os.WriteFile(filepath.Join(outside, "secret.rs"), []byte(marker+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, "escape")); err != nil {
+		t.Fatal(err)
+	}
 
 	f := newFixture(t)
 	id := f.result("board.open", map[string]any{"root": repo})["board"].(string)
 	created := f.result("object.create", map[string]any{
 		"board": id,
 		"type":  "note",
-		"props": map[string]any{"root": outside, "markdown": "```rs file=secret.rs#L1\n```\n"},
+		"props": map[string]any{"root": "escape", "markdown": "```rs file=secret.rs#L1\n```\n"},
 		"frame": map[string]any{"x": 0.0, "y": 0.0, "w": 200.0, "h": 100.0},
 	})
 	got := created["object"].(map[string]any)["props"].(map[string]any)["markdown"].(string)
