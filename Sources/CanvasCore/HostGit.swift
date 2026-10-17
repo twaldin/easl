@@ -321,17 +321,6 @@ public struct HostGit: Sendable {
         }
     }
 
-    /// Which of `paths` (as a code tile names them: board-relative, or absolute on the host) are
-    /// files on the host, for a tile whose file vanished.
-    public func existing(_ paths: [String], boardRoot: String) async throws -> Set<String> {
-        var request = Request(op: "exists", boardRoot: boardRoot)
-        request.paths = paths
-        let reply: ExistsReply = try await call(request)
-        guard reply.ok, let found = reply.exists, found.count == paths.count else { throw HostFileError(code: reply.code, message: reply.message, limit: reply.limit) }
-        return Set(zip(paths, found).filter { $0.1 }.map { $0.0 })
-    }
-
-
     private func call<Reply: Decodable>(_ request: Request) async throws -> Reply {
         let input = try JSONEncoder().encode(request)
         let output = try await files.execute([Self.script, "-"], input: input, timeout: 60, what: "host git")
@@ -357,7 +346,6 @@ public struct HostGit: Sendable {
         var refSha: String?
         var spec: Spec?
         var watch: JSONValue?
-        var paths: [String]?
         var toplevel: String?
         var target: String?
         var reverse: Bool?
@@ -566,14 +554,6 @@ public struct HostGit: Sendable {
         var code: String?
         var message: String?
         var limit: Int?
-    }
-
-    private struct ExistsReply: Decodable {
-        var ok: Bool
-        var code: String?
-        var message: String?
-        var limit: Int?
-        var exists: [Bool]?
     }
 }
 
@@ -784,7 +764,7 @@ extension HostGit {
         if (!area) return { kind: 'refused' };
         const p = resolved(abs);
         if (isDir(p)) return { kind: fs.existsSync(path.join(p, '.git')) ? 'submodule' : 'directory' };
-        requests.push({ path: p, roots: [area.real], bytes: want !== 'stamp', digest: want === 'digest', limit: limits.file, metadataLimit: false });
+        requests.push({ path: p, roots: [area.real], bytes: true, digest: want === 'digest', limit: limits.file, metadataLimit: false });
         slots.push(i);
         return null;
       });
@@ -1301,15 +1281,7 @@ extension HostGit {
       if (r.tooLarge) fail('apply', { message: 'git apply printed too much' });
       return { ok: true };
     }
-    function exists() {
-      const areas = areasOf(req.boardRoot);
-      const paths = Array.isArray(req.paths) ? req.paths : [];
-      const abs = paths.map(p => { try { return target(p, areas, areas[0].lex, false); } catch { return null; } });
-      const reads = readPaths(abs.filter(Boolean), areas, 'stamp');
-      let next = 0;
-      return { ok: true, exists: abs.map(p => p !== null && reads[next++].kind === 'regular') };
-    }
-    const operations = { code, changes, apply, exists, stamp: () => ({ ok: true, digest: observe(req.watch, areasOf(req.boardRoot)) }) };
+    const operations = { code, changes, apply, stamp: () => ({ ok: true, digest: observe(req.watch, areasOf(req.boardRoot)) }) };
     let reply;
     try {
       if (!operations[req.op]) fail('unavailable', { message: 'unknown host git operation ' + req.op });

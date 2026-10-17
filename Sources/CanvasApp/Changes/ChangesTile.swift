@@ -387,7 +387,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     /// A painter for `set` as the tile shows it: its folds, filter, list, Viewed checks, current
     /// hunk, selection, header message, and a Discard asking to be pressed again.
     private func makePainter(for set: ChangeSet, width: CGFloat, laidOut: (rows: ChangeRows, names: [String])? = nil) -> ChangesPainter {
-        var painter = ChangesPainter(set: set, collapsed: collapsed, width: width, filter: filter, listOpen: listOpen, laidOut: laidOut)
+        var painter = ChangesPainter(set: set, canPickBase: git != nil || set.repository != nil, collapsed: collapsed, width: width, filter: filter, listOpen: listOpen, laidOut: laidOut)
         painter.viewed = object.props["viewed"]
         painter.current = current
         painter.selection = selection

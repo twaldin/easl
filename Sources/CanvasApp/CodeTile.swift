@@ -552,28 +552,19 @@ final class CodeTile: NSView, TileContent {
     /// (`Board.codeFileVanished`; the user's own tiles stay). Checked again a moment later, so
     /// a save that deletes and re-creates the file isn't taken for a delete.
     private func fileVanished(_ path: String) {
-        guard vanishCheck == nil else { return }
+        guard git == nil, vanishCheck == nil else { return }
         let url = board.absoluteURL(path)
         let candidates = FollowFallback.candidates(object.props["history"]?.array ?? [], vanished: path).map { ($0, board.absoluteURL($0)) }
-        let git = git, boardRoot = board.root.path
         vanishCheck = Task { [weak self] in
             // Cancellation (tile removed/offscreen) must not continue into filesystem work.
             guard (try? await Task.sleep(for: .milliseconds(600))) != nil else { return }
-            let found: (gone: Bool, existing: Set<String>)?
-            if let git {
-                let paths = candidates.map(\.0)
-                found = (try? await git.existing([path] + paths, boardRoot: boardRoot)).map { present in
-                    (!present.contains(path), Set(paths.filter(present.contains)))
-                }
-            } else {
-                found = await offPool { () -> (gone: Bool, existing: Set<String>) in
-                    let files = FileManager.default
-                    return (!files.fileExists(atPath: url.path), Set(candidates.filter { files.fileExists(atPath: $0.1.path) }.map(\.0)))
-                }
+            let found = await offPool { () -> (gone: Bool, existing: Set<String>) in
+                let files = FileManager.default
+                return (!files.fileExists(atPath: url.path), Set(candidates.filter { files.fileExists(atPath: $0.1.path) }.map(\.0)))
             }
             guard !Task.isCancelled, let self else { return }
             self.vanishCheck = nil
-            guard let found, found.gone, self.document?.path == path, self.document?.diff.state == .missing, self.displayed.path == path else { return }
+            guard found.gone, self.document?.path == path, self.document?.diff.state == .missing, self.displayed.path == path else { return }
             if case .steppedBack(let back) = self.board.codeFileVanished(self.object.id, path: path, existing: found.existing) {
                 self.steppedBackTo = back
             }

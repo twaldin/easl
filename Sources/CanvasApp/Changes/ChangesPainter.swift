@@ -101,6 +101,7 @@ final class ChangesLineCache {
 @MainActor
 struct ChangesPainter {
     let set: ChangeSet
+    let canPickBase: Bool
     let rows: ChangeRows
     let collapsed: Set<String>
     /// `props.viewed`: files marked Viewed (checked while their diff is the one marked).
@@ -125,8 +126,9 @@ struct ChangesPainter {
 
     /// `laidOut`: rows and names worked out for the same set, folds, width, filter, and list
     /// (the live tile keeps them while only the current hunk or selection changes).
-    init(set: ChangeSet, collapsed: Set<String>, width: CGFloat, filter: String, listOpen: Bool, laidOut: (rows: ChangeRows, names: [String])?) {
+    init(set: ChangeSet, canPickBase: Bool, collapsed: Set<String>, width: CGFloat, filter: String, listOpen: Bool, laidOut: (rows: ChangeRows, names: [String])?) {
         self.set = set
+        self.canPickBase = canPickBase
         self.collapsed = collapsed
         self.filter = filter
         names = laidOut?.names ?? set.files.map(Self.name)
@@ -315,7 +317,7 @@ struct ChangesPainter {
             rest = "\(selection.lines.count) line\(selection.lines.count == 1 ? "" : "s") selected · " + (set.comparesCommits ? "m mention" : "s stage · u unstage · r ⌘⌫ discard · m mention")
             color = .controlAccentColor
         } else {
-            lead = set.repository == nil ? nil : set.lead + " ▾"
+            lead = canPickBase ? set.lead + " ▾" : nil
             rest = lead == nil ? set.summary : set.counts.isEmpty ? "" : " · " + set.counts
             color = .secondaryLabelColor
         }
