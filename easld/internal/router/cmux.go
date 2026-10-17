@@ -288,7 +288,7 @@ func (r *Router) cmuxPage(tile, method string, params map[string]any) (map[strin
 	if driver := r.browserDriver(tile, browser, b); driver != "" {
 		forward["caller"] = driver
 	}
-	result, err := r.await(c, "browser.call", forward, browserDeadline(method, forwardParams))
+	result, err := r.await(c, b.ID(), "browser.call", forward, browserDeadline(method, forwardParams))
 	if err != nil {
 		return nil, err
 	}

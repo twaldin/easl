@@ -771,7 +771,7 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 	params["target"] = terminal.ID
 	// From here until its turn reports, agent.restart counts the prompt as work (promptPending).
 	r.typing[terminal.ID]++
-	result, err := r.await(c, "agent.prompt", params, clients.TerminalDeadline)
+	result, err := r.await(c, b.ID(), "agent.prompt", params, clients.TerminalDeadline)
 	if r.typing[terminal.ID]--; r.typing[terminal.ID] <= 0 {
 		delete(r.typing, terminal.ID)
 	}
@@ -903,7 +903,7 @@ func (r *Router) restart(p map[string]any) (any, error) {
 	r.restartSeq++
 	op := r.restartSeq
 	r.restarts[terminal.ID] = op
-	result, err := r.await(c, "agent.restart", params, clients.TerminalDeadline)
+	result, err := r.await(c, b.ID(), "agent.restart", params, clients.TerminalDeadline)
 	if r.restarts[terminal.ID] == op {
 		delete(r.restarts, terminal.ID)
 	}

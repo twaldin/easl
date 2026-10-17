@@ -239,7 +239,7 @@ func (r *Router) browserCall(p map[string]any) (any, error) {
 	if caller := r.callerOf(p); caller != "" {
 		forward["caller"] = caller
 	}
-	return r.await(c, "browser.call", forward, browserDeadline(method, params))
+	return r.await(c, b.ID(), "browser.call", forward, browserDeadline(method, params))
 }
 
 func (r *Router) browserReport(p map[string]any, c Conn) (any, error) {
@@ -332,5 +332,5 @@ func (r *Router) reloadBrowser(b *board.Board, o model.Object, p map[string]any,
 	if caller != "" {
 		p["caller"] = caller
 	}
-	return r.await(c, "object.reload", p, millis(timeout)+clients.ReloadGrace)
+	return r.await(c, b.ID(), "object.reload", p, millis(timeout)+clients.ReloadGrace)
 }

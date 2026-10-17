@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "4a3703479a51a987"
+const SchemaHash = "b0b309be560806d1"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -331,6 +331,14 @@ type SurfaceNotice struct {
 //
 // SurfaceEvent is a union of JSON objects (variants: "", "", ""); decode it as a generic map.
 type SurfaceEvent = map[string]any
+
+// BoardLifecycleEvent: Board availability after a successful registry transition. The envelope names the canonical board and data is empty. Closing does not disconnect subscriptions; reopening the board announces its availability on those same subscriptions.
+type BoardLifecycleEvent struct {
+	// One of "board.closed", "board.opened".
+	Event string         `json:"event"`
+	Board Id             `json:"board"`
+	Data  map[string]any `json:"data"`
+}
 
 // Id: Prefixed id, e.g. obj_01H…, men_…
 type Id = string

@@ -28,6 +28,195 @@ func closeEntries(names map[string]string) []any {
 	return entries
 }
 
+func TestBoardCloseAnnouncesAvailabilityAndReopenOnTheSameSubscription(t *testing.T) {
+	f := newFixture(t)
+	subscriber := &conn{}
+	f.on(subscriber, "events.subscribe", map[string]any{"board": f.board.ID(), "events": []any{"board.closed", "board.opened"}})
+	before := len(subscriber.messages())
+	f.result("board.close", map[string]any{})
+	want := []map[string]any{{"event": "board.closed", "board": f.board.ID(), "data": map[string]any{}}}
+	if got := subscriber.messages()[before:]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("close signal %v, want %v", got, want)
+	}
+	f.result("board.open", map[string]any{"root": f.board.Root()})
+	want = append(want, map[string]any{"event": "board.opened", "board": f.board.ID(), "data": map[string]any{}})
+	if got := subscriber.messages()[before:]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("reopen signal %v, want %v", got, want)
+	}
+	f.result("board.open", map[string]any{"root": f.board.Root()})
+	if got := subscriber.messages()[before:]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("already open board announced another transition: %v", got)
+	}
+}
+
+func TestBoardLifecycleEventsUseCanonicalAliasAndNameFilters(t *testing.T) {
+	f := newFixture(t)
+	f.board.Repo = &store.RepoRecord{CommonDir: t.TempDir(), Merged: []string{"brd_legacy"}}
+	alias, opened, elsewhere := &conn{}, &conn{}, &conn{}
+	f.on(alias, "events.subscribe", map[string]any{"board": "brd_legacy", "events": []any{"board.closed", "board.opened"}})
+	f.on(opened, "events.subscribe", map[string]any{"events": []any{"board.opened"}})
+	f.on(elsewhere, "events.subscribe", map[string]any{"board": "brd_elsewhere"})
+	beforeAlias, beforeOpened, beforeElsewhere := len(alias.messages()), len(opened.messages()), len(elsewhere.messages())
+	f.result("board.close", map[string]any{"board": "brd_legacy"})
+	if code, _ := errorOf(f.call("board.get", map[string]any{"board": f.board.ID()})); code != "not_found" {
+		t.Fatalf("closed board is still available: %s", code)
+	}
+	f.result("board.open", map[string]any{"root": f.board.Root()})
+	want := []map[string]any{
+		{"event": "board.closed", "board": f.board.ID(), "data": map[string]any{}},
+		{"event": "board.opened", "board": f.board.ID(), "data": map[string]any{}},
+	}
+	if got := alias.messages()[beforeAlias:]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("alias subscription: %v, want %v", got, want)
+	}
+	if got := opened.messages()[beforeOpened:]; !reflect.DeepEqual(got, want[1:]) {
+		t.Fatalf("event-name filter: %v, want %v", got, want[1:])
+	}
+	if got := elsewhere.messages()[beforeElsewhere:]; len(got) != 0 {
+		t.Fatalf("unrelated board received lifecycle events: %v", got)
+	}
+}
+
+func TestBoardClosePrunesClientBoardsWithoutDisconnectingOtherBoardsOrSubscriptions(t *testing.T) {
+	f := newFixture(t)
+	other, _ := f.openBoard("other")
+	client := &conn{}
+	id := attachApp(f, client, map[string]any{"boards": []any{f.board.ID(), other}, "focused": f.board.ID(), "serves": []any{"view.get"}})
+	f.on(client, "events.subscribe", map[string]any{"board": f.board.ID(), "events": []any{"board.closed", "board.opened"}})
+	presence := &conn{}
+	f.on(presence, "events.subscribe", map[string]any{"board": other, "events": []any{"client.changed"}})
+	before := len(client.messages())
+	f.result("board.close", map[string]any{"board": f.board.ID()})
+	want := []any{map[string]any{"id": id, "boards": []string{other}, "serves": []string{"view.get"}}}
+	if got := f.result("client.list", map[string]any{})["clients"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("closed board remains attached or lost other board: %v, want %v", got, want)
+	}
+	wantPresence := []map[string]any{{
+		"event": "client.changed", "board": other,
+		"data": map[string]any{"clients": want},
+	}}
+	if got := presence.messages(); !reflect.DeepEqual(got, wantPresence) {
+		t.Fatalf("surviving board retained stale client boards or focus: %v, want %v", got, wantPresence)
+	}
+	if !client.IsOpen() || f.router.clients.Choose("view.get", other) == nil || f.router.clients.Choose("view.get", f.board.ID()) != nil {
+		t.Fatal("close disconnected the client or routed the wrong board")
+	}
+	f.result("board.open", map[string]any{"root": f.board.Root()})
+	wantEvents := []map[string]any{
+		{"event": "board.closed", "board": f.board.ID(), "data": map[string]any{}},
+		{"event": "board.opened", "board": f.board.ID(), "data": map[string]any{}},
+	}
+	if got := client.messages()[before:]; !reflect.DeepEqual(got, wantEvents) {
+		t.Fatalf("client event subscription did not survive close: %v", got)
+	}
+}
+
+func TestBoardCloseFailsAnInFlightDelegatedCallWithoutDisconnectingTheClient(t *testing.T) {
+	f := newFixture(t)
+	peer := &diagramPeer{conn: &conn{}, incoming: make(chan map[string]any, 16)}
+	t.Cleanup(peer.close)
+	attachApp(f, peer, map[string]any{"serves": []any{"view.get"}})
+	done := make(chan map[string]any, 1)
+	go func() {
+		reply := f.router.HandleConn(map[string]any{"id": "view", "method": "view.get", "params": map[string]any{"board": f.board.ID()}}, &conn{})
+		done <- reply.(map[string]any)
+	}()
+	request := diagramMessage(t, peer.incoming)
+	if request["method"] != "view.get" {
+		t.Fatalf("delegated the wrong method: %v", request)
+	}
+	f.result("board.close", map[string]any{"board": f.board.ID()})
+	select {
+	case reply := <-done:
+		if code, _ := errorOf(reply); code != "not_found" {
+			t.Fatalf("closed board call succeeded or timed out: %v", reply)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("closed board retained its delegated call")
+	}
+	if !f.router.clients.Answer(peer, map[string]any{"id": request["id"], "ok": true, "result": map[string]any{"selection": []any{}}}) {
+		t.Fatal("late closed-board answer was not discarded")
+	}
+	if !peer.IsOpen() {
+		t.Fatal("board.close disconnected its attached client")
+	}
+}
+
+func TestBoardCloseFailsDrawingCallsOnTheirTargetBoardAndKeepsTheOwnerOnReopen(t *testing.T) {
+	for _, method := range []string{"browser.call", "object.reload", "cmux"} {
+		t.Run(method, func(t *testing.T) {
+			f := newFixture(t)
+			driver := idOf(f.result("object.create", terminal(map[string]any{})))
+			target, root := f.openBoard("drawing")
+			peer := &diagramPeer{conn: &conn{}, incoming: make(chan map[string]any, 16)}
+			t.Cleanup(peer.close)
+			attachApp(f, peer, map[string]any{
+				"identity": "mch_home", "host": "home",
+				"boards": []any{f.board.ID(), target}, "focused": target,
+				"serves": []any{"browser.call", "object.reload"},
+			})
+			page := idOf(f.result("object.create", map[string]any{
+				"board": target, "type": "browser", "props": map[string]any{"url": "https://example.com/"}, "frame": browserFrame(),
+			}))
+			call := func() map[string]any {
+				params := map[string]any{"id": page, "caller": driver}
+				if method == "cmux" {
+					return f.router.cmuxHandler(driver)(map[string]any{
+						"id": "page", "method": "browser.url.get", "params": map[string]any{"surface_id": page},
+					}, nil).(map[string]any)
+				}
+				if method == "browser.call" {
+					params["method"] = "browser.url.get"
+					params["params"] = map[string]any{}
+				}
+				return f.router.HandleConn(map[string]any{"id": "page", "method": method, "params": params}, &conn{}).(map[string]any)
+			}
+			done := make(chan map[string]any, 1)
+			go func() { done <- call() }()
+			request := diagramMessage(t, peer.incoming)
+			wantMethod := "browser.call"
+			if method == "object.reload" {
+				wantMethod = method
+			}
+			params := request["params"].(map[string]any)
+			if request["method"] != wantMethod || params["id"] != page || params["caller"] != driver {
+				t.Fatalf("drawing request lost its target or cross-board driver: %v", request)
+			}
+			f.result("board.close", map[string]any{"board": target})
+			select {
+			case reply := <-done:
+				if code, message := errorOf(reply); code != "not_found" || message != "board "+target+" was closed" {
+					t.Fatalf("closed drawing call: %v", reply)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("closed board retained its drawing call")
+			}
+			if !f.router.clients.Answer(peer, map[string]any{"id": request["id"], "ok": true, "result": map[string]any{"url": "late"}}) {
+				t.Fatal("late drawing answer was not discarded")
+			}
+			if code, _ := errorOf(call()); code != "not_found" {
+				t.Fatalf("closed drawing target remains callable: %s", code)
+			}
+			if !peer.IsOpen() || f.router.clients.ChooseExact("mch_home", f.board.ID(), "browser.call") == nil {
+				t.Fatal("closing the drawing board disconnected its client's other board")
+			}
+			f.result("board.open", map[string]any{"root": root})
+			other := &scriptedClient{router: f.router}
+			attachApp(f, other, map[string]any{
+				"identity": "mch_other", "host": "other", "boards": []any{target},
+				"serves": []any{"browser.call", "object.reload"},
+			})
+			identity, host := drawingOfResult(t, f.object(page))
+			if identity != "mch_home" || host != "home" {
+				t.Fatalf("reopen reassigned the drawing machine: %s %s", identity, host)
+			}
+			if code, message := errorOf(call()); code != "unavailable" || message != "draws on home, which is offline" {
+				t.Fatalf("reopened board reused a removed capability or another drawing machine: %s %q", code, message)
+			}
+		})
+	}
+}
+
 func TestBoardCloseKeepsSessionsThroughSweepsRestartAndReopen(t *testing.T) {
 	f, state := restorable(t)
 	id, root := f.board.ID(), f.board.Root()
@@ -234,6 +423,9 @@ func TestBoardClosePersistenceFailuresLeaveTheBoardOpen(t *testing.T) {
 		t.Run(boundary, func(t *testing.T) {
 			f, state := restorable(t)
 			tile := idOf(f.result("object.create", terminal(map[string]any{"name": "still running"})))
+			subscriber := &conn{}
+			f.on(subscriber, "events.subscribe", map[string]any{"board": f.board.ID(), "events": []any{"board.closed", "board.opened"}})
+			before := len(subscriber.messages())
 			switch boundary {
 			case "board save":
 				if err := os.Mkdir(f.router.reg.Store.Path(f.board.ID()), 0o700); err != nil {
@@ -258,6 +450,9 @@ func TestBoardClosePersistenceFailuresLeaveTheBoardOpen(t *testing.T) {
 			}
 			if got := sessions(t, state); !reflect.DeepEqual(got, []string{tile}) {
 				t.Fatalf("failed keep close ended sessions: %v", got)
+			}
+			if got := subscriber.messages()[before:]; len(got) != 0 {
+				t.Fatalf("failed close announced availability: %v", got)
 			}
 			if boundary == "board save" {
 				if listed, err := store.ReadReopened(f.router.Reopens); err != nil || !reflect.DeepEqual(listed, []store.Reopened{{Root: f.board.Root(), Board: f.board.ID()}}) {
@@ -440,8 +635,8 @@ func TestBoardCloseFinishesWaitsAndReleasesInboxHoldsWithoutClosingSubscriptions
 			t.Errorf("%s answered %v", label, messages[0])
 		}
 	}
-	if got := len(subscriber.messages()); got != before || !subscriber.IsOpen() {
-		t.Fatalf("close changed subscription: %v", subscriber.messages())
+	if !subscriber.IsOpen() {
+		t.Fatal("close disconnected event subscription")
 	}
 	f.result("board.open", map[string]any{"root": f.board.Root()})
 	messages := f.result("agent.inbox", map[string]any{"tile": tile})["messages"].([]any)
@@ -450,7 +645,7 @@ func TestBoardCloseFinishesWaitsAndReleasesInboxHoldsWithoutClosingSubscriptions
 	}
 	f.result("object.update", map[string]any{"id": tile, "props": map[string]any{"name": "reopened"}})
 	events := subscriber.messages()
-	if len(events) != before+1 || events[len(events)-1]["event"] != "object.updated" {
+	if len(events) != before+3 || events[before]["event"] != "board.closed" || events[before+1]["event"] != "board.opened" || events[len(events)-1]["event"] != "object.updated" {
 		t.Fatalf("subscription did not resume on reopen: %v", events)
 	}
 }

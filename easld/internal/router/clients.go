@@ -191,9 +191,9 @@ func (r *Router) client(method, board, need string) (*clients.Client, error) {
 // await forwards a checked call to c and waits for its answer with the registry's lock released,
 // so the boards stay usable (by c too) while c works. Whatever the caller read of the boards
 // before may have changed when it returns.
-func (r *Router) await(c *clients.Client, method string, params map[string]any, deadline time.Duration) (map[string]any, error) {
+func (r *Router) await(c *clients.Client, board, method string, params map[string]any, deadline time.Duration) (map[string]any, error) {
 	r.reg.Mu.Unlock()
-	result, failure := r.clients.Call(context.Background(), c, method, params, deadline)
+	result, failure := r.clients.Call(context.Background(), c, board, method, params, deadline)
 	r.reg.Mu.Lock()
 	if failure != nil {
 		return nil, failure
@@ -211,7 +211,7 @@ func (r *Router) forward(method, board string, params map[string]any, deadline t
 	if err != nil {
 		return nil, err
 	}
-	result, err := r.await(c, method, params, deadline)
+	result, err := r.await(c, board, method, params, deadline)
 	if err != nil {
 		return nil, err
 	}

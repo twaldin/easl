@@ -87,14 +87,16 @@ func (c *gateClient) Send(v any) bool {
 	if _, ok := request["method"]; !ok {
 		return true
 	}
-	c.got <- struct{}{}
-	<-c.release
-	reply := map[string]any{}
-	for k, val := range c.reply {
-		reply[k] = val
-	}
-	reply["id"] = request["id"]
-	c.router.clients.Answer(c, reply)
+	go func() {
+		c.got <- struct{}{}
+		<-c.release
+		reply := map[string]any{}
+		for k, val := range c.reply {
+			reply[k] = val
+		}
+		reply["id"] = request["id"]
+		c.router.clients.Answer(c, reply)
+	}()
 	return true
 }
 
@@ -251,7 +253,7 @@ func TestHTMLFitUsesTheClientFrameAndRejectsAStaleInput(t *testing.T) {
 		"type": "html", "size": "fit", "props": htmlProps("<p>late</p>"),
 		"frame": map[string]any{"x": 0.0, "y": 0.0, "w": 400.0},
 	}))
-	if code != "conflict" || !strings.Contains(message, "changed identity") || len(f.board.Objects()) != n {
+	if code != "not_found" || len(f.board.Objects()) != n {
 		t.Fatalf("replaced board: %s %s objects %d", code, message, len(f.board.Objects()))
 	}
 }

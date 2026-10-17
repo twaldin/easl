@@ -60,14 +60,18 @@ public struct BoardAreas: Sendable {
         return nil
     }
 
-    /// The text of `path` (relative to `root`, or absolute) on disk, or at `commit`, read only
-    /// where the areas permit: `NoteSourceError.refused` outside them.
-    func read(_ path: String, commit: String?, root: URL) async throws -> String {
+    enum AuthorizedFile: Sendable {
+        case live(String)
+        case committed(directory: URL, relative: String, revision: String)
+    }
+
+    /// Checks path and commit policy without reading text. Live files also require `openNoFollow`.
+    func authorize(_ path: String, commit: String?, root: URL) async throws -> AuthorizedFile {
         guard !path.isEmpty, !path.contains("\0"), !path.hasPrefix("~") else { throw NoteSourceError.refused }
         let requested = Board.hostPath(path, under: root.path)
         guard let commit else {
             guard let real = resolve(live: requested) else { throw NoteSourceError.refused }
-            return try await offPool { Result { try Self.readRegular(real) } }.get()
+            return .live(real)
         }
         guard NoteSource.isRevision(commit) else { throw NoteSourceError.invalidRevision(commit) }
         guard let found = written(requested) else { throw NoteSourceError.refused }
@@ -84,13 +88,21 @@ public struct BoardAreas: Sendable {
         // A symlink's blob names a file elsewhere: refused, as the host's reader refuses it.
         if mode == "120000 " { throw NoteSourceError.refused }
         guard mode == "100644 " || mode == "100755 " else { throw NoteSourceError.notAtCommit(commit) }
-        return try await NoteSource.show(["show", "--end-of-options", "\(commit):./\(relative)"], commit: commit, in: directory)
+        return .committed(directory: directory, relative: relative, revision: commit)
     }
 
-    /// `real` (symlink-free) read through one descriptor opened with no symlink anywhere on its
-    /// path (`O_NOFOLLOW_ANY`), so a directory swapped for a symlink since the check can't lead
-    /// the read outside.
-    static func readRegular(_ real: String) throws -> String {
+    /// The text of `path`, read only where the board's areas permit it.
+    func read(_ path: String, commit: String?, root: URL) async throws -> String {
+        switch try await authorize(path, commit: commit, root: root) {
+        case .live(let real):
+            return try await offPool { Result { try Self.readRegular(real) } }.get()
+        case .committed(let directory, let relative, let revision):
+            return try await NoteSource.show(["show", "--end-of-options", "\(revision):./\(relative)"], commit: revision, in: directory)
+        }
+    }
+
+    /// No-follow opening prevents a directory swapped after authorization from redirecting reads.
+    static func openNoFollow(_ real: String) throws -> Int32 {
         let descriptor = open(real, O_RDONLY | O_NOFOLLOW_ANY | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else {
             switch errno {
@@ -99,6 +111,11 @@ public struct BoardAreas: Sendable {
             default: throw CocoaError(.fileReadUnknown)
             }
         }
+        return descriptor
+    }
+
+    static func readRegular(_ real: String) throws -> String {
+        let descriptor = try openNoFollow(real)
         let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         var info = stat()
         guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw CocoaError(.fileReadNoSuchFile) }

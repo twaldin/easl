@@ -544,6 +544,7 @@ final class CanvasView: NSScrollView {
         // the liveness pass to swap out. Terminals and browsers start live: they run a session
         // or a page an agent may be driving.
         if !(content is TerminalTile), !(content is BrowserTile), !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
+        if remote?.mirror.availability == .closed { content.setLive(false) }
         if tile.superview == nil { document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay) }
         tiles[id] = tile
         tile.zoomedOut = RenderMath.isZoomedOut(magnification: magnification, zoom: tile.zoom)
@@ -749,7 +750,7 @@ final class CanvasView: NSScrollView {
     /// and still receive the click (a terminal keeps focusing); drawn objects are selected and
     /// dragged here because they have no view of their own.
     private func handleMouse(_ event: NSEvent) -> NSEvent? {
-        guard event.window === window, !HyperMonitor.isHyper(event.modifierFlags) else { return event }
+        guard !isHidden, event.window === window, !HyperMonitor.isHyper(event.modifierFlags) else { return event }
         switch event.type {
         case .leftMouseDown:
             guard let hit = hitView(event), hit.isDescendant(of: document) else { return event }
@@ -2425,7 +2426,7 @@ final class CanvasView: NSScrollView {
             objectsMoved()
         }
         // Mid-pinch, LOD flips wait for the gesture to end.
-        if !magnifying {
+        if !magnifying, remote?.mirror.availability != .closed {
             let scale = magnification
             for tile in tiles.values {
                 tile.setLive(shouldBeLive(tile, scale: scale))

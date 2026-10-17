@@ -38,8 +38,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pasteMaintenance: TerminalPaste.Maintenance?
     private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
-        guard let self else { return nil }
-        return (self.controllers.values.first { $0.window === window } ?? self.remoteControllers.values.first { $0.window === window })?.canvas
+        guard let self,
+              let controller = self.controllers.values.first(where: { $0.window === window })
+                ?? self.remoteControllers.values.first(where: { $0.window === window }),
+              !controller.hostBoardClosed else { return nil }
+        return controller.canvas
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -508,9 +511,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task.detached { for folder in folders { try? FileManager.default.removeItem(at: folder) } }
     }
 
-    /// Forget a manual tab close before AppKit can detach it or hold its native window.
     func prepareNativeClose(_ controller: CanvasWindowController) -> Bool {
-        guard !terminating, controller.isBoardOpen, let host = controller.remote?.host,
+        guard !terminating, controller.isBoardOpen else { return true }
+        guard !controller.apiCloseInProgress else { return false }
+        if controller.remote == nil {
+            registry.setWindowOpen(false, board: controller.board.id)
+            return true
+        }
+        guard let host = controller.remote?.host,
               controller.closing?.outcome(backgroundAttach: backgroundAttach, server: host.server) == .forget else { return true }
         do {
             try reopenList.forget(sshTarget: host.sshTarget, board: controller.board.id)
@@ -1015,8 +1023,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Records the shown boards' roots in tab order (AppPaths.openBoards) for the next launch.
-    /// Closing the last board window quits easl (`applicationShouldTerminateAfterLastWindowClosed`),
-    /// so that board stays recorded, as Quit keeps every tab.
     private func saveOpenBoards(closing: NSWindow? = nil) {
         guard !terminating else { return }
         let open = controllers.values.filter { controller in

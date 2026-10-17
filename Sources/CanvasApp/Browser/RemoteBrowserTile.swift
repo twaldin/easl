@@ -191,6 +191,14 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
 
     @objc private func windowWillClose() { endLink() }
 
+    func hostBoardAvailabilityChanged() {
+        if remote.mirror.availability == .closed {
+            endLink()
+        } else if wantsLive {
+            startLink()
+        }
+    }
+
     func setLive(_ live: Bool) {
         guard live != wantsLive else { return }
         wantsLive = live
@@ -205,7 +213,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     /// Subscribe and start the event consumer before any `surface.stream`. A second call while
     /// the link is up does nothing.
     private func startLink() {
-        guard !statusOnly, wantsLive, window != nil, owned.current() == nil else { return }
+        guard !statusOnly, wantsLive, remote.mirror.availability == .open, window != nil, owned.current() == nil else { return }
         let board = remote.mirror.sessionBoardID
         guard !board.isEmpty else {
             setLinkStatus("No canonical board")

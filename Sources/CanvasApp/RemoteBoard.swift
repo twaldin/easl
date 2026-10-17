@@ -148,18 +148,22 @@ final class ConnectionBanner: NSVisualEffectView {
 
     @objc private func retryPressed() { onRetry?() }
 
-    /// Shows the banner for `state` (hidden while online). `problem` is why the link is down.
-    func show(_ state: EaslConnection.State, host: String, problem: String?) {
-        switch state {
-        case .online:
-            isHidden = true
-            return
-        case .connecting:
-            label.stringValue = "Reconnecting to \(host)…"
+    func show(_ state: EaslConnection.State, availability: BoardMirror.Availability, host: String, problem: String?) {
+        if availability == .closed {
+            label.stringValue = "\(host) closed this board: the board as last seen"
             retry.isHidden = true
-        case .offline:
-            label.stringValue = "\(host) is offline: the board as last seen" + (problem.map { " (\($0))" } ?? "")
-            retry.isHidden = false
+        } else {
+            switch state {
+            case .online:
+                isHidden = true
+                return
+            case .connecting:
+                label.stringValue = "Reconnecting to \(host)…"
+                retry.isHidden = true
+            case .offline:
+                label.stringValue = "\(host) is offline: the board as last seen" + (problem.map { " (\($0))" } ?? "")
+                retry.isHidden = false
+            }
         }
         let wasHidden = isHidden
         isHidden = false
@@ -167,5 +171,14 @@ final class ConnectionBanner: NSVisualEffectView {
             NSAccessibility.post(element: self, notification: .announcementRequested,
                                  userInfo: [.announcement: label.stringValue, .priority: NSAccessibilityPriorityLevel.high.rawValue])
         }
+    }
+}
+
+@MainActor
+final class ClosedBoardView: NSImageView {
+    override var acceptsFirstResponder: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(convert(point, from: superview)) ? self : nil
     }
 }

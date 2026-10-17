@@ -24,18 +24,21 @@ func (c *wrappingHTMLClient) Send(value any) bool {
 	}
 	params := request["params"].(map[string]any)
 	c.asked = append(c.asked, params)
-	if c.during != nil {
-		c.during()
-	}
-	width := 200.0
-	if w, ok := params["width"].(float64); ok {
-		width = w
-	}
-	body, _ := asMap(params["props"])["html"].(string)
-	height := 26 + 20*math.Ceil(float64(len(body))*10/width)
-	reply := sizeAnswer(width, height, nil)
-	reply["id"] = request["id"]
-	c.router.clients.Answer(c, reply)
+	during := c.during
+	go func() {
+		if during != nil {
+			during()
+		}
+		width := 200.0
+		if w, ok := params["width"].(float64); ok {
+			width = w
+		}
+		body, _ := asMap(params["props"])["html"].(string)
+		height := 26 + 20*math.Ceil(float64(len(body))*10/width)
+		reply := sizeAnswer(width, height, nil)
+		reply["id"] = request["id"]
+		c.router.clients.Answer(c, reply)
+	}()
 	return true
 }
 

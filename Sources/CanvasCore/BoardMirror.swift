@@ -76,7 +76,14 @@ public final class BoardMirror: BoardHost {
     private let renders: EaslConnection
     /// Nil until `load` succeeded.
     public private(set) var board: Board?
-    public var state: EaslConnection.State { refreshFailure != nil && linkState == .online ? .offline : linkState }
+    public enum Availability: Equatable, Sendable {
+        case open, closed
+    }
+    public private(set) var availability: Availability = .open
+    public var onAvailability: ((Availability) -> Void)?
+    public var state: EaslConnection.State {
+        refreshFailure != nil && linkState == .online ? .offline : linkState
+    }
     private var linkState: EaslConnection.State = .connecting
     private var refreshFailure: String?
     /// The board's availability or refresh problem changed, after it loaded.
@@ -158,6 +165,10 @@ public final class BoardMirror: BoardHost {
     /// How many times the link went down after the board loaded (a read that spans one reads again).
     private var drops = 0
     private var listeners: [Task<Void, Never>] = []
+    private var generation = 0
+    private var ended = false
+    private var lastHostAvailability: Availability = .open
+    private var lifecycleBoards: Set<BoardID> = []
 
     public init(hostName: String, board: BoardID, connection: EaslConnection, renders: EaslConnection) {
         self.hostName = hostName
@@ -170,17 +181,25 @@ public final class BoardMirror: BoardHost {
     /// Subscribes, reads the board and returns it; throws the host's failure (`not_found`: no such
     /// board there; `unavailable`: the host can't be reached).
     public func load() async throws -> Board {
+        guard !ended else { throw ApiRouter.Failure("unavailable", "this board's window closed") }
+        let generation = generation
         connection.subscribe(board: boardID)
         listen()
         let manifest: JSONValue
         let objects: [CanvasObject]
         do {
             manifest = try await connection.request("board.get", .object(["board": .string(boardID)]))
-            objects = try await whole(manifest["objects"])
+            try requireCurrent(generation)
+            identify(manifest)
+            guard manifest["closed"]?.bool != true else {
+                throw ApiRouter.Failure("not_found", "board \(boardID) is closed on \(hostName)")
+            }
+            objects = try await whole(manifest["objects"], generation: generation)
         } catch let failure as EaslConnection.Failure {
             throw ApiRouter.Failure(failure.code, failure.message)
         }
-        if let current = manifest["board"]?.string, ApiRouter.isBoardID(current) { sessionBoardID = current }
+        try requireCurrent(generation)
+        lastHostAvailability = .open
         let board = Board(remote: boardID, root: URL(fileURLWithPath: manifest["root"]?.string ?? "/"), host: self)
         self.board = board
         mergedBoards = manifest["merged"]?.array?.compactMap(\.string).filter(ApiRouter.isBoardID) ?? []
@@ -193,13 +212,25 @@ public final class BoardMirror: BoardHost {
         return board
     }
 
+    private func identify(_ manifest: JSONValue) {
+        guard let current = manifest["board"]?.string, ApiRouter.isBoardID(current) else { return }
+        sessionBoardID = current
+        if current != boardID, lifecycleBoards.insert(current).inserted {
+            connection.subscribe(board: current, events: ["board.closed", "board.opened"])
+        }
+    }
+
     /// Ends both links and this viewer's attachment; the board stays as last seen.
     public func close() {
-        failAwaitingEvents(ApiRouter.Failure("unavailable", "this board's viewer closed"))
+        guard !ended else { return }
+        ended = true
+        invalidate()
         for task in listeners { task.cancel() }
         listeners = []
         calls = nil
         attachment = nil
+        identity = nil
+        connection.serve(nil)
         connection.close()
         renders.close()
     }
@@ -218,6 +249,7 @@ public final class BoardMirror: BoardHost {
     }
 
     private func changed(_ state: EaslConnection.State) {
+        guard !ended else { return }
         guard state != linkState else { return }
         let previous = self.state
         linkState = state
@@ -231,9 +263,13 @@ public final class BoardMirror: BoardHost {
         }
         if calls != nil {
             if state == .online {
-                attach()
-                listClients()
+                if !stale {
+                    attach()
+                    listClients()
+                }
             } else {
+                attaches += 1
+                refocused = false
                 attachment = .waiting
                 setDrawingMachines(nil)
             }
@@ -247,6 +283,7 @@ public final class BoardMirror: BoardHost {
     /// first connect, or the next attempt after a drop, and heard late it is no reason to draw
     /// again. Internal for the tests, which hear it where the stream would.
     func rendersChanged(_ state: EaslConnection.State) {
+        guard !ended else { return }
         guard state != rendersState else { return }
         rendersState = state
         if state == .offline { redrawDue = true }
@@ -256,7 +293,7 @@ public final class BoardMirror: BoardHost {
     /// Tells `onRedraw` once both links are online and the board is as the host has it: after a
     /// read, or when the render link is the last to come back.
     private func drawAgainIfDue() {
-        guard redrawDue, board != nil, reading == nil, !stale, state == .online, rendersState == .online else { return }
+        guard !ended, availability == .open, redrawDue, board != nil, reading == nil, !stale, state == .online, rendersState == .online else { return }
         redrawDue = false
         onRedraw?()
     }
@@ -266,6 +303,7 @@ public final class BoardMirror: BoardHost {
 
     /// Tries the host again now (the user started easl there).
     public func reconnect() {
+        guard !ended else { return }
         if linkState == .online, stale {
             Task { await reread() }
         } else {
@@ -281,17 +319,17 @@ public final class BoardMirror: BoardHost {
     /// again when the user focuses the board (`userFocused`). Only for an easld host (a Mac host
     /// answers those calls itself), once the board is loaded and its window shows it.
     public func serve(_ window: ViewerWindow, as identity: ClientIdentity) {
-        guard let board else { return }
+        guard !ended, let board else { return }
         let calls = DelegatedCalls(board: board, window: window)
         self.calls = calls
         self.identity = identity
-        connection.serve { [weak self, weak calls] call in
-            guard let self, let calls else {
+        connection.serve { [weak self] call in
+            guard let self else {
                 return .failure(EaslConnection.Failure("unavailable", "\(call.method): this board's window closed"))
             }
-            return await self.answer(call, using: calls)
+            return await self.answer(call)
         }
-        if linkState == .online {
+        if linkState == .online, availability == .open, reading == nil {
             attach()
             listClients()
         } else {
@@ -299,12 +337,19 @@ public final class BoardMirror: BoardHost {
         }
     }
 
-    private func answer(_ call: EaslConnection.Call, using calls: DelegatedCalls) async -> Result<JSONValue, EaslConnection.Failure> {
+    private func answer(_ call: EaslConnection.Call) async -> Result<JSONValue, EaslConnection.Failure> {
+        guard !ended, availability == .open, let calls else {
+            return .failure(EaslConnection.Failure("unavailable", "board \(boardID) is closed"))
+        }
+        let generation = generation
         do {
             if call.method == "browser.call" || (call.method == "object.reload" && call.params["_diagram"] == nil) {
                 try await admit(through: call.eventsThrough)
             }
-            return await calls.answer(call)
+            try requireCurrent(generation)
+            let result = await calls.answer(call)
+            try requireCurrent(generation)
+            return result
         } catch {
             let failure = ApiRouter.failure(for: error)
             return .failure(EaslConnection.Failure(failure.code, failure.message))
@@ -313,15 +358,22 @@ public final class BoardMirror: BoardHost {
 
     /// Apply the events preceding the call, not an unseen creation that may already be deleted.
     private func admit(through sequence: UInt64) async throws {
-        guard linkState == .online, calls != nil else {
-            throw ApiRouter.Failure("unavailable", "\(hostName) is not connected")
-        }
-        if admitted(through: sequence) { return }
-        try await withCheckedThrowingContinuation {
-            awaitingEvents.append((sequence, $0))
+        guard !ended, availability == .open else {
+            throw ApiRouter.Failure("unavailable", "board \(boardID) is closed")
         }
         guard linkState == .online, calls != nil else {
             throw ApiRouter.Failure("unavailable", "\(hostName) is not connected")
+        }
+        if !admitted(through: sequence) {
+            try await withCheckedThrowingContinuation {
+                awaitingEvents.append((sequence, $0))
+            }
+        }
+        guard !ended, availability == .open, linkState == .online, calls != nil else {
+            throw ApiRouter.Failure("unavailable", "\(hostName) is not connected")
+        }
+        guard !stale else {
+            throw ApiRouter.Failure("unavailable", "\(hostName) has not refreshed this board")
         }
     }
 
@@ -347,6 +399,7 @@ public final class BoardMirror: BoardHost {
     /// The user is looking at this board (its window became key): an accepted attach goes again
     /// naming it, one still out goes again once it is accepted. A refused link asks nothing.
     public func userFocused() {
+        guard !ended, availability == .open else { return }
         switch attachment {
         case .attached?: attach(focused: true)
         case .attaching?: refocused = true
@@ -357,7 +410,7 @@ public final class BoardMirror: BoardHost {
     /// `client.attach` on the board's link, preserving a focus event even if the user has
     /// already moved to another window while the previous attach was outstanding.
     private func attach(focused: Bool = false) {
-        guard let calls, let identity else { return }
+        guard !ended, availability == .open, linkState == .online, reading == nil, let calls, let identity else { return }
         attaches += 1
         refocused = false
         let number = attaches
@@ -390,16 +443,19 @@ public final class BoardMirror: BoardHost {
     }
 
     private func listClients() {
-        let heard = presenceHeard, drop = drops
+        guard !ended, availability == .open, linkState == .online, calls != nil else { return }
+        let heard = presenceHeard, drop = drops, generation = generation
         Task {
             guard let reply = try? await connection.request("client.list") else { return }
-            guard heard == presenceHeard, drop == drops, linkState == .online, calls != nil else { return }
+            guard !ended, generation == self.generation, availability == .open,
+                  heard == presenceHeard, drop == drops, linkState == .online, calls != nil else { return }
             setDrawingMachines(drawingMachines(in: reply["clients"]))
         }
     }
 
     private func clientsChanged(_ event: EaslConnection.Event) {
-        guard calls != nil, event.board == nil || event.board == sessionBoardID || event.board == boardID else { return }
+        guard !ended, availability == .open, linkState == .online, calls != nil,
+              event.board == nil || event.board == sessionBoardID || event.board == boardID else { return }
         presenceHeard += 1
         setDrawingMachines(drawingMachines(in: event.data["clients"]))
     }
@@ -422,10 +478,31 @@ public final class BoardMirror: BoardHost {
     // MARK: The host's changes
 
     private func received(_ event: EaslConnection.Event) {
+        guard !ended else { return }
         receivedEventSequence = max(receivedEventSequence, event.sequence)
         defer { releaseAdmissions() }
+        let matches = event.board == nil || event.board == sessionBoardID || event.board == boardID
+        if matches, event.name == "board.closed" {
+            guard lastHostAvailability != .closed else { return }
+            markClosed()
+            return
+        }
+        if matches, event.name == "board.opened" {
+            guard lastHostAvailability != .open else { return }
+            lastHostAvailability = .open
+            invalidate()
+            stale = true
+            redrawDue = true
+            Task { await reread() }
+            return
+        }
         if event.name == "client.changed" { return clientsChanged(event) }
         if reading != nil || creating > 0 { return held.append(event) }
+        guard availability == .open else { return }
+        applyHostEvent(event)
+    }
+
+    private func applyHostEvent(_ event: EaslConnection.Event) {
         guard event.board == nil || event.board == sessionBoardID else { return }
         switch event.name {
         case "object.created", "object.updated":
@@ -442,6 +519,47 @@ public final class BoardMirror: BoardHost {
         default:
             // The tray is the viewer's own; a terminal's lifecycle arrives in its props.
             break
+        }
+    }
+
+    private func invalidate() {
+        let touched = Set(queues.keys).union(queues.keys.compactMap { hostIDs[$0] })
+        generation += 1
+        failAwaitingEvents(ApiRouter.Failure("unavailable", "board \(boardID) closed during the request"))
+        setDrawingMachines(nil)
+        attaches += 1
+        refocused = false
+        if calls != nil { attachment = .waiting }
+        for task in pumps.values { task.cancel() }
+        pumps = [:]
+        queues = [:]
+        hostIDs = [:]
+        failedCreates = []
+        creating = 0
+        reading = nil
+        held = []
+        deferredObjects.removeAll(keepingCapacity: true)
+        for id in touched.sorted() { settle(id) }
+    }
+
+    private func markClosed() {
+        let pending = availability == .open ? held : []
+        lastHostAvailability = .closed
+        let previous = state
+        invalidate()
+        for event in pending { applyHostEvent(event) }
+        stale = true
+        redrawDue = true
+        refreshFailure = nil
+        let changed = availability != .closed
+        availability = .closed
+        if changed { onAvailability?(.closed) }
+        if state != previous { onState?(state) }
+    }
+
+    private func requireCurrent(_ generation: Int) throws {
+        guard !ended, generation == self.generation else {
+            throw ApiRouter.Failure("unavailable", "board \(boardID) closed during the request")
         }
     }
 
@@ -482,27 +600,56 @@ public final class BoardMirror: BoardHost {
     /// Reads the board again after the link came back (one read at a time: one that a drop
     /// interrupted or outlasted reads again), then applies the events that arrived meanwhile.
     private func reread() async {
-        guard let board, reading == nil else { return }
+        guard !ended, let board, reading == nil, linkState == .online else { return }
+        let generation = generation
         reading = Reading()
         var again: Bool
         repeat {
             let before = drops
             stale = false
+            var receivedManifest = false
             do {
                 let manifest = try await connection.request("board.get", .object(["board": .string(boardID)]))
-                let objects = try await whole(manifest["objects"])
-                if let current = manifest["board"]?.string, ApiRouter.isBoardID(current) { sessionBoardID = current }
+                try requireCurrent(generation)
+                identify(manifest)
+                if manifest["closed"]?.bool == true {
+                    markClosed()
+                    return
+                }
+                receivedManifest = true
+                lastHostAvailability = .open
+                let objects = try await whole(manifest["objects"], generation: generation)
+                try requireCurrent(generation)
                 mergedBoards = manifest["merged"]?.array?.compactMap(\.string).filter(ApiRouter.isBoardID) ?? []
                 install(objects, on: board)
                 setRefreshFailure(nil)
+                if availability != .open {
+                    let previous = state
+                    availability = .open
+                    onAvailability?(.open)
+                    if state != previous { onState?(state) }
+                }
             } catch {
+                guard !ended, generation == self.generation else { return }
+                if !receivedManifest, (error as? EaslConnection.Failure)?.code == "not_found" {
+                    markClosed()
+                    return
+                }
                 setRefreshFailure("Couldn't refresh \(hostName): \(Self.reason(error))")
                 stale = true
+                if receivedManifest, availability == .closed {
+                    availability = .open
+                    onAvailability?(.open)
+                }
             }
             again = drops != before && linkState == .online
         } while again
         reading = nil
         release()
+        if attachment == .waiting {
+            attach()
+            listClients()
+        }
         drawAgainIfDue()
     }
 
@@ -549,18 +696,20 @@ public final class BoardMirror: BoardHost {
     }
 
     /// `board.get` summarizes every HTML page and cuts long notes; read their content whole.
-    private func whole(_ objects: JSONValue?) async throws -> [CanvasObject] {
+    private func whole(_ objects: JSONValue?, generation: Int) async throws -> [CanvasObject] {
         var result: [CanvasObject] = []
         for value in objects?.array ?? [] {
             var object = try value.decode(CanvasObject.self)
             if object.type == .html {
                 do {
                     let full = try await connection.request("object.get", .object(["id": .string(object.id)]))
+                    try requireCurrent(generation)
                     guard let value = full["object"] else {
                         throw EaslConnection.Failure("unavailable", "the host returned no HTML object")
                     }
                     object = try value.decode(CanvasObject.self)
                 } catch let failure as EaslConnection.Failure where failure.code == "not_found" {
+                    try requireCurrent(generation)
                     continue
                 }
             }
@@ -568,6 +717,7 @@ public final class BoardMirror: BoardHost {
                let full = try? await connection.request("object.get", .object(["id": .string(object.id)]))["object"]?.decode(CanvasObject.self) {
                 object = full
             }
+            try requireCurrent(generation)
             result.append(object)
         }
         return result
@@ -576,9 +726,16 @@ public final class BoardMirror: BoardHost {
     // MARK: The user's writes
 
     func send(_ write: RemoteWrite) {
+        guard !ended, availability == .open else {
+            settle(write.object)
+            return
+        }
         let key = queue(for: write.object)
         queues[key, default: []].append(write)
-        if queues[key]?.count == 1 { pumps[key] = Task { await pump(key) } }
+        if queues[key]?.count == 1 {
+            let generation = generation
+            pumps[key] = Task { await pump(key, generation: generation) }
+        }
     }
 
     /// The queue a write to `id` joins: its own, or a created object's while the writes queued
@@ -594,12 +751,14 @@ public final class BoardMirror: BoardHost {
     /// host answered that one exactly one revision on (nothing else changed the object between).
     /// Otherwise the base stays put, so an edit of the host's that crossed the user's (or one that
     /// made the host refuse an earlier write) stays a conflict for the writes after it.
-    private func pump(_ key: ObjectID) async {
+    private func pump(_ key: ObjectID, generation: Int) async {
         var touched: Set<ObjectID> = [key]
         var base: Int?
         if case .update(_, let seen, _, _, _) = queues[key]?.first { base = seen }
         while let write = queues[key]?.first {
-            let done = await perform(write, base: base)
+            guard !ended, generation == self.generation, availability == .open else { return }
+            let done = await perform(write, base: base, generation: generation)
+            guard !ended, generation == self.generation else { return }
             if let target = done.target { touched.insert(target) }
             if let rev = done.rev, base.map({ rev == $0 + 1 }) ?? true { base = rev }
             queues[key]?.removeFirst()
@@ -621,7 +780,7 @@ public final class BoardMirror: BoardHost {
 
     /// Sends one write, a props write with `rev` `base`; returns the host id it touched and, when
     /// the host made the change, the object's revision after it.
-    private func perform(_ write: RemoteWrite, base: Int?) async -> (target: ObjectID?, rev: Int?) {
+    private func perform(_ write: RemoteWrite, base: Int?, generation: Int) async -> (target: ObjectID?, rev: Int?) {
         switch write {
         case .create(let provisional):
             var params: [String: JSONValue] = [
@@ -633,17 +792,20 @@ public final class BoardMirror: BoardHost {
             // Its object's event, ahead of the answer, waits for it (`creating`).
             creating += 1
             defer {
-                creating -= 1
-                release()
+                if generation == self.generation {
+                    creating -= 1
+                    release()
+                }
             }
             do {
-                let object = try await request("object.create", params)
+                let object = try await request("object.create", params, generation: generation)
                 hostIDs[provisional.id] = object.id
                 reading?.created.insert(object.id)
                 learn(object)
                 board?.rekeyHost(provisional.id, as: object)
                 return (object.id, object.rev)
             } catch {
+                guard !ended, generation == self.generation else { return (nil, nil) }
                 failedCreates.insert(provisional.id)
                 notice("Not created on \(hostName): \(Self.reason(error))")
                 return (nil, nil)
@@ -659,38 +821,41 @@ public final class BoardMirror: BoardHost {
                 if let base { params["rev"] = .number(Double(base)) }
             }
             do {
-                let object = try await request("object.update", params)
+                let object = try await request("object.update", params, generation: generation)
                 learn(object)
                 return (target, object.rev)
             } catch {
-                await refused(target, error, doing: "changed")
+                await refused(target, error, doing: "changed", generation: generation)
                 return (target, nil)
             }
         case .delete(let id):
             guard let target = target(id) else { return (nil, nil) }
             do {
                 _ = try await connection.request("object.delete", .object(["id": .string(target)]))
+                try requireCurrent(generation)
                 known.removeValue(forKey: target)
                 reading?.deleted.insert(target)
             } catch {
-                await refused(target, error, doing: "deleted")
+                await refused(target, error, doing: "deleted", generation: generation)
             }
             return (target, nil)
         case .page(let id, let report):
             guard let target = target(id) else { return (nil, nil) }
             do {
-                let object = try await request("browser.report", report.params(target))
+                let object = try await request("browser.report", report.params(target), generation: generation)
                 learn(object)
                 return (target, object.rev)
             } catch {
+                guard !ended, generation == self.generation else { return (nil, nil) }
                 NSLog("easl: %@ took no page report for browser tile %@ (%@)", hostName, target, (error as? EaslConnection.Failure)?.code ?? "unavailable")
                 return (target, nil)
             }
         }
     }
 
-    private func request(_ method: String, _ params: [String: JSONValue]) async throws -> CanvasObject {
+    private func request(_ method: String, _ params: [String: JSONValue], generation: Int) async throws -> CanvasObject {
         let result = try await connection.request(method, .object(params))
+        try requireCurrent(generation)
         guard let object = try result["object"]?.decode(CanvasObject.self) else {
             throw EaslConnection.Failure("unavailable", "\(method) answered without an object")
         }
@@ -699,14 +864,33 @@ public final class BoardMirror: BoardHost {
 
     /// The host refused a write: what it has now is read again where it changed (`conflict`) or
     /// is gone (`not_found`), and the user is told.
-    private func refused(_ id: ObjectID, _ error: Error, doing verb: String) async {
+    private func refused(_ id: ObjectID, _ error: Error, doing verb: String, generation: Int) async {
+        guard !ended, generation == self.generation else { return }
         let code = (error as? EaslConnection.Failure)?.code
         let name = board?.objects[id].map(ActivityLog.describe) ?? id
         switch code {
         case "conflict":
-            if let current = try? await request("object.get", ["id": .string(id)]) { learn(current) }
+            if let current = try? await request("object.get", ["id": .string(id)], generation: generation) { learn(current) }
+            guard !ended, generation == self.generation else { return }
             notice("Not \(verb): \(name) changed on \(hostName) meanwhile")
         case "not_found":
+            do {
+                let manifest = try await connection.request("board.get", .object(["board": .string(boardID)]))
+                try requireCurrent(generation)
+                if manifest["closed"]?.bool == true {
+                    markClosed()
+                    return
+                }
+            } catch {
+                guard !ended, generation == self.generation else { return }
+                if (error as? EaslConnection.Failure)?.code == "not_found" {
+                    markClosed()
+                } else {
+                    stale = true
+                    notice("Not \(verb) on \(hostName): \(Self.reason(error))")
+                }
+                return
+            }
             known.removeValue(forKey: id)
             reading?.deleted.insert(id)
             notice("Not \(verb): \(name) is gone from \(hostName)")
@@ -731,6 +915,8 @@ public final class BoardMirror: BoardHost {
     /// The composer's send to one terminal on the host: `agent.prompt` with `composer` (the host
     /// sends it as its own composer would). Throws `ApiRouter.Failure` with the host's reason.
     public func prompt(_ text: String, to terminal: ObjectID, mentions: [Mention], answer: Bool) async throws {
+        guard !ended, availability == .open else { throw ApiRouter.Failure("unavailable", "board \(boardID) is closed") }
+        let generation = generation
         var params: [String: JSONValue] = ["target": .string(terminal), "text": .string(text), "composer": .bool(true)]
         if answer {
             params["answer"] = .bool(true)
@@ -740,6 +926,7 @@ public final class BoardMirror: BoardHost {
         }
         do {
             _ = try await connection.request("agent.prompt", .object(params), timeout: .seconds(30))
+            try requireCurrent(generation)
         } catch let failure as EaslConnection.Failure {
             throw ApiRouter.Failure(failure.code, failure.message)
         }
@@ -773,10 +960,15 @@ public final class BoardMirror: BoardHost {
     /// link's requests one at a time: the board's own link never waits behind it. Throws
     /// `ApiRouter.Failure` with the host's reason (`unavailable`: easld has no client to compute it).
     public func reloadDiagram(_ id: ObjectID) async throws -> JSONValue {
+        guard !ended, availability == .open else { throw ApiRouter.Failure("unavailable", "board \(boardID) is closed") }
+        let generation = generation
         while let writes = pumps[queue(for: id)] { await writes.value }
+        try requireCurrent(generation)
         guard let target = target(id) else { throw ApiRouter.Failure("not_found", "\(id) isn't on \(hostName)") }
         do {
-            return try await renders.request("object.reload", .object(["id": .string(target), "timeoutMs": .number(0)]), timeout: Self.diagramReloadDeadline)
+            let result = try await renders.request("object.reload", .object(["id": .string(target), "timeoutMs": .number(0)]), timeout: Self.diagramReloadDeadline)
+            try requireCurrent(generation)
+            return result
         } catch let failure as EaslConnection.Failure {
             throw ApiRouter.Failure(failure.code, failure.message)
         }

@@ -115,7 +115,7 @@ func (r *Router) measureHTML(props map[string]any, width *float64, b *board.Boar
 	if caller != "" {
 		params["caller"] = caller
 	}
-	result, err := r.await(c, "object.measure", params, clients.HTMLMeasureDeadline)
+	result, err := r.await(c, b.ID(), "object.measure", params, clients.HTMLMeasureDeadline)
 	if err != nil {
 		return 0, 0, false, err
 	}
