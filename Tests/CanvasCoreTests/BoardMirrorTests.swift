@@ -1084,7 +1084,7 @@ final class BoardMirrorTests {
             "version": 1, "schema": .string(ApiParams.schemaHash), "app": "0.2.7", "host": "studio",
             "serves": ["view.get", "agent.prompt", "agent.read", "text.measure"], "boards": [.string(host.id)],
         ])
-        #expect(easld.attaches == [attach], "never view.render or object.reload")
+        #expect(easld.attaches == [attach])
         key = true
         mirror.userFocused()
         try await eventually { easld.attaches.count == 2 }

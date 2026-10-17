@@ -83,14 +83,18 @@ final class HtmlTile: NSView, TileContent {
     /// never with a list compiled for an allowlist that has since changed.
     private func build() {
         guard live, webView == nil, !building else { return }
-        if board.isRemote { return attach(rules: nil) }
         building = true
         let hosts = allowNetwork
+        let remote = board.isRemote
         Task { @MainActor [weak self] in
             let rules: WKContentRuleList?
             var failure: Error?
             do {
-                rules = try await HtmlRuleLists.list(allowing: hosts)
+                if remote {
+                    rules = try await HtmlRuleLists.remote()
+                } else {
+                    rules = try await HtmlRuleLists.list(allowing: hosts)
+                }
             } catch {
                 rules = nil
                 failure = error
@@ -479,18 +483,18 @@ final class HtmlTile: NSView, TileContent {
     /// kit's `view.rendered`; then the document's scroll width and height. `pooled` (a measure)
     /// borrows a web view from `HtmlMeasurePool` instead of making one.
     private func loadOffscreen(size: CGSize, appearance: NSAppearance, limit: Duration = .seconds(60), pooled: Bool = false) async -> Result<CGSize, OffscreenFailure> {
-        let rules: WKContentRuleList?
-        if board.isRemote {
-            rules = nil
-        } else {
-            do {
+        let rules: WKContentRuleList
+        do {
+            if board.isRemote {
+                rules = try await HtmlRuleLists.remote()
+            } else {
                 rules = try await HtmlRuleLists.list(allowing: allowNetwork)
-            } catch {
-                return .failure(.rules("network rules failed to compile: \(error)"))
             }
+        } catch {
+            return .failure(.rules("network rules failed to compile: \(error)"))
         }
         let web: HtmlWebView
-        if pooled, let rules {
+        if pooled, !board.isRemote {
             let page = HtmlMeasurePool.take(for: self, rules: rules)
             measurePage = page
             web = page.web

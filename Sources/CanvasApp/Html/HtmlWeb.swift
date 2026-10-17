@@ -3,13 +3,22 @@ import CanvasCore
 import CryptoKit
 import WebKit
 
-/// Compiled network rule lists, one per distinct allowlist, shared by every HTML tile.
+/// Compiled local allowlists and the fixed remote connection-hint guard, shared by HTML tiles.
 @MainActor
 enum HtmlRuleLists {
     private static var compiled: [String: WKContentRuleList] = [:]
 
     static func list(allowing hosts: [String]) async throws -> WKContentRuleList {
-        let json = HtmlKit.networkRules(allow: hosts)
+        try await compile(HtmlKit.networkRules(allow: hosts))
+    }
+
+    /// CSP does not constrain DNS prefetch or preconnect. Never compile host data for a remote page.
+    /// WebKit classifies these hints as pings, so this also refuses anchor link pings.
+    static func remote() async throws -> WKContentRuleList {
+        try await compile(#"[{"trigger":{"url-filter":"^https?:","resource-type":["ping"]},"action":{"type":"block"}}]"#)
+    }
+
+    private static func compile(_ json: String) async throws -> WKContentRuleList {
         let identifier = "canvas-html-" + SHA256.hash(data: Data(json.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
         if let list = compiled[identifier] { return list }
         guard let list = try await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: identifier, encodedContentRuleList: json) else {

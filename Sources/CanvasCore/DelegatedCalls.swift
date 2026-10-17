@@ -52,8 +52,8 @@ public struct ClientIdentity: Equatable, Sendable {
 /// itself on that link, or come straight back here (the composer's own prompt).
 @MainActor
 final class DelegatedCalls {
-    /// What a viewer serves (`client.attach` `serves`). Never `view.render` or `object.reload`: the
-    /// viewer has only the host's drawings of those tiles, and would ask the host to draw them.
+    /// Drawings would recurse to the host; snapshots would persist content on the viewer's disk.
+    /// Neither is a capability of this remote-board window.
     static let served = ["view.get", "agent.prompt", "agent.read", "text.measure"]
 
     let board: Board
