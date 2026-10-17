@@ -120,29 +120,27 @@ public enum NoteMarkdown {
     public static func anchoring(_ markdown: String, fenceLines: [Int], anchor: String) -> String? {
         let text = anchor.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty, !text.contains(where: \.isNewline), !fenceLines.isEmpty else { return nil }
-        var lines = markdown.components(separatedBy: "\n")
+        var lines = sourceLines(markdown)
         let attribute = " anchor=" + escapeForCommonMark(quoted(text))
         for number in fenceLines {
-            guard number >= 1, number <= lines.count, let marker = fenceMarker(in: lines[number - 1]) else { return nil }
+            guard number >= 1, number <= lines.count, let marker = fenceMarker(in: String(lines[number - 1].text)) else { return nil }
             if marker == "`", text.contains("`") { return nil }
-            var line = lines[number - 1]
-            let carriageReturn = line.hasSuffix("\r")
-            if carriageReturn { line.removeLast() }
+            var line = String(lines[number - 1].text)
             while line.last?.isWhitespace == true { line.removeLast() }
-            lines[number - 1] = line + attribute + (carriageReturn ? "\r" : "")
+            lines[number - 1].text = Substring(line + attribute)
         }
-        return lines.joined(separator: "\n")
+        return join(lines, capacity: markdown.utf8.count + attribute.utf8.count * fenceLines.count)
     }
 
     /// Removes only anchor attribute bytes from the opening lines of refused fences.
     static func removingAnchors(_ markdown: String, fenceLines: [Int]) -> String {
         guard !fenceLines.isEmpty else { return markdown }
-        var lines = markdown.components(separatedBy: "\n")
+        var lines = sourceLines(markdown)
         for number in Set(fenceLines) where number >= 1 && number <= lines.count {
-            let line = lines[number - 1]
-            guard let marker = fenceMarker(in: line),
-                  let run = line.range(of: String(repeating: marker, count: 3)) else { continue }
-            var start = run.upperBound
+            let line = String(lines[number - 1].text)
+            guard let opening = line.firstIndex(where: { $0 == "`" || $0 == "~" }) else { continue }
+            let marker = line[opening]
+            var start = opening
             while start < line.endIndex, line[start] == marker { start = line.index(after: start) }
             let info = String(line[start...])
             var decoded = ""
@@ -181,9 +179,39 @@ public enum NoteMarkdown {
             }
             var cleaned = info
             for range in removals.reversed() { cleaned.removeSubrange(range) }
-            lines[number - 1] = String(line[..<start]) + cleaned
+            lines[number - 1].text = Substring(String(line[..<start]) + cleaned)
         }
-        return lines.joined(separator: "\n")
+        return join(lines, capacity: markdown.utf8.count)
+    }
+
+    private struct SourceLine {
+        var text: Substring
+        var ending: Substring
+    }
+
+    private static func sourceLines(_ markdown: String) -> [SourceLine] {
+        var lines: [SourceLine] = []
+        var start = markdown.startIndex
+        for index in markdown.indices {
+            let character = markdown[index]
+            if character == "\n" || character == "\r" || character == "\r\n" {
+                let end = markdown.index(after: index)
+                lines.append(SourceLine(text: markdown[start..<index], ending: markdown[index..<end]))
+                start = end
+            }
+        }
+        lines.append(SourceLine(text: markdown[start...], ending: markdown[markdown.endIndex...]))
+        return lines
+    }
+
+    private static func join(_ lines: [SourceLine], capacity: Int) -> String {
+        var result = ""
+        result.reserveCapacity(capacity)
+        for line in lines {
+            result.append(contentsOf: line.text)
+            result.append(contentsOf: line.ending)
+        }
+        return result
     }
 
     /// The fence character (`` ` `` or `~`) when the line opens a fence after its container
@@ -193,7 +221,7 @@ public enum NoteMarkdown {
             let run = String(repeating: marker, count: 3)
             guard let range = line.range(of: run) else { continue }
             let prefix = line[..<range.lowerBound]
-            if prefix.allSatisfy({ $0.isWhitespace || $0 == ">" || $0 == "-" || $0 == "*" || $0 == "+" || $0 == "." || $0 == ")" || $0.isNumber }) { return marker }
+            if prefix.allSatisfy({ $0.isWhitespace || $0 == ">" || $0 == "-" || $0 == "*" || $0 == "+" || $0 == "." || $0.isNumber }) { return marker }
         }
         return nil
     }

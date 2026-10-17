@@ -65,7 +65,7 @@ public struct BoardAreas: Sendable {
         case committed(directory: URL, relative: String, revision: String)
     }
 
-    /// Checks the same policy as `read` without reading the file's text.
+    /// Checks path and commit policy without reading text. Live files also require `openNoFollow`.
     func authorize(_ path: String, commit: String?, root: URL) async throws -> AuthorizedFile {
         guard !path.isEmpty, !path.contains("\0"), !path.hasPrefix("~") else { throw NoteSourceError.refused }
         let requested = Board.hostPath(path, under: root.path)
@@ -101,9 +101,7 @@ public struct BoardAreas: Sendable {
         }
     }
 
-    /// `real` (symlink-free) read through one descriptor opened with no symlink anywhere on its
-    /// path (`O_NOFOLLOW_ANY`), so a directory swapped for a symlink since the check can't lead
-    /// the read outside.
+    /// No-follow opening prevents a directory swapped after authorization from redirecting reads.
     static func openNoFollow(_ real: String) throws -> Int32 {
         let descriptor = open(real, O_RDONLY | O_NOFOLLOW_ANY | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else {

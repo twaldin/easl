@@ -137,6 +137,21 @@ final class BoardAnchorLoadTests {
         #expect(try loaded.object(refCode.id).props == refCode.props)
     }
 
+    @Test func mixedLineEndingsPreserveAllowedAnchorsAndAuthoredBytes() throws {
+        let store = store()
+        let board = try makeBoard()
+        let markdown = "a\rb\rc\n```txt file=../outside.txt#L1 anchor=DROP\n```\n```txt file=inside.txt#L1 anchor=KEEP\n```\n"
+        let note = board.create(type: .note, props: .object(["markdown": .string(markdown)]))
+        let malformed = board.create(type: .note, props: .object(["markdown": "~~~txt file=../outside.txt#L1 anchor=\"DROP\r\nAuthored body\r\n~~~\r\n"]))
+        try FileManager.default.createSymbolicLink(atPath: board.root.appendingPathComponent("dangling.txt").path, withDestinationPath: "../gone.txt")
+        let dangling = board.create(type: .code, props: .object(["path": "dangling.txt", "anchor": "DROP"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
+        try persist(board.snapshot, in: store)
+        let loaded = store.load(root: board.root)
+        #expect(try loaded.object(note.id).props["markdown"] == "a\rb\rc\n```txt file=../outside.txt#L1 \n```\n```txt file=inside.txt#L1 anchor=KEEP\n```\n")
+        #expect(try loaded.object(malformed.id).props["markdown"] == "~~~txt file=../outside.txt#L1 \r\nAuthored body\r\n~~~\r\n")
+        #expect(try loaded.object(dangling.id).props["anchor"] == nil)
+    }
+
     @Test func orderedListParenthesesDoNotHideFenceMetadata() throws {
         let store = store()
         let board = try makeBoard()
