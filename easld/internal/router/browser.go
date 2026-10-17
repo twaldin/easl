@@ -237,8 +237,8 @@ func (r *Router) browserCall(p map[string]any) (any, error) {
 	}
 	forward := map[string]any{"id": id, "method": method, "params": params}
 	caller, _ := optStr(p, "caller")
-	if driver := r.browserDriver(caller, o, b); driver != "" {
-		forward["caller"] = driver
+	if terminal, ok := b.Objects()[caller]; ok && terminal.Type == model.Terminal {
+		forward["caller"] = caller
 	}
 	return r.await(c, "browser.call", forward, browserDeadline(method, params))
 }
@@ -334,8 +334,8 @@ func (r *Router) reloadBrowser(b *board.Board, o model.Object, p map[string]any,
 	}
 	caller, _ := optStr(p, "caller")
 	delete(p, "caller")
-	if driver := r.browserDriver(caller, o, b); driver != "" {
-		p["caller"] = driver
+	if terminal, ok := b.Objects()[caller]; ok && terminal.Type == model.Terminal {
+		p["caller"] = caller
 	}
 	return r.await(c, "object.reload", p, millis(timeout)+clients.ReloadGrace)
 }
