@@ -6,9 +6,9 @@ import { join, resolve } from "node:path";
 
 const cli = resolve(import.meta.dir, "../bin/easl");
 
-async function run(args: string[], socket: string) {
+async function run(args: readonly string[], socket: string) {
   const proc = Bun.spawn([cli, ...args], {
-    env: { ...process.env, EASL_SOCKET: socket, CMUX_SOCKET_PATH: socket },
+    env: { ...process.env, EASL_SOCKET: socket, CMUX_SOCKET_PATH: socket, CMUX_SOCKET_PASSWORD: "" },
     stdout: "pipe",
     stderr: "pipe",
     timeout: 2000,
@@ -83,6 +83,17 @@ test("help never connects even when a socket is listening", async () => {
       expect(result.code, args.join(" ")).toBe(0);
       expect(result.stdout).toContain(args.includes("browser") ? "browser.navigate" : args.includes("object.create") ? "object.create" : args.length > 1 ? "view.render" : "usage: easl");
     }
+    for (const [args, expected] of [
+      [["help", "tell", "bob"], "agent.prompt"],
+      [["help", "agent", "spawn", "--name", "x", "--command", "sh", "--prompt"], "usage: easl"],
+      [["help", "metrics"], "usage: easl"],
+      [["help", "CodeProps"], "fields:"],
+      [["help", "--help"], "usage: easl"],
+    ] as const) {
+      const result = await run(args, socket);
+      expect(result.code, args.join(" ")).toBe(0);
+      expect(result.stdout).toContain(expected);
+    }
     expect(connections).toBe(0);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -93,14 +104,54 @@ test("help never connects even when a socket is listening", async () => {
 test("unknown method help fails locally and suggests the closest method", async () => {
   const dir = mkdtempSync(join(tmpdir(), "easl-help-"));
   try {
-    for (const args of [["view.rendr", "--help"], ["browser", "navigat", "--help"]]) {
+    for (const args of [["view.rendr", "--help"], ["browser", "navigat", "--help"], ["browser", "opne", "-h"]]) {
       const result = await run(args, join(dir, "missing.sock"));
       expect(result.code).toBe(2);
       expect(result.stderr).toContain("unknown method");
-      expect(result.stderr).toContain(args[0] === "browser" ? "browser.navigate" : "view.render");
+      expect(result.stderr).toContain(args[0] !== "browser" ? "view.render" : args[1] === "opne" ? "browser open" : "browser navigate");
       expect(result.stdout).toBe("");
     }
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a short help token used as a flag value remains request data", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "easl-help-"));
+  const socket = join(dir, "server.sock");
+  const requests: unknown[] = [];
+  const server = createServer((connection) => {
+    let buffer = "";
+    connection.on("data", (chunk) => {
+      buffer += chunk.toString();
+      if (!buffer.includes("\n")) return;
+      const request: unknown = JSON.parse(buffer.slice(0, buffer.indexOf("\n")));
+      if (typeof request !== "object" || request === null || !("id" in request)) throw new Error("invalid CLI request");
+      requests.push(request);
+      connection.end(`${JSON.stringify({ id: request.id, ok: true, result: {} })}\n`);
+    });
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socket, resolve);
+    });
+    for (const args of [
+      ["agent.prompt", "--target", "bob", "--text", "-h"],
+      ["object.update", "--id", "obj_x", "--props.text", "-h"],
+      ["browser", "type", "obj_x", "--selector", "#q", "--text", "-h"],
+    ]) {
+      const result = await run(args, socket);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe("");
+    }
+    expect(requests).toMatchObject([
+      { method: "agent.prompt", params: { target: "bob", text: "-h" } },
+      { method: "object.update", params: { id: "obj_x", props: { text: "-h" } } },
+      { method: "browser.type", params: { surface_id: "obj_x", selector: "#q", text: "-h" } },
+    ]);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(dir, { recursive: true, force: true });
   }
 });

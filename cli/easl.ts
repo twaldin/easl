@@ -280,7 +280,7 @@ function fieldLines(schema: Schema, refs: Set<string>, kind: "param" | "result",
   });
 }
 
-function unknownMethod(name: string, candidates: string[]): never {
+function unknownMethod(name: string, candidates: string[], hint = "easl methods", kind = "method"): never {
   const distance = (candidate: string): number => {
     let row = Array.from({ length: name.length + 1 }, (_, i) => i);
     for (let i = 0; i < candidate.length; i++) {
@@ -296,7 +296,7 @@ function unknownMethod(name: string, candidates: string[]): never {
     .filter((match) => match.distance <= Math.max(2, Math.floor(name.length / 3)))
     .sort((a, b) => a.distance - b.distance || a.method.localeCompare(b.method))
     .slice(0, 3);
-  console.error(`unknown method or type: ${name} (run \`easl methods\`)`);
+  console.error(`unknown ${kind}: ${name} (run \`${hint}\`)`);
   if (matches.length) console.error(`Did you mean: ${matches.map((match) => match.method).join(", ")}?`);
   process.exit(2);
 }
@@ -305,7 +305,7 @@ function unknownMethod(name: string, candidates: string[]): never {
 function describe(name: string): void {
   const spec = Object.hasOwn(methods, name) ? methods[name] : undefined;
   const def = Object.hasOwn(definitions, name) ? definitions[name] : undefined;
-  if (!spec && !def) unknownMethod(name, [...Object.keys(methods), ...Object.keys(definitions)]);
+  if (!spec && !def) unknownMethod(name, [...Object.keys(methods), ...Object.keys(definitions)], "easl methods", "method or type");
   const refs = new Set<string>();
   const lines = spec
     ? [name, `  ${spec.description}`, "", "params:", ...fieldLines(spec.params, refs, "param", envKeysOf(spec)), "", "result:", ...fieldLines(spec.result, refs, "result")]
@@ -321,13 +321,19 @@ function describe(name: string): void {
   console.log(lines.join("\n"));
 }
 
-const argv = process.argv.slice(2);
-if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") usage(true);
-if (argv[0] === "help") {
-  argv.shift();
-  if (!argv.length) usage(true);
-  argv.push("--help");
+function wantsHelp(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--help" || arg === "-h") return true;
+    if (arg.startsWith("--") && args[i + 1] !== undefined && !args[i + 1].startsWith("--")) i++;
+  }
+  return false;
 }
+
+const argv = process.argv.slice(2);
+const helpCommand = argv[0] === "help";
+if (helpCommand) argv.shift();
+if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") usage(true);
 
 if (argv[0] === "methods") {
   if (argv[1] === "--help" || argv[1] === "-h") usage(true);
@@ -356,7 +362,7 @@ const BROWSER_HELP: Record<string, [description: string, params: string[], resul
       "focus: boolean (optional) - ignored"],
     "{ surface_id: string, workspace_id: string, url: string, created_split: boolean, placement_strategy: string }",
   ],
-  "surface.list": ["List terminal and browser tiles on the selected board.", [],
+  "surface.list": ["List terminal and browser tiles on the selected board. Browser titles are page titles when available, otherwise tile titles.", [],
     "{ workspace_id: string, window_id: null, surfaces: { id: string, type: string, title?: string, url?: string }[] }"],
   "surface.close": ["Close a browser tile, or release one adopted with canvas:<tile id>.", [],
     "{ surface_id: string, workspace_id: string }"],
@@ -369,13 +375,14 @@ const BROWSER_HELP: Record<string, [description: string, params: string[], resul
   "browser.snapshot": ["Read the page's accessibility outline and element refs.",
     ["interactive: boolean (optional, default false) - only interactive elements",
       "max_depth: integer (optional, range 1..1000) - maximum outline depth"],
-    "{ snapshot: string, refs: object, page: { title: string, url: string, ready_state: string, text?: string, html?: string } }"],
+    "{ snapshot: string, refs: { [ref: string]: { role: string, name: string } }, page: { title: string, url: string, ready_state: string, text?: string, html?: string }, url: string, title: string, ready_state: string }"],
   "browser.screenshot": ["Save a screenshot and print its path instead of base64 image data.",
     ["out: string (optional) - PNG path; otherwise a new file under $TMPDIR/easl-renders/"],
-    "{ path: string, width: integer, height: integer }"],
+    "{ path: string, width: integer, height: integer, url: string }"],
   "browser.type": ["Type text into an element.", ["selector: string (required) - CSS selector or snapshot ref such as @e3", "text: string (required) - text to type"], "{}"],
   "browser.fill": ["Replace an element's text.", ["selector: string (required) - CSS selector or snapshot ref such as @e3", "text: string (required) - replacement text"], "{}"],
-  "browser.press": ["Press a key.", ["key: string (required) - Enter, Tab, Shift+Tab, or a character"], "{}"],
+  "browser.press": ["Press a key. Clipboard and undo shortcuts using Control or Meta with c/x/v/z/y are unavailable; use fill or type.",
+    ["key: string (required) - a character, named key, or modified key, e.g. Enter, Escape, ArrowLeft, F1, Shift+Tab"], "{}"],
   "browser.scroll": ["Scroll the page.", ["dx: number (optional, default 0) - horizontal delta", "dy: number (optional, default 0) - vertical delta"], "{ scroll_x: number, scroll_y: number }"],
   "browser.wait": ["Wait for exactly one of load_state, url_contains, or selector.",
     ["load_state: \"interactive\" | \"complete\" (optional) - desired document state",
@@ -390,7 +397,7 @@ for (const verb of ["click", "dblclick", "hover", "focus", "check", "uncheck", "
   ];
 }
 
-if (argv[0] === "browser" && (argv.includes("--help") || argv.includes("-h"))) {
+if (argv[0] === "browser" && (helpCommand || wantsHelp(argv.slice(1)))) {
   const verb = argv[1];
   if (!verb || verb === "--help" || verb === "-h") {
     console.log("usage: easl browser <verb> [<tile>] [--key value]\n\ncmux browser subset (docs/contracts.md):");
@@ -400,7 +407,10 @@ if (argv[0] === "browser" && (argv.includes("--help") || argv.includes("-h"))) {
   }
   const method = Object.hasOwn(BROWSER_METHODS, verb) ? BROWSER_METHODS[verb] : `browser.${verb}`;
   const entry = Object.hasOwn(BROWSER_HELP, method) ? BROWSER_HELP[method] : undefined;
-  if (!entry) unknownMethod(method, Object.keys(BROWSER_HELP));
+  if (!entry) {
+    const verbs = [...Object.keys(BROWSER_METHODS), ...Object.keys(BROWSER_HELP).filter((name) => name.startsWith("browser.")).map((name) => name.slice(8))];
+    unknownMethod(`browser ${verb}`, verbs.map((name) => `browser ${name}`), "easl browser --help");
+  }
   const [description, params, result] = entry;
   const boardScoped = method === "browser.open_split" || method === "surface.list";
   console.log([
@@ -414,11 +424,14 @@ if (argv[0] === "browser" && (argv.includes("--help") || argv.includes("-h"))) {
   process.exit(0);
 }
 
+if (helpCommand && argv[0] === "ask") askHelp(true);
+if (helpCommand && (argv[0] === "metrics" || (argv[0] === "agent" && argv[1] === "spawn"))) usage(true);
 const helpStart = argv[0] === "tell" ? 3 : argv[0] === "get" || argv[0] === "render" ? 2 : argv[0].includes(".") ? 1 : 2;
-if (argv[0] !== "browser" && argv[0] !== "ask" && argv[0] !== "metrics" && !(argv[0] === "agent" && argv[1] === "spawn")
-    && (argv.slice(helpStart).some((arg) => arg === "--help" || arg === "-h") || argv[1] === "--help" || argv[1] === "-h")) {
+if (helpCommand || (argv[0] !== "browser" && argv[0] !== "ask" && argv[0] !== "metrics" && !(argv[0] === "agent" && argv[1] === "spawn")
+    && (wantsHelp(argv.slice(helpStart)) || argv[1] === "--help" || argv[1] === "-h"))) {
   const aliases: Record<string, string> = { get: "object.get", tell: "agent.prompt", render: "view.render" };
-  describe(Object.hasOwn(aliases, argv[0]) ? aliases[argv[0]] : argv[0].includes(".") ? argv[0] : `${argv[0]}.${argv[1]}`);
+  const name = argv[0].includes(".") || !argv[1] || argv[1].startsWith("-") ? argv[0] : `${argv[0]}.${argv[1]}`;
+  describe(Object.hasOwn(aliases, argv[0]) ? aliases[argv[0]] : name);
   process.exit(0);
 }
 
