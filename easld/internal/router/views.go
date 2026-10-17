@@ -119,7 +119,7 @@ func (r *Router) render(id any, p map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	result, err := r.await(c, "view.render", params, millis(timeout)+clients.RenderGrace)
+	result, err := r.await(c, b.ID(), "view.render", params, millis(timeout)+clients.RenderGrace)
 	if err != nil {
 		return nil, err
 	}

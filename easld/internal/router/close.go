@@ -175,6 +175,7 @@ func (r *Router) forgetClosed(b *board.Board) error {
 }
 
 func (r *Router) closedBoard(closing *boardClose) {
+	r.clients.RemoveBoard(closing.board.ID())
 	terminals := map[string]bool{}
 	for _, terminal := range closing.terminals {
 		terminals[terminal.ID] = true

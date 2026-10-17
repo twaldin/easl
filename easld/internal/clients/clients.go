@@ -42,7 +42,7 @@ const (
 	requestPrefix       = "easld-"
 )
 
-// Conn is a client's connection.
+// Conn is a client's connection. Send queues without waiting on the peer or calling the registry.
 type Conn interface {
 	Send(v any) bool
 	// Done is closed when the connection closes.
@@ -109,6 +109,7 @@ type answer struct {
 type call struct {
 	conn   Conn
 	method string
+	board  string
 	done   chan answer
 }
 
@@ -182,6 +183,23 @@ func (r *Registry) detachWhenClosed(conn Conn) {
 	r.mu.Unlock()
 }
 
+func (r *Registry) RemoveBoard(board string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.clients {
+		delete(c.boards, board)
+		if c.focused == board {
+			c.focused, c.focusedAt = "", 0
+		}
+	}
+	for id, pending := range r.pending {
+		if pending.board == board {
+			delete(r.pending, id)
+			pending.done <- answer{failure: &Failure{api.CodeNotFound, "board " + board + " was closed"}}
+		}
+	}
+}
+
 // Choose is the client a call of method on board goes to ("" board: any client, for
 // text.measure): of those that serve the method and show the board, the one whose user focused
 // this board last, then the one focused most recently, then the one attached last. Nil when none.
@@ -251,16 +269,22 @@ func (r *Registry) List() []ListedClient {
 }
 
 // Call sends method with params to c and waits for its answer, cancellation, deadline or disconnect.
-func (r *Registry) Call(ctx context.Context, c *Client, method string, params map[string]any, deadline time.Duration) (any, *Failure) {
+func (r *Registry) Call(ctx context.Context, c *Client, board, method string, params map[string]any, deadline time.Duration) (any, *Failure) {
 	if ctx.Err() != nil {
 		return nil, &Failure{api.CodeUnavailable, method + " was cancelled"}
 	}
 	r.mu.Lock()
+	if board != "" && !c.boards[board] {
+		r.mu.Unlock()
+		return nil, &Failure{api.CodeNotFound, "board " + board + " was closed"}
+	}
 	r.request++
 	id := requestPrefix + strconv.FormatUint(r.request, 10)
-	pending := &call{conn: c.conn, method: method, done: make(chan answer, 1)}
+	pending := &call{conn: c.conn, method: method, board: board, done: make(chan answer, 1)}
 	r.pending[id] = pending
 	name := c.Name()
+	// Capability removal must not reject this call before its request is queued.
+	sent := c.conn.Send(map[string]any{"id": id, "method": method, "params": params})
 	r.mu.Unlock()
 	defer func() {
 		r.mu.Lock()
@@ -268,7 +292,7 @@ func (r *Registry) Call(ctx context.Context, c *Client, method string, params ma
 		r.mu.Unlock()
 	}()
 	disconnected := &Failure{api.CodeUnavailable, name + " disconnected before answering " + method}
-	if !c.conn.Send(map[string]any{"id": id, "method": method, "params": params}) {
+	if !sent {
 		return nil, disconnected
 	}
 	timer := time.NewTimer(deadline)
@@ -387,7 +411,7 @@ func (r *Registry) measureByClient(items []measure.TextItem) []measure.TextSize 
 	for i, item := range items {
 		list[i] = ItemJSON(item)
 	}
-	result, failure := r.Call(context.Background(), c, "text.measure", map[string]any{"items": list}, r.MeasureDeadline)
+	result, failure := r.Call(context.Background(), c, "", "text.measure", map[string]any{"items": list}, r.MeasureDeadline)
 	if failure != nil {
 		return nil
 	}

@@ -20,7 +20,7 @@ import (
 // app did when they were recorded. The test fails when one of them stops passing; a scenario
 // that starts passing is reported, so it can join the list.
 var passing = []string{
-	"agent-control", "agent-control-owned", "agents", "arrows", "batch", "board-close", "board-close-owned", "board-get-history", "boards", "client-delegation", "client-failures", "client-mode", "client-versions",
+	"agent-control", "agent-control-owned", "agents", "arrows", "batch", "board-close", "board-close-owned", "board-get-history", "board-lifecycle", "boards", "client-delegation", "client-failures", "client-mode", "client-versions",
 	"code-tiles", "events", "follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "messages",
 	"metrics", "no-client", "objects-crud", "open-url", "owned-terminals", "placement", "protocol", "questions", "tray", "viewer-serve",
 }

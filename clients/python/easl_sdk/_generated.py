@@ -81,6 +81,12 @@ class SurfaceNotice(TypedDict):
 
 SurfaceEvent = Union[dict[str, Any], dict[str, Any], dict[str, Any]]
 
+class BoardLifecycleEvent(TypedDict):
+    """Board availability after a successful registry transition. The envelope names the canonical board and data is empty. Closing does not disconnect subscriptions; reopening the board announces its availability on those same subscriptions."""
+    event: Required[Literal["board.closed", "board.opened"]]
+    board: Required["Id"]
+    data: Required[dict[str, Any]]
+
 Id = str
 
 MessageId = str
@@ -757,7 +763,7 @@ class EventsApi:
         self._call = call
 
     def subscribe(self, *, board: "Id" | None = None, events: list[str] | None = None) -> dict[str, Any]:
-        """Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}). Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers."""
+        """Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers."""
         params = {"board": board, "events": events}
         return self._call("events.subscribe", params, ["board"])
 

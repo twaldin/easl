@@ -535,6 +535,640 @@ final class BoardMirrorTests {
         #expect(host.objects.values.filter { $0.type == .note }.count == 1)
     }
 
+    @Test func closingAndReopeningKeepsTheLastSeenBoardAndResumesPrompts() async throws {
+        let edited = note("last seen")
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)]))
+        let easld = Easld()
+        try serveEasld(easld)
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        var pasted: [String] = []
+        mirror.serve(window(submit: { id, text in
+            pasted.append("\(id): \(text)")
+            return true
+        }), as: identity)
+        try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
+        try await mirror.prompt("before close", to: terminal.id, mentions: [], answer: false)
+        var availability: [BoardMirror.Availability] = []
+        var closedObjects: [ObjectID: CanvasObject]?
+        mirror.onAvailability = { [weak mirror] in
+            availability.append($0)
+            if $0 == .closed {
+                closedObjects = board.objects
+                #expect(mirror?.attachment == .waiting)
+            }
+        }
+        var redraws = 0
+        mirror.onRedraw = { redraws += 1 }
+        try registry.close(host.id)
+        try await eventually { mirror.availability == .closed }
+        #expect(closedObjects == [edited.id: edited, terminal.id: terminal])
+        #expect(board.objects == closedObjects)
+        #expect(mirror.connection.state == .online)
+        #expect(mirror.attachment == .waiting)
+        _ = try board.update(edited.id, props: .object(["markdown": "must not be sent"]))
+        try board.delete(terminal.id)
+        let provisional = board.create(type: .note, props: .object(["markdown": "must not be created"]))
+        #expect(board.objects[edited.id] == edited)
+        #expect(board.objects[terminal.id] == terminal)
+        #expect(board.objects[provisional.id] == nil)
+        mirror.userFocused()
+        await #expect(throws: ApiRouter.Failure.self) {
+            try await mirror.prompt("while closed", to: terminal.id, mentions: [], answer: false)
+        }
+        await #expect(throws: ApiRouter.Failure.self) { _ = try await mirror.reloadDiagram(edited.id) }
+        easld.call("agent.prompt", .object(["target": .string(terminal.id), "text": "late delegated prompt"])) { _ in }
+        try await eventually { easld.answers.count == 2 }
+        #expect(easld.answers.last?["error"]?["code"] == .string("unavailable"))
+        #expect(pasted == ["\(terminal.id): before close"])
+        #expect(easld.prompts.count == 1)
+        #expect(easld.attaches.count == 1)
+        let reopened = registry.open(root: host.root)
+        _ = try reopened.update(edited.id, props: .object(["markdown": "after reopen"]))
+        try await eventually {
+            mirror.availability == .open && mirror.attachment == .attached(client: "cli_1", version: 1)
+                && board.objects[edited.id] == reopened.objects[edited.id]
+        }
+        try await mirror.prompt("after reopen", to: terminal.id, mentions: [], answer: false)
+        #expect(pasted == ["\(terminal.id): before close", "\(terminal.id): after reopen"])
+        #expect(board.objects[edited.id]?.props["markdown"] == .string("after reopen"))
+        #expect(board.objects.count == 2)
+        #expect(availability == [.closed, .open])
+        #expect(easld.attaches.count == 2)
+        try await eventually { redraws == 1 }
+    }
+
+    @Test func aCloseDuringARefreshRejectsItsLateManifest() async throws {
+        let edited = note("last seen")
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        server.stop()
+        try await eventually { mirror.connection.state == .offline }
+        _ = try host.update(edited.id, props: .object(["markdown": "stale refresh"]))
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let held = Locked(false)
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            if request["method"]?.string == "board.get", let reply,
+               held.withLock({ value in
+                   guard !value else { return false }
+                   value = true
+                   return true
+               }) {
+                pending.withLock { $0 = { connection.send(reply) } }
+                return nil
+            }
+            return reply
+        }
+        try server.start()
+        try await eventually { pending.withLock { $0 != nil } }
+        #expect(mirror.reading != nil)
+        let final = try host.update(edited.id, props: .object(["markdown": "received before close"]))
+        try registry.close(host.id)
+        try await eventually { mirror.availability == .closed }
+        pending.withLock { $0 }?()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(mirror.availability == .closed)
+        #expect(board.objects[edited.id] == final)
+        let reopened = registry.open(root: host.root)
+        _ = try reopened.update(edited.id, props: .object(["markdown": "fresh reopen"]))
+        try await eventually { mirror.availability == .open && board.objects[edited.id] == reopened.objects[edited.id] }
+        #expect(board.objects[edited.id]?.props["markdown"] == .string("fresh reopen"))
+    }
+
+    @Test func aCloseDuringHtmlExpansionDoesNotDeleteTheLastSeenPage() async throws {
+        let page = host.create(type: .html, props: .object(["html": "<p>Last seen</p>"]))
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        server.stop()
+        try await eventually { mirror.connection.state == .offline }
+        _ = try host.update(page.id, props: .object(["html": "<p>During refresh</p>"]))
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let held = Locked(false)
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "object.get",
+               held.withLock({ value in
+                   guard !value else { return false }
+                   value = true
+                   return true
+               }) {
+                let reply: JSONValue = .object(["id": request["id"] ?? .null, "ok": .bool(false),
+                                               "error": .object(["code": "not_found", "message": "board closed"])])
+                pending.withLock { $0 = { connection.send(reply) } }
+                return nil
+            }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        try await eventually { pending.withLock { $0 != nil } }
+        try registry.close(host.id)
+        try await eventually { mirror.availability == .closed }
+        pending.withLock { $0 }?()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(board.objects[page.id] == page)
+        #expect(mirror.availability == .closed)
+        let reopened = registry.open(root: host.root)
+        _ = try reopened.update(page.id, props: .object(["html": "<p>Reopened whole</p>"]))
+        try await eventually { mirror.availability == .open && board.objects[page.id] == reopened.objects[page.id] }
+        #expect(board.objects[page.id]?.props["html"] == .string("<p>Reopened whole</p>"))
+    }
+
+    @Test(arguments: ["object.create", "object.update", "object.delete"])
+    func aCloseDiscardsPendingWritesAndRejectsLateNotFound(_ method: String) async throws {
+        let edited = note("last seen")
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let writes = Locked<[JSONValue]>([])
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == method {
+                let first = writes.withLock { log in
+                    log.append(request["params"] ?? .null)
+                    return log.count == 1
+                }
+                if first {
+                    let reply: JSONValue = .object(["id": request["id"] ?? .null, "ok": .bool(false),
+                                                   "error": .object(["code": "not_found", "message": "board closed"])])
+                    pending.withLock { $0 = { connection.send(reply) } }
+                    return nil
+                }
+            }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        var provisional: ObjectID?
+        switch method {
+        case "object.create":
+            let object = board.create(type: .note, props: .object(["markdown": "pending create"]))
+            provisional = object.id
+            _ = try board.update(object.id, props: .object(["markdown": "queued after create"]))
+        case "object.update":
+            _ = try board.update(edited.id, props: .object(["markdown": "pending update"]))
+            _ = try board.update(edited.id, props: .object(["markdown": "queued update"]))
+        default:
+            try board.delete(edited.id)
+        }
+        try await eventually { pending.withLock { $0 != nil } }
+        #expect(board.objects[edited.id] != edited || provisional != nil)
+        try registry.close(host.id)
+        try await eventually { mirror.availability == .closed }
+        #expect(board.objects == [edited.id: edited])
+        if let provisional { #expect(board.objects[provisional] == nil) }
+        pending.withLock { $0 }?()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(board.objects == [edited.id: edited])
+        #expect(writes.withLock { $0.count } == 1)
+        let reopened = registry.open(root: host.root)
+        try await eventually { mirror.availability == .open }
+        _ = try board.update(edited.id, props: .object(["markdown": "new lifetime write"]))
+        try await eventually { reopened.objects[edited.id]?.props["markdown"] == .string("new lifetime write") }
+        try await eventually { board.objects[edited.id] == reopened.objects[edited.id] }
+        #expect(board.objects.count == 1)
+    }
+
+    @Test func closingDuringAttachCannotAcceptItsLateAnswerOrRefocus() async throws {
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)]))
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let attaches = Locked<[JSONValue]>([])
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            guard request["method"]?.string == "client.attach" else { return await router.handle(request, connection: connection) }
+            let first = attaches.withLock { log in
+                log.append(request["params"] ?? .null)
+                return log.count == 1
+            }
+            let reply: JSONValue = .object(["id": request["id"] ?? .null, "ok": .bool(true),
+                                           "result": .object(["client": "cli_1", "version": 1])])
+            if first {
+                pending.withLock { $0 = { connection.send(reply) } }
+                return nil
+            }
+            return reply
+        }
+        try server.start()
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        mirror.serve(window(), as: identity)
+        try await eventually { pending.withLock { $0 != nil } }
+        mirror.userFocused()
+        try registry.close(host.id)
+        try await eventually { mirror.availability == .closed }
+        mirror.userFocused()
+        pending.withLock { $0 }?()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(mirror.attachment == .waiting)
+        #expect(attaches.withLock { $0.count } == 1)
+        #expect(board.objects[terminal.id] == terminal)
+        _ = registry.open(root: host.root)
+        try await eventually { mirror.availability == .open && mirror.attachment == .attached(client: "cli_1", version: 1) }
+        try await mirror.prompt("after attachment recovered", to: terminal.id, mentions: [], answer: false)
+        #expect(typed[terminal.id] == ["after attachment recovered"])
+        #expect(attaches.withLock { $0.count } == 2)
+        #expect(attaches.withLock { $0.last?["focused"] } == nil)
+    }
+
+    @Test(arguments: [true, false])
+    func aClosedBoardRefreshesBeforeReattachingAfterConnectionLoss(_ reopenWhileOffline: Bool) async throws {
+        let edited = note("last seen")
+        let gone = note("removed after reopen", at: 400)
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)]))
+        let easld = Easld()
+        try serveEasld(easld)
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        var pasted: [String] = []
+        mirror.serve(window(submit: { _, text in
+            pasted.append("\(text): \(board.objects[edited.id]?.props["markdown"]?.string ?? "missing")")
+            return true
+        }), as: identity)
+        try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
+        try registry.close(host.id)
+        try await eventually { mirror.availability == .closed }
+        server.stop()
+        try await eventually { mirror.connection.state == .offline }
+        if !reopenWhileOffline {
+            try serveEasld(easld)
+            try await eventually { mirror.connection.state == .online && mirror.reading == nil }
+            #expect(mirror.availability == .closed)
+            #expect(mirror.attachment == .waiting)
+            #expect(easld.attaches.count == 1)
+        }
+        let reopened = registry.open(root: host.root)
+        _ = try reopened.update(edited.id, props: .object(["markdown": "fresh after reconnect"]))
+        try reopened.delete(gone.id)
+        let added = reopened.create(type: .note, props: .object(["markdown": "created after reopen"]))
+        if reopenWhileOffline { try serveEasld(easld) }
+        try await eventually {
+            mirror.availability == .open && mirror.attachment == .attached(client: "cli_1", version: 1)
+                && board.objects[edited.id] == reopened.objects[edited.id] && board.objects[gone.id] == nil
+                && board.objects[added.id] == added
+        }
+        try await mirror.prompt("reconnected", to: terminal.id, mentions: [], answer: false)
+        #expect(pasted == ["reconnected: fresh after reconnect"])
+        #expect(board.objects.count == 3)
+        #expect(easld.attaches.count == 2)
+    }
+
+    @Test func aLoadedBoardMissingAfterReconnectIsClosedButAnInitialMissThrows() async throws {
+        let edited = note("last seen")
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        server.stop()
+        try await eventually { mirror.connection.state == .offline }
+        try registry.close(host.id)
+        server = Self.serve(router, at: socket)
+        try server.start()
+        try await eventually { mirror.connection.state == .online && mirror.availability == .closed }
+        #expect(board.objects[edited.id] == edited)
+        do {
+            _ = try await self.mirror()
+            Issue.record("an initial board.get not_found must fail load")
+        } catch let failure as ApiRouter.Failure {
+            #expect(failure.code == "not_found")
+        }
+        for unloaded in mirrors where unloaded.board == nil { unloaded.close() }
+        let reopened = registry.open(root: host.root)
+        _ = try reopened.update(edited.id, props: .object(["markdown": "present again"]))
+        try await eventually { mirror.availability == .open && board.objects[edited.id] == reopened.objects[edited.id] }
+        #expect(board.objects[edited.id]?.props["markdown"] == .string("present again"))
+    }
+
+    @Test(arguments: [true, false])
+    func aWriteNotFoundDistinguishesAClosedBoardFromADeletedObject(_ closeBoard: Bool) async throws {
+        let edited = note("last seen")
+        let kept = note("kept", at: 400)
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)]))
+        let once = Once()
+        once.body = { [unowned self] in
+            if closeBoard {
+                try? registry.close(host.id)
+            } else {
+                try? host.delete(edited.id)
+            }
+        }
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "events.subscribe" {
+                var params = request["params"]?.object ?? [:]
+                params["events"] = .array(["board.opened", "object.created", "object.updated"])
+                return await router.handle(request.merging(.object(["params": .object(params)])), connection: connection)
+            }
+            if request["method"]?.string == "object.update" { await once.run() }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        try await mirror.prompt("before refusal", to: terminal.id, mentions: [], answer: false)
+        _ = try board.update(edited.id, props: .object(["markdown": "refused write"]))
+        if closeBoard {
+            try await eventually { mirror.availability == .closed }
+            #expect(board.objects[edited.id] == edited)
+            #expect(board.objects[kept.id] == kept)
+            await #expect(throws: ApiRouter.Failure.self) {
+                try await mirror.prompt("closed refusal", to: terminal.id, mentions: [], answer: false)
+            }
+        } else {
+            try await eventually { board.objects[edited.id] == nil }
+            #expect(mirror.availability == .open)
+            #expect(board.objects[kept.id] == kept)
+            try await mirror.prompt("after object deletion", to: terminal.id, mentions: [], answer: false)
+            #expect(typed[terminal.id] == ["before refusal", "after object deletion"])
+        }
+        if closeBoard {
+            #expect(typed[terminal.id] == ["before refusal"])
+            let reopened = registry.open(root: host.root)
+            _ = try reopened.update(edited.id, props: .object(["markdown": "restored lifetime"]))
+            try await eventually { mirror.availability == .open && board.objects[edited.id] == reopened.objects[edited.id] }
+            #expect(board.objects[edited.id]?.props["markdown"] == .string("restored lifetime"))
+        }
+    }
+
+    @Test func aClosedHostWindowRemainsClosedAfterARefreshUntilItsHostReopensIt() async throws {
+        let edited = note("last seen")
+        let reads = Locked(0)
+        let router = router
+        server.stop()
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "board.get" { reads.withLock { $0 += 1 } }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        registry.setWindowOpen(false, board: host.id)
+        try await eventually { mirror.availability == .closed }
+        _ = try host.update(edited.id, props: .object(["markdown": "agent changed it while hidden"]))
+        let before = reads.withLock { $0 }
+        mirror.reconnect()
+        try await eventually { reads.withLock { $0 > before } && mirror.reading == nil }
+        #expect(mirror.availability == .closed)
+        #expect(board.objects[edited.id] == edited)
+        let initiallyClosed = BoardMirror(hostName: "home", board: host.id, connection: .unixSocket(socket), renders: .unixSocket(socket))
+        defer { initiallyClosed.close() }
+        await #expect(throws: ApiRouter.Failure.self) { _ = try await initiallyClosed.load() }
+        _ = registry.open(root: host.root)
+        try await eventually { mirror.availability == .open && board.objects[edited.id] == host.objects[edited.id] }
+        #expect(board.objects[edited.id]?.props["markdown"] == "agent changed it while hidden")
+    }
+
+    @Test func aReopenedBoardsHtmlFailureOffersRefreshInsteadOfStayingClosed() async throws {
+        let page = host.create(type: .html, props: .object(["html": "<p>Last seen</p>"]))
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)]))
+        let failure = Locked<String?>(nil)
+        let easld = Easld()
+        try serveEasld(easld, refusingHtml: failure)
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        var pasted: [String] = []
+        mirror.serve(window(submit: { _, text in pasted.append(text); return true }), as: identity)
+        try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
+        try registry.close(host.id)
+        try await eventually { mirror.availability == .closed }
+        failure.withLock { $0 = "HTML reopen failed" }
+        let reopened = registry.open(root: host.root)
+        _ = try reopened.update(page.id, props: .object(["html": "<p>Reopened</p>"]))
+        try await eventually { mirror.reading == nil && mirror.problem != nil }
+        #expect(mirror.availability == .open)
+        #expect(mirror.state == .offline)
+        mirror.reconnect()
+        try await eventually { mirror.state == .online }
+        #expect(board.objects[page.id] == reopened.objects[page.id])
+        try await mirror.prompt("after retry", to: terminal.id, mentions: [], answer: false)
+        #expect(pasted == ["after retry"])
+    }
+
+    @Test func reopeningWaitsForTheWholeReadAndReplaysChangesBeforeAttaching() async throws {
+        let edited = note("last seen")
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)]))
+        let holdRead = Locked(false)
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let attaches = Locked(0)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "client.attach" {
+                attaches.withLock { $0 += 1 }
+                return .object(["id": request["id"] ?? .null, "ok": .bool(true),
+                                "result": .object(["client": "cli_1", "version": 1])])
+            }
+            let reply = await router.handle(request, connection: connection)
+            if request["method"]?.string == "board.get", let reply,
+               holdRead.withLock({ value in
+                   defer { value = false }
+                   return value
+               }) {
+                pending.withLock { $0 = { connection.send(reply) } }
+                return nil
+            }
+            return reply
+        }
+        try server.start()
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        mirror.serve(window(), as: identity)
+        try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
+        try registry.close(host.id)
+        try await eventually { mirror.availability == .closed }
+        holdRead.withLock { $0 = true }
+        let reopened = registry.open(root: host.root)
+        try await eventually { pending.withLock { $0 != nil } }
+        _ = try reopened.update(edited.id, props: .object(["markdown": "changed during reopen read"]))
+        #expect(mirror.availability == .closed)
+        #expect(board.objects[edited.id] == edited)
+        #expect(mirror.attachment == .waiting)
+        #expect(attaches.withLock { $0 } == 1)
+        await #expect(throws: ApiRouter.Failure.self) {
+            try await mirror.prompt("before refresh", to: terminal.id, mentions: [], answer: false)
+        }
+        pending.withLock { $0 }?()
+        try await eventually {
+            mirror.availability == .open && mirror.attachment == .attached(client: "cli_1", version: 1)
+                && board.objects[edited.id] == reopened.objects[edited.id]
+        }
+        try await mirror.prompt("after refresh", to: terminal.id, mentions: [], answer: false)
+        #expect(board.objects[edited.id]?.props["markdown"] == .string("changed during reopen read"))
+        #expect(typed[terminal.id] == ["after refresh"])
+        #expect(attaches.withLock { $0 } == 2)
+    }
+
+    @Test func aCloseDuringAnUnfinishedReopenDiscardsHeldObjects() async throws {
+        let edited = note("last seen")
+        let holdRead = Locked(false)
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let attaches = Locked(0)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "client.attach" {
+                attaches.withLock { $0 += 1 }
+                return .object(["id": request["id"] ?? .null, "ok": .bool(true),
+                                "result": .object(["client": "cli_1", "version": 1])])
+            }
+            let reply = await router.handle(request, connection: connection)
+            if request["method"]?.string == "board.get", let reply,
+               holdRead.withLock({ value in
+                   defer { value = false }
+                   return value
+               }) {
+                pending.withLock { $0 = { connection.send(reply) } }
+                return nil
+            }
+            return reply
+        }
+        try server.start()
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        mirror.serve(window(), as: identity)
+        try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
+        var availability: [BoardMirror.Availability] = []
+        mirror.onAvailability = { availability.append($0) }
+        try registry.close(host.id)
+        try await eventually { mirror.availability == .closed }
+        let lastSeen = board.objects
+        holdRead.withLock { $0 = true }
+        let unfinished = registry.open(root: host.root)
+        try await eventually { pending.withLock { $0 != nil } }
+        #expect(mirror.reading != nil)
+        let terminal = unfinished.create(type: .terminal, props: .object(["cwd": .string(dir.path)]))
+        _ = try unfinished.update(edited.id, props: .object(["markdown": "unfinished reopen"]))
+        try registry.close(unfinished.id)
+        try await eventually { mirror.reading == nil }
+        #expect(board.objects == lastSeen)
+        #expect(board.objects == [edited.id: edited])
+        #expect(mirror.availability == .closed)
+        #expect(availability == [.closed])
+        #expect(mirror.attachment == .waiting)
+        #expect(attaches.withLock { $0 } == 1)
+        pending.withLock { $0 }?()
+        _ = try? await mirror.connection.request("board.get", .object(["board": .string(host.id)]))
+        #expect(board.objects == lastSeen)
+        #expect(availability == [.closed])
+        #expect(mirror.attachment == .waiting)
+        #expect(attaches.withLock { $0 } == 1)
+        let reopened = registry.open(root: host.root)
+        let fresh = try reopened.update(edited.id, props: .object(["markdown": "proper reopen"]))
+        try await eventually {
+            mirror.availability == .open && mirror.attachment == .attached(client: "cli_1", version: 1)
+                && board.objects[edited.id]?.props == fresh.props && board.objects[terminal.id]?.props == terminal.props
+        }
+        #expect(Set(board.objects.keys) == Set([edited.id, terminal.id]))
+        #expect(board.objects[terminal.id]?.type == .terminal)
+        #expect(availability == [.closed, .open])
+        #expect(attaches.withLock { $0 } == 2)
+    }
+
+    @Test func reopeningSupersedesAnOlderPendingBoardNotFound() async throws {
+        let edited = note("last seen")
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        try registry.close(host.id)
+        try await eventually { mirror.availability == .closed }
+        server.stop()
+        try await eventually { mirror.connection.state == .offline }
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let held = Locked(false)
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            if request["method"]?.string == "board.get", let reply,
+               held.withLock({ value in
+                   guard !value else { return false }
+                   value = true
+                   return true
+               }) {
+                pending.withLock { $0 = { connection.send(reply) } }
+                return nil
+            }
+            return reply
+        }
+        try server.start()
+        try await eventually { pending.withLock { $0 != nil } }
+        let reopened = registry.open(root: host.root)
+        _ = try reopened.update(edited.id, props: .object(["markdown": "new lifetime"]))
+        try await eventually { mirror.availability == .open && board.objects[edited.id] == reopened.objects[edited.id] }
+        pending.withLock { $0 }?()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(mirror.availability == .open)
+        #expect(board.objects[edited.id]?.props["markdown"] == .string("new lifetime"))
+    }
+
+    @Test func aLegacyAddressHearsCanonicalReopeningAfterReconnectingWhileClosed() async throws {
+        host.repo = RepoRecord(commonDir: dir.appendingPathComponent("root/.git").path, merged: ["brd_old"])
+        let edited = note("last seen")
+        let (mirror, board) = try await mirror(board: "brd_old")
+        defer { mirror.close() }
+        #expect(mirror.sessionBoardID == host.id)
+        var availability: [BoardMirror.Availability] = []
+        mirror.onAvailability = { availability.append($0) }
+        try registry.close(host.id)
+        try await eventually { mirror.availability == .closed }
+        server.stop()
+        try await eventually { mirror.connection.state == .offline }
+        server = Self.serve(router, at: socket)
+        try server.start()
+        try await eventually { mirror.connection.state == .online && mirror.reading == nil }
+        #expect(mirror.availability == .closed)
+        #expect(board.objects[edited.id] == edited)
+        let reopened = registry.open(root: host.root)
+        _ = try reopened.update(edited.id, props: .object(["markdown": "canonical reopen"]))
+        try await eventually { mirror.availability == .open && board.objects[edited.id] == reopened.objects[edited.id] }
+        #expect(board.id == "brd_old")
+        #expect(mirror.sessionBoardID == host.id)
+        #expect(board.objects[edited.id]?.props["markdown"] == .string("canonical reopen"))
+        #expect(availability == [.closed, .open])
+    }
+
+    @Test func anUnreadableBoardAfterAWriteNotFoundPreservesObjectsUntilRefresh() async throws {
+        let edited = note("last seen")
+        let kept = note("kept", at: 400)
+        let once = Once()
+        once.body = { [unowned self] in try? host.delete(edited.id) }
+        let refuseRead = Locked(false)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "events.subscribe" {
+                var params = request["params"]?.object ?? [:]
+                params["events"] = .array(["board.closed", "board.opened", "object.created", "object.updated"])
+                return await router.handle(request.merging(.object(["params": .object(params)])), connection: connection)
+            }
+            if request["method"]?.string == "object.update" {
+                await once.run()
+                refuseRead.withLock { $0 = true }
+            }
+            if request["method"]?.string == "board.get",
+               refuseRead.withLock({ value in
+                   defer { value = false }
+                   return value
+               }) {
+                return .object(["id": request["id"] ?? .null, "ok": .bool(false),
+                                "error": .object(["code": "unavailable", "message": "board read failed"])])
+            }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        var notices: [String] = []
+        mirror.onNotice = { notices.append($0) }
+        _ = try board.update(edited.id, props: .object(["markdown": "refused preview"]))
+        try await eventually { notices.contains { $0.contains("board read failed") } }
+        #expect(mirror.availability == .open)
+        #expect(board.objects[edited.id] == edited)
+        #expect(board.objects[kept.id] == kept)
+        mirror.reconnect()
+        try await eventually { mirror.reading == nil && board.objects[edited.id] == nil }
+        #expect(mirror.availability == .open)
+        #expect(board.objects[kept.id] == kept)
+    }
+
     // MARK: The viewer as easld's client
 
     /// easld's side of the client protocol in front of the host's router: `client.attach`

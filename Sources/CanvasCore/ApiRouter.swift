@@ -8,6 +8,7 @@ public final class BoardRegistry {
     public var frontmost: BoardID?
     public let store: BoardStore
     private var subscribers: [(connection: SocketServer.Connection, board: BoardID?, events: Set<String>?)] = []
+    private var closedWindows: Set<BoardID> = []
     /// App-level observer for every board's events (UI reconciliation). Socket subscribers are fed separately.
     public var onEvent: ((Board, BoardEvent) -> Void)?
     /// The router's own observer (agent.wait), kept apart from the app-level hook.
@@ -36,6 +37,7 @@ public final class BoardRegistry {
         let worktree = GitWorktree.containing(root.standardizedFileURL.path)
         let id = worktree.map { BoardStore.repoID(commonDir: $0.commonDir) } ?? BoardStore.pathID(root)
         if let existing = boards[id] {
+            setWindowOpen(true, board: existing.id)
             if let worktree { existing.opened(from: worktree) }
             return existing
         }
@@ -45,7 +47,7 @@ public final class BoardRegistry {
             guard let self, let board else { return }
             self.onEvent?(board, event)
             self.routerHook?(board, event)
-            self.broadcast(event, board: board.id)
+            self.broadcast(event.name, data: event.data, board: board.id)
         }
         board.onTerminalsEnded = { [weak self, weak board] ended in
             guard let self, let board else { return }
@@ -63,6 +65,7 @@ public final class BoardRegistry {
         replayAgentReports(on: board)
         // Questions that expired while the board was closed expire now.
         board.scheduleQuestionExpiry()
+        broadcast("board.opened", data: .object([:]), board: board.id)
         return board
     }
 
@@ -87,6 +90,14 @@ public final class BoardRegistry {
         boards[id] ?? boards.values.first { $0.repo?.merged?.contains(id) == true }
     }
 
+    public func setWindowOpen(_ open: Bool, board id: BoardID) {
+        guard let board = board(id: id) else { return }
+        let changed = open ? closedWindows.remove(board.id) != nil : closedWindows.insert(board.id).inserted
+        if changed { broadcast(open ? "board.opened" : "board.closed", data: .object([:]), board: board.id) }
+    }
+
+    func windowIsOpen(_ id: BoardID) -> Bool { !closedWindows.contains(id) }
+
     public func close(_ id: BoardID, beforeEviction: () throws -> Void = {}) throws {
         guard let board = board(id: id) else { throw ApiRouter.Failure("not_found", "board \(id)") }
         do {
@@ -101,6 +112,9 @@ public final class BoardRegistry {
         board.deactivate()
         if frontmost == board.id { frontmost = boards.keys.sorted().first }
         didClose?(board)
+        if closedWindows.remove(board.id) == nil {
+            broadcast("board.closed", data: .object([:]), board: board.id)
+        }
     }
 
     public func board(containing object: ObjectID) -> Board? {
@@ -117,17 +131,17 @@ public final class BoardRegistry {
         subscribers.contains { $0.connection === connection && $0.board == board && ($0.events?.contains(event) ?? true) }
     }
 
-    private func broadcast(_ event: BoardEvent, board: BoardID) {
+    private func broadcast(_ name: String, data: JSONValue, board: BoardID) {
         subscribers.removeAll { !$0.connection.isOpen }
         Metrics.shared.gauge("events.subscribers", Double(subscribers.count))
         let receivers = subscribers.filter { subscriber in
-            (subscriber.board == nil || subscriber.board == board) && (subscriber.events?.contains(event.name) ?? true)
+            (subscriber.board == nil || subscriber.board == board) && (subscriber.events?.contains(name) ?? true)
         }
         guard !receivers.isEmpty else { return }
         // Encoded once for every subscriber (an html tile's update carries its whole page).
-        let message: JSONValue = .object(["event": .string(event.name), "board": .string(board), "data": event.data])
+        let message: JSONValue = .object(["event": .string(name), "board": .string(board), "data": data])
         guard let line = try? JSONEncoder().encode(message) else { return }
-        Metrics.shared.record("event.\(event.name)", bytes: (line.count + 1) * receivers.count)
+        Metrics.shared.record("event.\(name)", bytes: (line.count + 1) * receivers.count)
         for subscriber in receivers { subscriber.connection.send(encoded: line) }
     }
 }
@@ -1379,6 +1393,7 @@ public final class ApiRouter {
                 "board": .string(board.id), "root": .string(board.root.path),
                 "revision": .number(Double(board.revision)), "objects": .array(objects.map(JSONValue.init)),
             ]
+            if !registry.windowIsOpen(board.id) { result["closed"] = .bool(true) }
             if let merged = board.repo?.merged, !merged.isEmpty { result["merged"] = .array(merged.map(JSONValue.string)) }
             if let regions { result["regions"] = .array(regions.map(JSONValue.string)) }
             if let since = p["since"]?.int { result["changed"] = .array(board.changed(since: since).map(JSONValue.string)) }
@@ -1430,7 +1445,7 @@ public final class ApiRouter {
             let boards = stored.map { entry -> JSONValue in
                 var info: [String: JSONValue] = [
                     "board": .string(entry.id), "root": .string(entry.root), "archived": .bool(entry.archived),
-                    "open": .bool(registry.boards[entry.id] != nil), "objects": .number(Double(entry.objectCount)),
+                    "open": .bool(registry.boards[entry.id] != nil && registry.windowIsOpen(entry.id)), "objects": .number(Double(entry.objectCount)),
                 ]
                 if let updatedAt = entry.updatedAt { info["updatedAt"] = .string(updatedAt.formatted(.iso8601)) }
                 if let repo = entry.repo { info["repo"] = .string(repo) }

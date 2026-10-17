@@ -125,7 +125,7 @@ func (r *Router) awaitDiagram(w diagramWait) map[string]any {
 }
 
 func (r *Router) computeDiagram(job *diagramJob) {
-	result, failure := r.clients.Call(job.ctx, job.client, "object.reload", map[string]any{"id": job.id, "_diagram": job.object.APIJSON()}, diagramComputeDeadline)
+	result, failure := r.clients.Call(job.ctx, job.client, job.board.ID(), "object.reload", map[string]any{"id": job.id, "_diagram": job.object.APIJSON()}, diagramComputeDeadline)
 	r.reg.Mu.Lock()
 	defer r.reg.Mu.Unlock()
 	if r.diagrams[job.id] != job {

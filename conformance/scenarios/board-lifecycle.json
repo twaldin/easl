@@ -1,0 +1,28 @@
+{
+  "description": "Board availability uses canonical board envelopes with empty data, preserves subscriptions across close and reopen, respects board and event-name filters, rejects closed targets, and announces only successful transitions.",
+  "files": { "keeper/.keep": "" },
+  "steps": [
+    { "call": "board.open", "params": { "root": "{{root}}/keeper" }, "save": "keeper", "expect": { "response.ok": true, "eventCount": 0 } },
+    { "call": "events.subscribe", "conn": "lifecycle", "params": { "board": "{{board}}", "events": ["board.closed", "board.opened"] }, "expect": { "response.ok": true, "eventCount": 0 } },
+    { "call": "events.subscribe", "conn": "opened", "params": { "events": ["board.opened"] }, "expect": { "response.ok": true, "eventCount": 0 } },
+    { "call": "events.subscribe", "conn": "elsewhere", "params": { "board": "{{keeper.board}}" }, "expect": { "response.ok": true, "eventCount": 0 } },
+    { "call": "events.subscribe", "conn": "objects", "params": { "board": "{{board}}", "events": ["object.created"] }, "expect": { "response.ok": true, "eventCount": 0 } },
+    { "call": "board.open", "params": { "root": "{{root}}" }, "expect": { "response.ok": true, "eventCount": 0 } },
+    { "call": "board.close", "params": { "board": "{{board}}", "endSessions": "true" }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "board.close", "params": { "board": "{{board}}" }, "expect": { "response.ok": true, "events": [
+      { "event": "board.closed", "board": "{{board}}", "data": {} },
+      { "conn": "lifecycle", "event": "board.closed", "board": "{{board}}", "data": {} }
+    ] }, "expectShape": { "events.0": "BoardLifecycleEvent" } },
+    { "call": "board.get", "params": { "board": "{{board}}" }, "expect": { "response.error.code": "not_found", "eventCount": 0 } },
+    { "call": "board.close", "params": { "board": "{{board}}" }, "expect": { "response.error.code": "not_found", "eventCount": 0 } },
+    { "call": "system.ping", "conn": "lifecycle", "expect": { "response.ok": true, "eventCount": 0 } },
+    { "call": "board.open", "params": { "root": "{{root}}" }, "expect": { "response.ok": true, "events": [
+      { "event": "board.opened", "board": "{{board}}", "data": {} },
+      { "conn": "lifecycle", "event": "board.opened", "board": "{{board}}", "data": {} },
+      { "conn": "opened", "event": "board.opened", "board": "{{board}}", "data": {} }
+    ] }, "expectShape": { "events.0": "BoardLifecycleEvent" } },
+    { "call": "board.open", "params": { "root": "{{root}}" }, "expect": { "response.ok": true, "eventCount": 0 } },
+    { "call": "board.get", "params": { "board": "{{board}}" }, "expect": { "response.ok": true, "eventCount": 0 } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "after reopen" }, "frame": { "x": 0, "y": 0, "w": 280, "h": 120 } }, "expect": { "response.ok": true, "eventCount": 2, "events.0.event": "object.created", "events.0.board": "{{board}}", "events.1.conn": "objects", "events.1.event": "object.created", "events.1.data.props.markdown": "after reopen" } }
+  ]
+}
