@@ -226,6 +226,7 @@ final class CanvasTerminalView: TerminalView {
     func submitOrdered(_ paste: @escaping @MainActor () -> Bool, delay: Duration) async -> Bool {
         let id = UUID()
         let cancellation = SubmissionCancellation()
+        let cancelOnMain: @MainActor @Sendable () -> Void = { [weak self] in self?.cancelSubmission(id) }
         let result = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 guard !Task.isCancelled else {
@@ -236,7 +237,7 @@ final class CanvasTerminalView: TerminalView {
             }
         } onCancel: {
             cancellation.cancel()
-            Task { @MainActor [weak self] in self?.cancelSubmission(id) }
+            Task { await cancelOnMain() }
         }
         return result && !Task.isCancelled
     }
