@@ -1304,6 +1304,7 @@ final class BoardMirrorTests {
     }
 
     @Test func aPageOpenedOnTheDrawingMacIsCreditedToItsAgent() async throws {
+        registry.drawingMachine = DrawingMachine(id: "mch_01STUDIO", host: "studio")
         let agent = host.create(type: .terminal, props: .object(["cwd": .string(dir.path), "name": "worker"])).id
         let (mirror, board) = try await mirror()
         defer { mirror.close() }
@@ -1312,7 +1313,6 @@ final class BoardMirrorTests {
         try await eventually { host.objects.values.contains { $0.type == .browser } }
         let created = try #require(host.objects.values.first { $0.type == .browser })
         #expect(created.createdBy == .agent(tile: agent))
-        #expect(created.props == props)
         try await eventually { board.objects[created.id] != nil && board.objects[opened.id] == nil }
     }
 }

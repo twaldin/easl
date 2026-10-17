@@ -110,7 +110,7 @@ final class BrowserTile: NSView, TileContent {
     /// The tile whose page opened this one as a popup the user asked for: shown again when the
     /// popup's page closes it while the popup has the user's attention (`hasAttention`: the
     /// canvas's answer, selected or holding the keyboard).
-    private var popupOpener: ObjectID?
+    private weak var popupOpener: BrowserTile?
     var hasAttention: ((ObjectID) -> Bool)?
     /// The viewers streaming this page from another Mac (`BrowserSurface`), while any do: its
     /// dialogs go to them and what they can't answer is refused rather than asked here.
@@ -396,7 +396,7 @@ final class BrowserTile: NSView, TileContent {
     /// When its page closes it (`webViewDidClose`), a popup the user opened shows `opener` again.
     func adoptPopup(_ configuration: WKWebViewConfiguration, opener: ObjectID, returnsToOpener: Bool) -> WKWebView? {
         guard webView == nil else { return nil }
-        popupOpener = returnsToOpener ? opener : nil
+        popupOpener = returnsToOpener ? browserTile?(opener) : nil
         return makeWebView(popup: configuration)
     }
 
@@ -1357,7 +1357,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         let attended = hasAttention?(objectID) == true
         let caller: ObjectID? = if case .agent(let tile) = credit.actor() { tile } else { nil }
         try? board.delete(objectID, caller: caller)
-        if attended, let popupOpener, board.objects[popupOpener] != nil { onOpenedTile?(popupOpener) }
+        if attended, let opener = popupOpener?.objectID, board.objects[opener] != nil { onOpenedTile?(opener) }
     }
 
     private func finished(_ navigation: WKNavigation?) {

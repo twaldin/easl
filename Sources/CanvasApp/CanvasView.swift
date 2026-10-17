@@ -363,11 +363,17 @@ final class CanvasView: NSScrollView {
         switch event {
         case .objectCreated(let object):
             let carried = rekeyed.removeValue(forKey: object.id)
+            let provisional = carried?.browser?.objectID
             add(object, reusing: carried?.browser)
             restack()
             scheduleGeometry()
             if let carried {
-                if carried.selected { setSelection(selection.union([object.id])) }
+                if carried.selected {
+                    var selected = selection
+                    if let provisional { selected.remove(provisional) }
+                    selected.insert(object.id)
+                    setSelection(selected)
+                }
                 if let draft = carried.draft { (tiles[object.id]?.content as? NoteTile)?.resume(draft) }
             }
         case .objectUpdated(let object):
@@ -439,7 +445,9 @@ final class CanvasView: NSScrollView {
     /// selection with it.
     private func removeTile(_ id: ObjectID) {
         tiles.removeValue(forKey: id)?.removeFromSuperview()
-        if selection.contains(id) { setSelection(selection.subtracting([id])) }
+        if selection.contains(id), !rekeyed.values.contains(where: { $0.browser?.objectID == id }) {
+            setSelection(selection.subtracting([id]))
+        }
     }
 
     private func add(_ object: CanvasObject, reusing preserved: TileFrameView? = nil) {
