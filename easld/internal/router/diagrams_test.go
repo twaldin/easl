@@ -340,7 +340,6 @@ func TestDiagramDisconnectRetiresTheJobWithoutPublishing(t *testing.T) {
 	}
 }
 
-
 func TestDiagramFiniteWaitReturnsStoredSummaryAndStillPublishesLateResult(t *testing.T) {
 	f := newFixture(t)
 	id := createDiagram(f)
