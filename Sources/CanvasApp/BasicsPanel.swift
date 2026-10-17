@@ -11,7 +11,7 @@ final class BasicsPanel: NSVisualEffectView {
     static let width: CGFloat = 440
 
     private let text = BasicsTextView()
-    private let scroll = NSScrollView()
+    private let scroll = OverlayScrollView()
     private weak var previousResponder: NSResponder?
     var isOpen: Bool { !isHidden }
     /// The panel's Hide Board Chrome button (the View menu's item, for presenting).

@@ -70,10 +70,24 @@ final class InstanceLockTests {
         #expect(request?["params"] == .object(["root": .string("/tmp/repo"), "select": .bool(true)]))
     }
 
-    @Test func forwardWaitsForAnInstanceThatIsStillStarting() throws {
+    @Test func forwardWaitsForAnInstanceThatIsStillStarting() async throws {
         let server = SocketServer(path: socket) { _, _ in .string("up") }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { try? server.start() }
         defer { server.stop() }
-        #expect(try InstanceLock.forward(root: "/tmp/repo", to: socket) == .string("up"))
+        let socket = socket
+        async let reply: Result<JSONValue, Error> = withCheckedContinuation { done in
+            Thread.detachNewThread {
+                done.resume(returning: Result { try InstanceLock.forward(root: "/tmp/repo", to: socket) })
+            }
+        }
+        // Neither side of the startup race may queue behind blocking work on the global pool.
+        let started: Result<Void, Error> = await withCheckedContinuation { done in
+            Thread.detachNewThread {
+                Thread.sleep(forTimeInterval: 0.5)
+                done.resume(returning: Result { try server.start() })
+            }
+        }
+        let response = await reply
+        try started.get()
+        #expect(try response.get() == .string("up"))
     }
 }

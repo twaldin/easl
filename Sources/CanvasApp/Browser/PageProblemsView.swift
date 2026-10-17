@@ -25,7 +25,7 @@ final class PageProblemsView: NSView {
     private let title = NSTextField(labelWithString: "")
     private let close = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close") ?? NSImage(), target: nil, action: nil)
     private let hint = NSTextField(labelWithString: "Click an entry for its stack · Hyper-click to mention it to your agent")
-    private let scroll = NSScrollView()
+    private let scroll = OverlayScrollView()
     private let rowsView = FlippedView()
     /// Rows and section labels, top to bottom.
     private var items: [NSView] = []
