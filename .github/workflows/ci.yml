@@ -63,9 +63,25 @@ jobs:
       - name: Vet
         working-directory: easld
         run: go vet ./...
+      - name: Install zmx
+        working-directory: ${{ runner.temp }}
+        env:
+          ZMX_VERSION: '0.8.1'
+          ZMX_SHA256: dfd75720b942466f28870731cc86dbc07afa72fb8f3bd5eeb4ff707e4eecebe8
+        run: |
+          archive="zmx-${ZMX_VERSION}-linux-x86_64.tar.gz"
+          url="https://github.com/neurosnap/zmx/releases/download/v${ZMX_VERSION}"
+          curl -fL --retry 3 -O "$url/$archive"
+          curl -fL --retry 3 -O "$url/$archive.sha256"
+          read -r release_sha256 _ < "$archive.sha256"
+          test "$release_sha256" = "$ZMX_SHA256"
+          printf '%s  %s\n' "$ZMX_SHA256" "$archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/zmx"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/zmx"
+          echo "$RUNNER_TEMP/zmx" >> "$GITHUB_PATH"
       - name: Test
         working-directory: easld
-        run: go test ./...
+        run: go test -p 2 -v ./...
       - name: Build for Linux
         working-directory: easld
         run: GOOS=linux GOARCH=amd64 go build ./...
