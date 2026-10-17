@@ -131,6 +131,9 @@ func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, 
 	cwd, _ := terminal.Props["cwd"].(string)
 	spawn := r.Owns.Request(b.ID(), tile, b.Root(), cwd, launch.Argv)
 	spawn.Merged = merged
+	if path, ok := r.ensureCmux(tile); ok {
+		spawn.Env = cmuxEnv(spawn.Env, path, tile, b.ID())
+	}
 	r.reg.Mu.Unlock()
 	if err != nil {
 		return err

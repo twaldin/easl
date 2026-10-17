@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 1
-    static let schemaHash = "f44c843db2c0034f"
+    static let schemaHash = "ca5d155c1a884802"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "surface.stream": (["id", "scale", "format"], ["id"]),
@@ -61,8 +61,10 @@ enum ApiParams {
         "session.kill": (["tile", "home"], ["tile"]),
         "relay.open": (["instance", "port", "token"], ["instance", "port", "token"]),
         "events.subscribe": (["board", "events"], []),
-        "client.attach": (["version", "schema", "app", "host", "serves", "boards", "focused"], ["version", "schema", "serves"]),
+        "client.attach": (["version", "schema", "app", "host", "identity", "serves", "boards", "focused"], ["version", "schema", "serves"]),
         "client.list": ([], []),
+        "browser.call": (["id", "method", "params", "caller"], ["id", "method", "params"]),
+        "browser.report": (["id", "url", "pageTitle", "caller", "actor"], ["id"]),
         "text.measure": (["items", "board"], ["items"]),
     ]
 }

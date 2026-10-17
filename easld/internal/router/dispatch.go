@@ -16,7 +16,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/store"
 )
 
-func (r *Router) dispatch(method string, p map[string]any) (any, error) {
+func (r *Router) dispatch(method string, p map[string]any, from Conn) (any, error) {
 	switch method {
 	case "system.ping":
 		return map[string]any{"version": float64(api.SchemaVersion), "app": "easl"}, nil
@@ -62,7 +62,7 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 	case "object.get":
 		return r.objectGet(p)
 	case "object.create":
-		return r.create(p)
+		return r.create(p, from)
 	case "object.update":
 		return r.update(p)
 	case "object.delete":
@@ -234,7 +234,7 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 		}
 		return result, nil
 	case "view.open_url":
-		return r.openURL(p)
+		return r.openURL(p, from)
 	case "view.get":
 		b, err := r.boardOf(p)
 		if err != nil {

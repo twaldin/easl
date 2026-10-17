@@ -232,12 +232,27 @@ export type TerminalProps = {
   branch?: string;
 };
 
+export type DrawingMachine = {
+  /** the drawing Mac's persistent client.attach identity, independent of its connection id and hostname */
+  id: Id;
+  /** the machine's display name, retained for offline notices; never used for routing */
+  host: string;
+};
+
 export type BrowserProps = {
   url: string;
+  /** Host-owned easld navigation intent, distinct from the observed url. An explicit string URL update stamps the assigned URL, resulting object rev and actor credited with that assignment; URL removal or non-string replacement clears it. Undo or rollback restoration of an existing browser whose URL or intent changed stamps the restored observed URL, new object rev and restored snapshot's updatedBy or createdBy actor, or clears the marker when the restored URL is absent or non-string. Browser reports and unrelated edits or restorations preserve the complete marker, including its original actor. Caller-supplied markers are discarded on creation/import and ignored on update. Mac-hosted boards do not consume this marker */
+  urlIntent?: {
+    url: string;
+    rev: number;
+    actor: Actor;
+  };
   /** names the tile; the app never overwrites it */
   title?: string;
   /** written by the app: the page's own title; shown when `title` is unset; never bumps rev */
   pageTitle?: string;
+  /** the Mac that runs this page in its own browser profile. Mac-hosted boards run on their host and reject foreign or cleared assignments until machine switching is supported; imported browsers bind to the host. Easld persists the creating Mac's identity, or the first eligible attached Mac for an existing unassigned tile. Disconnect never moves a page to another machine */
+  drawingMachine?: DrawingMachine;
   zoom?: Zoom;
   /** a named browser profile: its own cookies, logins and storage, shared by every tile that names it; absent: the default profile. Tiles a page opens (links, popups) take it */
   profile?: string;
@@ -1951,7 +1966,9 @@ export type ClientAttachParams = {
   app?: string;
   /** the machine it runs on, for messages */
   host?: string;
-  /** the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure (others are ignored) */
+  /** this app home's persistent machine identity, unchanged across reconnects and relaunches; distinct from the connection's cli_ id. Needed to serve browser.call */
+  identity?: Id;
+  /** the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call (others are ignored) */
   serves: string[];
   /** the boards this client serves, in a window, tab, or background attachment, each open on the server; default none */
   boards?: Id[];
@@ -1971,6 +1988,8 @@ export type ClientListParams = Record<string, unknown>;
 export type ClientListResult = {
   clients: {
     id: Id;
+    /** the persistent app-home machine identity, absent on older clients; distinct from this connection's id */
+    identity?: Id;
     /** the client's easl version, absent when not reported */
     app?: string;
     /** the client's machine, absent when not reported */
@@ -1980,6 +1999,30 @@ export type ClientListResult = {
     /** the board this client last focused, absent when it never focused */
     focused?: Id;
   }[];
+};
+
+export type BrowserCallParams = {
+  id: Id;
+  method: "browser.navigate" | "browser.back" | "browser.forward" | "browser.reload" | "browser.url.get" | "browser.eval" | "browser.snapshot" | "browser.screenshot" | "browser.click" | "browser.dblclick" | "browser.hover" | "browser.focus" | "browser.check" | "browser.uncheck" | "browser.scroll_into_view" | "browser.type" | "browser.fill" | "browser.press" | "browser.scroll" | "browser.wait";
+  /** the cmux command's params, without surface selection; checked by the drawing Mac's existing browser command parser */
+  params: Record<string, unknown>;
+  /** the terminal driving the page, credited for its actions */
+  caller?: Id;
+};
+export type BrowserCallResult = Record<string, unknown>;
+
+export type BrowserReportParams = {
+  id: Id;
+  url?: string;
+  /** the page's title; null removes it */
+  pageTitle?: unknown;
+  /** explicit terminal credit from the drawing Mac, never filled from the reporting process's environment; mutually exclusive with actor */
+  caller?: Id;
+  /** URL credit when no caller is given; mutually exclusive with caller */
+  actor?: "user" | "system";
+};
+export type BrowserReportResult = {
+  object: CanvasObject;
 };
 
 export type TextMeasureParams = {
@@ -2139,14 +2182,20 @@ export interface CanvasApi {
     open(params: RelayOpenParams): Promise<RelayOpenResult>;
   };
   events: {
-    /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers. */
+    /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}), client.changed ({clients}, the current attached-client snapshot for this board; transient, never stored), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers. */
     subscribe(params?: EventsSubscribeParams): Promise<EventsSubscribeResult>;
   };
   client: {
-    /** Make this connection a client that serves what only the Mac app can answer: the window (view.get, view.snapshot), drawing (view.render), live terminal surfaces (agent.prompt, agent.read's screen modes, agent.restart; interim: easld takes them over with zmx sessions, behind the same methods and errors), browser pages (object.reload), WebKit HTML layout (object.measure), and AppKit text measurement (text.measure). A client built from an older schema `version` than the server's is refused `unavailable` ("easl 0.1.0 on studio is older than this board's server …; update it"); a newer one is accepted and speaks the server's `version` (the reply's), and with the same `version` the two work together whatever their `schema` hashes. Either way each uses what both know: params and `serves` names the server doesn't know are ignored. From then on the server sends this connection requests for the methods in `serves` (transport `clients`): a call that needs a client goes, after the server's own checks, to one that serves its method and shows its board (text.measure: any that serves it), the one whose user focused that board last, else the one focused most recently, else the one attached last. The call is forwarded as the same method (`board` and agent `target` resolved to ids; agent.prompt without `mentions`, which the server queues). HTML measurement receives resolved candidate props and width, including fitted writes. Rendering receives `inline:true` with no `out`: the client returns image data and the server writes any caller-requested file on its own host. Other client results and errors pass through. The server waits for object.reload's and view.render's `timeoutMs` plus 5 s and 30 s, else 5 s (view.get), 30 s (view.snapshot), 25 s (HTML object.measure), 10 s (agent.prompt, agent.read, agent.restart), 2 s (text.measure); past that, or when the client disconnects first, the call fails `unavailable` (text.measure falls back to the glyph table). Diagram reload is unavailable until easld has language servers. With no client for its board a delegated call fails `unavailable` saying what it needs. Attach again whenever `serves`, `boards` or `focused` change: each call replaces the last; closing the connection detaches. Answer text.measure without waiting on the server, which may hold a board while it measures. For the Mac app; agents never need it. */
+    /** Attach this connection as a Mac client serving the named methods and open boards, including background boards. The optional identity is persistent per app home; the returned cli_ id identifies only this connection. Older schema versions are refused unavailable; newer versions speak the server's version, and equal versions work across schema hashes. Unknown attach params and serves names are ignored. Calls normally go to the capable viewer that focused this board last, then focused most recently, then attached last. Browser calls and browser object.reload instead go only to the tile's persisted drawingMachine identity. An eligible creator supplies a new browser's default; otherwise the earliest eligible attached Mac supplies it. The first eligible attachment fills existing missing owners. Disconnect never migrates a page. Delegated requests retain their method, with canonical board/target ids. Prompt mentions are queued by easld. HTML measurement receives resolved props and width. Rendering is requested inline without out; only the server writes caller-requested render files. Results and errors otherwise pass through. Reload waits timeoutMs plus 5 s; render waits timeoutMs plus 30 s. Browser wait uses its requested timeout plus grace. Other deadlines are 5 s for view.get, 30 s for view.snapshot, 25 s for HTML object.measure, 10 s for terminal calls and 2 s for text.measure. Missing, disconnected or unresponsive clients fail unavailable, except text.measure falls back to the glyph table. Attach again to replace capabilities, boards or focus; closing detaches. Answer delegated calls without awaiting a new request on this same link, and answer text.measure without any server request because it may hold the board lock. */
     attach(params: ClientAttachParams): Promise<ClientAttachResult>;
     /** The clients attached to easld, including background viewers. Each entry names its app, host, served boards and methods. Entries, boards and methods are sorted by id or name. The Mac app answers unsupported. */
     list(params?: ClientListParams): Promise<ClientListResult>;
+  };
+  browser: {
+    /** Run a page-scoped cmux browser command on this browser tile's persisted drawingMachine. Easld forwards only to that attached identity, never to the most recently focused viewer. The drawing Mac uses its own page and profile. Results and errors pass through in memory; no page body, image, cookie or profile is stored by easld. Offline returns unavailable naming the drawing machine. Structural cmux open, list and close stay on easld. The Mac app's host API answers unsupported; its own agents use the cmux socket. */
+    call(params: BrowserCallParams): Promise<BrowserCallResult>;
+    /** A drawing Mac reports committed page URL and title metadata to easld. Only an attached client serving this board whose persistent identity matches the tile's drawingMachine may report. URL commits preserve agent, user or system credit; pageTitle is bookkeeping with no rev bump. No page body, image, cookie, log or profile field is accepted. The Mac app's host API answers unsupported. */
+    report(params: BrowserReportParams): Promise<BrowserReportResult>;
   };
   text: {
     /** Sizes of text as the board lays it out, in board points: an attached Mac client that serves text.measure (client.attach) measures it with AppKit, exactly as it draws; with none, or when it doesn't answer within 2 s, the server approximates from its glyph table (advance widths of the app's fonts, extracted on a Mac; no kerning) and says `approximate: true`. object.measure, `size: fit`, layout.check and arrow routing measure through it. note: `text` is markdown laid out as a note `width` wide (default 280) with its live fences and images read under `root`: the size is the note's whole frame (title bar included) and `tableShortfall` how much wider it would have to be to show every table cell whole; text: a text shape's text at `textSize` (default 1: 20 pt Shantell Sans) wrapped at `width` (default unwrapped): its bounds rounded up, plus 2; label: a rect's or ellipse's label (18 pt, centered) wrapped at `width`, likewise; arrowLabel: an arrow's caption (15 pt, centered, wrapped at 240): its chip, 8 wider than the text; caption: a code tile's caption strip (`inline code` in the code font): the narrowest frame that shows it whole, and the strip's height. */
@@ -2243,13 +2292,17 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       attach: (params: ClientAttachParams) => call("client.attach", params ?? {}, []) as Promise<ClientAttachResult>,
       list: (params?: ClientListParams) => call("client.list", params ?? {}, []) as Promise<ClientListResult>,
     },
+    browser: {
+      call: (params: BrowserCallParams) => call("browser.call", params ?? {}, ["caller"]) as Promise<BrowserCallResult>,
+      report: (params: BrowserReportParams) => call("browser.report", params ?? {}, []) as Promise<BrowserReportResult>,
+    },
     text: {
       measure: (params: TextMeasureParams) => call("text.measure", params ?? {}, ["board"]) as Promise<TextMeasureResult>,
     },
   };
 }
 
-export const METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","text.measure"] as const;
+export const METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

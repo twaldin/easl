@@ -1,5 +1,5 @@
 {
-  "description": "Three scripted Mac clients (client.attach) show one board. A call goes to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call `unavailable`, naming it, and nothing is retried on another client; the next call goes to the client the choice order picks then. This records easld's protocol with scripted clients.",
+  "description": "Three scripted Mac clients show one board. Ordinary calls go to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call unavailable, naming it, and nothing is retried on another client. Browser object.reload does not use that order: it goes only to the tile's persisted drawingMachine. This records easld's protocol with scripted clients.",
   "steps": [
     {
       "call": "object.create",
@@ -14,18 +14,23 @@
         "schema": "{{schemaHash}}",
         "app": "0.2.0",
         "host": "studio",
-        "serves": ["view.render", "object.reload"],
+        "identity": "mch_studio",
+        "serves": ["view.render", "object.reload", "browser.call"],
         "boards": ["{{board}}"],
         "focused": "{{board}}"
       },
       "replies": {
-        "object.reload": [{ "silent": true }],
+        "object.reload": [
+          { "silent": true },
+          { "result": { "loaded": true, "url": "https://example.com/studio" } }
+        ],
         "view.render": [{ "result": { "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "format": "png", "width": 1, "height": 1, "scale": 2, "objects": [] } }]
       },
       "ignore": {
         "request.schema": "the schema's hash changes with every schema edit",
         "response.result.schema": "the schema's hash changes with every schema edit"
-      }
+      },
+      "note": "first eligible attachment: studio becomes the drawing machine of the browser created above"
     },
     {
       "call": "client.attach",
@@ -35,11 +40,12 @@
         "schema": "{{schemaHash}}",
         "app": "0.2.0",
         "host": "laptop",
-        "serves": ["view.render", "object.reload"],
+        "identity": "mch_laptop",
+        "serves": ["view.render", "object.reload", "browser.call"],
         "boards": ["{{board}}"]
       },
       "replies": {
-        "object.reload": [{ "result": { "loaded": true, "url": "https://example.com/" } }],
+        "object.reload": [{ "result": { "loaded": true, "url": "https://example.com/laptop" } }],
         "view.render": [{ "hangUp": true }]
       },
       "ignore": {
@@ -55,19 +61,19 @@
         "schema": "{{schemaHash}}",
         "app": "0.2.0",
         "host": "mini",
-        "serves": ["view.render", "object.reload"],
+        "serves": ["view.render"],
         "boards": ["{{board}}"]
       },
       "ignore": {
         "request.schema": "the schema's hash changes with every schema edit",
         "response.result.schema": "the schema's hash changes with every schema edit"
       },
-      "note": "attached last, never focused: chosen only when no other client has a focus"
+      "note": "no identity: attached, but not a drawing owner"
     },
     {
       "call": "object.reload",
       "params": { "id": "{{web.object.id}}", "timeoutMs": 100 },
-      "note": "studio focused the board: it gets the call and never answers; easld gives up at the caller's timeoutMs plus 5 s"
+      "note": "studio owns the page and never answers; easld gives up at timeoutMs plus 5 s and does not ask laptop"
     },
     {
       "call": "client.attach",
@@ -77,7 +83,8 @@
         "schema": "{{schemaHash}}",
         "app": "0.2.0",
         "host": "laptop",
-        "serves": ["view.render", "object.reload"],
+        "identity": "mch_laptop",
+        "serves": ["view.render", "object.reload", "browser.call"],
         "boards": ["{{board}}"],
         "focused": "{{board}}"
       },
@@ -85,18 +92,23 @@
         "request.schema": "the schema's hash changes with every schema edit",
         "response.result.schema": "the schema's hash changes with every schema edit"
       },
-      "note": "laptop's user focuses the board: attaching again keeps the client and moves the focus"
+      "note": "laptop's user focuses the board: attaching again keeps the client and moves the focus. The page stays on studio"
     },
-    { "call": "object.reload", "params": { "id": "{{web.object.id}}", "timeoutMs": 100 }, "note": "laptop focused the board last: it serves the call" },
+    {
+      "call": "object.reload",
+      "params": { "id": "{{web.object.id}}", "timeoutMs": 1000 },
+      "expect": { "response.ok": true, "response.result.url": "https://example.com/studio" },
+      "note": "laptop focused the board last; reload still reaches studio, the persisted drawing machine"
+    },
     {
       "call": "view.render",
       "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 } },
-      "note": "laptop hangs up mid-call: the call fails, and it isn't retried on another client"
+      "note": "focus routing is unchanged: laptop hangs up mid-call, and the call is not retried"
     },
     {
       "call": "view.render",
       "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 }, "inline": true },
-      "note": "laptop is gone: studio, which focused the board, comes before mini, which attached last; easld returns the image inline"
+      "note": "laptop is gone: studio, which focused the board, comes before mini"
     }
   ]
 }

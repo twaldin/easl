@@ -38,7 +38,8 @@
         "schema": "{{schemaHash}}",
         "app": "0.2.0",
         "host": "studio",
-        "serves": ["object.measure", "view.render", "object.reload"],
+        "identity": "mch_studio",
+        "serves": ["object.measure", "view.render", "object.reload", "browser.call"],
         "boards": ["{{board}}"],
         "focused": "{{board}}"
       },

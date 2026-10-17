@@ -7,13 +7,39 @@ public enum RemoteWrite: Equatable, Sendable {
     /// `seen`: the object's revision as the board showed it when the user made the change.
     case update(ObjectID, seen: Int?, frame: Frame?, z: Double?, props: JSONValue?)
     case delete(ObjectID)
+    /// A browser tile's page as this Mac runs it (`Board.reportPage`): the one write-back of the
+    /// app's own that a remote board sends to its host.
+    case page(ObjectID, BrowserReport)
 
     /// The object written, by its id on this board.
     var object: ObjectID {
         switch self {
         case .create(let object): object.id
-        case .update(let id, _, _, _, _), .delete(let id): id
+        case .update(let id, _, _, _, _), .delete(let id), .page(let id, _): id
         }
+    }
+}
+
+/// What a browser tile's drawing Mac reports of its page (`browser.report`): an address it
+/// committed, credited to whoever drove the page there, or the page's own title (nil: none).
+public enum BrowserReport: Equatable, Sendable {
+    case url(String, by: ActivityActor)
+    case title(String?)
+
+    func params(_ id: ObjectID) -> [String: JSONValue] {
+        var params: [String: JSONValue] = ["id": .string(id)]
+        switch self {
+        case .url(let url, let actor):
+            params["url"] = .string(url)
+            switch actor {
+            case .agent(let tile): params["caller"] = .string(tile)
+            case .user: params["actor"] = .string("user")
+            case .system: params["actor"] = .string("system")
+            }
+        case .title(let title):
+            params["pageTitle"] = title.map(JSONValue.string) ?? .null
+        }
+        return params
     }
 }
 
@@ -72,6 +98,13 @@ public final class BoardMirror: BoardHost {
     /// This viewer as the board's easld's client (docs/design/next.md "The client protocol");
     /// nil until `serve`, and on a Mac host, which answers those calls itself.
     public private(set) var attachment: Attachment?
+    /// The machine identities of the Macs attached to the board that run its browser tiles' pages
+    /// (`client.list`, then each `client.changed`): attached as easld's clients serving the board
+    /// and `browser.call`. Nil until heard after `serve`, and while the link is down; never stored.
+    public private(set) var drawingMachines: Set<String>?
+    /// `drawingMachines` changed: the tiles that say where their page runs say it again.
+    public var onDrawingMachines: (() -> Void)?
+    private var presenceHeard = 0
 
     /// Where this viewer's `client.attach` stands on the board's link.
     public enum Attachment: Equatable, Sendable {
@@ -89,6 +122,8 @@ public final class BoardMirror: BoardHost {
     /// The board's delegated calls, answered from its window; nil until `serve`.
     private var calls: DelegatedCalls?
     private var identity: ClientIdentity?
+    private var receivedEventSequence: UInt64 = 0
+    private var awaitingEvents: [(through: UInt64, continuation: CheckedContinuation<Void, Error>)] = []
     /// The latest attach's number: an older one's answer changes nothing.
     private var attaches = 0
     /// The user focused the board while an attach was out: once it is accepted, attach again.
@@ -115,6 +150,7 @@ public final class BoardMirror: BoardHost {
     /// Creates sent and not answered yet: the created object's event comes ahead of the answer
     /// that says it is the user's provisional one, so events wait until then.
     private var creating = 0
+    private var deferredObjects: Set<ObjectID> = []
     /// The host's events that arrived while the board was being read or a create was in flight,
     /// applied in order once neither is (`release`), so nothing they say is undone or doubled.
     private var held: [EaslConnection.Event] = []
@@ -220,17 +256,22 @@ public final class BoardMirror: BoardHost {
         if state != .online { refreshFailure = nil }
         guard board != nil else { return }
         if state != .online {
+            failAwaitingEvents(ApiRouter.Failure("unavailable", "\(hostName) disconnected before applying the browser target"))
             stale = true
             drops += 1
             redrawDue = true
         }
         if calls != nil {
             if state == .online {
-                if !stale { attach() }
+                if !stale {
+                    attach()
+                    listClients()
+                }
             } else {
                 attaches += 1
                 refocused = false
                 attachment = .waiting
+                setDrawingMachines(nil)
             }
         }
         if self.state != previous { onState?(self.state) }
@@ -288,7 +329,12 @@ public final class BoardMirror: BoardHost {
             }
             return await self.answer(call)
         }
-        if linkState == .online, availability == .open, reading == nil { attach() } else { attachment = .waiting }
+        if linkState == .online, availability == .open, reading == nil {
+            attach()
+            listClients()
+        } else {
+            attachment = .waiting
+        }
     }
 
     private func answer(_ call: EaslConnection.Call) async -> Result<JSONValue, EaslConnection.Failure> {
@@ -296,12 +342,59 @@ public final class BoardMirror: BoardHost {
             return .failure(EaslConnection.Failure("unavailable", "board \(boardID) is closed"))
         }
         let generation = generation
-        let result = await calls.answer(call)
-        guard !ended, generation == self.generation, availability == .open else {
-            return .failure(EaslConnection.Failure("unavailable", "board \(boardID) is closed"))
+        do {
+            if call.method == "browser.call" || (call.method == "object.reload" && call.params["_diagram"] == nil) {
+                try await admit(through: call.eventsThrough)
+            }
+            try requireCurrent(generation)
+            let result = await calls.answer(call)
+            try requireCurrent(generation)
+            return result
+        } catch {
+            let failure = ApiRouter.failure(for: error)
+            return .failure(EaslConnection.Failure(failure.code, failure.message))
         }
-        return result
     }
+
+    /// Apply the events preceding the call, not an unseen creation that may already be deleted.
+    private func admit(through sequence: UInt64) async throws {
+        guard !ended, availability == .open else {
+            throw ApiRouter.Failure("unavailable", "board \(boardID) is closed")
+        }
+        guard linkState == .online, calls != nil else {
+            throw ApiRouter.Failure("unavailable", "\(hostName) is not connected")
+        }
+        if !admitted(through: sequence) {
+            try await withCheckedThrowingContinuation {
+                awaitingEvents.append((sequence, $0))
+            }
+        }
+        guard !ended, availability == .open, linkState == .online, calls != nil else {
+            throw ApiRouter.Failure("unavailable", "\(hostName) is not connected")
+        }
+        guard !stale else {
+            throw ApiRouter.Failure("unavailable", "\(hostName) has not refreshed this board")
+        }
+    }
+
+    private func admitted(through sequence: UInt64) -> Bool {
+        reading == nil && deferredObjects.isEmpty && receivedEventSequence >= sequence
+            && !held.contains { $0.sequence <= sequence }
+    }
+
+    private func releaseAdmissions() {
+        awaitingEvents.removeAll { waiting in
+            guard admitted(through: waiting.through) else { return false }
+            waiting.continuation.resume()
+            return true
+        }
+    }
+
+    private func failAwaitingEvents(_ failure: ApiRouter.Failure) {
+        for waiting in awaitingEvents { waiting.continuation.resume(throwing: failure) }
+        awaitingEvents.removeAll(keepingCapacity: true)
+    }
+
 
     /// The user is looking at this board (its window became key): an accepted attach goes again
     /// naming it, one still out goes again once it is accepted. A refused link asks nothing.
@@ -328,6 +421,7 @@ public final class BoardMirror: BoardHost {
             "boards": .array([.string(boardID)]),
         ]
         if let app = identity.app { fields["app"] = .string(app) }
+        if let id = identity.id { fields["identity"] = .string(id) }
         if focused || calls.window.focused() { fields["focused"] = .string(boardID) }
         let params = JSONValue.object(fields)
         Task {
@@ -348,10 +442,45 @@ public final class BoardMirror: BoardHost {
         }
     }
 
+    private func listClients() {
+        guard !ended, availability == .open, linkState == .online, calls != nil else { return }
+        let heard = presenceHeard, drop = drops, generation = generation
+        Task {
+            guard let reply = try? await connection.request("client.list") else { return }
+            guard !ended, generation == self.generation, availability == .open,
+                  heard == presenceHeard, drop == drops, linkState == .online, calls != nil else { return }
+            setDrawingMachines(drawingMachines(in: reply["clients"]))
+        }
+    }
+
+    private func clientsChanged(_ event: EaslConnection.Event) {
+        guard !ended, availability == .open, linkState == .online, calls != nil,
+              event.board == nil || event.board == sessionBoardID || event.board == boardID else { return }
+        presenceHeard += 1
+        setDrawingMachines(drawingMachines(in: event.data["clients"]))
+    }
+
+    private func drawingMachines(in clients: JSONValue?) -> Set<String> {
+        let boards: Set<BoardID> = [boardID, sessionBoardID]
+        return Set((clients?.array ?? []).compactMap { entry -> String? in
+            guard let identity = entry["identity"]?.string, entry["serves"]?.array?.contains(.string("browser.call")) == true,
+                  entry["boards"]?.array?.contains(where: { $0.string.map { boards.contains($0) } == true }) == true else { return nil }
+            return identity
+        })
+    }
+
+    private func setDrawingMachines(_ machines: Set<String>?) {
+        guard machines != drawingMachines else { return }
+        drawingMachines = machines
+        onDrawingMachines?()
+    }
+
     // MARK: The host's changes
 
     private func received(_ event: EaslConnection.Event) {
         guard !ended else { return }
+        receivedEventSequence = max(receivedEventSequence, event.sequence)
+        defer { releaseAdmissions() }
         let matches = event.board == nil || event.board == sessionBoardID || event.board == boardID
         if matches, event.name == "board.closed" {
             guard lastHostAvailability != .closed else { return }
@@ -367,6 +496,7 @@ public final class BoardMirror: BoardHost {
             Task { await reread() }
             return
         }
+        if event.name == "client.changed" { return clientsChanged(event) }
         if reading != nil || creating > 0 { return held.append(event) }
         guard availability == .open else { return }
         applyHostEvent(event)
@@ -395,6 +525,8 @@ public final class BoardMirror: BoardHost {
     private func invalidate() {
         let touched = Set(queues.keys).union(queues.keys.compactMap { hostIDs[$0] })
         generation += 1
+        failAwaitingEvents(ApiRouter.Failure("unavailable", "board \(boardID) closed during the request"))
+        setDrawingMachines(nil)
         attaches += 1
         refocused = false
         if calls != nil { attachment = .waiting }
@@ -406,6 +538,7 @@ public final class BoardMirror: BoardHost {
         creating = 0
         reading = nil
         held = []
+        deferredObjects.removeAll(keepingCapacity: true)
         for id in touched.sorted() { settle(id) }
     }
 
@@ -513,7 +646,10 @@ public final class BoardMirror: BoardHost {
         } while again
         reading = nil
         release()
-        if attachment == .waiting { attach() }
+        if attachment == .waiting {
+            attach()
+            listClients()
+        }
         drawAgainIfDue()
     }
 
@@ -536,13 +672,24 @@ public final class BoardMirror: BoardHost {
         }
         for object in objects where !read.deleted.contains(object.id) {
             learn(object)
-            if !busy(object.id), let current = known[object.id] { board.applyHost(current) }
+            // A reread can learn a create before its answer. Keep the provisional view until rekey.
+            if creating > 0, board.objects[object.id] == nil {
+                deferredObjects.insert(object.id)
+            } else if !busy(object.id), let current = known[object.id] {
+                board.applyHost(current)
+            }
         }
     }
 
     /// The events that waited (`held`), in the order they came, once nothing holds them.
     private func release() {
-        guard reading == nil, creating == 0, !held.isEmpty else { return }
+        defer { releaseAdmissions() }
+        guard reading == nil, creating == 0 else { return }
+        for id in deferredObjects.sorted() where !busy(id) {
+            if let object = known[id] { board?.applyHost(object) }
+        }
+        deferredObjects.removeAll(keepingCapacity: true)
+        guard !held.isEmpty else { return }
         let waiting = held
         held = []
         for event in waiting { received(event) }
@@ -641,6 +788,7 @@ public final class BoardMirror: BoardHost {
                 "frame": RenderMath.json(provisional.frame),
             ]
             if let parent = provisional.parent { params["parent"] = .string(parent) }
+            if provisional.type == .browser, case .agent(let tile) = provisional.createdBy { params["caller"] = .string(tile) }
             // Its object's event, ahead of the answer, waits for it (`creating`).
             creating += 1
             defer {
@@ -691,6 +839,17 @@ public final class BoardMirror: BoardHost {
                 await refused(target, error, doing: "deleted", generation: generation)
             }
             return (target, nil)
+        case .page(let id, let report):
+            guard let target = target(id) else { return (nil, nil) }
+            do {
+                let object = try await request("browser.report", report.params(target), generation: generation)
+                learn(object)
+                return (target, object.rev)
+            } catch {
+                guard !ended, generation == self.generation else { return (nil, nil) }
+                NSLog("easl: %@ took no page report for browser tile %@ (%@)", hostName, target, (error as? EaslConnection.Failure)?.code ?? "unavailable")
+                return (target, nil)
+            }
         }
     }
 

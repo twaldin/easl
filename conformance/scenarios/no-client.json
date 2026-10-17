@@ -29,7 +29,7 @@
     { "call": "agent.read", "params": { "target": "{{t.object.id}}", "since": "prompt" } },
     { "call": "agent.read", "params": { "target": "{{t.object.id}}", "block": "last" } },
     { "call": "agent.restart", "params": { "target": "worker", "mode": "fresh", "force": true }, "note": "no agent, but a command to relaunch (forced: nothing there reports a draft): easld's checks pass, and the relaunch needs the client" },
-    { "call": "object.reload", "params": { "id": "{{web.object.id}}" } },
+    { "call": "object.reload", "params": { "id": "{{web.object.id}}" }, "expect": { "response.ok": false, "response.error.code": "unavailable", "response.error.message": "{{web.object.id}} has no drawing Mac yet" } },
     { "call": "object.reload", "params": { "id": "{{dg.object.id}}" }, "note": "a diagram needs the client's language servers" },
     {
       "call": "text.measure",

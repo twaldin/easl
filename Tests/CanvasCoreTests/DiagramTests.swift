@@ -581,6 +581,7 @@ final class DiagramTests {
             render: { _, _ in throw ApiRouter.Failure("unavailable", "no canvas") }, hostPicture: { _ in false },
             measureHTML: { _, _ in throw ApiRouter.Failure("unavailable", "no page") },
             reload: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser") },
+            browse: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser") },
             submit: { _, _ in false }, surfaceTail: { _, _ in nil },
             block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") }, status: { _ in nil }, languages: { [service] in service }))
 

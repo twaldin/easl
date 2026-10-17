@@ -209,5 +209,9 @@ func (b *Board) put(target model.Object) {
 	o.UpdatedAt = time.Now()
 	user := model.Actor{Kind: "user"}
 	o.UpdatedBy = &user
-	b.restore(o)
+	intentActor := target.CreatedBy
+	if target.UpdatedBy != nil {
+		intentActor = *target.UpdatedBy
+	}
+	b.restore(o, intentActor)
 }
