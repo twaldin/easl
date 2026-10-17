@@ -144,6 +144,7 @@ final class CanvasTerminalView: TerminalView {
         func cancel() { lock.withLock { cancelled = true } }
     }
 
+    @MainActor
     private final class Submission {
         let id: UUID
         let paste: @MainActor () -> Bool
@@ -178,7 +179,7 @@ final class CanvasTerminalView: TerminalView {
         case problem(String)
     }
 
-    private struct ActiveInput {
+    private struct ActiveInput: Sendable {
         let token: UUID
         let task: Task<Void, Never>
         let submission: Submission?
