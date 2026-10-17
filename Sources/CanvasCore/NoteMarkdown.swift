@@ -120,18 +120,98 @@ public enum NoteMarkdown {
     public static func anchoring(_ markdown: String, fenceLines: [Int], anchor: String) -> String? {
         let text = anchor.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty, !text.contains(where: \.isNewline), !fenceLines.isEmpty else { return nil }
-        var lines = markdown.components(separatedBy: "\n")
+        var lines = sourceLines(markdown)
         let attribute = " anchor=" + escapeForCommonMark(quoted(text))
         for number in fenceLines {
-            guard number >= 1, number <= lines.count, let marker = fenceMarker(in: lines[number - 1]) else { return nil }
+            guard number >= 1, number <= lines.count, let marker = fenceMarker(in: String(lines[number - 1].text)) else { return nil }
             if marker == "`", text.contains("`") { return nil }
-            var line = lines[number - 1]
-            let carriageReturn = line.hasSuffix("\r")
-            if carriageReturn { line.removeLast() }
+            var line = String(lines[number - 1].text)
             while line.last?.isWhitespace == true { line.removeLast() }
-            lines[number - 1] = line + attribute + (carriageReturn ? "\r" : "")
+            lines[number - 1].text = Substring(line + attribute)
         }
-        return lines.joined(separator: "\n")
+        return join(lines, capacity: markdown.utf8.count + attribute.utf8.count * fenceLines.count)
+    }
+
+    /// Removes only anchor attribute bytes from the opening lines of refused fences.
+    static func removingAnchors(_ markdown: String, fenceLines: [Int]) -> String {
+        guard !fenceLines.isEmpty else { return markdown }
+        var lines = sourceLines(markdown)
+        for number in Set(fenceLines) where number >= 1 && number <= lines.count {
+            let line = String(lines[number - 1].text)
+            guard let opening = line.firstIndex(where: { $0 == "`" || $0 == "~" }) else { continue }
+            let marker = line[opening]
+            var start = opening
+            while start < line.endIndex, line[start] == marker { start = line.index(after: start) }
+            let info = String(line[start...])
+            var decoded = ""
+            var decodedLength = 0
+            var source: [(decoded: NSRange, raw: Range<String.Index>)] = []
+            var index = info.startIndex
+            while index < info.endIndex {
+                var end = info.index(after: index)
+                if info[index] == "\\", end < info.endIndex {
+                    end = info.index(after: end)
+                } else if info[index] == "&", let semicolon = info[index...].firstIndex(of: ";"),
+                          !info[index...semicolon].contains(where: \.isWhitespace) {
+                    end = info.index(after: semicolon)
+                }
+                let raw = String(info[index..<end])
+                let piece: String
+                if (raw.first == "\\" || raw.first == "&"),
+                   let block = parse("~~~x" + raw + "x\n~~~\n").child(at: 0) as? CodeBlock,
+                   let language = block.language, language.first == "x", language.last == "x" {
+                    piece = String(language.dropFirst().dropLast())
+                } else {
+                    piece = raw
+                }
+                let length = piece.utf16.count
+                source.append((NSRange(location: decodedLength, length: length), index..<end))
+                decodedLength += length
+                decoded += piece
+                index = end
+            }
+            let removals = NoteFence.tokenRanges(decoded).compactMap { token -> Range<String.Index>? in
+                guard decoded[token].hasPrefix("anchor=") else { return nil }
+                let range = NSRange(token, in: decoded)
+                guard let first = source.first(where: { NSMaxRange($0.decoded) > range.location }),
+                      let last = source.last(where: { $0.decoded.location < NSMaxRange(range) }) else { return nil }
+                return first.raw.lowerBound..<last.raw.upperBound
+            }
+            var cleaned = info
+            for range in removals.reversed() { cleaned.removeSubrange(range) }
+            lines[number - 1].text = Substring(String(line[..<start]) + cleaned)
+        }
+        return join(lines, capacity: markdown.utf8.count)
+    }
+
+    private struct SourceLine {
+        var text: Substring
+        var ending: Substring
+    }
+
+    private static func sourceLines(_ markdown: String) -> [SourceLine] {
+        var lines: [SourceLine] = []
+        var start = markdown.startIndex
+        for index in markdown.indices {
+            let character = markdown[index]
+            if character == "\n" || character == "\r" || character == "\r\n" {
+                let end = markdown.index(after: index)
+                lines.append(SourceLine(text: markdown[start..<index], ending: markdown[index..<end]))
+                start = end
+            }
+        }
+        lines.append(SourceLine(text: markdown[start...], ending: markdown[markdown.endIndex...]))
+        return lines
+    }
+
+    private static func join(_ lines: [SourceLine], capacity: Int) -> String {
+        var result = ""
+        result.reserveCapacity(capacity)
+        for line in lines {
+            result.append(contentsOf: line.text)
+            result.append(contentsOf: line.ending)
+        }
+        return result
     }
 
     /// The fence character (`` ` `` or `~`) when the line opens a fence after its container

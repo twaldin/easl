@@ -43,7 +43,8 @@ func (f Fence) Mode() FenceMode {
 func ParseFenceInfo(info string) Fence {
 	var f Fence
 	languageSet := false
-	for _, token := range fenceTokens(info) {
+	for _, span := range fenceTokenRanges(info) {
+		token := info[span.Start:span.End]
 		equals := strings.IndexByte(token, '=')
 		if equals < 0 {
 			if token == "propose" {
@@ -134,38 +135,53 @@ func fenceLineRange(text string) *model.LineRange {
 	return &model.LineRange{Start: start, End: end}
 }
 
-func fenceTokens(info string) []string {
-	var tokens []string
-	var current strings.Builder
+// FenceInfoRange is a half-open byte range in a decoded fence info string.
+type FenceInfoRange struct {
+	Start int
+	End   int
+}
+
+// FenceAnchorRanges locates every anchor attribute, including duplicate and empty values.
+func FenceAnchorRanges(info string) []FenceInfoRange {
+	var anchors []FenceInfoRange
+	for _, token := range fenceTokenRanges(info) {
+		if strings.HasPrefix(info[token.Start:token.End], "anchor=") {
+			anchors = append(anchors, token)
+		}
+	}
+	return anchors
+}
+
+func fenceTokenRanges(info string) []FenceInfoRange {
+	var tokens []FenceInfoRange
 	var quote string
 	escaped := false
+	start, offset := -1, 0
 	for _, c := range Chars(info) {
+		if start < 0 && !IsWhitespaceChar(c) {
+			start = offset
+		}
 		switch {
 		case escaped:
-			current.WriteString(c)
 			escaped = false
 		case c == "\\" && quote != "":
-			current.WriteString(c)
 			escaped = true
 		case quote != "":
-			current.WriteString(c)
 			if c == quote {
 				quote = ""
 			}
 		case c == "\"" || c == "'":
-			current.WriteString(c)
 			quote = c
 		case IsWhitespaceChar(c):
-			if current.Len() > 0 {
-				tokens = append(tokens, current.String())
+			if start >= 0 {
+				tokens = append(tokens, FenceInfoRange{Start: start, End: offset})
+				start = -1
 			}
-			current.Reset()
-		default:
-			current.WriteString(c)
 		}
+		offset += len(c)
 	}
-	if current.Len() > 0 {
-		tokens = append(tokens, current.String())
+	if start >= 0 {
+		tokens = append(tokens, FenceInfoRange{Start: start, End: len(info)})
 	}
 	return tokens
 }
