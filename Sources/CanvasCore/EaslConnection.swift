@@ -468,6 +468,7 @@ public final class EaslConnection: @unchecked Sendable {
     private func read(_ link: Link) {
         /// nil while the link is open; else why it ended (EOF is "").
         var ended: String?
+        var search = link.buffer.count
         while true {
             let count = link.chunk.withUnsafeMutableBytes { Darwin.read(link.readFD, $0.baseAddress, $0.count) }
             if count > 0 {
@@ -480,9 +481,10 @@ public final class EaslConnection: @unchecked Sendable {
             break
         }
         var start = 0
-        while let newline = link.buffer[start...].firstIndex(of: 0x0A) {
+        while let newline = link.buffer[search...].firstIndex(of: 0x0A) {
             let line = link.buffer[start..<newline]
             start = newline + 1
+            search = start
             guard !line.isEmpty, let message = try? JSONDecoder().decode(JSONValue.self, from: Data(line)) else { continue }
             receive(message, on: link)
             // A message may have dropped this link (a failed handshake).

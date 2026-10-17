@@ -235,6 +235,7 @@ public final class SocketServer: @unchecked Sendable {
     }
 
     private func read(_ connection: Connection) {
+        let previous = connection.buffer.count
         let count = readBuffer.withUnsafeMutableBytes { Darwin.read(connection.fd, $0.baseAddress, $0.count) }
         guard count > 0 else {
             closeConnection(connection)
@@ -242,9 +243,11 @@ public final class SocketServer: @unchecked Sendable {
             return
         }
         connection.buffer.append(contentsOf: readBuffer[0..<count])
-        while let newline = connection.buffer.firstIndex(of: 0x0A) {
+        var search = connection.buffer.index(connection.buffer.startIndex, offsetBy: previous)
+        while let newline = connection.buffer[search...].firstIndex(of: 0x0A) {
             let line = connection.buffer[connection.buffer.startIndex..<newline]
             connection.buffer.removeSubrange(connection.buffer.startIndex...newline)
+            search = connection.buffer.startIndex
             guard !line.isEmpty else { continue }
             let request: JSONValue
             do {

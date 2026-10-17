@@ -683,6 +683,7 @@ final class ApiRouterTests {
         for index in 0..<400 {
             board.create(type: .note, props: .object(["markdown": .string("\(index) \(text)")]),
                          frame: Frame(x: Double(index) * 400, y: 0, w: 360, h: 240))
+            await Task.yield()
         }
         let other = try connect()
         other.send(#"{"id":"p","method":"system.ping","params":{}}"#)
