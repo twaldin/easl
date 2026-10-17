@@ -289,7 +289,7 @@ final class NoteTile: NSView, TileContent {
         let unfound = unpinned.contains { $0.fence.path == nil && results[$0.key]?.path.isEmpty != false }
         let root = linkRoot
         watch(files: Set(files.map { FileEvents.canonical($0.hasPrefix("/") ? $0 : root.appendingPathComponent($0).path) } + imageFiles.map { FileEvents.canonical($0.path) }), root: unfound)
-        persistAnchors(results)
+        persistAnchors()
     }
 
     /// The text each fence showed when it first resolved to exactly what it names.
@@ -325,11 +325,17 @@ final class NoteTile: NSView, TileContent {
     /// A line-range fence without `anchor=` gets its resolved first line written back as
     /// `anchor="…"`, so the range can be re-found after lines move even across app restarts,
     /// and agents reading the markdown see what it's anchored to. One update for all fences.
-    private func persistAnchors(_ results: [String: NoteExcerpt]) {
-        guard !board.isRemote, session == nil else { return }
-        let text = NoteMarkdown.anchoringRanges(markdown, fences: fences, results: results)
-        guard text != markdown else { return }
-        _ = try? board.update(object.id, rev: object.rev, props: .object(["markdown": .string(text)]), actor: .system)
+    /// The anchors come from a read of their own inside the board's areas (`BoardAreas`), not
+    /// from what the tile shows: a note may show any file on this Mac, but nothing the app
+    /// writes into its markdown comes from outside the board.
+    private func persistAnchors() {
+        guard !board.isRemote, session == nil, let reading, fences.contains(where: NoteMarkdown.needsAnchor) else { return }
+        let markdown = markdown, captured = captured, board = board, id = object.id, rev = object.rev
+        Task { [weak self] in
+            let text = await NoteMarkdown.anchoringRanges(markdown, reading: reading, within: BoardAreas(boardRoot: board.root), captured: captured)
+            guard text != markdown, let self, self.session == nil, self.markdown == markdown else { return }
+            _ = try? board.update(id, rev: rev, props: .object(["markdown": .string(text)]), actor: .system)
+        }
     }
 
     private func scheduleResolve() {

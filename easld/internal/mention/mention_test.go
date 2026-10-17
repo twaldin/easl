@@ -771,7 +771,7 @@ func TestNoteFencesAnchorAndReportTheirState(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "src/a.py", "import os\n\ndef a():\n    return 1\n\ndef b():\n    return 2\n")
 	note := "```python file=src/a.py#L3-4 anchor=\"def a():\"\n```\n\n```python file=src/a.py#L1-2 anchor=\"def b():\"\n```\n\n```python file=src/a.py symbol=gone\n```\n\n```python file=src/a.py#L6-7 propose\ndef b():\n    return 2\n```\n\n```python file=src/nope.py#L1\n```"
-	status := NoteFences(note, measure.LinkReading{Root: root})
+	status := NoteFences(note, measure.LinkReading{Root: root, Board: root})
 	var states []any
 	var opened []any
 	for _, s := range status {
@@ -787,7 +787,7 @@ func TestNoteFencesAnchorAndReportTheirState(t *testing.T) {
 		at(3)["propose"] != true || at(4)["reason"] != "no file src/nope.py" || at(4)["path"] != "src/nope.py" {
 		t.Errorf("status %v", status)
 	}
-	if got := AnchoringRanges("```python file=src/a.py#L3-4\n```\n", measure.LinkReading{Root: root}); got != "```python file=src/a.py#L3-4 anchor=\"def a():\"\n```\n" {
+	if got := AnchoringRanges("```python file=src/a.py#L3-4\n```\n", measure.LinkReading{Root: root, Board: root}); got != "```python file=src/a.py#L3-4 anchor=\"def a():\"\n```\n" {
 		t.Errorf("anchoring ranges %q", got)
 	}
 }
