@@ -140,10 +140,16 @@ class TerminalProps(TypedDict):
     worktree: NotRequired[str]
     branch: NotRequired[str]
 
+class DrawingMachine(TypedDict):
+    id: Required["Id"]
+    host: Required[str]
+
 class BrowserProps(TypedDict):
     url: Required[str]
+    urlIntent: NotRequired[dict[str, Any]]
     title: NotRequired[str]
     pageTitle: NotRequired[str]
+    drawingMachine: NotRequired["DrawingMachine"]
     zoom: NotRequired["Zoom"]
     profile: NotRequired[str]
     reloadOnChange: NotRequired[bool]
@@ -763,7 +769,7 @@ class EventsApi:
         self._call = call
 
     def subscribe(self, *, board: "Id" | None = None, events: list[str] | None = None) -> dict[str, Any]:
-        """Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers."""
+        """Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}), client.changed ({clients}, the current attached-client snapshot for this board; transient, never stored), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers."""
         params = {"board": board, "events": events}
         return self._call("events.subscribe", params, ["board"])
 
@@ -772,15 +778,30 @@ class ClientApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
-    def attach(self, *, version: int, schema: str, serves: list[str], app: str | None = None, host: str | None = None, boards: list["Id"] | None = None, focused: "Id" | None = None) -> dict[str, Any]:
-        """Make this connection a client that serves what only the Mac app can answer: the window (view.get, view.snapshot), drawing (view.render), live terminal surfaces (agent.prompt, agent.read's screen modes, agent.restart; interim: easld takes them over with zmx sessions, behind the same methods and errors), browser pages (object.reload), WebKit HTML layout (object.measure), and AppKit text measurement (text.measure). A client built from an older schema `version` than the server's is refused `unavailable` ("easl 0.1.0 on studio is older than this board's server …; update it"); a newer one is accepted and speaks the server's `version` (the reply's), and with the same `version` the two work together whatever their `schema` hashes. Either way each uses what both know: params and `serves` names the server doesn't know are ignored. From then on the server sends this connection requests for the methods in `serves` (transport `clients`): a call that needs a client goes, after the server's own checks, to one that serves its method and shows its board (text.measure: any that serves it), the one whose user focused that board last, else the one focused most recently, else the one attached last. The call is forwarded as the same method (`board` and agent `target` resolved to ids; agent.prompt without `mentions`, which the server queues). HTML measurement receives resolved candidate props and width, including fitted writes. Rendering receives `inline:true` with no `out`: the client returns image data and the server writes any caller-requested file on its own host. Other client results and errors pass through. The server waits for object.reload's and view.render's `timeoutMs` plus 5 s and 30 s, else 5 s (view.get), 30 s (view.snapshot), 25 s (HTML object.measure), 10 s (agent.prompt, agent.read, agent.restart), 2 s (text.measure); past that, or when the client disconnects first, the call fails `unavailable` (text.measure falls back to the glyph table). Diagram reload is unavailable until easld has language servers. With no client for its board a delegated call fails `unavailable` saying what it needs. Attach again whenever `serves`, `boards` or `focused` change: each call replaces the last; closing the connection detaches. Answer text.measure without waiting on the server, which may hold a board while it measures. For the Mac app; agents never need it."""
-        params = {"version": version, "schema": schema, "app": app, "host": host, "serves": serves, "boards": boards, "focused": focused}
+    def attach(self, *, version: int, schema: str, serves: list[str], app: str | None = None, host: str | None = None, identity: "Id" | None = None, boards: list["Id"] | None = None, focused: "Id" | None = None) -> dict[str, Any]:
+        """Attach this connection as a Mac client serving the named methods and open boards, including background boards. The optional identity is persistent per app home; the returned cli_ id identifies only this connection. Older schema versions are refused unavailable; newer versions speak the server's version, and equal versions work across schema hashes. Unknown attach params and serves names are ignored. Calls normally go to the capable viewer that focused this board last, then focused most recently, then attached last. Browser calls and browser object.reload instead go only to the tile's persisted drawingMachine identity. An eligible creator supplies a new browser's default; otherwise the earliest eligible attached Mac supplies it. The first eligible attachment fills existing missing owners. Disconnect never migrates a page. Delegated requests retain their method, with canonical board/target ids. Prompt mentions are queued by easld. HTML measurement receives resolved props and width. Rendering is requested inline without out; only the server writes caller-requested render files. Results and errors otherwise pass through. Reload waits timeoutMs plus 5 s; render waits timeoutMs plus 30 s. Browser wait uses its requested timeout plus grace. Other deadlines are 5 s for view.get, 30 s for view.snapshot, 25 s for HTML object.measure, 10 s for terminal calls and 2 s for text.measure. Missing, disconnected or unresponsive clients fail unavailable, except text.measure falls back to the glyph table. Attach again to replace capabilities, boards or focus; closing detaches. Answer delegated calls without awaiting a new request on this same link, and answer text.measure without any server request because it may hold the board lock."""
+        params = {"version": version, "schema": schema, "app": app, "host": host, "identity": identity, "serves": serves, "boards": boards, "focused": focused}
         return self._call("client.attach", params, [])
 
     def list(self) -> dict[str, Any]:
         """The clients attached to easld, including background viewers. Each entry names its app, host, served boards and methods. Entries, boards and methods are sorted by id or name. The Mac app answers unsupported."""
         params = {}
         return self._call("client.list", params, [])
+
+@_snake_case_hints
+class BrowserApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def call(self, *, id: "Id", method: Literal["browser.navigate", "browser.back", "browser.forward", "browser.reload", "browser.url.get", "browser.eval", "browser.snapshot", "browser.screenshot", "browser.click", "browser.dblclick", "browser.hover", "browser.focus", "browser.check", "browser.uncheck", "browser.scroll_into_view", "browser.type", "browser.fill", "browser.press", "browser.scroll", "browser.wait"], params: dict[str, Any], caller: "Id" | None = None) -> dict[str, Any]:
+        """Run a page-scoped cmux browser command on this browser tile's persisted drawingMachine. Easld forwards only to that attached identity, never to the most recently focused viewer. The drawing Mac uses its own page and profile. Results and errors pass through in memory; no page body, image, cookie or profile is stored by easld. Offline returns unavailable naming the drawing machine. Structural cmux open, list and close stay on easld. The Mac app's host API answers unsupported; its own agents use the cmux socket."""
+        params = {"id": id, "method": method, "params": params, "caller": caller}
+        return self._call("browser.call", params, ["caller"])
+
+    def report(self, *, id: "Id", url: str | None = None, page_title: Any | None = None, caller: "Id" | None = None, actor: Literal["user", "system"] | None = None) -> dict[str, Any]:
+        """A drawing Mac reports committed page URL and title metadata to easld. Only an attached client serving this board whose persistent identity matches the tile's drawingMachine may report. URL commits preserve agent, user or system credit; pageTitle is bookkeeping with no rev bump. No page body, image, cookie, log or profile field is accepted. The Mac app's host API answers unsupported."""
+        params = {"id": id, "url": url, "pageTitle": page_title, "caller": caller, "actor": actor}
+        return self._call("browser.report", params, [])
 
 @_snake_case_hints
 class TextApi:
@@ -808,9 +829,10 @@ class GeneratedApi:
         self.relay = RelayApi(call)
         self.events = EventsApi(call)
         self.client = ClientApi(call)
+        self.browser = BrowserApi(call)
         self.text = TextApi(call)
 
-METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","text.measure"]
+METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","browser.call","browser.report","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

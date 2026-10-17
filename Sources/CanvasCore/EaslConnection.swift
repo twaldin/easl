@@ -31,6 +31,11 @@ public final class EaslConnection: @unchecked Sendable {
         public var name: String
         public var board: BoardID?
         public var data: JSONValue
+        var sequence: UInt64 = 0
+
+        public static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.name == rhs.name && lhs.board == rhs.board && lhs.data == rhs.data
+        }
 
         public init(name: String, board: BoardID?, data: JSONValue) {
             self.name = name
@@ -59,6 +64,7 @@ public final class EaslConnection: @unchecked Sendable {
     public struct Call: Sendable {
         public var method: String
         public var params: JSONValue
+        var eventsThrough: UInt64 = 0
 
         public init(method: String, params: JSONValue) {
             self.method = method
@@ -263,6 +269,7 @@ public final class EaslConnection: @unchecked Sendable {
     private var cancelled: Set<Int> = []
     private var stateWatchers: [UUID: AsyncStream<State>.Continuation] = [:]
     private var eventWatchers: [UUID: AsyncStream<Event>.Continuation] = [:]
+    private var eventSequence: UInt64 = 0
     /// What answers the server's calls (`serve`).
     private var server: (@Sendable (Call) async -> Result<JSONValue, Failure>)?
 
@@ -501,13 +508,18 @@ public final class EaslConnection: @unchecked Sendable {
 
     private func receive(_ message: JSONValue, on link: Link) {
         if let name = message["event"]?.string {
-            let event = Event(name: name, board: message["board"]?.string, data: message["data"] ?? .null)
+            guard !eventWatchers.isEmpty else { return }
+            eventSequence += 1
+            var event = Event(name: name, board: message["board"]?.string, data: message["data"] ?? .null)
+            event.sequence = eventSequence
             for watcher in eventWatchers.values { watcher.yield(event) }
             return
         }
         if let method = message["method"]?.string {
             guard let id = message["id"]?.string else { return }
-            return called(Call(method: method, params: message["params"] ?? .object([:])), id: id, on: link)
+            var call = Call(method: method, params: message["params"] ?? .object([:]))
+            call.eventsThrough = eventSequence
+            return called(call, id: id, on: link)
         }
         guard let id = message["id"]?.string.flatMap({ Int($0) }) else { return }
         let failure = message["ok"]?.bool == true ? nil : Failure(

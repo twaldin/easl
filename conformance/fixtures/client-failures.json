@@ -1,7 +1,7 @@
 {
   "scenario": "client-failures",
-  "description": "Three scripted Mac clients (client.attach) show one board. A call goes to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call `unavailable`, naming it, and nothing is retried on another client; the next call goes to the client the choice order picks then. This records easld's protocol with scripted clients.",
-  "recordedOn": "easld a780b45 + final review fixes; binary SHA256 251b44868afbc655ec6449ce0aec8fbde427171f9db0dc8d119a550fbabd29a3",
+  "description": "Three scripted Mac clients show one board. Ordinary calls go to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call unavailable, naming it, and nothing is retried on another client. Browser object.reload does not use that order: it goes only to the tile's persisted drawingMachine. This records easld's protocol with scripted clients.",
+  "recordedOn": "easld browser-machine lane",
   "steps": [
     {
       "step": "board.open",
@@ -112,9 +112,11 @@
         ],
         "focused": "<board>",
         "host": "studio",
+        "identity": "mch_studio",
         "serves": [
           "view.render",
-          "object.reload"
+          "object.reload",
+          "browser.call"
         ],
         "version": 1
       },
@@ -126,6 +128,59 @@
           "version": 1
         }
       },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "studio",
+                "id": "<cli:1>",
+                "identity": "mch_studio",
+                "serves": [
+                  "browser.call",
+                  "object.reload",
+                  "view.render"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "drawingMachine": {
+                "host": "studio",
+                "id": "mch_studio"
+              },
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ],
       "ignored": {
         "request.schema": "the schema's hash changes with every schema edit",
         "response.result.schema": "the schema's hash changes with every schema edit"
@@ -141,9 +196,11 @@
           "<board>"
         ],
         "host": "laptop",
+        "identity": "mch_laptop",
         "serves": [
           "view.render",
-          "object.reload"
+          "object.reload",
+          "browser.call"
         ],
         "version": 1
       },
@@ -155,6 +212,45 @@
           "version": 1
         }
       },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "studio",
+                "id": "<cli:1>",
+                "identity": "mch_studio",
+                "serves": [
+                  "browser.call",
+                  "object.reload",
+                  "view.render"
+                ]
+              },
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "host": "laptop",
+                "id": "<cli:2>",
+                "identity": "mch_laptop",
+                "serves": [
+                  "browser.call",
+                  "object.reload",
+                  "view.render"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        }
+      ],
       "ignored": {
         "request.schema": "the schema's hash changes with every schema edit",
         "response.result.schema": "the schema's hash changes with every schema edit"
@@ -171,8 +267,7 @@
         ],
         "host": "mini",
         "serves": [
-          "view.render",
-          "object.reload"
+          "view.render"
         ],
         "version": 1
       },
@@ -184,6 +279,56 @@
           "version": 1
         }
       },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "studio",
+                "id": "<cli:1>",
+                "identity": "mch_studio",
+                "serves": [
+                  "browser.call",
+                  "object.reload",
+                  "view.render"
+                ]
+              },
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "host": "laptop",
+                "id": "<cli:2>",
+                "identity": "mch_laptop",
+                "serves": [
+                  "browser.call",
+                  "object.reload",
+                  "view.render"
+                ]
+              },
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "host": "mini",
+                "id": "<cli:3>",
+                "serves": [
+                  "view.render"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        }
+      ],
       "ignored": {
         "request.schema": "the schema's hash changes with every schema edit",
         "response.result.schema": "the schema's hash changes with every schema edit"
@@ -226,9 +371,11 @@
         ],
         "focused": "<board>",
         "host": "laptop",
+        "identity": "mch_laptop",
         "serves": [
           "view.render",
-          "object.reload"
+          "object.reload",
+          "browser.call"
         ],
         "version": 1
       },
@@ -240,6 +387,57 @@
           "version": 1
         }
       },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "studio",
+                "id": "<cli:1>",
+                "identity": "mch_studio",
+                "serves": [
+                  "browser.call",
+                  "object.reload",
+                  "view.render"
+                ]
+              },
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "laptop",
+                "id": "<cli:2>",
+                "identity": "mch_laptop",
+                "serves": [
+                  "browser.call",
+                  "object.reload",
+                  "view.render"
+                ]
+              },
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "host": "mini",
+                "id": "<cli:3>",
+                "serves": [
+                  "view.render"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        }
+      ],
       "ignored": {
         "request.schema": "the schema's hash changes with every schema edit",
         "response.result.schema": "the schema's hash changes with every schema edit"
@@ -250,23 +448,23 @@
       "method": "object.reload",
       "request": {
         "id": "<obj:1>",
-        "timeoutMs": 100
+        "timeoutMs": 1000
       },
       "response": {
         "id": "r4",
         "ok": true,
         "result": {
           "loaded": true,
-          "url": "https://example.com/"
+          "url": "https://example.com/studio"
         }
       },
       "forwarded": [
         {
-          "conn": "laptop",
+          "conn": "studio",
           "method": "object.reload",
           "params": {
             "id": "<obj:1>",
-            "timeoutMs": 100
+            "timeoutMs": 1000
           }
         }
       ]
@@ -291,6 +489,42 @@
         "id": "r5",
         "ok": false
       },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "studio",
+                "id": "<cli:1>",
+                "identity": "mch_studio",
+                "serves": [
+                  "browser.call",
+                  "object.reload",
+                  "view.render"
+                ]
+              },
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "host": "mini",
+                "id": "<cli:3>",
+                "serves": [
+                  "view.render"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        }
+      ],
       "forwarded": [
         {
           "conn": "laptop",

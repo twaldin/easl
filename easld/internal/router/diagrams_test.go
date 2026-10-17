@@ -340,19 +340,6 @@ func TestDiagramDisconnectRetiresTheJobWithoutPublishing(t *testing.T) {
 	}
 }
 
-func TestBrowserReloadKeepsItsExistingDelegatedBehavior(t *testing.T) {
-	f := newFixture(t)
-	id := idOf(f.result("object.create", map[string]any{"type": "browser", "props": map[string]any{"url": "https://example.com"}}))
-	peer := attachDiagramPeer(t, f)
-	waiting := diagramReload(f, id, 0)
-	request := diagramMessage(t, peer.incoming)
-	want := map[string]any{"id": id, "loaded": false, "url": "https://example.com"}
-	f.router.clients.Answer(peer, map[string]any{"id": request["id"], "ok": true, "result": want})
-	if reply := diagramMessage(t, waiting); reply["ok"] != true || !reflect.DeepEqual(reply["result"], want) {
-		t.Fatalf("browser reload = %v, want %v", reply, want)
-	}
-}
-
 func TestDiagramFiniteWaitReturnsStoredSummaryAndStillPublishesLateResult(t *testing.T) {
 	f := newFixture(t)
 	id := createDiagram(f)

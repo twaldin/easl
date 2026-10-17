@@ -8,7 +8,7 @@ import CanvasCore
 final class TileFrameView: NSView {
     static let titleHeight = CGFloat(RenderMath.tileTitleHeight)
 
-    let objectID: ObjectID
+    private(set) var objectID: ObjectID
     let content: any TileContent
     /// Holds the content at the tile's `zoom`: its frame is the body, its bounds the body divided
     /// by the zoom, so the content lays out, hit-tests, and converts coordinates in its own points
@@ -234,6 +234,11 @@ final class TileFrameView: NSView {
         card.frame = body
         cardTitle.frame = body.insetBy(dx: 12, dy: body.height / 3)
         cardTint.frame = bounds
+    }
+
+    func rekey(_ object: CanvasObject) {
+        objectID = object.id
+        update(object)
     }
 
     func update(_ object: CanvasObject) {

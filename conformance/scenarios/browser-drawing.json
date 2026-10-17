@@ -1,0 +1,82 @@
+{
+  "description": "browser.call and browser.report on an easld board. A new browser takes the creating Mac when that connection is an eligible attached client. browser.call and object.reload go only to that persisted identity. Another attached Mac cannot report the page. URL credit follows caller; pageTitle is bookkeeping. No page body is stored.",
+  "steps": [
+    {
+      "call": "client.attach",
+      "conn": "home",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "{{schemaHash}}",
+        "app": "0.2.0",
+        "host": "home",
+        "identity": "mch_home",
+        "serves": ["browser.call", "object.reload"],
+        "boards": ["{{board}}"],
+        "focused": "{{board}}"
+      },
+      "replies": {
+        "browser.call": [{ "result": { "url": "https://example.com/drawn" } }],
+        "object.reload": [{ "result": { "loaded": true, "url": "https://example.com/drawn" } }]
+      },
+      "ignore": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "call": "client.attach",
+      "conn": "work",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "{{schemaHash}}",
+        "app": "0.2.0",
+        "host": "work",
+        "identity": "mch_work",
+        "serves": ["browser.call", "object.reload"],
+        "boards": ["{{board}}"]
+      },
+      "replies": {
+        "browser.call": [{ "result": { "url": "https://wrong.example/" } }]
+      },
+      "ignore": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "call": "object.create",
+      "conn": "home",
+      "params": { "board": "{{board}}", "type": "browser", "props": { "url": "https://example.com/" }, "frame": { "x": 0, "y": 0, "w": 600, "h": 400 } },
+      "save": "web",
+      "expect": { "response.ok": true, "response.result.object.props.drawingMachine.id": "mch_home", "response.result.object.props.drawingMachine.host": "home" }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "terminal", "props": { "name": "worker" }, "frame": { "x": 0, "y": 500, "w": 600, "h": 400 } },
+      "save": "term"
+    },
+    {
+      "call": "browser.call",
+      "params": { "id": "{{web.object.id}}", "method": "browser.navigate", "params": { "url": "https://example.com/drawn" }, "caller": "{{term.object.id}}" },
+      "expect": { "response.ok": true, "response.result.url": "https://example.com/drawn" },
+      "note": "work is attached and would answer, but the call goes to home"
+    },
+    {
+      "call": "object.reload",
+      "params": { "id": "{{web.object.id}}" },
+      "expect": { "response.ok": true, "response.result.loaded": true }
+    },
+    {
+      "call": "browser.report",
+      "conn": "work",
+      "params": { "id": "{{web.object.id}}", "url": "https://evil.example/" },
+      "expect": { "response.ok": false, "response.error.code": "unavailable" }
+    },
+    {
+      "call": "browser.report",
+      "conn": "home",
+      "params": { "id": "{{web.object.id}}", "url": "https://example.com/drawn", "caller": "{{term.object.id}}", "pageTitle": "Drawn" },
+      "expect": { "response.ok": true, "response.result.object.props.url": "https://example.com/drawn", "response.result.object.props.pageTitle": "Drawn", "response.result.object.props.drawingMachine.id": "mch_home" }
+    }
+  ]
+}

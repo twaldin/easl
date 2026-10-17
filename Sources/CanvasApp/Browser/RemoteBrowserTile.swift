@@ -113,7 +113,12 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         addSubview(picture)
         addSubview(status)
         layoutParts()
+        if statusOnly { refreshStatus() }
     }
+
+    private var statusOnly: Bool { remote.host.server == .easld }
+
+    private var drawingStatus: String { DrawingMachine.status(of: object.props, attached: remote.mirror.drawingMachines) }
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
@@ -208,7 +213,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     /// Subscribe and start the event consumer before any `surface.stream`. A second call while
     /// the link is up does nothing.
     private func startLink() {
-        guard wantsLive, remote.mirror.availability == .open, window != nil, owned.current() == nil else { return }
+        guard !statusOnly, wantsLive, remote.mirror.availability == .open, window != nil, owned.current() == nil else { return }
         let board = remote.mirror.sessionBoardID
         guard !board.isEmpty else {
             setLinkStatus("No canonical board")
@@ -1161,10 +1166,15 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     private func refreshStatus() {
-        let lines = [linkStatus, noticeText].compactMap { $0 }
+        let lines = [statusOnly ? drawingStatus : linkStatus, noticeText].compactMap { $0 }
         status.stringValue = lines.joined(separator: "\n")
         status.isHidden = lines.isEmpty
         status.setAccessibilityLabel(lines.joined(separator: ". "))
+        status.toolTip = statusOnly ? DrawingMachine(object.props).map { "\($0.host): \($0.id)" } : nil
+    }
+
+    func drawingMachinesChanged() {
+        if statusOnly { refreshStatus() }
     }
 
     func update(_ object: CanvasObject) {
@@ -1173,13 +1183,14 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         self.object = object
         if !chrome.isEditing { chrome.setAddress(object.props["url"]?.string ?? "") }
         if zoomChanged { layoutParts() }
+        if statusOnly { refreshStatus() }
         guard idChanged, wantsLive else { return }
         endLink()
         startLink()
     }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
-        guard let image else { return .placeholder(request, "not streamed from \(remote.host.name) yet") }
+        guard let image else { return .placeholder(request, statusOnly ? drawingStatus : "not streamed from \(remote.host.name) yet") }
         let pageSize = self.pageSize
         let drawn = request.image { bounds in
             NSColor.controlBackgroundColor.setFill()
@@ -1200,7 +1211,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void) {
-        if image != nil { ready() } else { readyWaiters.append(ready) }
+        if image != nil || statusOnly { ready() } else { readyWaiters.append(ready) }
     }
 
     func mentionTarget(at point: NSPoint) -> MentionTarget? { .object(object.id) }

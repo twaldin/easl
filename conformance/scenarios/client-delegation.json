@@ -28,7 +28,8 @@
         "schema": "{{schemaHash}}",
         "app": "0.2.0",
         "host": "studio",
-        "serves": ["view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "object.measure", "text.measure"],
+        "identity": "mch_studio",
+        "serves": ["view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "object.measure", "text.measure", "browser.call"],
         "boards": ["{{board}}"],
         "focused": "{{board}}"
       },

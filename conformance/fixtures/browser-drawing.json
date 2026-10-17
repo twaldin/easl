@@ -1,0 +1,492 @@
+{
+  "scenario": "browser-drawing",
+  "description": "browser.call and browser.report on an easld board. A new browser takes the creating Mac when that connection is an eligible attached client. browser.call and object.reload go only to that persisted identity. Another attached Mac cannot report the page. URL credit follows caller; pageTitle is bookkeeping. No page body is stored.",
+  "recordedOn": "easld browser-machine lane",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "home",
+      "request": {
+        "app": "0.2.0",
+        "boards": [
+          "<board>"
+        ],
+        "focused": "<board>",
+        "host": "home",
+        "identity": "mch_home",
+        "serves": [
+          "browser.call",
+          "object.reload"
+        ],
+        "version": 1
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:1>",
+          "version": 1
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "home",
+                "id": "<cli:1>",
+                "identity": "mch_home",
+                "serves": [
+                  "browser.call",
+                  "object.reload"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        }
+      ],
+      "ignored": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "work",
+      "request": {
+        "app": "0.2.0",
+        "boards": [
+          "<board>"
+        ],
+        "host": "work",
+        "identity": "mch_work",
+        "serves": [
+          "browser.call",
+          "object.reload"
+        ],
+        "version": 1
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:2>",
+          "version": 1
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "home",
+                "id": "<cli:1>",
+                "identity": "mch_home",
+                "serves": [
+                  "browser.call",
+                  "object.reload"
+                ]
+              },
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "host": "work",
+                "id": "<cli:2>",
+                "identity": "mch_work",
+                "serves": [
+                  "browser.call",
+                  "object.reload"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        }
+      ],
+      "ignored": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "conn": "home",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "url": "https://example.com/"
+        },
+        "type": "browser"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "drawingMachine": {
+                "host": "home",
+                "id": "mch_home"
+              },
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "drawingMachine": {
+                "host": "home",
+                "id": "mch_home"
+              },
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 0,
+          "y": 500
+        },
+        "props": {
+          "name": "worker"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 0,
+              "y": 500
+            },
+            "id": "<obj:2>",
+            "props": {
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 0,
+              "y": 500
+            },
+            "id": "<obj:2>",
+            "props": {
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "browser.call",
+      "method": "browser.call",
+      "request": {
+        "caller": "<obj:2>",
+        "id": "<obj:1>",
+        "method": "browser.navigate",
+        "params": {
+          "url": "https://example.com/drawn"
+        }
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "url": "https://example.com/drawn"
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "home",
+          "method": "browser.call",
+          "params": {
+            "caller": "<obj:2>",
+            "id": "<obj:1>",
+            "method": "browser.navigate",
+            "params": {
+              "url": "https://example.com/drawn"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "object.reload",
+      "method": "object.reload",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "loaded": true,
+          "url": "https://example.com/drawn"
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "home",
+          "method": "object.reload",
+          "params": {
+            "id": "<obj:1>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "browser.report",
+      "method": "browser.report",
+      "conn": "work",
+      "request": {
+        "id": "<obj:1>",
+        "url": "https://evil.example/"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "only the drawing Mac may report <obj:1>"
+        },
+        "id": "r2",
+        "ok": false
+      }
+    },
+    {
+      "step": "browser.report",
+      "method": "browser.report",
+      "conn": "home",
+      "request": {
+        "caller": "<obj:2>",
+        "id": "<obj:1>",
+        "pageTitle": "Drawn",
+        "url": "https://example.com/drawn"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "drawingMachine": {
+                "host": "home",
+                "id": "mch_home"
+              },
+              "pageTitle": "Drawn",
+              "url": "https://example.com/drawn"
+            },
+            "rev": "<rev:2>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "drawingMachine": {
+                "host": "home",
+                "id": "mch_home"
+              },
+              "url": "https://example.com/drawn"
+            },
+            "rev": "<rev:2>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "drawingMachine": {
+                "host": "home",
+                "id": "mch_home"
+              },
+              "pageTitle": "Drawn",
+              "url": "https://example.com/drawn"
+            },
+            "rev": "<rev:2>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    }
+  ]
+}

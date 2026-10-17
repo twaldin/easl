@@ -106,7 +106,7 @@ func (s *batchState) advance(method string, p map[string]any, size *fit, index i
 
 // batch is object.batch: every op applies or none does, as one board revision.
 // Fits measure sequential planned state; `$n` names what op n created or upserted.
-func (r *Router) batch(p map[string]any) (any, error) {
+func (r *Router) batch(p map[string]any, from Conn) (any, error) {
 	ops, ok := p["ops"].([]any)
 	if !ok || len(ops) == 0 {
 		return nil, invalid("ops must be a non-empty array")
@@ -325,7 +325,7 @@ func (r *Router) batch(p map[string]any) (any, error) {
 				if err != nil {
 					return err
 				}
-				res, err := r.dispatch(method, fitted)
+				res, err := r.dispatch(method, fitted, from)
 				if err != nil {
 					return err
 				}

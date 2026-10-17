@@ -88,10 +88,8 @@ func TestAnOwnedTerminalsSessionStartsWithItsVariablesAndLabels(t *testing.T) {
 	if got.Env["EASL_SOCKET"] != "/home/u/.local/state/easl/easl.sock" || got.Env["EASL_BOARD_ROOT"] != f.board.Root() {
 		t.Errorf("env %v", got.Env)
 	}
-	for key := range got.Env {
-		if strings.HasPrefix(key, "CMUX_") {
-			t.Errorf("the session inherited easld's %s", key)
-		}
+	if got.Env["CMUX_SOCKET_PASSWORD"] != "" || got.Env["CMUX_SOCKET_PATH"] == "/old/cmux.sock" || got.Env["CMUX_SURFACE_ID"] == "obj_old" {
+		t.Errorf("the session inherited easld's cmux variables: %v", got.Env)
 	}
 	if want := []string{"/bin/sh", "-l", "-c", `'omp' '--model' 'it'"'"'s'; exec '/bin/sh' -l`}; !reflect.DeepEqual(unpathed(t, got.Args), want) {
 		t.Errorf("command %q, want %q", got.Args, want)

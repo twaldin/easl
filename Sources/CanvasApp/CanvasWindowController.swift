@@ -262,6 +262,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         if hostBoardClosed { hostBoardAvailabilityChanged() }
         mirror.onNotice = { [weak self] text in self?.canvas.showNotice(text) }
         mirror.onRedraw = { [weak self] in self?.canvas.redrawRemoteTiles() }
+        mirror.onDrawingMachines = { [weak self] in self?.canvas.drawingMachinesChanged() }
         sendPrompt = { text, terminal, mentions, answer in
             try await mirror.prompt(text, to: terminal, mentions: mentions, answer: answer)
         }
@@ -592,7 +593,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// client (`BoardMirror.serve`). A Mac host answers them itself: nothing attaches there.
     func serveHost() {
         guard let remote, remote.host.server == .easld else { return }
-        let identity = ClientIdentity(app: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String, host: TerminalHost.localHostname())
+        let identity = ClientIdentity.thisMac
+        if identity.id == nil {
+            canvas.showNotice("This Mac couldn't keep its machine identity in \(AppPaths.clientID.path): it draws none of \(remote.host.name)'s browser tiles")
+        }
         remote.mirror.serve(ViewerWindow(self), as: identity)
     }
 

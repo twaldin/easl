@@ -53,7 +53,8 @@ final class DelegatedCallsTests {
                 laidOut.append(width)
                 return page(props, width)
             },
-            reload: { id, _, _ in .object(["id": .string(id), "loaded": .bool(true)]) },
+            reload: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser page is loaded") },
+            browse: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser page is loaded") },
             submit: { [unowned self] id, text in
                 guard surface, id == terminal else { return false }
                 screen += ["> \(text)"] + reply
@@ -223,5 +224,19 @@ final class DelegatedCallsTests {
         page = { _, width in CGSize(width: width, height: 9000) }
         #expect(try await measure(.object(["html": "<p>long</p>"])) == .object(["w": 640, "h": 4000]))
         #expect(code(await answer(calls, "object.measure", .object(["board": "brd_host", "type": "note", "props": .object(["markdown": "hi"])]))) == "unsupported")
+    }
+
+
+    @Test func aBrowserCallRejectsInvalidCommandsAndTargets() async throws {
+        tile("obj_page", .browser, at: 0)
+        tile("obj_note", .note, at: 400)
+        let calls = delegated()
+        func call(_ id: ObjectID, _ method: String, _ params: JSONValue) async -> Result<JSONValue, EaslConnection.Failure> {
+            await answer(calls, "browser.call", .object(["id": .string(id), "method": .string(method), "params": params]))
+        }
+        #expect(code(await call("obj_page", "browser.wait", .object(["selector": "#done", "load_state": "complete"]))) == "invalid_params")
+        #expect(code(await call("obj_page", "browser.open_split", .object(["url": "https://example.com/"]))) == "invalid_params")
+        #expect(code(await call("obj_note", "browser.url.get", .object([:]))) == "not_found")
+        #expect(code(await call("obj_gone", "browser.url.get", .object([:]))) == "not_found")
     }
 }

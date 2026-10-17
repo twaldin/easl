@@ -109,17 +109,19 @@ public enum WebLink {
 extension Board {
     /// A web link the user or an agent followed, shown in a browser tile beside `source`: the
     /// tile already showing the same address (`WebLink.address`, compared with each browser
-    /// tile's `props.url`; a tile in another browser profile, `props.profile` against the
-    /// `profile` in `props`, is another page) is returned as it is (`existing`) and nothing is
-    /// created; otherwise a browser tile with that `url` and `props` is placed beside `source`
+    /// tile's `props.url`; another profile or an explicitly chosen drawing identity is another
+    /// page) is returned as it is (`existing`) and nothing is created; otherwise a browser tile
+    /// with that `url` and `props` is placed beside `source`
     /// (`place`) and credited to `caller`. Only http(s) addresses are matched: the caller hands
     /// anything else to the system.
     @discardableResult
     public func openLink(_ url: URL, near source: ObjectID?, caller: ObjectID?, props: [String: JSONValue] = [:]) -> (object: CanvasObject, existing: Bool) {
         let address = WebLink.address(url)
         let here = source.flatMap { objects[$0]?.frame }
+        let machine = props["drawingMachine"]?["id"]?.string
         let shown = address == nil ? [] : objects.values.filter { object in
             object.type == .browser && object.props["profile"]?.string == props["profile"]?.string
+                && (machine == nil || DrawingMachine(object.props)?.id == machine)
                 && object.props["url"]?.string.flatMap(URL.init(string:)).flatMap(WebLink.address) == address
         }
         // Several tiles can show one address (the user made a second on purpose): the nearest.

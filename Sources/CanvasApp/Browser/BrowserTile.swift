@@ -31,10 +31,11 @@ final class BrowserTile: NSView, TileContent {
     /// How long a released web view outlives its release (see `release`).
     static let closeDelay: TimeInterval = 2
 
-    let objectID: ObjectID
+    var objectID: ObjectID { object.id }
     let board: Board
     private(set) var object: CanvasObject
     private(set) var webView: WKWebView?
+    private var pendingURLIntent: JSONValue?
     /// The loaded page's background luminance (`PageSurface`), kept while the page is detached.
     private(set) var surfaceLuminance: Double?
     private let chrome = BrowserChrome()
@@ -63,7 +64,7 @@ final class BrowserTile: NSView, TileContent {
     private var lastRefresh = Date.distantPast
     private var readyWaiters: [@MainActor () -> Void] = []
 
-    /// Navigations this tile started that haven't finished or failed (for load-state waits).
+    /// The tile's latest navigation, until it finishes or fails (for load-state waits).
     var pendingNavigations: [WKNavigation] = []
     /// Navigations (ours or the page's) whose new document hasn't replaced the current one yet;
     /// until then the current document's ready state says nothing about the destination.
@@ -110,7 +111,7 @@ final class BrowserTile: NSView, TileContent {
     /// The tile whose page opened this one as a popup the user asked for: shown again when the
     /// popup's page closes it while the popup has the user's attention (`hasAttention`: the
     /// canvas's answer, selected or holding the keyboard).
-    private var popupOpener: ObjectID?
+    private weak var popupOpener: BrowserTile?
     var hasAttention: ((ObjectID) -> Bool)?
     /// The viewers streaming this page from another Mac (`BrowserSurface`), while any do: its
     /// dialogs go to them and what they can't answer is refused rather than asked here.
@@ -128,7 +129,6 @@ final class BrowserTile: NSView, TileContent {
     private var reloadPending = false
 
     init(object: CanvasObject, board: Board) {
-        objectID = object.id
         self.board = board
         self.object = object
         zoom = CGFloat(object.zoom)
@@ -281,7 +281,9 @@ final class BrowserTile: NSView, TileContent {
     func ensureWebView() -> WKWebView {
         if let webView { return webView }
         let view = makeWebView()
-        load(object.props["url"]?.string ?? "about:blank")
+        let intent = pendingURLIntent
+        pendingURLIntent = nil
+        if let intent { load(intent: intent) } else { load(object.props["url"]?.string ?? "about:blank") }
         return view
     }
 
@@ -397,7 +399,7 @@ final class BrowserTile: NSView, TileContent {
     /// When its page closes it (`webViewDidClose`), a popup the user opened shows `opener` again.
     func adoptPopup(_ configuration: WKWebViewConfiguration, opener: ObjectID, returnsToOpener: Bool) -> WKWebView? {
         guard webView == nil else { return nil }
-        popupOpener = returnsToOpener ? opener : nil
+        popupOpener = returnsToOpener ? browserTile?(opener) : nil
         return makeWebView(popup: configuration)
     }
 
@@ -628,6 +630,9 @@ final class BrowserTile: NSView, TileContent {
 
     func track(_ navigation: WKNavigation?) {
         guard let navigation else { return }
+        // WebKit can omit callbacks for superseded requests that never start.
+        pendingNavigations.removeAll(keepingCapacity: true)
+        uncommittedNavigations.removeAll(keepingCapacity: true)
         pendingNavigations.append(navigation)
         uncommittedNavigations.append(navigation)
     }
@@ -643,18 +648,14 @@ final class BrowserTile: NSView, TileContent {
         guard let url = webView?.url?.absoluteString else { return }
         if !chrome.isEditing { chrome.setAddress(url) }
         guard url != object.props["url"]?.string else { return }
-        let props = JSONValue.object(["url": .string(url)])
-        switch credit.actor() {
-        case .agent(let tile): _ = try? board.update(objectID, props: props, caller: tile)
-        case let actor: _ = try? board.update(objectID, props: props, actor: actor)
-        }
+        try? board.reportPage(objectID, .url(url, by: credit.actor()))
     }
 
     /// The page named itself: bookkeeping (`props.pageTitle`), not anyone's edit, so the tile's
     /// `rev` stays and an agent's own `title` keeps its place.
     private func commitTitle(_ title: String?) {
         guard let title, !title.isEmpty, title != object.props["pageTitle"]?.string else { return }
-        try? board.writeBookkeeping(objectID, props: .object(["pageTitle": .string(title)]))
+        try? board.reportPage(objectID, .title(title))
     }
 
     // MARK: Pages that don't load
@@ -675,7 +676,7 @@ final class BrowserTile: NSView, TileContent {
         failureView.show(failure)
         failureView.isHidden = false
         if !chrome.isEditing { chrome.setAddress(url.absoluteString) }
-        if object.props["pageTitle"] != nil { try? board.writeBookkeeping(objectID, props: .object(["pageTitle": .null])) }
+        if object.props["pageTitle"] != nil { try? board.reportPage(objectID, .title(nil)) }
         NSLog("easl: browser %@ %@", objectID, failure.summary)
         retryTask?.cancel()
         retryTask = nil
@@ -747,20 +748,23 @@ final class BrowserTile: NSView, TileContent {
     }
 
     /// A link opened beside this one (⌘-click, `target=_blank`), credited like a navigation, in
-    /// this tile's profile: a tile on the board already showing that address in the same profile
-    /// is reused (`Board.openLink`; a second click while the first tile appears gets it too).
-    /// One the user opened (`onOpenedTile`) is shown and selected, since it may be out of view.
+    /// this tile's profile and on its drawing machine: a tile on the board already showing that
+    /// address in the same profile is reused (`Board.openLink`; a second click while the first tile
+    /// appears gets it too). One the user opened (`onOpenedTile`) is shown and selected, since it
+    /// may be out of view.
     private func openTile(_ url: URL) {
         let actor = credit.actor()
         let caller: ObjectID? = if case .agent(let tile) = actor { tile } else { nil }
-        let opened = board.openLink(url, near: objectID, caller: caller, props: profileProps)
+        let opened = board.openLink(url, near: objectID, caller: caller, props: childProps)
         if opened.existing { NSLog("easl: browser %@ link %@ reuses %@", objectID, url.absoluteString, opened.object.id) }
         if actor == .user { onOpenedTile?(opened.object.id) }
     }
 
-    /// `props.profile` for the tiles this page opens: they share its cookies and logins.
-    private var profileProps: [String: JSONValue] {
-        webViewProfile.map { ["profile": .string($0)] } ?? [:]
+    private var childProps: [String: JSONValue] {
+        var props: [String: JSONValue] = [:]
+        if let webViewProfile { props["profile"] = .string(webViewProfile) }
+        if let machine = object.props["drawingMachine"] { props["drawingMachine"] = machine }
+        return props
     }
 
     /// A page's `window.open` (a sign-in popup, a share dialog): a new tile beside this one
@@ -773,7 +777,7 @@ final class BrowserTile: NSView, TileContent {
         let size = Board.defaultSize(.browser)
         let caller: ObjectID? = if case .agent(let tile) = actor { tile } else { nil }
         let address = url.map(\.absoluteString).flatMap { $0.isEmpty ? nil : $0 } ?? "about:blank"
-        let opened = board.create(type: .browser, props: .object(["url": .string(address)].merging(profileProps) { $1 }),
+        let opened = board.create(type: .browser, props: .object(["url": .string(address)].merging(childProps) { $1 }),
                                   frame: board.place(width: size.w, height: size.h, near: objectID), caller: caller)
         NSLog("easl: browser %@ opened popup %@ (%@)", objectID, opened.id, address)
         if actor == .user { onOpenedTile?(opened.id) }
@@ -1066,10 +1070,13 @@ final class BrowserTile: NSView, TileContent {
 
     var takesKeyboardFocus: Bool { true }
 
-    /// Someone else changed `props.url` (an agent's object.update): go there, credited to them.
+    /// Remote navigation follows host URL intent, never observed URL metadata.
     /// Another `profile` builds the page again in that profile's store (from `props.url`).
     func update(_ object: CanvasObject) {
         let previous = self.object.props["url"]?.string
+        let intent = object.props["urlIntent"]
+        let newIntent = board.isRemote && intent != self.object.props["urlIntent"]
+        if newIntent { pendingURLIntent = intent }
         self.object = object
         if CGFloat(object.zoom) != zoom {
             zoom = CGFloat(object.zoom)
@@ -1082,11 +1089,34 @@ final class BrowserTile: NSView, TileContent {
             return
         }
         updatePageWatch()
-        guard let url = object.props["url"]?.string, url != previous else { return }
-        // A released page reloads from props.url when it comes back.
+        let url: String?
+        if board.isRemote {
+            guard newIntent else { return }
+            url = pendingURLIntent?["url"]?.string
+        } else {
+            url = object.props["url"]?.string
+            guard url != previous else { return }
+        }
+        guard let url else { return }
+        // Released pages keep new intent until their web view returns.
         guard let webView else { return chrome.setAddress(url) }
+        pendingURLIntent = nil
         guard url != webView.url?.absoluteString else { return }
-        if case .agent(let tile) = object.updatedBy { credit.agent(tile) } else { credit.user() }
+        if board.isRemote {
+            if let intent { load(intent: intent) }
+            return
+        } else if case .agent(let tile) = object.updatedBy {
+            credit.agent(tile)
+        } else {
+            credit.user()
+        }
+        load(url)
+    }
+
+    private func load(intent: JSONValue) {
+        guard let url = intent["url"]?.string else { return }
+        let actor = intent["actor"]
+        if actor?["kind"]?.string == "agent" { credit.agent(actor?["tile"]?.string) } else { credit.user() }
         load(url)
     }
 
@@ -1281,7 +1311,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        if !uncommittedNavigations.contains(where: { $0 === navigation }) { uncommittedNavigations.append(navigation) }
+        if let navigation, !uncommittedNavigations.contains(where: { $0 === navigation }) { uncommittedNavigations.append(navigation) }
         documentStatus.started()
         signalChange()
     }
@@ -1359,7 +1389,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         let attended = hasAttention?(objectID) == true
         let caller: ObjectID? = if case .agent(let tile) = credit.actor() { tile } else { nil }
         try? board.delete(objectID, caller: caller)
-        if attended, let popupOpener, board.objects[popupOpener] != nil { onOpenedTile?(popupOpener) }
+        if attended, let opener = popupOpener?.objectID, board.objects[opener] != nil { onOpenedTile?(opener) }
     }
 
     private func finished(_ navigation: WKNavigation?) {
