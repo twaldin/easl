@@ -283,6 +283,8 @@ A board window can mirror a board another easl hosts (`AppDelegate.openRemoteBoa
 
 WindowServer captures from isolated fixtures on physical Space 5: [easld host](media/remote-html-easld.webp), [Mac host](media/remote-html-mac.webp), [live content update and scrolling](media/remote-html-scroll.webp), [reattached terminal beside HTML](media/remote-html-attached-terminal.webp), and [retained page during link loss](media/remote-html-link-down.webp). The [network-policy probe](media/remote-html-network.webp) predates the client-attachment integration.
 
+Image captures from short unfocused development sessions show an [easld image before](media/remote-image-easld-before.webp) and [after a host edit](media/remote-image-easld-after.webp), plus a [Mac-hosted image before](media/remote-image-mac-before.webp) and [after a host edit](media/remote-image-mac-after.webp). The easld captures also show host refusals for an escaping symlink and an outside-root path. These are WindowServer captures by window ID, without reopening either remote board.
+
 ### Open Remote
 
 A board hosted on another machine opens over ssh, with no network server and no new authentication (docs/design/next.md "Remote boards"). The transport and the picker are here; the window that draws a remote board is client mode's (`AppDelegate.openRemoteBoard(host:board:)`, "Client mode" above).
