@@ -301,6 +301,25 @@ struct HostLanguageTests {
         #expect(actual == "func beta\n")
     }
 
+    @Test func quitRejectsARequestWhoseHostLookupFinishesAfterQuit() async throws {
+        let host = try LanguageHost()
+        let board = host.fixture.root
+        let file = board.appendingPathComponent("main.fake")
+        try write(file, "func alpha\n")
+        let service = LanguageService(host: host.files, configs: [host.config()])
+        try Data().write(to: host.holdCommands)
+        let request = Task { try await service.documentSymbols(file: file, boardRoot: board) }
+        defer {
+            request.cancel()
+            try? FileManager.default.removeItem(at: host.holdCommands)
+        }
+        try #require(await eventually(10) { host.held(host.holdCommands) })
+        await service.terminateAll(grace: .milliseconds(50))
+        try FileManager.default.removeItem(at: host.holdCommands)
+        await #expect(throws: LSPError.self) { try await request.value }
+        await service.stopAll()
+    }
+
     @Test func stopAndQuitEndAServerThatOutlivesItsSsh() async throws {
         let host = try LanguageHost()
         let board = host.fixture.root
