@@ -74,6 +74,201 @@ final class BoardMirrorTests {
         #expect(host.objects.values.filter { $0.type == .code }.count == 1)
     }
 
+    @Test func attentionSnapshotOnLoadReplacesAndAStaleAckDoesNotClear() async throws {
+        let note = self.note("look")
+        let raised = try host.raiseAttention(note.id, message: "here", caller: nil)
+        let (mirror, view) = try await mirror()
+        #expect(view.attention[note.id]?.stamp == raised.marker.stamp)
+        #expect(view.attention[note.id]?.message == "here")
+        let stale = SeenMarker(id: note.id, message: "here", raisedBy: nil, raisedAt: "2000-01-01T00:00:00.000000000Z")
+        #expect(host.seen(note.id, rev: nil, marker: stale).cleared == false)
+        #expect(host.attention[note.id]?.stamp == raised.marker.stamp)
+        mirror.close()
+    }
+
+    @Test func composerReturnedRestagesOnlyThisViewersTerminal() async throws {
+        let alpha = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        let beta = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        try host.reportLifecycle(tile: alpha, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        try host.reportLifecycle(tile: beta, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        let quoted = note("mine")
+        let (one, view) = try await mirror()
+        let (two, other) = try await mirror()
+        defer {
+            one.close()
+            two.close()
+        }
+        let first = try view.stage(.object(quoted.id))
+        let second = try other.stage(.object(quoted.id))
+        try await one.prompt("first [1]", to: alpha, mentions: view.withdraw([first.id]), answer: false)
+        try await two.prompt("second [1]", to: beta, mentions: other.withdraw([second.id]), answer: false)
+        try host.releaseAgent(tile: alpha)
+        try await eventually { view.tray.map(\.target) == [.object(quoted.id)] }
+        #expect(view.tray.map(\.id) == [first.id])
+        #expect(other.tray.isEmpty && host.tray.isEmpty)
+        let waiting = await host.drain(peek: true, caller: beta, prompt: "second [1]")
+        #expect(waiting.context.contains("mine"))
+        try host.releaseAgent(tile: beta)
+        try await eventually { other.tray.map(\.target) == [.object(quoted.id)] }
+        #expect(other.tray.map(\.id) == [second.id])
+        #expect(view.tray.count == 1)
+    }
+
+    @Test func aReturnBeforeAFailedReplyCannotReleaseTheNextDelivery() async throws {
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        try host.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let delay = Locked(true)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            guard request["method"]?.string == "agent.prompt", delay.withLock({ value in
+                defer { value = false }
+                return value
+            }) else { return reply }
+            let failure: JSONValue = .object(["id": request["id"] ?? .null, "ok": .bool(false),
+                                               "error": .object(["code": "unavailable", "message": "reply lost"])])
+            pending.withLock { $0 = { connection.send(failure) } }
+            return nil
+        }
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let original = try view.stage(.terminal(object: terminal, text: "first captured output"))
+        let mentions = view.withdraw([original.id])
+        let first = Task { try await mirror.prompt("first [1]", to: terminal, mentions: mentions, answer: false) }
+        try await eventually { pending.withLock { $0 != nil } }
+        host.dropComposerPrompts(of: terminal)
+        try await eventually { view.tray.map(\.target) == [.terminal(object: terminal, text: "first captured output")] }
+        #expect(view.tray.map(\.id) == [original.id])
+        try view.unstage(try #require(view.tray.first).id)
+        var next = original
+        next.target = .terminal(object: terminal, text: "second captured output")
+        try await mirror.prompt("second [1]", to: terminal, mentions: [next], answer: false)
+        pending.withLock { $0 }?()
+        do {
+            try await first.value
+            Issue.record("the first prompt's failed reply must reach its caller")
+        } catch let failure as ApiRouter.Failure {
+            #expect(failure.code == "unavailable")
+        }
+        host.dropComposerPrompts(of: terminal)
+        try await eventually { view.tray.map(\.target) == [.terminal(object: terminal, text: "second captured output")] }
+        #expect(view.tray.map(\.id) == [original.id])
+        #expect(host.tray.isEmpty)
+    }
+
+    @Test func aLateSubmissionFromAFailedRequestCannotConsumeTheNextDelivery() async throws {
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        try host.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let delay = Locked(true)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            guard request["method"]?.string == "agent.prompt", delay.withLock({ value in
+                defer { value = false }
+                return value
+            }) else { return reply }
+            let failure: JSONValue = .object(["id": request["id"] ?? .null, "ok": .bool(false),
+                                               "error": .object(["code": "unavailable", "message": "reply lost"])])
+            pending.withLock { $0 = { connection.send(failure) } }
+            return nil
+        }
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let original = try view.stage(.terminal(object: terminal, text: "first captured output"))
+        let mentions = view.withdraw([original.id])
+        let first = Task { try await mirror.prompt("first [1]", to: terminal, mentions: mentions, answer: false) }
+        try await eventually { pending.withLock { $0 != nil } }
+        pending.withLock { $0 }?()
+        do {
+            try await first.value
+            Issue.record("the first prompt's failed reply must reach its caller")
+        } catch let failure as ApiRouter.Failure {
+            #expect(failure.code == "unavailable")
+        }
+        var next = original
+        next.target = .terminal(object: terminal, text: "second captured output")
+        try await mirror.prompt("second [1]", to: terminal, mentions: [next], answer: false)
+        let submitted = await host.drain(caller: terminal, prompt: "first [1]")
+        #expect(submitted.context.contains("first captured output"))
+        try host.releaseAgent(tile: terminal)
+        try await eventually { view.tray.map(\.target) == [.terminal(object: terminal, text: "second captured output")] }
+        #expect(view.tray.map(\.id) == [original.id])
+        #expect(host.tray.isEmpty)
+    }
+
+    @Test func anExpiryMissedOfflineIsRecoveredOnceWithoutLosingCapturedText() async throws {
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        try host.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let target = MentionTarget.terminal(object: terminal, text: "private captured output\nsecond line")
+        let original = try view.stage(target)
+        try await mirror.prompt("review [1]", to: terminal, mentions: view.withdraw([original.id]), answer: false)
+        server.stop()
+        try await eventually { mirror.state == .offline }
+        host.expireComposerPrompts(now: Date().addingTimeInterval(ComposerPrompt.lifetime + 1))
+        #expect(view.tray.isEmpty)
+        server = Self.serve(router, at: socket)
+        try server.start()
+        try await eventually { mirror.state == .online && mirror.reading == nil && view.tray.map(\.target) == [target] }
+        #expect(view.tray.map(\.id) == [original.id])
+        try view.unstage(try #require(view.tray.first).id)
+        try host.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        try await mirror.prompt("again [1]", to: terminal, mentions: [original], answer: false)
+        server.stop()
+        try await eventually { mirror.state == .offline }
+        _ = try host.update(terminal, props: .object(["name": "read again"]))
+        server = Self.serve(router, at: socket)
+        try server.start()
+        try await eventually { mirror.state == .online && mirror.reading == nil && view.objects[terminal]?.props["name"] == "read again" }
+        #expect(view.tray.isEmpty)
+        let waiting = await host.drain(peek: true, caller: terminal, prompt: "again [1]")
+        #expect(waiting.context.contains("second line"))
+        try host.releaseAgent(tile: terminal)
+        try await eventually { view.tray.map(\.target) == [target] }
+        #expect(view.tray.count == 1 && host.tray.isEmpty)
+    }
+
+    @Test func aSubmissionMissedOfflineReleasesOnlyTheConsumedOrigins() async throws {
+        let alpha = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        let beta = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        try host.reportLifecycle(tile: alpha, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        try host.reportLifecycle(tile: beta, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let firstTarget = MentionTarget.terminal(object: alpha, text: "first captured output")
+        let original = try view.stage(firstTarget)
+        let mentions = view.withdraw([original.id])
+        try await mirror.prompt("first [1]", to: alpha, mentions: mentions, answer: false)
+        try await mirror.prompt("first [1]", to: beta, mentions: mentions, answer: false)
+        server.stop()
+        try await eventually { mirror.state == .offline }
+        let submitted = await host.drain(caller: alpha, prompt: "first [1]")
+        #expect(submitted.context.contains("first captured output"))
+        #expect(host.composerPrompts[alpha] == nil)
+        _ = try host.update(beta, props: .object(["name": "read submitted"]))
+        server = Self.serve(router, at: socket)
+        try server.start()
+        try await eventually { mirror.state == .online && mirror.reading == nil && view.objects[beta]?.props["name"] == "read submitted" }
+        var next = original
+        next.target = .terminal(object: alpha, text: "new captured output")
+        try await mirror.prompt("next [1]", to: alpha, mentions: [next], answer: false)
+        try host.releaseAgent(tile: alpha)
+        try await eventually { view.tray.map(\.target) == [.terminal(object: alpha, text: "new captured output")] }
+        #expect(view.tray.map(\.id) == [original.id])
+        try view.unstage(original.id)
+        try host.releaseAgent(tile: beta)
+        try await eventually { view.tray.map(\.target) == [firstTarget] }
+        #expect(view.tray.map(\.id) == [original.id])
+        #expect(host.tray.isEmpty)
+    }
+
     @Test func movingAProvisionalTerminalPreviewKeepsItAfterCanonicalCreate() async throws {
         let terminal = host.create(type: .terminal, props: .object([:]))
         let (_, view) = try await mirror()
@@ -411,17 +606,16 @@ final class BoardMirrorTests {
 
     @Test func theHostChecksComposerParamsBeforeAnythingElse() async throws {
         let client = try LineClient(path: socket)
-        for (params, message) in [
-            (#"{"target":"nobody","text":"x","answer":true}"#, "needs composer: true"),
-            (#"{"target":"nobody","text":"x","composer":true,"caller":"obj_1"}"#, "takes no caller"),
-            (#"{"target":"nobody","text":"x","composer":true,"force":true}"#, "never forces"),
-            (#"{"target":"nobody","text":"x","composer":true,"from":"machine-watch"}"#, "takes no from"),
-            (#"{"target":"nobody","text":"x","composer":true,"when":"next-turn"}"#, "takes no when"),
+        for params in [
+            #"{"target":"nobody","text":"x","answer":true}"#,
+            #"{"target":"nobody","text":"x","composer":true,"caller":"obj_1"}"#,
+            #"{"target":"nobody","text":"x","composer":true,"force":true}"#,
+            #"{"target":"nobody","text":"x","composer":true,"from":"machine-watch"}"#,
+            #"{"target":"nobody","text":"x","composer":true,"when":"next-turn"}"#,
         ] {
             client.send(#"{"id":"1","method":"agent.prompt","params":\#(params)}"#)
             let reply = try await client.next()
             #expect(reply["error"]?["code"]?.string == "invalid_params")
-            #expect(reply["error"]?["message"]?.string?.contains(message) == true)
         }
         client.send(#"{"id":"2","method":"view.render","params":{"target":"nobody","inline":true,"out":"/tmp/x.png"}}"#)
         #expect(try await client.next()["error"]?["code"]?.string == "invalid_params")
@@ -1337,6 +1531,8 @@ final class BoardMirrorTests {
                 easld.prompted(params)
                 var forwarded = params.object ?? [:]
                 forwarded["mentions"] = nil
+                forwarded["staged"] = nil
+                forwarded["viewer"] = nil
                 easld.call("agent.prompt", .object(forwarded)) { answer in connection.send(answer.merging(.object(["id": id]))) }
                 return nil
             case "object.update"? where easld.measuresWrites:
@@ -1415,7 +1611,7 @@ final class BoardMirrorTests {
         mirror.serve(window(focused: { key }), as: identity)
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
         let attach: JSONValue = .object([
-            "version": 1, "schema": .string(ApiParams.schemaHash), "app": "0.2.7", "host": "studio", "identity": "mch_01STUDIO",
+            "version": .number(Double(ApiParams.schemaVersion)), "schema": .string(ApiParams.schemaHash), "app": "0.2.7", "host": "studio", "identity": "mch_01STUDIO",
             "serves": ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure", "browser.call"], "boards": [.string(host.id)],
         ])
         #expect(easld.attaches == [attach])

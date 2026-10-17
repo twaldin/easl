@@ -927,10 +927,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.exitGroup()
     }
 
-    /// ⌘Z undoes the latest board change (the user's or an agent's). A text field or editor with
-    /// its own pending edits undoes those first; a terminal holding the keyboard keeps ⌘Z and ⇧⌘Z
-    /// for its program (`canvasUndoApplies`). No undo or redo is silent: a notice names what it
-    /// did and whose change it was (`UndoHistory.Step.notice`).
     @objc func undoCanvas(_ sender: Any?) { undo(redo: false) }
     @objc func redoCanvas(_ sender: Any?) { undo(redo: true) }
 
@@ -939,6 +935,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return redo ? manager.redo() : manager.undo()
         }
         guard canvasUndoApplies(redo: redo) else { return }
+        if let remote {
+            let replay = remote.mirror.undo(redo: redo)
+            Task {
+                let notice = await replay.value
+                if let notice { canvas.showNotice(notice) }
+            }
+            return
+        }
         let step = redo ? board.nextRedo : board.nextUndo
         guard redo ? board.redo() : board.undo(), let step, let notice = step.notice(redo: redo, author: board.authorName(step.author)) else { return }
         canvas.showNotice(notice)
@@ -951,8 +955,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private var canvasUndoApplies: Bool { canvasUndoApplies(redo: false) }
 
     private func canvasUndoApplies(redo: Bool) -> Bool {
-        // A remote board's changes are its host's: no undo for them here (v1).
-        guard !board.isRemote else { return false }
         guard let terminal = canvas.focusedTerminal else { return true }
         return (redo ? board.nextRedo : board.nextUndo)?.pastedInto == terminal
     }
@@ -1261,11 +1263,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// What a remote board's window doesn't offer (v1): commands that read this Mac's files or
-    /// git for the board (the host's aren't here), the first-run walk-through, and restacking,
-    /// which the API can't send.
+    /// git for the board (the host's aren't here), and the first-run walk-through.
     private static let localOnly: Set<Selector> = [
         #selector(openCodeTile(_:)), #selector(reviewChanges(_:)), #selector(reviewBranch(_:)), #selector(toggleGetStarted(_:)),
-        #selector(bringToFront(_:)), #selector(sendToBack(_:)), #selector(snapshotPage(_:)),
+        #selector(snapshotPage(_:)),
     ]
 
     /// A text view with its own undo history holding the keyboard (a note being edited).

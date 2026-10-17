@@ -1,7 +1,7 @@
 {
   "scenario": "client-delegation",
   "description": "A scripted Mac client (client.attach) serves every delegated method: easld checks each call as before, forwards it as the same method (board and terminal resolved to ids), and relays the client's result or error; view.render is asked inline with no out, and a non-inline caller gets the image written on easld; agent.prompt's mentions stay easld's (queued, withdrawn when the client fails); text is measured by the client, so nothing is approximate. This records easld's protocol with a scripted client, not the app's drawing.",
-  "recordedOn": "easld browser-machine lane",
+  "recordedOn": "scratch easld schema2 remote edits and composer receipts",
   "steps": [
     {
       "step": "board.open",
@@ -345,14 +345,14 @@
           "text.measure",
           "browser.call"
         ],
-        "version": 1
+        "version": 2
       },
       "response": {
         "id": "r1",
         "ok": true,
         "result": {
           "client": "<cli:1>",
-          "version": 1
+          "version": 2
         }
       },
       "events": [

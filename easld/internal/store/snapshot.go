@@ -99,6 +99,9 @@ type Attention struct {
 	Message  *string
 	RaisedBy *string
 	RaisedAt time.Time
+	// Stamp is the wire raisedAt, set when the marker is raised. The board file keeps RaisedAt;
+	// a load derives Stamp from it when this is empty.
+	Stamp string
 	// EarlierTurn: its agent has started a later turn since; nil while the raising turn is current.
 	EarlierTurn *bool
 }

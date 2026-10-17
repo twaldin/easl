@@ -133,6 +133,8 @@ public final class EaslConnection: @unchecked Sendable {
     /// The current state.
     public var state: State { queue.sync { current } }
 
+    public var schemaVersion: Int? { queue.sync { advertisedSchemaVersion } }
+
     /// Why the connection isn't online, for the user: the relay's last stderr line (ssh's
     /// "Connection refused", nc's "No such file or directory"), a refused connect, a silent
     /// server. Nil while online.
@@ -232,6 +234,8 @@ public final class EaslConnection: @unchecked Sendable {
             self.link?.tearDown()
             self.link = nil
             self.handshake = []
+            self.handshakePing = nil
+            self.advertisedSchemaVersion = nil
             self.handshakeTimer?.cancel()
             self.failAll(Failure("unavailable", "the connection was closed"))
             self.reason = "closed"
@@ -259,6 +263,8 @@ public final class EaslConnection: @unchecked Sendable {
     private var subscriptions: [JSONValue] = []
     /// The current link's handshake requests not answered yet; online when empty.
     private var handshake: Set<Int> = []
+    private var handshakePing: Int?
+    private var advertisedSchemaVersion: Int?
     private var handshakeTimer: DispatchWorkItem?
     /// Handshake ids count down from -1, apart from requests' ids.
     private var handshakeIDs = 0
@@ -520,6 +526,10 @@ public final class EaslConnection: @unchecked Sendable {
             guard handshake.remove(id) != nil else { return }
             // A server that refuses `system.ping` (or a subscription) isn't one to talk to.
             if let failure { return lost(link.generation, reason: "the server refused the handshake: \(failure)") }
+            if id == handshakePing {
+                advertisedSchemaVersion = message["result"]?["version"]?.int
+                handshakePing = nil
+            }
             if handshake.isEmpty { cameOnline(link) }
             return
         }
@@ -543,6 +553,8 @@ public final class EaslConnection: @unchecked Sendable {
     private func startHandshake(on link: Link) {
         let ping = nextHandshakeID()
         handshake = [ping]
+        handshakePing = ping
+        advertisedSchemaVersion = nil
         write(line(id: ping, method: "system.ping", params: .object([:])), on: link)
         for params in subscriptions {
             let id = nextHandshakeID()
@@ -617,6 +629,8 @@ public final class EaslConnection: @unchecked Sendable {
         link?.tearDown()
         link = nil
         handshake = []
+        handshakePing = nil
+        advertisedSchemaVersion = nil
         handshakeTimer?.cancel()
         handshakeTimer = nil
         for (id, request) in pending where request.sentOn != nil {

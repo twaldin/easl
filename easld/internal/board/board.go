@@ -85,12 +85,15 @@ type Board struct {
 	Delivered int
 	attention map[string]store.Attention
 	// Repo is the repository this board is for; nil outside git.
-	Repo            *store.RepoRecord
-	workingWorktree *store.Worktree
-	promptTarget    store.PromptTargetState
-	handoffs        map[string][]Handoff
-	finalAnswers    map[string]string
-	turnErrors      map[string]string
+	Repo             *store.RepoRecord
+	workingWorktree  *store.Worktree
+	promptTarget     store.PromptTargetState
+	handoffs         map[string][]Handoff
+	composerPrompts  map[string][]ComposerPrompt
+	composerNotices  []composerNotice
+	composerReceipts []map[string]any
+	finalAnswers     map[string]string
+	turnErrors       map[string]string
 	// aliases are names terminals had before a rename, each still addressing its terminal
 	// (AgentAddress) until another terminal on this board takes it; saved with the board.
 	aliases map[string]string
@@ -132,6 +135,9 @@ type Board struct {
 	refitDeferral int
 	pendingRefits []refit
 
+	viewers    map[string]*viewerHistory
+	viewerTick uint64
+
 	workingDirectories map[string]string
 	// unknown is the board file's top-level keys easld doesn't know, written back as they were.
 	unknown map[string]any
@@ -162,8 +168,10 @@ type Board struct {
 	Lock sync.Locker
 	// questionExpiry is the pending check for the earliest open question's expiresAt
 	// (Board.questionExpiry); expirySeq tells a timer that was replaced.
-	questionExpiry *time.Timer
-	expirySeq      int
+	questionExpiry    *time.Timer
+	expirySeq         int
+	composerExpiry    *time.Timer
+	composerExpirySeq int
 }
 
 // New is an empty board.
@@ -171,12 +179,13 @@ func New(id, root string) *Board {
 	return &Board{
 		id: id, root: root,
 		objects: map[string]model.Object{}, attention: map[string]store.Attention{}, handoffs: map[string][]Handoff{},
-		finalAnswers: map[string]string{}, turnErrors: map[string]string{}, changedAt: map[string]int{},
+		composerPrompts: map[string][]ComposerPrompt{},
+		finalAnswers:    map[string]string{}, turnErrors: map[string]string{}, changedAt: map[string]int{},
 		keyHolders: map[string]map[string]bool{}, seenSinceWorking: map[string]bool{}, lifecycleSeq: map[string]int{},
 		aliases: map[string]string{}, messages: map[string][]Message{},
 		pendingApprovals: map[string][]approval{}, relaunchedAgents: map[string]bool{}, restartingAgents: map[string]bool{}, revHighWater: map[string]int{}, history: newHistory(),
 		Activity: NewActivityLog(DefaultActivityCapacity, nil), replayActor: UserActor, cascades: map[string]cascade{}, cascadeRev: -1,
-		workingDirectories: map[string]string{}, promptTarget: store.PromptTargetState{FocusOrder: []string{}},
+		workingDirectories: map[string]string{}, promptTarget: store.PromptTargetState{FocusOrder: []string{}}, viewers: map[string]*viewerHistory{},
 	}
 }
 
@@ -238,6 +247,9 @@ func FromSnapshot(s *store.Snapshot) *Board {
 	}
 	for _, a := range s.Attention {
 		if _, ok := b.objects[a.Object]; ok {
+			if a.Stamp == "" {
+				a.Stamp = AttentionStamp(a.RaisedAt)
+			}
 			b.attention[a.Object] = a
 		}
 	}
@@ -765,6 +777,7 @@ func (b *Board) Delete(id, caller string) error {
 	}
 	b.tray = kept
 	b.forgetHandoffs(id)
+	b.ForgetComposerPrompts(id)
 	b.forgetMessages(removed)
 	_, marked := b.attention[id]
 	delete(b.attention, id)
@@ -926,6 +939,7 @@ func (b *Board) bumpRevision() {
 func (b *Board) endStep() {
 	b.history.end()
 	b.flushBounces()
+	b.flushComposerNotices()
 	b.flushTerminals()
 }
 
@@ -970,6 +984,7 @@ func (b *Board) Atomically(body func() error) error {
 	b.history.begin()
 	mark := b.history.mark()
 	handed, queued, named := maps.Clone(b.handoffs), maps.Clone(b.messages), maps.Clone(b.aliases)
+	prompts, notices := cloneComposerPrompts(b.composerPrompts), cloneComposerNotices(b.composerNotices)
 	defer func() {
 		b.endStep()
 		if outermost {
@@ -981,6 +996,7 @@ func (b *Board) Atomically(body func() error) error {
 		b.revert(b.history.discard(mark))
 		b.replayVerb, b.replayActor = "", UserActor
 		b.handoffs, b.messages, b.aliases = handed, queued, named
+		b.composerPrompts, b.composerNotices = prompts, notices
 		return err
 	}
 	return nil

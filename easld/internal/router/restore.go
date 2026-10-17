@@ -233,6 +233,78 @@ func ownedTerminals(b *board.Board) []model.Object {
 	return out
 }
 
+// SweepComposerExits returns undrained composer mentions when an owned terminal
+// is back at its shell prompt. Native calls run outside the registry lock.
+func (r *Router) SweepComposerExits() {
+	r.sweepComposerExits(session.ForegroundState)
+}
+
+func (r *Router) sweepComposerExits(foreground func(int) (int, bool)) {
+	if r.Owns == nil || r.Sessions == nil {
+		return
+	}
+	type pending struct {
+		board    *board.Board
+		terminal model.Object
+		token    string
+		merged   []string
+	}
+	r.reg.Mu.Lock()
+	var pendingQueues []pending
+	for _, b := range r.reg.SortedBoards() {
+		for tile, token := range b.ComposerQueues() {
+			terminal, ok := b.Objects()[tile]
+			if !ok || board.TerminalHost(terminal) != "" || r.typing[tile] > 0 || b.AwaitsRelaunchedAgent(tile) {
+				continue
+			}
+			if _, restarting := r.restarts[tile]; restarting {
+				continue
+			}
+			pendingQueues = append(pendingQueues, pending{b, terminal, token, mergedInto(b)})
+		}
+	}
+	r.reg.Mu.Unlock()
+	if len(pendingQueues) == 0 {
+		return
+	}
+	list, err := r.Sessions.List()
+	if err != nil {
+		return
+	}
+	sessions := make(map[string]session.Session, len(list))
+	for _, s := range list {
+		sessions[s.Tile] = s
+	}
+	for _, p := range pendingQueues {
+		tile := p.terminal.ID
+		s, listed := sessions[tile]
+		if !listed || s.Unreachable || s.PID <= 0 || !s.Carries(r.Owns.Labels(p.board.ID(), tile), p.merged...) {
+			continue
+		}
+		pid, known := foreground(s.PID)
+		if !known || pid != 0 {
+			continue
+		}
+		r.reg.Mu.Lock()
+		b, open := r.reg.Board(p.board.ID())
+		if open && b == p.board {
+			current, exists := b.Objects()[tile]
+			_, restarting := r.restarts[tile]
+			if exists && current.Rev == p.terminal.Rev && current.CreatedAt.Equal(p.terminal.CreatedAt) &&
+				model.Equal(current.Props["agent"], p.terminal.Props["agent"]) &&
+				b.HasComposerQueue(tile, p.token) && r.typing[tile] == 0 && !restarting && !b.AwaitsRelaunchedAgent(tile) {
+				b.DropComposerPrompts(tile)
+				if board.NotifyingReports(current) || stateOf(current) == "working" || stateOf(current) == "blocked" {
+					_ = b.ReleaseAgent(tile)
+				} else {
+					b.EndAgentSession(tile)
+				}
+			}
+		}
+		r.reg.Mu.Unlock()
+	}
+}
+
 // SweepOrphans ends the sessions of easld's home whose board is open but has no owned terminal
 // for them any more (easld was down when it was deleted, zmx refused to end it), once the sweep
 // before found them so too (the same session: the same process). Run a grace apart, a session is

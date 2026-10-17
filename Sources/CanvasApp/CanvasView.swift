@@ -1056,7 +1056,7 @@ final class CanvasView: NSScrollView {
     }
 
     func bringToFront() {
-        guard !board.isRemote else { return showNotice("Restacking isn't sent to a remote board's host yet") }
+        if let unavailable = board.hostHistoryUnavailable { return showNotice(unavailable) }
         let ids = expandedSelection().sorted { (board.objects[$0]?.z ?? 0) < (board.objects[$1]?.z ?? 0) }
         var top = board.objects.values.map(\.z).max() ?? 0
         board.transaction {
@@ -1068,7 +1068,7 @@ final class CanvasView: NSScrollView {
     }
 
     func sendToBack() {
-        guard !board.isRemote else { return showNotice("Restacking isn't sent to a remote board's host yet") }
+        if let unavailable = board.hostHistoryUnavailable { return showNotice(unavailable) }
         let ids = expandedSelection().sorted { (board.objects[$0]?.z ?? 0) > (board.objects[$1]?.z ?? 0) }
         var bottom = board.objects.values.map(\.z).min() ?? 0
         board.transaction {

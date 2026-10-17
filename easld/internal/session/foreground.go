@@ -8,34 +8,32 @@ import (
 	"strings"
 )
 
-// ForegroundPID is the leader of the foreground job of the session whose shell is `shell` (zmx
-// list's pid; ForegroundProgram.foregroundPid): the agent when one runs in it; 0 at the shell's
-// prompt, when the shell is gone, and where there is no /proc (macOS, where the app reads its
-// own sessions).
-func ForegroundPID(shell int) int { return foreground("/proc", shell) }
+// ForegroundState reports the foreground job and whether the shell's state is known.
+// A known zero is the shell prompt. Missing /proc, unreadable processes and shells
+// without a controlling terminal are unknown, not evidence that an agent exited.
+func ForegroundState(shell int) (pid int, known bool) { return foreground("/proc", shell) }
 
-// foreground is ForegroundPID over the process table at `proc`. The terminal's foreground
-// process group is the shell's own while it waits at its prompt, runs a command it was given
-// with -c (without job control, its children stay in its group: the newest is the command), or
-// exec'd a program (no longer a shell); else it is a job's, whose leader it names.
-func foreground(proc string, shell int) int {
+func foreground(proc string, shell int) (pid int, known bool) {
 	st, ok := readStat(proc, shell)
 	if !ok || st.tpgid <= 0 {
-		return 0
+		return 0, false
 	}
 	if st.tpgid != shell {
-		return st.tpgid
+		return st.tpgid, true
 	}
 	argv := readCmdline(proc, shell)
+	if len(argv) == 0 || argv[0] == "" {
+		return 0, false
+	}
 	if len(argv) > 0 && !isShell(argv[0]) {
-		return shell
+		return shell, true
 	}
 	if !slices.Contains(argv, "-c") {
-		return 0
+		return 0, true
 	}
 	entries, err := os.ReadDir(proc)
 	if err != nil {
-		return 0
+		return 0, false
 	}
 	newest, started := 0, uint64(0)
 	for _, e := range entries {
@@ -47,7 +45,7 @@ func foreground(proc string, shell int) int {
 			newest, started = pid, child.start
 		}
 	}
-	return newest
+	return newest, true
 }
 
 // stat is what foreground reads of /proc/<pid>/stat.

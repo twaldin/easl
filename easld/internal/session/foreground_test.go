@@ -65,11 +65,33 @@ func TestTheForegroundProcessIsTheAgentWhereverTheShellRunsIt(t *testing.T) {
 		"no terminal":         {[]process{{pid: 10, ppid: 1, pgrp: 10, tpgid: -1, argv: login}}, 0},
 		"gone":                {nil, 0},
 	} {
-		if got := foreground(proc(t, c.table...), 10); got != c.want {
+		if got, _ := foreground(proc(t, c.table...), 10); got != c.want {
 			t.Errorf("%s: %d, want %d", name, got, c.want)
 		}
 	}
-	if ForegroundPID(999999999) != 0 {
-		t.Error("a pid no process has has a foreground process")
+	if pid, known := ForegroundState(999999999); pid != 0 || known {
+		t.Error("a missing process must have unknown foreground state")
+	}
+}
+
+func TestForegroundDistinguishesThePromptFromUnknownState(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		table []process
+		pid   int
+		known bool
+	}{
+		{name: "shell prompt", table: []process{{pid: 10, pgrp: 10, tpgid: 10, argv: []string{"-zsh"}}}, known: true},
+		{name: "running job", table: []process{{pid: 10, pgrp: 10, tpgid: 20, argv: []string{"-zsh"}}}, pid: 20, known: true},
+		{name: "missing shell"},
+		{name: "no controlling terminal", table: []process{{pid: 10, pgrp: 10, tpgid: -1, argv: []string{"sh"}}}},
+		{name: "unreadable command", table: []process{{pid: 10, pgrp: 10, tpgid: 10}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pid, known := foreground(proc(t, c.table...), 10)
+			if pid != c.pid || known != c.known {
+				t.Fatalf("foreground (%d, %t), want (%d, %t)", pid, known, c.pid, c.known)
+			}
+		})
 	}
 }

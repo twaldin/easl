@@ -1,6 +1,6 @@
 {
   "$comment": "easl API method catalog. Single source of truth for the socket protocol; clients (TS, Python, CLI) are generated from this file by scripts/gen-clients.ts. Bump `version` on any breaking change.",
-  "version": 1,
+  "version": 2,
   "transport": {
     "socket": "$EASL_SOCKET (default: ~/Library/Application Support/Easl/easl.sock)",
     "framing": "newline-delimited JSON, one object per line, UTF-8",
@@ -21,6 +21,42 @@
     "ambiguous": "an address (a terminal's name, `name@board`, a board's name, `board.open_remote`'s host name) matches more than one terminal, open board or host; the message lists each candidate (a terminal as `name@board (tile id)`, a host by its ssh target), so the caller can name one"
   },
   "definitions": {
+    "ViewerId": { "type": "string", "pattern": "^vw_[A-Za-z0-9_-]{8,64}$", "description": "A remote window's in-memory identity, retained across reconnects and scoped to that window's edits and composer returns." },
+    "ComposerReceipt": {
+      "type": "object",
+      "required": ["receipt", "event", "viewer", "terminal", "ids"],
+      "properties": {
+        "receipt": { "$ref": "#/definitions/Id", "description": "Stable outcome identity; the same receipt appears live and in board.get so a viewer applies it once." },
+        "event": { "enum": ["composer.returned", "composer.submitted"] },
+        "viewer": { "$ref": "#/definitions/ViewerId" },
+        "terminal": { "$ref": "#/definitions/Id" },
+        "ids": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "Original staged mention ids, never copied delivery ids or captured targets." }
+      },
+      "additionalProperties": false
+    },
+    "AttentionMarker": {
+      "type": "object",
+      "required": ["id", "raisedAt"],
+      "properties": {
+        "id": { "$ref": "#/definitions/Id" },
+        "message": { "type": "string" },
+        "raisedBy": { "$ref": "#/definitions/Id" },
+        "raisedAt": { "type": "string", "format": "date-time", "description": "The marker's identity for a guarded view.seen acknowledgment; echo the value from board.get or attention.changed." }
+      },
+      "additionalProperties": false
+    },
+    "ViewerReplay": {
+      "type": "object",
+      "required": ["changed", "deleted", "kept", "pushed"],
+      "properties": {
+        "step": { "type": "integer", "minimum": 1, "description": "The viewer's step that was replayed; omitted when no host history remains." },
+        "pushed": { "type": "boolean", "description": "The replay created an opposite-stack step. The viewer uses this authoritative receipt even when repeating a command whose reply was lost." },
+        "changed": { "type": "array", "items": { "$ref": "#/definitions/CanvasObject" } },
+        "deleted": { "type": "array", "items": { "$ref": "#/definitions/Id" } },
+        "kept": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "Objects with fields left unchanged because another edit replaced them." }
+      },
+      "additionalProperties": false
+    },
     "SurfaceStream": { "type": "string", "pattern": "^str_[0-9A-Za-z]+$", "description": "A session owned only by the connection that opened it; never transferable between connections or reconnected clients." },
     "SurfaceSize": {
       "type": "object", "required": ["w", "h"],
@@ -1065,10 +1101,40 @@
           "closed": { "type": "boolean", "description": "True when the Mac host closed this board's tab by hand but keeps its agents running. Omitted while its tab is open and by easld. Remote viewers keep the last seen board read-only until board.opened or a later board.get without closed:true." },
           "revision": { "type": "integer" },
           "objects": { "type": "array", "items": { "$ref": "#/definitions/CanvasObject" } },
+          "attention": { "type": "array", "items": { "$ref": "#/definitions/AttentionMarker" }, "description": "Unseen markers on the returned objects, sorted by id; omitted when none. A reread replaces the viewer's marker snapshot." },
+          "composerReceipts": { "type": "array", "items": { "$ref": "#/definitions/ComposerReceipt" }, "description": "Newest 2000 committed composer outcomes, in order; transient like viewer history, omitted when empty. A reconnect applies unseen receipt identities before held live events, filtering by its viewer." },
           "changed": { "type": "array", "items": { "$ref": "#/definitions/Id" } },
           "regions": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "with `branch`: the ids of the branch's regions (groups keyed `branch:<branch>`), `[]` when it has none" }
         }
       }
+    },
+    "board.undo": {
+      "description": "Undo this remote viewer's latest host-accepted step at or before step. Only fields still equal to the values that step wrote are reverted; concurrent edits remain and their objects appear in kept. The host retains up to 200 steps per viewer in memory. Nothing from another viewer or agent enters this viewer's history.",
+      "params": {
+        "type": "object",
+        "required": ["viewer", "step"],
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "viewer": { "$ref": "#/definitions/ViewerId" },
+          "step": { "type": "integer", "minimum": 1, "description": "The latest local step the viewer intends to undo. A retry of an already-undone step does not undo another step." }
+        },
+        "additionalProperties": false
+      },
+      "result": { "$ref": "#/definitions/ViewerReplay" }
+    },
+    "board.redo": {
+      "description": "Redo the fields this viewer's undo actually changed. Fields edited since that undo remain unchanged and their objects appear in kept. A new host-accepted step from this viewer clears its redo history.",
+      "params": {
+        "type": "object",
+        "required": ["viewer", "step"],
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "viewer": { "$ref": "#/definitions/ViewerId" },
+          "step": { "type": "integer", "minimum": 1, "description": "The undone step to redo. A retry does not apply the step twice." }
+        },
+        "additionalProperties": false
+      },
+      "result": { "$ref": "#/definitions/ViewerReplay" }
     },
     "board.history": {
       "description": "Activity log: who created, changed, or deleted what (including objects that existed only for seconds), where the user's viewport settled, what they selected, follow-tile re-aims, app starts, and peer messages that bounced (`message`: its receiver's agent ended before taking it, and the sender was a script or takes no messages; the entry's `id` is the receiver). Plain request/response, cheap to poll: pass the returned `cursor` as `since` next time. In memory, newest 2000 entries per board; an app restart starts a new log with a `restart` entry.",
@@ -1329,6 +1395,8 @@
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width)" },
           "parent": { "$ref": "#/definitions/Id" },
+          "viewer": { "$ref": "#/definitions/ViewerId", "description": "With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch." },
+          "step": { "type": "integer", "minimum": 1, "description": "The viewer's gesture id; writes with the same id form one undo step." },
           "caller": { "$ref": "#/definitions/Id", "description": "calling tile id; clients fill from EASL_TILE_ID" }
         },
         "additionalProperties": false
@@ -1336,7 +1404,7 @@
       "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "reused": { "const": true, "description": "a changes tile: the caller's existing tile for the same root, base, and paths came back (updated) instead of a new one" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "diagram": { "type": "object", "description": "a diagram created with `size: fit` before it had a graph: object.reload's result for its first one (`loaded` false: still computing when the wait ended, the tile left at its default size, and `warnings` says so)" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "`size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids" }, "approximate": { "const": true, "description": "the frame was measured (`size: fit`, a note's automatic height) from easld's glyph table or a client's fallback HTML layout, rather than exact Mac layout, as object.measure's `approximate`" } } }
     },
     "object.update": {
-      "description": "Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 1546; image: at most `frame.w`, default 960; never their current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: \"fit\"` in the same update to refit its height to the new content.",
+      "description": "Patch an object's frame, stacking order z, and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 1546; image: at most `frame.w`, default 960; never their current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: \"fit\"` in the same update to refit its height to the new content.",
       "params": {
         "type": "object",
         "required": ["id"],
@@ -1344,8 +1412,11 @@
           "id": { "$ref": "#/definitions/Id" },
           "rev": { "type": "integer" },
           "frame": { "$ref": "#/definitions/FramePatch" },
+          "z": { "type": "number", "description": "stacking order, back to front; objects with larger values draw above objects with smaller values" },
           "size": { "const": "fit", "description": "measure the frame's size from the content" },
           "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "viewer": { "$ref": "#/definitions/ViewerId", "description": "With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch." },
+          "step": { "type": "integer", "minimum": 1, "description": "The viewer's gesture id; writes with the same id form one undo step." },
           "caller": { "$ref": "#/definitions/Id" }
         },
         "additionalProperties": false
@@ -1375,7 +1446,12 @@
       "params": {
         "type": "object",
         "required": ["id"],
-        "properties": { "id": { "$ref": "#/definitions/Id" }, "caller": { "$ref": "#/definitions/Id" } },
+        "properties": {
+          "id": { "$ref": "#/definitions/Id" },
+          "viewer": { "$ref": "#/definitions/ViewerId", "description": "With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch." },
+          "step": { "type": "integer", "minimum": 1, "description": "The viewer's gesture id; writes with the same id form one undo step." },
+          "caller": { "$ref": "#/definitions/Id" }
+        },
         "additionalProperties": false
       },
       "result": { "type": "object", "properties": {} }
@@ -1721,12 +1797,14 @@
           "target": { "type": "string", "description": "a tile id, `name` or `name@board` (the board's name is its root folder's name): a bare name is looked up on the caller's board first, then on every open board; more than one match is `ambiguous`" },
           "text": { "type": "string" },
           "mentions": { "type": "array", "items": { "$ref": "#/definitions/PromptMention" }, "description": "objects on the target's board to attach, e.g. [{\"object\": \"obj_…\"}, {\"object\": \"obj_…\", \"lines\": {\"start\": 41, \"end\": 48}}]" },
+          "staged": { "type": "array", "items": { "$ref": "#/definitions/Mention" }, "description": "With composer only, complete staged mentions in token order, copied into that terminal's own prompt queue and numbered from 1. Requires viewer when nonempty. Cannot accompany mentions or answer." },
+          "viewer": { "$ref": "#/definitions/ViewerId", "description": "With composer only, the submitting window that receives undelivered staged mentions through composer.returned." },
           "caller": { "$ref": "#/definitions/Id", "description": "the prompting terminal: the sender a message names (its address for replies, resolved at delivery), and whose board a bare `target` name is looked up on first; clients fill from EASL_TILE_ID" },
           "from": { "type": "string", "minLength": 1, "description": "a sender label for a caller with no tile (a script, a launchd job): `machine-watch`. The message is then the user's (attribution `user`), names this label and has no reply address, even when a `caller` is given (clients fill it inside a terminal; it still decides which board a bare `target` is looked up on first)" },
           "when": { "enum": ["now", "next-turn"], "default": "now", "description": "now: a steer into the running turn, or a new turn when idle; next-turn: never into a running turn, delivered once it has ended" },
           "message": { "$ref": "#/definitions/MessageId", "description": "out-of-band only: the id the message gets (`msg_` and 8 to 64 letters, digits, `_` or `-`), the same on every attempt to send it. A prompt whose `message` is already queued for the target answers with that message (`duplicate: true`) and queues nothing, also when the first attempt is still being sent, so a sender whose call timed out can send again without the target getting it twice (a terminal on another machine has its text read over ssh before the message is queued, which can outlast a short timeout). The receiving integration drops an id it already delivered. Typing ignores it" },
           "force": { "type": "boolean", "default": false, "description": "typing only: send even though the target is `blocked` or runs another foreground program than its agent (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" },
-          "composer": { "type": "boolean", "default": false, "description": "the user's own prompt from a composer that isn't in this app (a remote board's viewer, docs/design.md \"Client mode\"): sent exactly as this app's composer sends it, typed into the terminal, also into one whose integration takes messages; `mentions` wait for that prompt's own drain, numbered from 1, never the tray and never a hand-off. Takes no `caller`, `from` or `when`" },
+          "composer": { "type": "boolean", "default": false, "description": "The user's own prompt from a remote composer's window: typed into the terminal even when its integration takes peer messages. Full staged mentions wait for this prompt's matching submission drain, numbered from 1, never the tray or a hand-off. Takes no caller, from, when, force or mentions." },
           "answer": { "type": "boolean", "default": false, "description": "with `composer`: the text is the user's answer to the question or approval the target is blocked on, so it passes the blocked check (only the user answers; `force` is for agents and scripts). Takes no mentions" }
         },
         "additionalProperties": false
@@ -1842,6 +1920,25 @@
         "additionalProperties": false
       },
       "result": { "type": "object", "properties": {} }
+    },
+    "view.seen": {
+      "description": "Acknowledge what a viewer saw without rewriting lifecycle props. A marker clears only when its raisedAt still matches marker; a terminal is marked seen only when its current revision equals rev. Working or blocked terminals are never marked seen. Stale acknowledgments leave newer markers and answers unchanged.",
+      "params": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "$ref": "#/definitions/Id" },
+          "rev": { "type": "integer", "minimum": 1 },
+          "marker": { "$ref": "#/definitions/AttentionMarker" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["cleared", "seen"],
+        "properties": { "cleared": { "type": "boolean" }, "seen": { "type": "boolean" } },
+        "additionalProperties": false
+      }
     },
     "view.attention": {
       "description": "Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. A marker belongs to the caller's turn: raising one clears the markers the same caller raised in earlier turns (a turn starts when its lifecycle goes to working from idle, done, or no state; answering an approval, blocked → working, continues the turn); markers from this turn stay. The user seeing the object also clears it. Unseen markers are stored with the board and survive app restarts; deleting the object removes its marker. Never moves the user's viewport.",
@@ -2053,7 +2150,7 @@
       }
     },
     "events.subscribe": {
-      "description": "Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}), client.changed ({clients}, the current attached-client snapshot for this board; transient, never stored), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers.",
+      "description": "Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?, raisedAt?}), composer.returned and composer.submitted (ComposerReceipt: {receipt, event, viewer, terminal, ids}, original staged mention ids for the originating viewer, never captured targets), client.changed ({clients}, the current attached-client snapshot for this board; transient, never stored), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). A composer submission receipt follows actual queue consumption, not typing or a peek; board.get replays the newest 2000 receipts after a reconnect. Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers.",
       "params": {
         "type": "object",
         "properties": { "board": { "$ref": "#/definitions/Id" }, "events": { "type": "array", "items": { "type": "string" } } },

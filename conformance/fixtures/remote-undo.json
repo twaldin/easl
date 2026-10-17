@@ -1,0 +1,3507 @@
+{
+  "scenario": "remote-undo",
+  "description": "A remote viewer's own board.undo and board.redo. Writes carry viewer and step. One step groups every write with that id. Undo reverts only fields still equal to what that step wrote: another actor's edit of a different field stays, and an edit of the same field is kept. Deleting and undoing restores the same id at a fresh revision unless its key was taken. A repeated undo or redo of a step already replayed changes nothing. A viewer's new accepted step clears that viewer's redo.",
+  "recordedOn": "scratch easld remote-edit integrated host",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 1,
+        "viewer": "vw_noviewer"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "changed": [],
+          "deleted": [],
+          "kept": [],
+          "pushed": false
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 0,
+          "y": 200
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "step": 1,
+        "type": "shape",
+        "viewer": "vw_viewer02"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 200
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 200
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 120,
+          "w": 280,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "start"
+        },
+        "step": 1,
+        "type": "note",
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "start"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "start"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 120,
+          "w": 280,
+          "x": 400,
+          "y": 0
+        },
+        "props": {
+          "markdown": "pair"
+        },
+        "step": 1,
+        "type": "note",
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "markdown": "pair"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "markdown": "pair"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 0,
+          "y": 800
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 800
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 800
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 4
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 300,
+          "y": 800
+        },
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 300,
+              "y": 800
+            },
+            "id": "<obj:5>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 5
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 300,
+              "y": 800
+            },
+            "id": "<obj:5>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 5
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 0,
+          "w": 0,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "members": [
+            "<obj:4>",
+            "<obj:5>"
+          ],
+          "title": "Pair"
+        },
+        "type": "group"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 508,
+              "x": -24,
+              "y": 744
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:5>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "z": 6
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 508,
+              "x": -24,
+              "y": 744
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:5>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "z": 6
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:6>"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 508,
+              "x": -24,
+              "y": 744
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:5>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "z": 6
+          }
+        }
+      }
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 1,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "changed": [],
+          "deleted": [
+            "<obj:2>",
+            "<obj:3>"
+          ],
+          "kept": [],
+          "pushed": true,
+          "step": 1
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:3>"
+          },
+          "event": "object.deleted"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:2>"
+          },
+          "event": "object.deleted"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object <obj:2>"
+        },
+        "id": "r11",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:3>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object <obj:3>"
+        },
+        "id": "r12",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 200
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 1,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "changed": [],
+          "deleted": [
+            "<obj:2>",
+            "<obj:3>"
+          ],
+          "kept": [],
+          "pushed": true,
+          "step": 1
+        }
+      }
+    },
+    {
+      "step": "board.redo",
+      "method": "board.redo",
+      "request": {
+        "board": "<board>",
+        "step": 1,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "markdown": "start"
+              },
+              "rev": "<rev:2>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 2
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 400,
+                "y": 0
+              },
+              "id": "<obj:3>",
+              "props": {
+                "markdown": "pair"
+              },
+              "rev": "<rev:2>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 3
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 1
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "start"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "markdown": "pair"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "start"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:3>"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "markdown": "pair"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          }
+        }
+      }
+    },
+    {
+      "step": "board.redo",
+      "method": "board.redo",
+      "request": {
+        "board": "<board>",
+        "step": 1,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "markdown": "start"
+              },
+              "rev": "<rev:2>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 2
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 400,
+                "y": 0
+              },
+              "id": "<obj:3>",
+              "props": {
+                "markdown": "pair"
+              },
+              "rev": "<rev:2>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 3
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 1
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "x": 120
+        },
+        "id": "<obj:2>",
+        "step": 2,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "start"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "start"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "props": {
+          "markdown": "agent text"
+        }
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:4>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:4>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 2,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "markdown": "agent text"
+              },
+              "rev": "<rev:5>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 2
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 2
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:5>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r22",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:5>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      }
+    },
+    {
+      "step": "board.redo",
+      "method": "board.redo",
+      "request": {
+        "board": "<board>",
+        "step": 2,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r23",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 120,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "markdown": "agent text"
+              },
+              "rev": "<rev:6>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 2
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 2
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:6>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r24",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:6>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:3>",
+        "props": {
+          "markdown": "viewer words"
+        },
+        "step": 3,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r25",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "markdown": "viewer words"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "markdown": "viewer words"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:3>",
+        "props": {
+          "markdown": "kept words"
+        }
+      },
+      "response": {
+        "id": "r26",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "markdown": "kept words"
+            },
+            "rev": "<rev:4>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "markdown": "kept words"
+            },
+            "rev": "<rev:4>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 3,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r27",
+        "ok": true,
+        "result": {
+          "changed": [],
+          "deleted": [],
+          "kept": [
+            "<obj:3>"
+          ],
+          "pushed": false,
+          "step": 3
+        }
+      }
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 3,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r28",
+        "ok": true,
+        "result": {
+          "changed": [],
+          "deleted": [],
+          "kept": [
+            "<obj:3>"
+          ],
+          "pushed": false,
+          "step": 3
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r29",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:6>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:3>"
+      },
+      "response": {
+        "id": "r30",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "markdown": "kept words"
+            },
+            "rev": "<rev:4>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          }
+        }
+      }
+    },
+    {
+      "step": "board.redo",
+      "method": "board.redo",
+      "request": {
+        "board": "<board>",
+        "step": 3,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r31",
+        "ok": true,
+        "result": {
+          "changed": [],
+          "deleted": [],
+          "kept": [],
+          "pushed": false
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:3>"
+      },
+      "response": {
+        "id": "r32",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "markdown": "kept words"
+            },
+            "rev": "<rev:4>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          }
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "step": 4,
+        "viewer": "vw_viewer01",
+        "z": 9
+      },
+      "response": {
+        "id": "r33",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:7>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 9
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:7>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 9
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 4,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r34",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 120,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "markdown": "agent text"
+              },
+              "rev": "<rev:8>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 2
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 4
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:8>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r35",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:8>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      }
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 4,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r36",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 120,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "markdown": "agent text"
+              },
+              "rev": "<rev:8>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 2
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 4
+        }
+      }
+    },
+    {
+      "step": "board.redo",
+      "method": "board.redo",
+      "request": {
+        "board": "<board>",
+        "step": 4,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r37",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 120,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "markdown": "agent text"
+              },
+              "rev": "<rev:9>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 9
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 4
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:9>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 9
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r38",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:9>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 9
+          }
+        }
+      }
+    },
+    {
+      "step": "board.redo",
+      "method": "board.redo",
+      "request": {
+        "board": "<board>",
+        "step": 4,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r39",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 120,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "markdown": "agent text"
+              },
+              "rev": "<rev:9>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 9
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 4
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "x": 40
+        },
+        "id": "<obj:4>",
+        "step": 5,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r40",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 40,
+              "y": 800
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 40,
+              "y": 800
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 468,
+              "x": 16,
+              "y": 744
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:5>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:2>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "x": 500
+        },
+        "id": "<obj:5>",
+        "step": 5,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r41",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 500,
+              "y": 800
+            },
+            "id": "<obj:5>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 500,
+              "y": 800
+            },
+            "id": "<obj:5>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 668,
+              "x": 16,
+              "y": 744
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:5>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:3>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 5,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r42",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 0,
+                "y": 800
+              },
+              "id": "<obj:4>",
+              "props": {
+                "kind": "rect"
+              },
+              "rev": "<rev:3>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 4
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 300,
+                "y": 800
+              },
+              "id": "<obj:5>",
+              "props": {
+                "kind": "rect"
+              },
+              "rev": "<rev:3>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 5
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 180,
+                "w": 508,
+                "x": -24,
+                "y": 744
+              },
+              "id": "<obj:6>",
+              "props": {
+                "members": [
+                  "<obj:4>",
+                  "<obj:5>"
+                ],
+                "title": "Pair"
+              },
+              "rev": "<rev:5>",
+              "type": "group",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 6
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 5
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 300,
+              "y": 800
+            },
+            "id": "<obj:5>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 468,
+              "x": 16,
+              "y": 744
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:5>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:4>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 800
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 508,
+              "x": -24,
+              "y": 744
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:5>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:5>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r43",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 800
+            },
+            "id": "<obj:4>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:5>"
+      },
+      "response": {
+        "id": "r44",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 300,
+              "y": 800
+            },
+            "id": "<obj:5>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          }
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:6>"
+      },
+      "response": {
+        "id": "r45",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 508,
+              "x": -24,
+              "y": 744
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:5>"
+              ],
+              "title": "Pair"
+            },
+            "rev": "<rev:5>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          }
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 120,
+          "w": 280,
+          "x": 0,
+          "y": 1200
+        },
+        "props": {
+          "key": "fresh",
+          "markdown": "keyed"
+        },
+        "step": 6,
+        "type": "note",
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r46",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 1200
+            },
+            "id": "<obj:7>",
+            "props": {
+              "key": "fresh",
+              "markdown": "keyed"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 10
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 1200
+            },
+            "id": "<obj:7>",
+            "props": {
+              "key": "fresh",
+              "markdown": "keyed"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 10
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:7>",
+        "step": 7,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r47",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:7>"
+          },
+          "event": "object.deleted"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:7>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object <obj:7>"
+        },
+        "id": "r48",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 7,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r49",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 0,
+                "y": 1200
+              },
+              "id": "<obj:7>",
+              "props": {
+                "key": "fresh",
+                "markdown": "keyed"
+              },
+              "rev": "<rev:2>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 10
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 7
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 1200
+            },
+            "id": "<obj:7>",
+            "props": {
+              "key": "fresh",
+              "markdown": "keyed"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 10
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:7>"
+      },
+      "response": {
+        "id": "r50",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 1200
+            },
+            "id": "<obj:7>",
+            "props": {
+              "key": "fresh",
+              "markdown": "keyed"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 10
+          }
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 400,
+          "y": 1200
+        },
+        "props": {
+          "key": "busy",
+          "kind": "rect"
+        },
+        "step": 8,
+        "type": "shape",
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r51",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 1200
+            },
+            "id": "<obj:8>",
+            "props": {
+              "key": "busy",
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 11
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 1200
+            },
+            "id": "<obj:8>",
+            "props": {
+              "key": "busy",
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 11
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:8>",
+        "step": 9,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r52",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:8>"
+          },
+          "event": "object.deleted"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 120,
+          "w": 280,
+          "x": 800,
+          "y": 1200
+        },
+        "props": {
+          "key": "busy",
+          "markdown": "took the key"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r53",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 800,
+              "y": 1200
+            },
+            "id": "<obj:9>",
+            "props": {
+              "key": "busy",
+              "markdown": "took the key"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 11
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 800,
+              "y": 1200
+            },
+            "id": "<obj:9>",
+            "props": {
+              "key": "busy",
+              "markdown": "took the key"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 11
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 9,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r54",
+        "ok": true,
+        "result": {
+          "changed": [],
+          "deleted": [],
+          "kept": [
+            "<obj:8>"
+          ],
+          "pushed": false,
+          "step": 9
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:8>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object <obj:8>"
+        },
+        "id": "r55",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:9>"
+      },
+      "response": {
+        "id": "r56",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 800,
+              "y": 1200
+            },
+            "id": "<obj:9>",
+            "props": {
+              "key": "busy",
+              "markdown": "took the key"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 11
+          }
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "x": 900
+        },
+        "id": "<obj:1>",
+        "step": 2,
+        "viewer": "vw_viewer02"
+      },
+      "response": {
+        "id": "r57",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 900,
+              "y": 200
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 900,
+              "y": 200
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "x": 10
+        },
+        "id": "<obj:2>",
+        "step": 10,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r58",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 10,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:10>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 9
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 10,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:10>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 9
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 10,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r59",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 120,
+                "w": 280,
+                "x": 120,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "markdown": "agent text"
+              },
+              "rev": "<rev:11>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 9
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 10
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:11>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 9
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r60",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:11>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 9
+          }
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r61",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 900,
+              "y": 200
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:2>",
+        "step": 11,
+        "viewer": "vw_viewer01",
+        "z": 4
+      },
+      "response": {
+        "id": "r62",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:12>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:12>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "board.redo",
+      "method": "board.redo",
+      "request": {
+        "board": "<board>",
+        "step": 10,
+        "viewer": "vw_viewer01"
+      },
+      "response": {
+        "id": "r63",
+        "ok": true,
+        "result": {
+          "changed": [],
+          "deleted": [],
+          "kept": [],
+          "pushed": false
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r64",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:12>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      }
+    },
+    {
+      "step": "board.undo",
+      "method": "board.undo",
+      "request": {
+        "board": "<board>",
+        "step": 2,
+        "viewer": "vw_viewer02"
+      },
+      "response": {
+        "id": "r65",
+        "ok": true,
+        "result": {
+          "changed": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 0,
+                "y": 200
+              },
+              "id": "<obj:1>",
+              "props": {
+                "kind": "rect"
+              },
+              "rev": "<rev:3>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 1
+            }
+          ],
+          "deleted": [],
+          "kept": [],
+          "pushed": true,
+          "step": 2
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 200
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r66",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 0,
+              "y": 200
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:3>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r67",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 120,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "markdown": "agent text"
+            },
+            "rev": "<rev:12>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          }
+        }
+      }
+    }
+  ]
+}

@@ -11,6 +11,7 @@ import Testing
 final class DelegatedCallsTests {
     final class NoHost: BoardHost {
         func send(_ write: RemoteWrite) {}
+        var historyUnavailable: String? { nil }
     }
 
     let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("dc-\(UUID().uuidString.prefix(8))")

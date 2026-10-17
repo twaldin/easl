@@ -73,12 +73,12 @@ var (
 var idKeys = map[string]bool{
 	// Typed in the schema.
 	"ack": true, "arrow": true, "arrows": true, "board": true, "boards": true, "caller": true, "changed": true, "cleared": true, "client": true,
-	"crosses": true, "enteredGroup": true, "exclude": true, "focused": true, "followOf": true, "id": true, "identity": true, "ids": true, "lines": true,
+	"crosses": true, "deleted": true, "enteredGroup": true, "exclude": true, "focused": true, "followOf": true, "id": true, "identity": true, "ids": true, "kept": true, "lines": true,
 	"members": true, "merged": true, "message": true, "near": true, "object": true, "objects": true, "overlaps": true, "parent": true,
-	"promptTarget": true, "region": true, "regions": true, "selection": true, "target": true, "tile": true,
+	"promptTarget": true, "receipt": true, "region": true, "regions": true, "selection": true, "target": true, "tile": true,
 	// Untyped on the wire: an object's graph (arrowsIn/arrowsOut ends, enclosure), the terminal a
 	// follow tile follows, who raised an attention marker.
-	"from": true, "to": true, "enclosedBy": true, "encloses": true, "follow": true, "raisedBy": true, "stream": true, "dialog": true,
+	"from": true, "to": true, "enclosedBy": true, "encloses": true, "follow": true, "raisedBy": true, "stream": true, "dialog": true, "terminal": true, "viewer": true,
 }
 
 // idMaps are maps keyed by id (layout results' `frames`).

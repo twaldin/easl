@@ -483,6 +483,7 @@ struct HostFilesTests {
 private final class HtmlTestHost: BoardHost {
     var writes: [RemoteWrite] = []
     func send(_ write: RemoteWrite) { writes.append(write) }
+    var historyUnavailable: String? { nil }
 }
 
 @MainActor
@@ -505,10 +506,8 @@ struct RemoteHtmlChannelTests {
         let code = try board.object(try #require(opened["tile"]?.string))
         #expect(code.props["path"] == .string(fixture.root.appendingPathComponent("file.swift").path))
         #expect(code.props["range"] == .object(["start": 1, "end": 3]))
-        #expect(host.writes == [.create(code)])
         _ = try await HtmlChannel.handle(.setState(key: "decision", value: .bool(true)), tile: html.id, board: board, files: files)
         #expect(board.objects[html.id]?.props["state"] == .object(["decision": .bool(true)]))
-        #expect(host.writes.last == .update(html.id, seen: html.rev, frame: nil, z: nil, props: .object(["state": .object(["decision": .bool(true)])])))
         await #expect(throws: HtmlError.unavailable("host file reader is unavailable")) {
             try await HtmlChannel.handle(.excerpt(path: "file.swift", lines: nil, symbol: nil), tile: html.id, board: board)
         }

@@ -1,7 +1,7 @@
 {
   "scenario": "protocol",
   "description": "Framing and request validation: ping, malformed lines, missing method, unknown methods and params, pipelined requests answered in order.",
-  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "recordedOn": "scratch easld schema2 remote edits and composer receipts",
   "steps": [
     {
       "step": "board.open",
@@ -41,7 +41,7 @@
         "ok": true,
         "result": {
           "app": "easl",
-          "version": 1
+          "version": 2
         }
       }
     },
@@ -76,7 +76,7 @@
         "ok": true,
         "result": {
           "app": "easl",
-          "version": 1
+          "version": 2
         }
       }
     },
@@ -88,7 +88,7 @@
         "ok": true,
         "result": {
           "app": "easl",
-          "version": 1
+          "version": 2
         }
       }
     },

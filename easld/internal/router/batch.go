@@ -162,6 +162,11 @@ func (r *Router) batch(p map[string]any, from Conn) (any, error) {
 			if err := checkParams(method, opParams); err != nil {
 				return err
 			}
+			for _, k := range []string{"viewer", "step"} {
+				if _, given := asMap(opParams)[k]; given {
+					return invalid("viewer and step mark a remote window's own edit; they aren't allowed inside object.batch")
+				}
+			}
 			replaced, _ := replacingReferences(opParams, func(n int, _ string) (any, bool, error) {
 				if id, ok := updating[n]; ok {
 					return id, true, nil

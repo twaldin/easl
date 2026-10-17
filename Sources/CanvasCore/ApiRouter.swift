@@ -244,7 +244,7 @@ public final class ApiRouter {
     /// only for a browser tile on an open board whose `surface.frame` this connection subscribed
     /// to; every other request names a stream the app checks belongs to this connection.
     public var surface: ((SurfaceRequest, SocketServer.Connection) async throws -> JSONValue)?
-    public static let schemaVersion = 1
+    public static let schemaVersion = ApiParams.schemaVersion
     static let readLinesDefault = 100
     static let readLinesMax = 2000
     /// How much of a terminal `agent.prompt` remembers from just before it submits: enough to
@@ -829,13 +829,10 @@ public final class ApiRouter {
         let text = try string(p, "text")
         let mentions = p["mentions"]?.array ?? []
         if p["composer"]?.bool == true {
-            // A composer in another app (a remote board's viewer): what this app's composer sends.
             let answer = p["answer"]?.bool == true
-            let given: [Mention] = answer ? [] : try mentions.map { json in
-                let target = try HandoffMention(json: json).target(on: board)
-                return Mention(id: IDs.make("men"), target: target, label: MentionContext.label(for: target, on: board), stagedAt: Date())
-            }
-            return try await submitPrompt(text, to: resolved, on: board, attached: .composer(given, answer: answer), caller: nil, force: false)
+            let staged = try Self.stagedMentions(p, on: board)
+            let viewer = try Self.composerViewer(p, staged: staged)
+            return try await submitPrompt(text, to: resolved, on: board, attached: .composer(staged, answer: answer, viewer: viewer), caller: nil, force: false)
         }
         let when: AgentMessage.When
         switch p["when"] {
@@ -1006,13 +1003,41 @@ public final class ApiRouter {
         if p["answer"]?.bool == true, !composer {
             throw Failure("invalid_params", "answer is the user's answer from a composer: it needs composer: true (an agent or script sends force: true instead)")
         }
-        guard composer else { return }
+        if !composer {
+            if p["staged"].map({ $0 != .null }) == true { throw Failure("invalid_params", "staged is only for a composer's prompt") }
+            if p["viewer"].map({ $0 != .null }) == true { throw Failure("invalid_params", "viewer is only for a composer's prompt") }
+            return
+        }
+        if p["mentions"].map({ $0 != .null }) == true { throw Failure("invalid_params", "a composer's prompt takes staged mentions, not mentions") }
+        if p["answer"]?.bool == true, let staged = p["staged"]?.array, !staged.isEmpty {
+            throw Failure("invalid_params", "an answer takes no staged mentions")
+        }
         if p["caller"].map({ $0 != .null }) == true { throw Failure("invalid_params", "a composer's prompt is the user's: it takes no caller") }
         if p["from"].map({ $0 != .null }) == true { throw Failure("invalid_params", "a composer's prompt is the user's: it takes no from") }
         if p["when"].map({ $0 != .null }) == true { throw Failure("invalid_params", "a composer's prompt is typed as the user sends it: it takes no when") }
         if p["force"]?.bool == true { throw Failure("invalid_params", "a composer's prompt never forces: answer: true answers a blocked target") }
     }
 
+    static func stagedMentions(_ p: JSONValue, on board: Board) throws -> [Mention] {
+        guard let raw = p["staged"], raw != .null else { return [] }
+        guard let items = raw.array else { throw Failure("invalid_params", "staged must be a list of mentions") }
+        return try items.map { json in
+            let mention: Mention
+            do { mention = try json.decode(Mention.self) } catch {
+                throw Failure("invalid_params", "a staged mention needs id, target, label and stagedAt")
+            }
+            for id in mention.target.objectIDs where board.objects[id] == nil {
+                throw Failure("not_found", "object \(id)")
+            }
+            return mention
+        }
+    }
+
+    static func composerViewer(_ p: JSONValue, staged: [Mention]) throws -> String? {
+        let present = p["viewer"].map { $0 != .null } == true
+        if staged.isEmpty && !present { return nil }
+        return try ViewerEdit.viewer(p["viewer"])
+    }
     /// Messages whose receiver's agent session ended before its integration took them
     /// (`Board.endAgentSession`): never dropped silently. Each goes back to a sending terminal
     /// whose integration takes messages, as a message from easl ("undelivered to bob@canvas: its
@@ -1042,7 +1067,7 @@ public final class ApiRouter {
     /// What goes with a prompt: an agent's `mentions` (`Board.handOff`), or the composer's.
     private enum Attached {
         case agent(() throws -> [MentionTarget])
-        case composer([Mention], answer: Bool)
+        case composer([Mention], answer: Bool, viewer: String?)
     }
 
     /// The composer's send to one terminal (docs/design.md, Composer): `agent.prompt` from the
@@ -1057,7 +1082,7 @@ public final class ApiRouter {
     /// where the integration submits answers as prompts (`PromptTarget.answersAsPrompt`).
     public func composerPrompt(_ text: String, to terminal: ObjectID, on board: Board, mentions: [Mention], answer: Bool) async throws {
         guard let tile = board.objects[terminal], tile.type == .terminal else { throw Failure("not_found", "terminal \(terminal) was closed") }
-        _ = try await submitPrompt(text, to: tile, on: board, attached: .composer(answer ? [] : mentions, answer: answer), caller: nil, force: false)
+        _ = try await submitPrompt(text, to: tile, on: board, attached: .composer(answer ? [] : mentions, answer: answer, viewer: nil), caller: nil, force: false)
     }
 
     private func submitPrompt(_ text: String, to terminal: CanvasObject, on board: Board, attached: Attached, caller sender: ObjectID?, force: Bool) async throws -> JSONValue {
@@ -1071,7 +1096,7 @@ public final class ApiRouter {
         }
         let session = board.agentSession(of: terminal.id)
         let answering: Bool
-        if case .composer(_, let answer) = attached { answering = answer } else { answering = false }
+        if case .composer(_, let answer, _) = attached { answering = answer } else { answering = false }
         if Self.state(of: terminal) == LifecycleState.blocked.rawValue, !force, !answering {
             let blocker = terminal.props["lifecycle"]?["message"]?.string.map { " (“\($0)”)" } ?? ""
             throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Leave it to the user. force: true types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow), so never force an answer to an approval")
@@ -1099,12 +1124,12 @@ public final class ApiRouter {
         let mentions: [MentionTarget]
         switch attached {
         case .agent(let parse): mentions = try parse()
-        case .composer(let given, _): mentions = given.map(\.target)
+        case .composer(let given, _, _): mentions = given.map(\.target)
         }
         if !mentions.isEmpty, !PromptTarget.drains(terminal) {
             throw Failure("unavailable", "\(terminal.id) runs no agent with an easl integration, so nothing there would take the mentions; name the objects in the text instead")
         }
-        if case .composer(let given, _) = attached, !given.isEmpty, PromptTarget.skipsDrain(text, in: terminal) {
+        if case .composer(let given, _, _) = attached, !given.isEmpty, PromptTarget.skipsDrain(text, in: terminal) {
             throw Failure("invalid_params", "a slash command or shell escape takes no mentions: its agent drains nothing for it")
         }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
@@ -1122,9 +1147,9 @@ public final class ApiRouter {
         case .agent:
             let senderName = sender.flatMap { try? agentTileIncludingClosing($0) }.map { PromptTarget.label($0.1, shownTitle: terminalStatus?($0.0, $0.1.id).title) }
             handed = try board.handOff(mentions, to: terminal.id, from: sender, fromName: senderName)
-        case .composer(let given, let answer):
+        case .composer(let given, let answer, let viewer):
             if PromptTarget.drains(current), !PromptTarget.skipsDrain(text, in: current), answer ? PromptTarget.answersAsPrompt(current) : !given.isEmpty {
-                queued = board.queueComposerPrompt(text, to: terminal.id, mentions: given, answer: answer)
+                queued = board.queueComposerPrompt(text, to: terminal.id, mentions: given, answer: answer, viewer: viewer)
             }
         }
         // The paste and Enter: no restart starts until they are in (`pastingFailure`). Nothing
@@ -1403,6 +1428,10 @@ public final class ApiRouter {
             if let merged = board.repo?.merged, !merged.isEmpty { result["merged"] = .array(merged.map(JSONValue.string)) }
             if let regions { result["regions"] = .array(regions.map(JSONValue.string)) }
             if let since = p["since"]?.int { result["changed"] = .array(board.changed(since: since).map(JSONValue.string)) }
+            let scope = p["branch"]?.string == nil ? nil : Set(snapshot.map(\.id))
+            let markers = board.attentionMarkers(on: scope)
+            if !markers.isEmpty { result["attention"] = .array(markers.map(\.json)) }
+            if !board.composerReceipts.isEmpty { result["composerReceipts"] = .array(board.composerReceipts.map(\.json)) }
             return .object(result)
 
         case "board.history":
@@ -1507,6 +1536,7 @@ public final class ApiRouter {
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
             guard var props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
             try Self.checkProps(p)
+            let edit = try ViewerEdit(p)
             // Just w and h: that size, placed as a create without a frame is (near the caller).
             let frame = try p["frame"].map { value in
                 if value["x"]?.number == nil, value["y"]?.number == nil, let w = value["w"]?.number, let h = value["h"]?.number {
@@ -1519,13 +1549,18 @@ public final class ApiRouter {
             if type == .diagram, let problem = DiagramSpec.problem(props) { throw Failure("invalid_params", problem) }
             if type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             if type == .question { props = try board.questionToCreate(props, caller: caller(p)) }
-            let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p))
+            let object = try board.asViewerEdit(edit) { board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p)) }
             return Self.withWarnings(["object": JSONValue(board.reported(object))], type.unknownPropWarnings(props))
 
         case "object.update":
             let id = try string(p, "id")
             let board = try board(forObject: id)
             try Self.checkProps(p)
+            let edit = try ViewerEdit(p)
+            let z = try p["z"].map { value -> Double in
+                guard let z = value.number, z.isFinite else { throw Failure("invalid_params", "z must be a finite number") }
+                return z
+            }
             var frame = try p["frame"].map { try Self.frame($0, onto: board.object(id).frame) }
             var props = p["props"]
             if let root = props?["root"]?.string, !root.isEmpty, [.note, .html].contains(try board.object(id).type) { try board.checkLinkRoot(root) }
@@ -1534,14 +1569,20 @@ public final class ApiRouter {
             }
             if try board.object(id).type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             (props, frame) = try board.questionUpdate(id, props: props, frame: frame, caller: caller(p))
-            let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: props, caller: caller(p))
+            let object = try board.asViewerEdit(edit) { try board.update(id, rev: p["rev"]?.int, frame: frame, z: z, props: props, caller: caller(p)) }
             return Self.withWarnings(["object": JSONValue(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
         case "object.delete":
             let id = try string(p, "id")
             let board = try board(forObject: id)
-            try board.delete(id, caller: caller(p))
+            let edit = try ViewerEdit(p)
+            try board.asViewerEdit(edit) { try board.delete(id, caller: caller(p)) }
             return .object([:])
+
+        case "board.undo", "board.redo":
+            let board = try board(p)
+            let replay = try board.replayViewer(try ViewerEdit.viewer(p["viewer"]), step: try ViewerEdit.step(p["step"]), redo: method == "board.redo")
+            return replay.json(board)
 
         case "layout.place":
             let id = try string(p, "id")
@@ -1641,6 +1682,20 @@ public final class ApiRouter {
             if !raised.cleared.isEmpty { result["cleared"] = .array(raised.cleared.map(JSONValue.string)) }
             return .object(result)
 
+        case "view.seen":
+            let id = try string(p, "id")
+            let board = try board(forObject: id)
+            if p["rev"] != nil, p["rev"] != .null, p["rev"]?.int == nil || (p["rev"]?.int ?? 0) < 1 {
+                throw Failure("invalid_params", "rev must be an integer of at least 1")
+            }
+            let marker = try p["marker"].map { value -> SeenMarker in
+                guard value != .null else { throw Failure("invalid_params", "marker must be an attention marker") }
+                guard let marker = SeenMarker(value) else { throw Failure("invalid_params", "marker needs id and raisedAt") }
+                guard marker.id == id else { throw Failure("invalid_params", "marker.id must be the object being acknowledged") }
+                return marker
+            }
+            let acknowledged = board.seen(id, rev: p["rev"]?.int, marker: marker)
+            return .object(["cleared": .bool(acknowledged.cleared), "seen": .bool(acknowledged.seen)])
         case "view.open_url":
             let board = try board(p)
             let raw = try string(p, "url")
@@ -1900,6 +1955,7 @@ public final class ApiRouter {
         if !given.isEmpty { update["props"] = .object(given) }
         if let frame = p["frame"] { update["frame"] = frame }
         if let size = p["size"] { update["size"] = size }
+        for key in ["viewer", "step"] { update[key] = p[key] }
         return .object(update)
     }
 
@@ -2190,6 +2246,9 @@ public final class ApiRouter {
             let params: JSONValue
             do {
                 try Self.checkParams(method, op["params"] ?? .object([:]))
+                if op["params"]?["viewer"] != nil || op["params"]?["step"] != nil {
+                    throw Failure("invalid_params", "viewer and step mark a remote window's own edit: they aren't taken inside object.batch")
+                }
                 var raw = prepared(method, try Self.replacingReferences(op["params"] ?? .object([:])) { n, _ in updating[n].map(JSONValue.string) })
                 if method == "object.upsert" {
                     let key = try string(raw, "key")

@@ -1,7 +1,7 @@
 {
   "scenario": "viewer-serve",
   "description": "A scripted Mac client serves object.measure, view.render and browser object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a host-picture refusal is the caller's. client.list names attached clients. easld only.",
-  "recordedOn": "easld browser-machine lane",
+  "recordedOn": "scratch easld schema2 remote edits and composer receipts",
   "steps": [
     {
       "step": "board.open",
@@ -308,14 +308,14 @@
           "object.reload",
           "browser.call"
         ],
-        "version": 1
+        "version": 2
       },
       "response": {
         "id": "r1",
         "ok": true,
         "result": {
           "client": "<cli:1>",
-          "version": 1
+          "version": 2
         }
       },
       "events": [
@@ -388,14 +388,14 @@
         "serves": [
           "object.measure"
         ],
-        "version": 1
+        "version": 2
       },
       "response": {
         "id": "r1",
         "ok": true,
         "result": {
           "client": "<cli:2>",
-          "version": 1
+          "version": 2
         }
       },
       "events": [

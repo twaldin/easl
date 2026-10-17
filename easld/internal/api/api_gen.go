@@ -3,10 +3,10 @@
 package api
 
 // SchemaVersion is the `version` of the schema this build was generated from.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "b0b309be560806d1"
+const SchemaHash = "43a2dbf4727eedef"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -70,6 +70,14 @@ var Methods = map[string]ParamSpec{
 		Accepted: []string{"board", "since", "branch"},
 		Required: nil,
 	},
+	"board.undo": {
+		Accepted: []string{"board", "viewer", "step"},
+		Required: []string{"viewer", "step"},
+	},
+	"board.redo": {
+		Accepted: []string{"board", "viewer", "step"},
+		Required: []string{"viewer", "step"},
+	},
 	"board.history": {
 		Accepted: []string{"board", "since", "limit", "kinds"},
 		Required: nil,
@@ -103,11 +111,11 @@ var Methods = map[string]ParamSpec{
 		Required: nil,
 	},
 	"object.create": {
-		Accepted: []string{"board", "type", "props", "frame", "size", "parent", "caller"},
+		Accepted: []string{"board", "type", "props", "frame", "size", "parent", "viewer", "step", "caller"},
 		Required: []string{"type", "props"},
 	},
 	"object.update": {
-		Accepted: []string{"id", "rev", "frame", "size", "props", "caller"},
+		Accepted: []string{"id", "rev", "frame", "z", "size", "props", "viewer", "step", "caller"},
 		Required: []string{"id"},
 	},
 	"object.upsert": {
@@ -115,7 +123,7 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"key", "type", "props"},
 	},
 	"object.delete": {
-		Accepted: []string{"id", "caller"},
+		Accepted: []string{"id", "viewer", "step", "caller"},
 		Required: []string{"id"},
 	},
 	"object.measure": {
@@ -187,7 +195,7 @@ var Methods = map[string]ParamSpec{
 		Required: nil,
 	},
 	"agent.prompt": {
-		Accepted: []string{"target", "text", "mentions", "caller", "from", "when", "message", "force", "composer", "answer"},
+		Accepted: []string{"target", "text", "mentions", "staged", "viewer", "caller", "from", "when", "message", "force", "composer", "answer"},
 		Required: []string{"target", "text"},
 	},
 	"agent.wait": {
@@ -209,6 +217,10 @@ var Methods = map[string]ParamSpec{
 	"follow.report": {
 		Accepted: []string{"tile", "path", "range", "changes", "action"},
 		Required: []string{"tile", "path", "action"},
+	},
+	"view.seen": {
+		Accepted: []string{"id", "rev", "marker"},
+		Required: []string{"id"},
 	},
 	"view.attention": {
 		Accepted: []string{"id", "message", "clear", "caller"},
@@ -270,6 +282,39 @@ var Methods = map[string]ParamSpec{
 		Accepted: []string{"items", "board"},
 		Required: []string{"items"},
 	},
+}
+
+// ViewerId: A remote window's in-memory identity, retained across reconnects and scoped to that window's edits and composer returns.
+type ViewerId = string
+
+type ComposerReceipt struct {
+	// Stable outcome identity; the same receipt appears live and in board.get so a viewer applies it once.
+	Receipt Id `json:"receipt"`
+	// One of "composer.returned", "composer.submitted".
+	Event    string   `json:"event"`
+	Viewer   ViewerId `json:"viewer"`
+	Terminal Id       `json:"terminal"`
+	// Original staged mention ids, never copied delivery ids or captured targets.
+	Ids []Id `json:"ids"`
+}
+
+type AttentionMarker struct {
+	ID       Id      `json:"id"`
+	Message  *string `json:"message,omitempty"`
+	RaisedBy *Id     `json:"raisedBy,omitempty"`
+	// The marker's identity for a guarded view.seen acknowledgment; echo the value from board.get or attention.changed.
+	RaisedAt string `json:"raisedAt"`
+}
+
+type ViewerReplay struct {
+	// The viewer's step that was replayed; omitted when no host history remains.
+	Step *int `json:"step,omitempty"`
+	// The replay created an opposite-stack step. The viewer uses this authoritative receipt even when repeating a command whose reply was lost.
+	Pushed  bool           `json:"pushed"`
+	Changed []CanvasObject `json:"changed"`
+	Deleted []Id           `json:"deleted"`
+	// Objects with fields left unchanged because another edit replaced them.
+	Kept []Id `json:"kept"`
 }
 
 // SurfaceStream: A session owned only by the connection that opened it; never transferable between connections or reconnected clients.

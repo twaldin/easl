@@ -1,7 +1,7 @@
 {
   "scenario": "client-versions",
   "description": "Scripted Mac clients on other easl versions (client.attach): one built from an older schema version is refused `unavailable` and serves nothing; one with the server's version and another schema hash, and one built from a newer version, are accepted and serve the methods both sides know. easld ignores the attach params and `serves` names it doesn't know and never sends a client a method it doesn't list. This records easld's protocol with scripted clients.",
-  "recordedOn": "easld browser-machine lane",
+  "recordedOn": "scratch easld schema2 remote edits and composer receipts",
   "steps": [
     {
       "step": "board.open",
@@ -48,12 +48,12 @@
           "view.get",
           "view.render"
         ],
-        "version": 0
+        "version": 1
       },
       "response": {
         "error": {
           "code": "unavailable",
-          "message": "easl 0.1.0 on studio is older than this board's server (schema version 0, the server's 1); update it"
+          "message": "easl 0.1.0 on studio is older than this board's server (schema version 1, the server's 2); update it"
         },
         "id": "r1",
         "ok": false
@@ -90,7 +90,7 @@
           "view.render",
           "view.zoom"
         ],
-        "version": 1,
+        "version": 2,
         "windows": [
           {
             "board": "<board>",
@@ -103,7 +103,7 @@
         "ok": true,
         "result": {
           "client": "<cli:1>",
-          "version": 1
+          "version": 2
         }
       },
       "events": [
@@ -198,7 +198,7 @@
           "view.get",
           "view.zoom"
         ],
-        "version": 2,
+        "version": 3,
         "windows": [
           {
             "board": "<board>",
@@ -211,7 +211,7 @@
         "ok": true,
         "result": {
           "client": "<cli:2>",
-          "version": 1
+          "version": 2
         }
       },
       "events": [

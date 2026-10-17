@@ -6,10 +6,6 @@ import (
 	"github.com/twaldin/easl/easld/internal/model"
 )
 
-// The API has no undo, so the history keeps only what a step needs while it is open: its
-// changes, so a failed `atomically` (object.batch, layout ops) reverts exactly what it did
-// (UndoHistory.swift: begin/end, mark/discard, merged updates, bookkeeping never recorded).
-
 type changeKind int
 
 const (
@@ -129,6 +125,8 @@ func (h *history) record(c change) {
 
 func (h *history) begin()       { h.depth++ }
 func (h *history) isOpen() bool { return h.depth > 0 }
+
+func (h *history) openChanges() []change { return append([]change(nil), h.open...) }
 
 func (h *history) mark() int {
 	h.mergeFloor = len(h.open)

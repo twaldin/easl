@@ -218,6 +218,7 @@ func (r *Registry) Close(id string, persistClosed func() error) error {
 	delete(r.boards, id)
 	b.closed = true
 	b.StopQuestionExpiry()
+	b.StopComposerExpiry()
 	b.OnChange, b.OnEvent, b.OnMessagesBounced, b.OnTerminals = nil, nil, nil, nil
 	b.Viewport, b.Texts = nil, nil
 	r.Store.Cancel(id)

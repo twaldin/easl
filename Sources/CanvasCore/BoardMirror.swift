@@ -1,21 +1,24 @@
 import Foundation
 
-/// A user's write to a remote board, already applied there as a preview, for its host.
+/// A user's write to a remote board, already applied there as a preview, for its host. `step` is
+/// the local history step the write belongs to (`UndoHistory.Step.id`): the host files the
+/// write's changes under it for this viewer's `board.undo`.
 public enum RemoteWrite: Equatable, Sendable {
     /// A provisional object (its id is this board's own until the host answers with its id).
-    case create(CanvasObject)
+    case create(CanvasObject, step: Int)
     /// `seen`: the object's revision as the board showed it when the user made the change.
-    case update(ObjectID, seen: Int?, frame: Frame?, z: Double?, props: JSONValue?)
-    case delete(ObjectID)
+    case update(ObjectID, step: Int, seen: Int?, frame: Frame?, z: Double?, props: JSONValue?)
+    case delete(ObjectID, step: Int)
     /// A browser tile's page as this Mac runs it (`Board.reportPage`): the one write-back of the
     /// app's own that a remote board sends to its host.
     case page(ObjectID, BrowserReport)
-
+    /// A look the user took. Follows that object's writes and records no history step.
+    case seen(ObjectID, rev: Int?, marker: SeenMarker?)
     /// The object written, by its id on this board.
     var object: ObjectID {
         switch self {
-        case .create(let object): object.id
-        case .update(let id, _, _, _, _), .delete(let id), .page(let id, _): id
+        case .create(let object, _): object.id
+        case .update(let id, _, _, _, _, _), .delete(let id, _), .page(let id, _), .seen(let id, _, _): id
         }
     }
 }
@@ -47,6 +50,9 @@ public enum BrowserReport: Equatable, Sendable {
 @MainActor
 protocol BoardHost: AnyObject {
     func send(_ write: RemoteWrite)
+    /// Why the host can't keep this viewer's history (its undo and restacking): an easl older than
+    /// this app's API there. Nil when it can, or while that isn't known yet.
+    var historyUnavailable: String? { get }
 }
 
 /// A board another easl hosts, mirrored over that easl's API (docs/design.md "Client mode").
@@ -68,8 +74,11 @@ public final class BoardMirror: BoardHost {
     /// The host as the user knows it, for titles and notices.
     public let hostName: String
     public let boardID: BoardID
+    /// This window's id. Undo and composer returns share it.
+    public let viewer = IDs.make("vw") as String
     /// The canonical owner of sessions and events; `boardID` remains the requested window address.
     public private(set) var sessionBoardID: BoardID
+    var hostSpeaksQueue: Bool { (connection.schemaVersion ?? 0) >= 2 }
     public private(set) var mergedBoards: [BoardID] = []
     /// Subscriptions, reads, writes and prompts.
     public let connection: EaslConnection
@@ -204,6 +213,8 @@ public final class BoardMirror: BoardHost {
         self.board = board
         mergedBoards = manifest["merged"]?.array?.compactMap(\.string).filter(ApiRouter.isBoardID) ?? []
         install(objects, on: board)
+        installAttention(manifest["attention"], on: board)
+        installComposerReceipts(manifest["composerReceipts"])
         reading = nil
         // The tiles are made now: they ask over a render link that is offline and fail at once, and
         // that is a drawing to ask for again. (A drop heard before the board was read is no debt.)
@@ -230,6 +241,8 @@ public final class BoardMirror: BoardHost {
         calls = nil
         attachment = nil
         identity = nil
+        heldComposer.removeAll()
+        seenComposerReceipts.removeAll()
         connection.serve(nil)
         connection.close()
         renders.close()
@@ -507,23 +520,33 @@ public final class BoardMirror: BoardHost {
         switch event.name {
         case "object.created", "object.updated":
             guard let object = try? event.data.decode(CanvasObject.self) else { return }
+            replayEvents?.insert(object.id)
             hostChanged(object)
         case "object.deleted":
             guard let id = event.data["id"]?.string else { return }
+            replayEvents?.insert(id)
             hostDeleted(id)
         case "attention.changed":
             guard let id = event.data["id"]?.string else { return }
-            let marker = event.data["active"]?.bool == true
-                ? Attention(object: id, message: event.data["message"]?.string, raisedBy: event.data["raisedBy"]?.string, raisedAt: Date()) : nil
+            let marker: Attention?
+            if event.data["active"]?.bool == true, let stamp = event.data["raisedAt"]?.string, !stamp.isEmpty {
+                marker = Attention(object: id, message: event.data["message"]?.string, raisedBy: event.data["raisedBy"]?.string, raisedAt: Date(), stamp: stamp)
+            } else if event.data["active"]?.bool == true {
+                marker = Attention(object: id, message: event.data["message"]?.string, raisedBy: event.data["raisedBy"]?.string, raisedAt: Date())
+            } else {
+                marker = nil
+            }
             board?.applyHostAttention(marker, on: id)
+        case "composer.returned", "composer.submitted":
+            applyComposerReceipt(event.data, event: event.name)
         default:
-            // The tray is the viewer's own; a terminal's lifecycle arrives in its props.
             break
         }
     }
 
     private func invalidate() {
-        let touched = Set(queues.keys).union(queues.keys.compactMap { hostIDs[$0] })
+        let written = Array(queues.keys) + heldWrites.map(\.write.object)
+        let touched = Set(written).union(written.compactMap { hostIDs[$0] })
         generation += 1
         failAwaitingEvents(ApiRouter.Failure("unavailable", "board \(boardID) closed during the request"))
         setDrawingMachines(nil)
@@ -533,6 +556,7 @@ public final class BoardMirror: BoardHost {
         for task in pumps.values { task.cancel() }
         pumps = [:]
         queues = [:]
+        heldWrites = []
         hostIDs = [:]
         failedCreates = []
         creating = 0
@@ -582,9 +606,9 @@ public final class BoardMirror: BoardHost {
         board?.removeHost(id)
     }
 
-    /// Writes to `id` (by its host id) are in flight.
     private func busy(_ id: ObjectID) -> Bool {
         queues.contains { key, writes in !writes.isEmpty && (key == id || hostIDs[key] == id) }
+            || heldWrites.contains { $0.write.object == id || hostIDs[$0.write.object] == id }
     }
 
     /// The board shows the host's `id` as last heard: after its writes were answered.
@@ -622,6 +646,8 @@ public final class BoardMirror: BoardHost {
                 try requireCurrent(generation)
                 mergedBoards = manifest["merged"]?.array?.compactMap(\.string).filter(ApiRouter.isBoardID) ?? []
                 install(objects, on: board)
+                installAttention(manifest["attention"], on: board)
+                installComposerReceipts(manifest["composerReceipts"])
                 setRefreshFailure(nil)
                 if availability != .open {
                     let previous = state
@@ -726,7 +752,16 @@ public final class BoardMirror: BoardHost {
     // MARK: The user's writes
 
     func send(_ write: RemoteWrite) {
+        if replaysAnswered < replaysAsked, !ended, availability == .open {
+            heldWrites.append((write, replaysAsked))
+            return
+        }
+        enqueue(write)
+    }
+
+    private func enqueue(_ write: RemoteWrite) {
         guard !ended, availability == .open else {
+            if case .seen = write { return }
             settle(write.object)
             return
         }
@@ -754,7 +789,7 @@ public final class BoardMirror: BoardHost {
     private func pump(_ key: ObjectID, generation: Int) async {
         var touched: Set<ObjectID> = [key]
         var base: Int?
-        if case .update(_, let seen, _, _, _) = queues[key]?.first { base = seen }
+        if case .update(_, _, let seen, _, _, _) = queues[key]?.first { base = seen }
         while let write = queues[key]?.first {
             guard !ended, generation == self.generation, availability == .open else { return }
             let done = await perform(write, base: base, generation: generation)
@@ -781,14 +816,17 @@ public final class BoardMirror: BoardHost {
     /// Sends one write, a props write with `rev` `base`; returns the host id it touched and, when
     /// the host made the change, the object's revision after it.
     private func perform(_ write: RemoteWrite, base: Int?, generation: Int) async -> (target: ObjectID?, rev: Int?) {
+        await handshake()
+        guard !ended, generation == self.generation, availability == .open else { return (nil, nil) }
         switch write {
-        case .create(let provisional):
+        case .create(let provisional, let step):
             var params: [String: JSONValue] = [
                 "board": .string(boardID), "type": .string(provisional.type.rawValue), "props": provisional.props,
                 "frame": RenderMath.json(provisional.frame),
             ]
             if let parent = provisional.parent { params["parent"] = .string(parent) }
             if provisional.type == .browser, case .agent(let tile) = provisional.createdBy { params["caller"] = .string(tile) }
+            mark(&params, step: step)
             // Its object's event, ahead of the answer, waits for it (`creating`).
             creating += 1
             defer {
@@ -810,16 +848,18 @@ public final class BoardMirror: BoardHost {
                 notice("Not created on \(hostName): \(Self.reason(error))")
                 return (nil, nil)
             }
-        case .update(let id, _, let frame, _, let props):
+        case .update(let id, let step, _, let frame, let z, let props):
             guard let target = target(id) else { return (nil, nil) }
-            // The API sets no z: a restack isn't sent, and the host's version puts it back.
-            guard frame != nil || props != nil else { return (target, nil) }
+            let z = hostKeepsHistory ? z : nil
+            guard frame != nil || z != nil || props != nil else { return (target, nil) }
             var params: [String: JSONValue] = ["id": .string(target)]
             if let frame { params["frame"] = RenderMath.json(frame) }
+            if let z { params["z"] = .number(z) }
             if let props {
                 params["props"] = props
                 if let base { params["rev"] = .number(Double(base)) }
             }
+            mark(&params, step: step)
             do {
                 let object = try await request("object.update", params, generation: generation)
                 learn(object)
@@ -828,10 +868,12 @@ public final class BoardMirror: BoardHost {
                 await refused(target, error, doing: "changed", generation: generation)
                 return (target, nil)
             }
-        case .delete(let id):
+        case .delete(let id, let step):
             guard let target = target(id) else { return (nil, nil) }
+            var params: [String: JSONValue] = ["id": .string(target)]
+            mark(&params, step: step)
             do {
-                _ = try await connection.request("object.delete", .object(["id": .string(target)]))
+                _ = try await connection.request("object.delete", .object(params))
                 try requireCurrent(generation)
                 known.removeValue(forKey: target)
                 reading?.deleted.insert(target)
@@ -850,7 +892,27 @@ public final class BoardMirror: BoardHost {
                 NSLog("easl: %@ took no page report for browser tile %@ (%@)", hostName, target, (error as? EaslConnection.Failure)?.code ?? "unavailable")
                 return (target, nil)
             }
+        case .seen(let id, let rev, let marker):
+            guard hostSpeaksQueue, let target = target(id) else { return (nil, nil) }
+            var params: [String: JSONValue] = ["id": .string(target)]
+            if let rev { params["rev"] = .number(Double(rev)) }
+            if let marker { params["marker"] = marker.json }
+            do {
+                _ = try await connection.request("view.seen", .object(params))
+                try requireCurrent(generation)
+            } catch {
+                if let rev, board?.seenForwarded[target] == rev { board?.seenForwarded.removeValue(forKey: target) }
+                guard !ended, generation == self.generation else { return (target, nil) }
+                stale = true
+                setRefreshFailure("Couldn't acknowledge \(hostName): \(Self.reason(error))")
+            }
+            return (target, nil)
         }
+    }
+
+    private func handshake() async {
+        guard connection.state == .connecting else { return }
+        for await state in connection.states() where state != .connecting { break }
     }
 
     private func request(_ method: String, _ params: [String: JSONValue], generation: Int) async throws -> CanvasObject {
@@ -910,6 +972,153 @@ public final class BoardMirror: BoardHost {
         (error as? EaslConnection.Failure)?.message ?? (error as? ApiRouter.Failure)?.message ?? String(describing: error)
     }
 
+
+    private var replaysAsked = 0
+    private var replaysAnswered = 0
+    private var heldWrites: [(write: RemoteWrite, after: Int)] = []
+    private var lastReplay: Task<String?, Never>?
+    private struct ReplayRedo {
+        var made: Int
+        var steps: [UndoHistory.Step]
+    }
+    private var replayRedo: ReplayRedo?
+    private var replayEvents: Set<ObjectID>?
+
+    private var hostKeepsHistory: Bool { (connection.schemaVersion ?? 1) >= 2 }
+
+    var historyUnavailable: String? {
+        guard let version = connection.schemaVersion, version < 2 else { return nil }
+        return "Undo and restacking on this board need a newer easl on \(hostName)"
+    }
+
+    private func mark(_ params: inout [String: JSONValue], step: Int) {
+        guard hostKeepsHistory else { return }
+        params["viewer"] = .string(viewer)
+        params["step"] = .number(Double(step))
+    }
+
+    /// ⌘Z (⇧⌘Z when `redo`): the board's latest step made before now. A step of the viewer's own
+    /// (the tray's chips Hyper-V pasted) is undone here, online or not. A step that changed the
+    /// board is the host's to revert (`board.undo`): it goes after every write made before it,
+    /// writes made after it wait for its answer, and replays go one at a time. The local history
+    /// then follows what the host did, by step id; offline or refused, it stays as it was. The
+    /// task's value is the notice to show.
+    @discardableResult
+    public func undo(redo: Bool) -> Task<String?, Never> {
+        if replaysAsked == replaysAnswered, let board {
+            replayRedo = ReplayRedo(made: board.history.lastID, steps: board.history.redoSteps)
+        }
+        replaysAsked += 1
+        let ticket = replaysAsked, made = board?.history.lastID ?? 0, previous = lastReplay
+        let task = Task { () -> String? in
+            _ = await previous?.value
+            let notice = await replay(redo: redo, madeBy: made)
+            replayAnswered(ticket)
+            return notice
+        }
+        lastReplay = task
+        return task
+    }
+
+    private func replayAnswered(_ ticket: Int) {
+        replaysAnswered = ticket
+        let released = heldWrites.filter { $0.after <= ticket }
+        heldWrites.removeAll { $0.after <= ticket }
+        for held in released { enqueue(held.write) }
+        if ticket == replaysAsked { replayRedo = nil }
+    }
+
+    private func replay(redo: Bool, madeBy made: Int) async -> String? {
+        guard !ended, let board else { return nil }
+        let verb = redo ? "redo" : "undo"
+        if made > (replayRedo?.made ?? made) {
+            replayRedo = ReplayRedo(made: made, steps: [])
+        }
+        guard let step = (redo ? replayRedo?.steps ?? [] : board.history.undoSteps).last(where: { $0.id <= made }) else { return nil }
+        guard step.changesBoard else {
+            let reply = ViewerReplay(step: step.id, pushed: true)
+            let replayed = board.reconcile(reply, asked: step, redo: redo)
+            reconcileRedo(reply, step: replayed, redo: redo)
+            return step.notice(redo: redo, author: board.authorName(step.author))
+        }
+        for pump in Array(pumps.values) { await pump.value }
+        guard !ended, availability == .open, linkState == .online, !stale else { return "Couldn't \(verb): \(hostName) is offline" }
+        guard reading == nil else { return "Couldn't \(verb) while \(hostName)'s board is read again" }
+        guard hostKeepsHistory else { return "\(redo ? "Redo" : "Undo") on this board needs a newer easl on \(hostName)" }
+        let generation = generation
+        let candidates = redo ? [step] : board.history.undoSteps.filter { $0.id <= step.id }
+        var revisions: [ObjectID: Int] = [:]
+        for candidate in candidates {
+            for id in ViewerHistory.touched(candidate.changes) {
+                if let id = target(id), let object = known[id] { revisions[id] = object.rev }
+            }
+        }
+        replayEvents = []
+        defer { replayEvents = nil }
+        let reply: ViewerReplay
+        do {
+            let params: JSONValue = .object(["board": .string(boardID), "viewer": .string(viewer), "step": .number(Double(step.id))])
+            let result = try await connection.request(redo ? "board.redo" : "board.undo", params)
+            try requireCurrent(generation)
+            reply = try ViewerReplay(reply: result)
+        } catch let failure as EaslConnection.Failure where failure.code == "conflict" {
+            guard !ended, generation == self.generation else { return nil }
+            board.history.remove(redo: redo) { $0.changesBoard && $0.id <= step.id }
+            replayRedo?.steps.removeAll { $0.changesBoard && $0.id <= step.id }
+            return "Couldn't \(verb): \(hostName) no longer keeps that change"
+        } catch {
+            guard !ended, generation == self.generation else { return nil }
+            return "Couldn't \(verb) on \(hostName): \(Self.reason(error))"
+        }
+        for object in reply.changed {
+            if let before = revisions[object.id], object.rev == before + 1 {
+                rebaseHeldWrites(object.id, from: before, to: object.rev)
+            }
+            if replayEvents?.contains(object.id) != true { learn(object) }
+        }
+        for id in reply.deleted where replayEvents?.contains(id) != true { known.removeValue(forKey: id) }
+        for id in reply.changed.map(\.id) + reply.deleted where !busy(id) { settle(id) }
+        let replayed = board.reconcile(reply, asked: step, redo: redo)
+        reconcileRedo(reply, step: replayed, redo: redo)
+        return notice(of: reply, step: replayed, redo: redo, on: board)
+    }
+
+    private func reconcileRedo(_ reply: ViewerReplay, step: UndoHistory.Step?, redo: Bool) {
+        if redo {
+            if let id = reply.step {
+                replayRedo?.steps.removeAll { $0.id == id }
+            } else {
+                replayRedo?.steps.removeAll { $0.changesBoard }
+            }
+        } else if reply.pushed, let step {
+            replayRedo?.steps.append(step)
+        }
+    }
+
+    private func rebaseHeldWrites(_ id: ObjectID, from before: Int, to after: Int) {
+        guard let first = heldWrites.first(where: { target($0.write.object) == id }),
+              case .update(_, _, let seen, _, _, _) = first.write, seen == before else { return }
+        for index in heldWrites.indices {
+            guard case .update(let local, let step, let seen?, let frame, let z, let props) = heldWrites[index].write,
+                  target(local) == id else { continue }
+            heldWrites[index].write = .update(local, step: step, seen: seen + after - before, frame: frame, z: z, props: props)
+        }
+    }
+
+    private func notice(of reply: ViewerReplay, step: UndoHistory.Step?, redo: Bool, on board: Board) -> String {
+        let done = redo ? "redone" : "undone"
+        guard reply.step != nil else { return "Nothing to \(redo ? "redo" : "undo") on \(hostName)" }
+        guard !reply.changed.isEmpty || !reply.deleted.isEmpty else {
+            return reply.kept.isEmpty ? "Nothing \(done): what it changed is gone" : "Nothing \(done): everything it touched changed since"
+        }
+        let summary = step.map(\.summary).flatMap { $0.isEmpty ? nil : $0 } ?? "a change on \(hostName)"
+        let author = step.flatMap { board.authorName($0.author) }.map { "\($0): " } ?? ""
+        var text = "\(redo ? "Redid" : "Undid") \(author)\(summary)"
+        if !reply.kept.isEmpty { text += " · kept \(reply.kept.count) someone changed since" }
+        if reply.pushed { text += redo ? " · ⌘Z undoes" : " · ⇧⌘Z redoes" }
+        return text
+    }
+
     // MARK: Prompts and renders
 
     /// The composer's send to one terminal on the host: `agent.prompt` with `composer` (the host
@@ -917,37 +1126,80 @@ public final class BoardMirror: BoardHost {
     public func prompt(_ text: String, to terminal: ObjectID, mentions: [Mention], answer: Bool) async throws {
         guard !ended, availability == .open else { throw ApiRouter.Failure("unavailable", "board \(boardID) is closed") }
         let generation = generation
+        await handshake()
+        try requireCurrent(generation)
         var params: [String: JSONValue] = ["target": .string(terminal), "text": .string(text), "composer": .bool(true)]
-        if answer {
-            params["answer"] = .bool(true)
-        } else {
-            let attached = Self.promptMentions(mentions.map(\.target))
-            if !attached.isEmpty { params["mentions"] = .array(attached) }
+        if answer { params["answer"] = .bool(true) }
+        let staged = !answer && !mentions.isEmpty
+        var wireMentions: [Mention] = []
+        if staged {
+            guard hostSpeaksQueue else {
+                throw ApiRouter.Failure("unavailable", "this host is an older easl and cannot take staged mentions; update it")
+            }
+            wireMentions = mentions.map { original in
+                var wire = original
+                wire.id = IDs.make("men")
+                return wire
+            }
+            params["viewer"] = .string(viewer)
+            params["staged"] = try JSONValue.encode(wireMentions)
+        }
+        for (wire, original) in zip(wireMentions, mentions) {
+            heldComposer[terminal, default: [:]][wire.id] = original
         }
         do {
             _ = try await connection.request("agent.prompt", .object(params), timeout: .seconds(30))
             try requireCurrent(generation)
-        } catch let failure as EaslConnection.Failure {
-            throw ApiRouter.Failure(failure.code, failure.message)
+        } catch {
+            for wire in wireMentions { _ = takeOrigin(wire.id, for: terminal) }
+            if let failure = error as? EaslConnection.Failure {
+                throw ApiRouter.Failure(failure.code, failure.message)
+            }
+            throw error
         }
     }
 
-    /// What `agent.prompt` can attach of the composer's mentions (`PromptMention`): an object, a
-    /// code tile's lines, an image tile's pixel; any other target as the objects it is on.
-    static func promptMentions(_ targets: [MentionTarget]) -> [JSONValue] {
-        var result: [JSONValue] = []
-        func add(_ value: JSONValue) { if !result.contains(value) { result.append(value) } }
-        for target in targets {
-            switch target {
-            case .code(let object, _, let lines, _, _, _, _):
-                add(.object(["object": .string(object), "lines": .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])]))
-            case .image(let object, _, let x, let y):
-                add(.object(["object": .string(object), "point": .object(["x": .number(Double(x)), "y": .number(Double(y))])]))
-            default:
-                for object in target.objectIDs { add(.object(["object": .string(object)])) }
-            }
+    private var heldComposer: [ObjectID: [MentionID: Mention]] = [:]
+    private var seenComposerReceipts: Set<String> = []
+
+    private func installComposerReceipts(_ raw: JSONValue?) {
+        for receipt in raw?.array ?? [] { applyComposerReceipt(receipt) }
+    }
+
+    private func applyComposerReceipt(_ raw: JSONValue, event: String? = nil) {
+        guard raw["viewer"]?.string == viewer,
+              let receipt = raw["receipt"]?.string, !receipt.isEmpty,
+              let terminal = raw["terminal"]?.string,
+              let kind = event ?? raw["event"]?.string,
+              kind == "composer.returned" || kind == "composer.submitted",
+              seenComposerReceipts.insert(receipt).inserted else { return }
+        let ids = raw["ids"]?.array?.compactMap(\.string) ?? []
+        if kind == "composer.returned" {
+            deliverReturn(terminal: terminal, ids: ids)
+        } else {
+            noteSubmitted(terminal: terminal, ids: ids)
         }
-        return result
+    }
+
+    private func takeOrigin(_ id: MentionID, for terminal: ObjectID) -> Mention? {
+        let origin = heldComposer[terminal]?.removeValue(forKey: id)
+        if heldComposer[terminal]?.isEmpty == true { heldComposer.removeValue(forKey: terminal) }
+        return origin
+    }
+
+    private func noteSubmitted(terminal: ObjectID, ids: [String]) {
+        for id in ids { _ = takeOrigin(id, for: terminal) }
+    }
+
+    private func deliverReturn(terminal: ObjectID, ids: [String]) {
+        let mentions = ids.compactMap { takeOrigin($0, for: terminal) }
+        board?.returnComposerMentions(mentions, from: terminal)
+    }
+
+    private func installAttention(_ raw: JSONValue?, on board: Board) {
+        let markers = raw?.array?.compactMap(SeenMarker.init) ?? []
+        let busy = Set(queues.keys).union(queues.keys.compactMap { hostIDs[$0] })
+        board.replaceHostAttention(markers, skipping: busy)
     }
 
     static let diagramReloadDeadline: Duration = .seconds(15)
@@ -962,6 +1214,7 @@ public final class BoardMirror: BoardHost {
     public func reloadDiagram(_ id: ObjectID) async throws -> JSONValue {
         guard !ended, availability == .open else { throw ApiRouter.Failure("unavailable", "board \(boardID) is closed") }
         let generation = generation
+        if let lastReplay { _ = await lastReplay.value }
         while let writes = pumps[queue(for: id)] { await writes.value }
         try requireCurrent(generation)
         guard let target = target(id) else { throw ApiRouter.Failure("not_found", "\(id) isn't on \(hostName)") }
