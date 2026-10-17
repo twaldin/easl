@@ -3,14 +3,17 @@ import Testing
 @testable import CanvasCore
 
 struct ZmxIsolationTests {
-    @Test func aDevelopmentHomeIsIsolatedUnderItself() {
-        guard case .isolated(let layout) = ZmxIsolation.decide(environment: ["EASL_HOME": "/tmp/easl-dev-plain"], uid: 501, accountHome: "/Users/someone", guiTemp: "/var/folders/ab/T") else {
+    @Test func aDevelopmentHomeIsIsolatedUnderItself() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("easl-zmx-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        guard case .isolated(let layout) = ZmxIsolation.decide(environment: ["EASL_HOME": home.path], uid: 501, accountHome: "/Users/someone", guiTemp: "/var/folders/ab/T") else {
             Issue.record("a plain development home was refused")
             return
         }
-        #expect(layout.zmxDir == "/tmp/easl-dev-plain/zmx")
-        #expect(layout.stateHome == "/tmp/easl-dev-plain/state")
-        #expect(layout.tmpDir == "/tmp/easl-dev-plain/tmp")
+        #expect(layout.zmxDir == home.path + "/zmx")
+        #expect(layout.stateHome == home.path + "/state")
+        #expect(layout.tmpDir == home.path + "/tmp")
     }
 
     @Test func noEaslHomeIsTheInstalledApp() {
@@ -19,7 +22,7 @@ struct ZmxIsolationTests {
     }
 
     @Test func aSymlinkOutOfTheHomeIsRefused() throws {
-        let root = URL(fileURLWithPath: "/tmp").appendingPathComponent("easl-zmx-\(UUID().uuidString.prefix(8))")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("easl-zmx-\(UUID().uuidString)")
         let account = root.appendingPathComponent("account")
         let installed = account.appendingPathComponent(".local/state/zmx")
         let dev = root.appendingPathComponent("dev")
@@ -51,7 +54,7 @@ struct ZmxIsolationTests {
     }
 
     @Test func dotDotAfterASymlinkStaysInTheLinkTarget() throws {
-        let root = URL(fileURLWithPath: "/tmp").appendingPathComponent("easl-phys-\(UUID().uuidString.prefix(8))")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("easl-phys-\(UUID().uuidString)")
         let target = root.appendingPathComponent("target/nested")
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("link"), withDestinationURL: target)
