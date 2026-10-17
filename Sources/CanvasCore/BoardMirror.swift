@@ -48,8 +48,6 @@ public final class BoardMirror: BoardHost {
     public private(set) var mergedBoards: [BoardID] = []
     /// Subscriptions, reads, writes and prompts.
     public let connection: EaslConnection
-    /// `view.render`'s own link: the host answers one link's requests in order, and a render may
-    /// wait seconds for a page. `queue` keeps one request on it at a time.
     private let renders: EaslConnection
     /// Nil until `load` succeeded.
     public private(set) var board: Board?
@@ -94,6 +92,7 @@ public final class BoardMirror: BoardHost {
     private var known: [ObjectID: CanvasObject] = [:]
     /// Writes not answered yet, by the written object's id here, oldest first (the first is in flight).
     private var queues: [ObjectID: [RemoteWrite]] = [:]
+    private var pumps: [ObjectID: Task<Void, Never>] = [:]
     /// A provisional object's id here → the host's id for it, once its create is answered.
     private var hostIDs: [ObjectID: ObjectID] = [:]
 
@@ -447,7 +446,7 @@ public final class BoardMirror: BoardHost {
     func send(_ write: RemoteWrite) {
         let key = queue(for: write.object)
         queues[key, default: []].append(write)
-        if queues[key]?.count == 1 { Task { await pump(key) } }
+        if queues[key]?.count == 1 { pumps[key] = Task { await pump(key) } }
     }
 
     /// The queue a write to `id` joins: its own, or a created object's while the writes queued
@@ -474,6 +473,7 @@ public final class BoardMirror: BoardHost {
             queues[key]?.removeFirst()
         }
         queues.removeValue(forKey: key)
+        pumps.removeValue(forKey: key)
         for id in touched.sorted() where !busy(id) { settle(id) }
     }
 
@@ -637,5 +637,25 @@ public final class BoardMirror: BoardHost {
     public func render(_ id: ObjectID, scale: Double, wanted: @escaping @MainActor () -> Bool,
                        answer: @escaping @MainActor (Result<Render, Error>) -> Void) -> RenderTicket {
         queue.add(id, scale: scale, wanted: wanted, answer: answer)
+    }
+
+
+    static let diagramReloadDeadline: Duration = .seconds(15)
+
+    /// Asks the host to compute diagram `id`'s graph afresh (`object.reload`), as it has the
+    /// diagram once this viewer's writes to it are answered, so a reload the user's expansion
+    /// started computes that expansion. The host writes the graph, which arrives as the object's
+    /// update: the answer comes once the computation started (`loaded` false), and the
+    /// computation goes on there however long it takes. Sent on `renders`, as the host answers a
+    /// link's requests one at a time: the board's own link never waits behind it. Throws
+    /// `ApiRouter.Failure` with the host's reason (`unavailable`: easld has no client to compute it).
+    public func reloadDiagram(_ id: ObjectID) async throws -> JSONValue {
+        while let writes = pumps[queue(for: id)] { await writes.value }
+        guard let target = target(id) else { throw ApiRouter.Failure("not_found", "\(id) isn't on \(hostName)") }
+        do {
+            return try await renders.request("object.reload", .object(["id": .string(target), "timeoutMs": .number(0)]), timeout: Self.diagramReloadDeadline)
+        } catch let failure as EaslConnection.Failure {
+            throw ApiRouter.Failure(failure.code, failure.message)
+        }
     }
 }

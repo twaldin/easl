@@ -1,14 +1,6 @@
 import AppKit
 import CanvasCore
 
-/// A diagram computed from the code (`type: diagram`): for `kind: calls`, a function's callers
-/// and/or callees from the language server, laid out as a layered graph (`DiagramLayout`) of
-/// symbol-anchored nodes. The graph is `props.graph` (`DiagramRefresh` writes it); this view
-/// draws it, asks for it again when a file it shows changes on disk, and turns clicks into
-/// expansions. A click on a node that isn't expanded opens its next level (`props.expanded`,
-/// undoable); on an expanded one, closes it; on its `path:line`, opens the code beside the
-/// tile. A Hyper-click mentions the node's symbol (its declaration's lines) or the excerpt line
-/// under the pointer.
 @MainActor
 final class DiagramTile: NSView, TileContent {
     /// Posted (object: the tile) when its nodes moved: arrows bound to them follow.
@@ -20,14 +12,34 @@ final class DiagramTile: NSView, TileContent {
 
     private var object: CanvasObject
     private let board: Board
+    private let remote: RemoteSource?
     private var live = true
     private var graph: DiagramGraph?
     private var layout: DiagramLayout
-    private var computing = false
-    private var computeTask: Task<Void, Never>?
+    private enum Computation {
+        case idle
+        case local(Int, Task<Void, Never>)
+        case asking(Int, Task<Void, Never>)
+        case hostComputing
+
+        var task: Task<Void, Never>? {
+            switch self {
+            case .local(_, let task), .asking(_, let task): task
+            case .idle, .hostComputing: nil
+            }
+        }
+    }
+    private var computation: Computation = .idle
+    private var computing: Bool {
+        if case .idle = computation { return false }
+        return true
+    }
     private var computeGeneration = 0
     private var events: FileEvents?
     private var watched: Set<String> = []
+    private var hostWatch: HostFileWatch?
+    private var hostProbe: HostGitProbe?
+    private var hostFailure: String?
     private var pendingRefresh: DispatchWorkItem?
     /// A file changed (or the graph was never checked since launch) while the tile wasn't
     /// live: refresh when it is again.
@@ -35,9 +47,10 @@ final class DiagramTile: NSView, TileContent {
     /// The first graph arrives into a tile of the default size: grow it to show the graph.
     private var fitOnArrival: Bool
 
-    init(object: CanvasObject, board: Board) {
+    init(object: CanvasObject, board: Board, remote: RemoteSource? = nil) {
         self.object = object
         self.board = board
+        self.remote = remote
         let graph = DiagramGraph(object.props["graph"])
         self.graph = graph
         layout = graph.map(DiagramLayout.init) ?? DiagramLayout(DiagramGraph(aim: DiagramSpec(object.props).aim))
@@ -62,44 +75,71 @@ final class DiagramTile: NSView, TileContent {
 
     // MARK: Computing
 
-    /// Asks the language server again (`DiagramRefresh`); the newest request wins. Returns once
-    /// this request's graph is written or it was superseded.
-    @discardableResult
-    func refresh() -> Task<Void, Never> {
-        computeTask?.cancel()
+    private func refresh() {
+        computation.task?.cancel()
         pendingRefresh?.cancel()
         dirty = false
         computeGeneration += 1
         let generation = computeGeneration
-        computing = true
-        needsDisplay = true
-        let id = object.id, board = board
-        let task = Task { [weak self] in
-            do {
-                _ = try await DiagramRefresh.run(id, on: board, languages: CodeNavigation.languages)
-            } catch {
-                // Cancelled by a newer refresh, which reports.
-            }
-            guard let self, self.computeGeneration == generation else { return }
-            self.computing = false
-            self.needsDisplay = true
+        if let remote {
+            computation = .asking(generation, Task { [weak self] in
+                guard let self else { return }
+                await self.askHost(remote, generation)
+            })
+        } else {
+            let id = object.id, board = board
+            computation = .local(generation, Task { [weak self] in
+                _ = try? await DiagramRefresh.run(id, on: board, languages: CodeNavigation.languages)
+                self?.computed(generation)
+            })
         }
-        computeTask = task
-        return task
+        needsDisplay = true
     }
 
-    /// `object.reload`: refresh and wait for the graph (`ApiRouter.computeDiagram` stops waiting at
-    /// its timeout). Not loaded when a newer refresh superseded this one.
+    private func computed(_ generation: Int) {
+        guard case .local(let current, _) = computation, current == generation else { return }
+        computation = .idle
+        needsDisplay = true
+    }
+
+    private func askHost(_ remote: RemoteSource, _ generation: Int) async {
+        let failure: String?
+        let loaded: Bool
+        do {
+            loaded = try await remote.mirror.reloadDiagram(object.id)["loaded"]?.bool == true
+            failure = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            loaded = false
+            failure = "Not computed on \(remote.mirror.hostName): \(BoardMirror.reason(error))"
+        }
+        guard case .asking(let current, _) = computation, current == generation else { return }
+        hostFailure = failure
+        computation = loaded || failure != nil ? .idle : .hostComputing
+        needsDisplay = true
+    }
+
+    func hostDidReconnect() {
+        guard remote != nil else { return }
+        if live, window != nil { refresh() } else { dirty = true }
+    }
+
     func reload() async -> JSONValue {
-        await refresh().value
+        refresh()
+        if case .local(_, let task) = computation { await task.value }
         return DiagramRefresh.summary(object.id, graph: DiagramGraph(board.objects[object.id]?.props["graph"]), computed: !computing)
     }
 
-    /// One FSEvents stream over the directories of the files the graph shows, while live.
     private func watch() {
-        guard live, window != nil, let graph else {
-            events = nil
-            watched = []
+        guard live, window != nil, let graph else { return stopWatching() }
+        if let remote {
+            guard let probe = DiagramRefresh.hostProbe(of: object, on: board) else { return stopWatching() }
+            guard probe != hostProbe else { return }
+            hostWatch?.cancel()
+            hostProbe = probe
+            let git = remote.git
+            hostWatch = HostFileWatch(baseline: nil, probe: { await git.stamp(probe) }) { [weak self] _ in self?.scheduleRefresh() }
             return
         }
         var files = Set(graph.nodes.map { FileEvents.canonical(board.absoluteURL($0.path).path) })
@@ -113,6 +153,14 @@ final class DiagramTile: NSView, TileContent {
         }
     }
 
+    private func stopWatching() {
+        events = nil
+        watched = []
+        hostWatch?.cancel()
+        hostWatch = nil
+        hostProbe = nil
+    }
+
     private func scheduleRefresh() {
         guard live else {
             dirty = true
@@ -120,7 +168,7 @@ final class DiagramTile: NSView, TileContent {
         }
         pendingRefresh?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { _ = self?.refresh() }
+            MainActor.assumeIsolated { self?.refresh() }
         }
         pendingRefresh = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounce, execute: work)
@@ -129,8 +177,9 @@ final class DiagramTile: NSView, TileContent {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil {
-            events = nil
+            stopWatching()
             pendingRefresh?.cancel()
+            if remote != nil { dirty = true }
         } else {
             watch()
             if dirty, live { refresh() }
@@ -194,14 +243,15 @@ final class DiagramTile: NSView, TileContent {
     private func drawHeader(in bounds: CGRect) {
         let text: String
         var color = NSColor.secondaryLabelColor
-        if let error = graph?.error, graph?.nodes.isEmpty ?? true {
+        let error = hostFailure ?? graph?.error
+        if let error, graph?.nodes.isEmpty ?? true {
             // Nothing to draw: the whole reason, wrapped (an ambiguous name lists its candidates).
             let shown = (computing ? "Asking the language server again… " : "") + error
             NSAttributedString(string: shown, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.systemOrange])
                 .draw(with: CGRect(x: 10, y: 8, width: max(0, bounds.width - 20), height: max(0, bounds.height - 16)),
                       options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
             return
-        } else if let error = graph?.error {
+        } else if let error {
             text = (computing ? "Asking the language server again… " : "") + error
             color = .systemOrange
         } else if computing {
@@ -390,13 +440,17 @@ final class DiagramTile: NSView, TileContent {
             watch()
             if dirty { refresh() }
         } else {
-            events = nil
-            watched = []
+            stopWatching()
+            if remote != nil {
+                pendingRefresh?.cancel()
+                pendingRefresh = nil
+                dirty = true
+            }
         }
     }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
-        if graph == nil, computing { await computeTask?.value }
+        if graph == nil, case .local(_, let task) = computation { await task.value }
         let size = request.full ? CGSize(width: max(request.size.width, layout.bodySize.width), height: max(request.size.height, layout.bodySize.height)) : request.size
         guard let image = request.image(size: size, { bounds in paint(in: bounds) }) else {
             return TileRender(image: nil, contentSize: request.size, state: .failed, reason: "bitmap allocation failed")
@@ -425,8 +479,17 @@ final class DiagramTile: NSView, TileContent {
     func update(_ object: CanvasObject) {
         let previous = self.object
         self.object = object
-        if DiagramSpec(previous.props) != DiagramSpec(object.props) { refresh() }
+        if DiagramSpec(previous.props) != DiagramSpec(object.props) {
+            refresh()
+        } else if remote != nil, computing, object.rev != previous.rev {
+            scheduleRefresh()
+        }
         guard previous.props["graph"] != object.props["graph"] else { return }
+        hostFailure = nil
+        switch computation {
+        case .asking, .hostComputing: computation = .idle
+        case .idle, .local: break
+        }
         // An error before any node (a server still loading) isn't the first graph yet.
         let before = graph?.nodes.count ?? 0
         graph = DiagramGraph(object.props["graph"])
@@ -463,6 +526,7 @@ final class DiagramTile: NSView, TileContent {
     /// resize stays unless the graph needs more), into free space only (`Board.grownFrame`):
     /// what doesn't fit is drawn scaled. The app's write, not an undo step.
     private func fit(growingOnly: Bool) {
+        guard remote == nil else { return }
         let zoom = CGFloat(object.zoom)
         let body = layout.bodySize, current = RenderMath.body(of: object)
         var w = min(body.width, Self.maxFitBody.width), h = min(body.height, Self.maxFitBody.height)

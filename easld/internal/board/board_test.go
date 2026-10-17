@@ -221,6 +221,27 @@ func TestFailedAtomicStepRevertsEverythingAsOneRevision(t *testing.T) {
 	}
 }
 
+func TestBookkeepingWrittenInAFailedAtomicStepIsKeptWithoutARevision(t *testing.T) {
+	b := New("brd", "/r")
+	diagram := b.Create(model.Diagram, map[string]any{"path": "main.go", "symbol": "run"}, frame(0, 0, 760, 480), "", "")
+	graph := map[string]any{"root": "main.go#run", "nodes": []any{map[string]any{"id": "main.go#run"}}, "computedAt": "2026-10-17T12:00:00Z"}
+	rollback := errors.New("rollback")
+	err := b.Atomically(func() error {
+		if err := b.WriteBookkeeping(diagram.ID, map[string]any{"graph": graph}); err != nil {
+			return err
+		}
+		return rollback
+	})
+	if err != rollback {
+		t.Fatalf("err %v", err)
+	}
+	want := diagram.Clone()
+	want.Props["graph"] = graph
+	if got := b.Objects()[diagram.ID]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("after the failed step %+v, want %+v", got, want)
+	}
+}
+
 func TestKeysAreUniqueAndFollowDeletes(t *testing.T) {
 	b := New("brd", "/r")
 	a := b.Create(model.Note, map[string]any{"markdown": "a", "key": "REL-1"}, frame(0, 0, 100, 100), "", "")

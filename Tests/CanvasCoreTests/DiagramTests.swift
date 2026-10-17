@@ -567,6 +567,28 @@ final class DiagramTests {
         #expect(reloaded["result"]?["loaded"] == .bool(false), "\(reloaded)")
         await late.stopAll()
     }
+
+
+    @Test func aViewerComputesEasldsCopyOfADiagramNotItsOwnPreview() async throws {
+        let host = DelegatedCallsTests.NoHost()
+        let board = Board(remote: "brd_host", root: dir, host: host)
+        let easlds = CanvasObject(id: "obj_calls", type: .diagram, frame: Frame(x: 0, y: 0, w: 800, h: 500), z: 0, rev: 4, createdBy: .user, createdAt: Date(),
+                                  props: .object(["kind": "calls", "path": "Sources/Lib/Spool.swift", "symbol": "Spool.read", "direction": "incoming", "depth": 1]))
+        board.applyHost(easlds)
+        try board.update(easlds.id, props: .object(["symbol": "Registry.replay"]))
+        let calls = DelegatedCalls(board: board, window: ViewerWindow(
+            focused: { false }, viewState: { nil }, submit: { _, _ in false }, surfaceTail: { _, _ in nil },
+            block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") }, status: { _ in nil }, languages: { [service] in service }))
+
+        let answer = try await calls.answer(EaslConnection.Call(method: "object.reload", params: .object(["id": "obj_calls", "_diagram": try JSONValue.encode(easlds)]))).get()
+        #expect(answer["id"] == "obj_calls" && answer["loaded"] == .bool(true) && answer["rev"] == 4)
+        let graph = try #require(DiagramGraph(answer["graph"]))
+        #expect(graph.root == Self.root)
+        #expect(graph.nodes.filter { $0.level == -1 }.map(\.id) == [Self.replay, Self.relaunch, Self.warm])
+
+        let unsnapshotted = await calls.answer(EaslConnection.Call(method: "object.reload", params: .object(["id": "obj_calls"])))
+        #expect(unsnapshotted == .failure(EaslConnection.Failure("unavailable", "diagram obj_calls is computed by this viewer only from easld's copy of it (_diagram)")))
+    }
 }
 
 /// The pan after a user opens a diagram node (`Layout.revealGrown`): a viewport 1000 × 800 at

@@ -23,6 +23,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// A remote board's host and its link (docs/design.md "Client mode"); nil for a local board.
     let remote: RemoteSource?
     private let banner = ConnectionBanner(frame: .zero)
+    private var languages: LanguageService { remote?.languages ?? CodeNavigation.languages }
+    private var navigationRoot: URL { remote == nil ? board.workingRoot : board.root }
 
     /// The board in front: the frontmost visible board window, with tabs its selected tab (the
     /// others are ordered out). What menu commands and ⌘Z act on, also while a panel such as
@@ -193,10 +195,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                 self?.selectGoToLines(nil, in: id)
             case .heading(let id, let line): self?.canvas.go(to: id, heading: line)
             case .file(let path, let lines):
-                // Relative to the listed checkout (`Board.workingRoot`), as the board stores it.
-                guard let board = self?.board else { return }
-                let stored = board.relativePath(path.hasPrefix("/") ? path : board.workingRoot.appendingPathComponent(path).path)
-                if let id = self?.open(path: stored, lines: lines) { self?.selectGoToLines(lines, in: id) }
+                guard let self else { return }
+                let stored = self.board.relativePath(path.hasPrefix("/") ? path : self.navigationRoot.appendingPathComponent(path).path)
+                if let id = self.open(path: stored, lines: lines) { self.selectGoToLines(lines, in: id) }
             case .status: break
             }
         }
@@ -691,7 +692,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     @objc func showNavigator(_ sender: Any?) {
         guard window?.attachedSheet == nil else { return }
         if navigator.isOpen { return navigator.focusField() }
-        let files = BoardFiles.of(board.workingRoot)
+        let files = BoardFiles.of(navigationRoot, languages: languages)
         navigator.open(rows: canvas.navigatorRows(), files: files.index)
         files.refresh { [weak self] index in self?.navigator.update(files: index) }
     }
@@ -803,13 +804,16 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// server for those files' languages could answer (not installed, crashed), the answer's
     /// note says why, with its install hint, for the panel's footer (never a row).
     private func workspaceSymbols(named name: String) async -> NavigatorPanel.SymbolAnswer {
-        let root = board.workingRoot
-        var files = board.objects.values.filter { $0.type == .code }.compactMap { $0.props["path"]?.string }.map(board.absoluteURL)
+        let root = navigationRoot
+        let languages = languages
+        var files = board.objects.values.filter {
+            $0.type == .code && (remote == nil || ($0.props["pinnedCommit"]?.string == nil && RefSource.ref(of: $0.props) == nil))
+        }.compactMap { $0.props["path"]?.string }.map(board.absoluteURL)
         if files.isEmpty {
             let configs = LanguageServerConfig.defaults
             var counts: [String: Int] = [:]
             var first: [String: String] = [:]
-            for path in BoardFiles.of(root).index.paths.prefix(20_000) {
+            for path in BoardFiles.of(root, languages: languages).index.paths.prefix(20_000) {
                 let url = URL(fileURLWithPath: path)
                 guard let language = configs.first(where: { $0.languageID(for: url) != nil })?.language else { continue }
                 counts[language, default: 0] += 1
@@ -819,7 +823,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }
         guard !files.isEmpty else { return NavigatorPanel.SymbolAnswer(rows: []) }
         func ask() async -> Result<[LSPWorkspaceSymbol], Error> {
-            do { return .success(try await CodeNavigation.languages.workspaceSymbols(name, files: files, boardRoot: root)) } catch { return .failure(error) }
+            do { return .success(try await languages.workspaceSymbols(name, files: files, boardRoot: root)) } catch { return .failure(error) }
         }
         var answer = await ask()
         // A server that just started answers before it has read the project (pyright: nothing at
@@ -848,7 +852,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         symbols = symbols.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
         var rows: [NavigatorRow] = []
         for symbol in symbols {
-            let path = Board.relativePath(symbol.location.url.path, root: root)
+            let path = languages.relativePath(symbol.location.url.path, boardRoot: root)
             guard !path.hasPrefix("/") else { continue }
             let line = symbol.location.range.start.line + 1
             rows.append(NavigatorRow(target: .file(path, lines: LineRange(start: line, end: line)), title: symbol.name, kind: symbol.kindName.capitalized, dot: nil,

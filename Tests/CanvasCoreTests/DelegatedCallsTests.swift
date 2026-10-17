@@ -45,7 +45,8 @@ final class DelegatedCallsTests {
                 return tail.finish()
             },
             block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") },
-            status: { _ in TerminalStatus(title: "omp") }))
+            status: { _ in TerminalStatus(title: "omp") },
+            languages: { nil }))
     }
 
     func answer(_ calls: DelegatedCalls, _ method: String, _ params: JSONValue) async -> Result<JSONValue, EaslConnection.Failure> {

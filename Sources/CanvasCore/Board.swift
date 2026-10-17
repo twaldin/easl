@@ -442,7 +442,6 @@ public final class Board {
     }
 
     func commitBookkeeping(_ before: CanvasObject, props: JSONValue) {
-        // A remote board's bookkeeping is its host's.
         guard !isRemote else { return }
         var object = before
         object.props = object.props.merging(props)

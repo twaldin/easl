@@ -20,16 +20,21 @@ public struct ViewerWindow {
     public var block: (ObjectID, _ index: Int) throws -> (command: TerminalCommand, output: String)
     /// A terminal tile's title, last command and focus, as its tile knows them now; nil without it.
     public var status: (ObjectID) -> TerminalStatus?
+    /// The language servers of the board's host, which compute its diagrams (`object.reload`);
+    /// nil once the window is gone.
+    public var languages: () -> LanguageService?
 
     public init(focused: @escaping () -> Bool, viewState: @escaping () -> ViewState?,
                 submit: @escaping (ObjectID, String) async -> Bool, surfaceTail: @escaping (ObjectID, Int) -> TerminalTail.Tail?,
-                block: @escaping (ObjectID, Int) throws -> (command: TerminalCommand, output: String), status: @escaping (ObjectID) -> TerminalStatus?) {
+                block: @escaping (ObjectID, Int) throws -> (command: TerminalCommand, output: String), status: @escaping (ObjectID) -> TerminalStatus?,
+                languages: @escaping () -> LanguageService?) {
         self.focused = focused
         self.viewState = viewState
         self.submit = submit
         self.surfaceTail = surfaceTail
         self.block = block
         self.status = status
+        self.languages = languages
     }
 }
 
@@ -54,7 +59,7 @@ public struct ClientIdentity: Equatable, Sendable {
 final class DelegatedCalls {
     /// Drawings would recurse to the host; snapshots would persist content on the viewer's disk.
     /// Neither is a capability of this remote-board window.
-    static let served = ["view.get", "agent.prompt", "agent.read", "text.measure"]
+    static let served = ["view.get", "agent.prompt", "agent.read", "object.reload", "text.measure"]
 
     let board: Board
     let window: ViewerWindow
@@ -70,8 +75,13 @@ final class DelegatedCalls {
     /// know fails just this call (docs/design/next.md "Versions").
     func answer(_ call: EaslConnection.Call) async -> Result<JSONValue, EaslConnection.Failure> {
         do {
-            try ApiRouter.checkParams(call.method, call.params)
-            let p = call.params
+            var p = call.params
+            var diagram: JSONValue?
+            if call.method == "object.reload", var fields = p.object {
+                diagram = fields.removeValue(forKey: "_diagram")
+                p = .object(fields)
+            }
+            try ApiRouter.checkParams(call.method, p)
             switch call.method {
             case "view.get":
                 guard let state = window.viewState() else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
@@ -79,12 +89,33 @@ final class DelegatedCalls {
             case "agent.prompt": return .success(try await prompt(p))
             case "agent.read": return .success(try read(p))
             case "text.measure": return .success(try measure(p))
+            case "object.reload": return .success(try await reload(p, diagram: diagram))
             default: throw ApiRouter.Failure("unsupported", "\(call.method) isn't served by this board's viewer")
             }
         } catch {
             let failure = ApiRouter.failure(for: error)
             return .failure(EaslConnection.Failure(failure.code, failure.message))
         }
+    }
+
+    private func reload(_ p: JSONValue, diagram: JSONValue?) async throws -> JSONValue {
+        let id = p["id"]?.string ?? ""
+        if let diagram {
+            guard let object = try? diagram.decode(CanvasObject.self), object.id == id, object.type == .diagram else {
+                throw ApiRouter.Failure("invalid_params", "_diagram isn't diagram \(id)")
+            }
+            guard let languages = window.languages() else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
+            let graph = try await DiagramRefresh.compute(object, on: board, languages: languages)
+            var result = DiagramRefresh.summary(id, graph: graph, computed: true).object ?? [:]
+            result["graph"] = graph.json
+            result["rev"] = .number(Double(object.rev))
+            return .object(result)
+        }
+        guard let object = board.objects[id] else { throw ApiRouter.Failure("not_found", "object \(id) isn't on this board's viewer") }
+        guard object.type != .diagram else {
+            throw ApiRouter.Failure("unavailable", "diagram \(id) is computed by this viewer only from easld's copy of it (_diagram)")
+        }
+        throw ApiRouter.Failure("unavailable", "\(object.type.rawValue) tile \(id) isn't reloaded by this viewer: it computes only diagrams")
     }
 
     /// Types the prompt into the terminal's surface, as the app's own `agent.prompt` does once its

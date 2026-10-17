@@ -360,7 +360,7 @@ final class LanguageServiceTests: Sendable {
         let file = try write("main.swift", "let x = 1\n")
         let config = LanguageServerConfig(language: "swift", command: "canvas-no-such-language-server", languageIDs: ["swift": "swift"], rootMarkers: [])
         let service = LanguageService(configs: [config])
-        await #expect(throws: LSPError.unavailable(config.notFound)) {
+        await #expect(throws: LSPError.unavailable(config.notFound())) {
             try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 0, character: 4))
         }
         await #expect(throws: LSPError.unsupportedLanguage(".txt files")) {

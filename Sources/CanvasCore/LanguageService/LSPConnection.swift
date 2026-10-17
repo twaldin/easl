@@ -1,6 +1,15 @@
 import Darwin
 import Foundation
 
+struct LSPLaunch: Sendable {
+    var executable: URL
+    var arguments: [String]
+    var environment: [String: String]
+    var directory: URL?
+    var name: String
+    var remote: Bool
+}
+
 /// One language-server process speaking JSON-RPC 2.0 over stdio. Thread-safe: requests may come
 /// from any task; responses arrive on the pipe's reader thread and resume the waiting request.
 final class LSPConnection: @unchecked Sendable {
@@ -11,6 +20,7 @@ final class LSPConnection: @unchecked Sendable {
     static let maxQueuedBytes = 64 << 20
 
     let process = Process()
+    let launch: LSPLaunch
     private let input = Pipe()
     private let output = Pipe()
     private let errors = Pipe()
@@ -24,6 +34,7 @@ final class LSPConnection: @unchecked Sendable {
     private var exitWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     private var exited = false
     private var exitReason = ""
+    private var hostProcess: Int32?
     /// Work-done progress in flight (token → title), e.g. sourcekit-lsp's "Indexing".
     private var progress: [String: String] = [:]
     /// Last bytes of stderr, for the crash message. Only touched on the stderr reader thread and at exit.
@@ -36,12 +47,12 @@ final class LSPConnection: @unchecked Sendable {
     private let writeQueue = DispatchQueue(label: "canvas.lsp.write")
     private var queuedBytes = 0
 
-    init(executable: URL, arguments: [String], environment: [String: String], directory: URL,
-         onExit: @escaping Exit) {
-        process.executableURL = executable
-        process.arguments = arguments
-        process.environment = environment
-        process.currentDirectoryURL = directory
+    init(_ launch: LSPLaunch, onExit: @escaping Exit) {
+        self.launch = launch
+        process.executableURL = launch.executable
+        process.arguments = launch.arguments
+        process.environment = launch.environment
+        if let directory = launch.directory { process.currentDirectoryURL = directory }
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
@@ -49,6 +60,8 @@ final class LSPConnection: @unchecked Sendable {
     }
 
     var pid: Int32 { process.processIdentifier }
+
+    var serverPID: Int32? { launch.remote ? lock.withLock { hostProcess } : pid }
 
     func start() throws {
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -169,6 +182,8 @@ final class LSPConnection: @unchecked Sendable {
                 answer(id: id, method: method, params: message["params"])
             } else if method == "$/progress" {
                 track(message["params"])
+            } else if method == "easl/hostProcess", launch.remote, let pid = message["params"]?["pid"]?.int {
+                lock.withLock { hostProcess = hostProcess ?? Int32(clamping: pid) }
             } else if let id = message["id"]?.int {
                 guard let continuation = take(id) else { continue }
                 if let error = message["error"] {
@@ -253,7 +268,7 @@ final class LSPConnection: @unchecked Sendable {
     }
 
     private func didExit(_ status: Int32) {
-        let name = process.executableURL?.lastPathComponent ?? "language server"
+        let name = launch.name
         let (requests, waiters, reason) = lock.withLock {
             let tail = String(decoding: stderrTail, as: UTF8.self)
             let lastLine = tail.split(whereSeparator: \.isNewline).last.map { ": \($0)" } ?? ""

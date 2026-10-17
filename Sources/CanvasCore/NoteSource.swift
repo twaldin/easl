@@ -190,9 +190,7 @@ public enum NoteSource {
     /// First tracked file that declares `symbol` (its last dotted component), found by `git grep`
     /// with the strongest declaration keywords.
     static func locate(symbol: String, root: URL) async -> String? {
-        guard let name = symbol.split(separator: ".").last.map(String.init), !name.isEmpty,
-              name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }) else { return nil }
-        let pattern = "(^|[^[:alnum:]_.$])(\(DeclarationKeywords.alternation(DeclarationKeywords.kinds.keys)))[[:space:]]+([(][^)]*[)][[:space:]]*)?\(name.replacingOccurrences(of: "$", with: "\\$"))([^[:alnum:]_$]|$)"
+        guard let pattern = declarationPattern(symbol) else { return nil }
         guard let data = try? await GitRunner.shared.run(["grep", "-l", "-I", "-E", "-e", pattern], in: root, allowedStatus: [0, 1], maxOutput: maxOutput, timeout: timeout),
               let output = String(data: data, encoding: .utf8) else { return nil }
         let candidates = output.split(separator: "\n").map(String.init)
@@ -202,6 +200,12 @@ public enum NoteSource {
                 return NoteAnchor.symbolRange(symbol, in: lines(of: text)) != nil
             }
         }
+    }
+
+    static func declarationPattern(_ symbol: String) -> String? {
+        guard let name = symbol.split(separator: ".").last.map(String.init), !name.isEmpty,
+              name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }) else { return nil }
+        return "(^|[^[:alnum:]_.$])(\(DeclarationKeywords.alternation(DeclarationKeywords.kinds.keys)))[[:space:]]+([(][^)]*[)][[:space:]]*)?\(name.replacingOccurrences(of: "$", with: "\\$"))([^[:alnum:]_$]|$)"
     }
 
     /// Git for a fence is bounded: a pinned file larger than this is not an excerpt, and a stuck

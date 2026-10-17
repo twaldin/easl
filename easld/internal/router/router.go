@@ -69,7 +69,8 @@ type Router struct {
 	restartSeq uint64
 	closing    map[string]*boardClose
 	// typing: the terminals a client is typing an agent.prompt into now, with how many prompts.
-	typing map[string]int
+	typing   map[string]int
+	diagrams map[string]*diagramJob
 	// FirstReportGrace: how long agent.wait gives a terminal with no lifecycle to start reporting.
 	FirstReportGrace time.Duration
 	// PromptStartGrace: how long agent.wait gives a prompt to start the agent's turn.
@@ -96,9 +97,12 @@ type Router struct {
 // New is a router over reg; it observes every board's events (agent.wait), and measures the
 // text of reg's boards through its clients.
 func New(reg *board.Registry) *Router {
-	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[messageHold]Conn{}, restarts: map[string]uint64{}, closing: map[string]*boardClose{}, typing: map[string]int{},
+	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[messageHold]Conn{}, restarts: map[string]uint64{}, closing: map[string]*boardClose{}, typing: map[string]int{}, diagrams: map[string]*diagramJob{},
 		FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
-	reg.Hook = r.observe
+	reg.Hook = func(b *board.Board, e model.Event) {
+		r.observeDiagrams(b, e)
+		r.observe(b, e)
+	}
 	reg.Bounced = r.bounce
 	reg.Terminals = r.terminals
 	reg.Opened = r.opened
@@ -121,8 +125,8 @@ func (r *Router) Handle(req any, c *server.Conn) any {
 }
 
 // HandleConn is Handle for any connection. The sessions of owned terminals a request created or
-// deleted are up or gone (or their failure logged) before it is answered: they run once the
-// registry's lock is let go.
+// deleted are up or gone (or their failure logged) before it is answered, and a finite diagram
+// reload has waited for its graph: both happen once the registry's lock is let go.
 func (r *Router) HandleConn(req any, c Conn) any {
 	if reply, ok := r.hostCall(req); ok {
 		return reply
@@ -130,6 +134,9 @@ func (r *Router) HandleConn(req any, c Conn) any {
 	reply, before, after := r.locked(req, c)
 	if after != before {
 		r.waitSessions(after)
+	}
+	if wait, ok := reply.(diagramWait); ok {
+		return r.awaitDiagram(wait)
 	}
 	return reply
 }
@@ -160,6 +167,9 @@ func (r *Router) handle(req any, c Conn) any {
 	}
 	if result == nil {
 		return nil
+	}
+	if wait, ok := result.(diagramWait); ok {
+		return wait
 	}
 	// Swift encodes every result with JSONEncoder (JSONValue.encode), which throws on NaN and
 	// infinities; the change is made, the reply is that error.
@@ -272,7 +282,7 @@ func (r *Router) call(id any, method string, raw any, c Conn) (any, error) {
 	case "object.measure":
 		return r.measure(p)
 	case "object.reload":
-		return r.reload(p)
+		return r.reload(id, p)
 	case "object.batch":
 		return r.batch(p)
 	case "layout.check":

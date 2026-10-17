@@ -412,9 +412,11 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// Every remote image tile asks the host for a fresh drawing (`BoardMirror.onRedraw`).
     func redrawRemoteTiles() {
-        for tile in tiles.values { (tile.content as? RemoteImageTile)?.redraw() }
+        for tile in tiles.values {
+            (tile.content as? RemoteImageTile)?.redraw()
+            (tile.content as? DiagramTile)?.hostDidReconnect()
+        }
     }
 
     /// A tile's view off the board (its object deleted, or an archived question), out of the

@@ -926,6 +926,27 @@ final class BoardMirrorTests {
         #expect(host.objects.values.filter { $0.type == .note }.count == 1)
     }
 
+    @Test func aDiagramReloadComputesTheExpansionTheUserJustMade() async throws {
+        let diagram = host.create(type: .diagram, props: .object(["path": "Sources/a.swift", "symbol": "run"]))
+        var computedFor: [[String]] = []
+        router.refreshDiagram = { board, id in
+            computedFor.append(DiagramSpec(board.objects[id]?.props ?? .null).expanded)
+            return DiagramRefresh.summary(id, graph: nil, computed: true)
+        }
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "object.update" { try? await Task.sleep(for: .milliseconds(400)) }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        _ = try board.update(diagram.id, props: .object(["expanded": ["a.swift#run"]]))
+        _ = try await mirror.reloadDiagram(diagram.id)
+        try await eventually { computedFor == [["a.swift#run"]] }
+    }
+
     // MARK: The viewer as easld's client
 
     /// easld's side of the client protocol in front of the host's router: `client.attach`
@@ -1034,7 +1055,7 @@ final class BoardMirrorTests {
     /// A board's window for `serve`: key while `focused` says, its terminals typed into by `submit`.
     func window(focused: @escaping () -> Bool = { false }, submit: @escaping (ObjectID, String) async -> Bool = { _, _ in false }) -> ViewerWindow {
         ViewerWindow(focused: focused, viewState: { nil }, submit: submit, surfaceTail: { _, _ in nil },
-                     block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") }, status: { _ in nil })
+                     block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") }, status: { _ in nil }, languages: { nil })
     }
 
     @Test func aFocusDuringAttachIsKeptAfterTheWindowResigns() async throws {
@@ -1082,7 +1103,7 @@ final class BoardMirrorTests {
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
         let attach: JSONValue = .object([
             "version": 1, "schema": .string(ApiParams.schemaHash), "app": "0.2.7", "host": "studio",
-            "serves": ["view.get", "agent.prompt", "agent.read", "text.measure"], "boards": [.string(host.id)],
+            "serves": ["view.get", "agent.prompt", "agent.read", "object.reload", "text.measure"], "boards": [.string(host.id)],
         ])
         #expect(easld.attaches == [attach])
         key = true
