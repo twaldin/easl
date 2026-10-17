@@ -136,11 +136,13 @@ extension ApiRouterTests {
         #expect(try await subscriber.next() == .object(["event": "board.closed", "board": .string(board.id), "data": .object([:])]))
         #expect(try await call(subscriber, "system.ping", [:])["ok"] == .bool(true))
         #expect(try await call(client, "board.get", ["board": .string(board.id)])["result"]?["closed"] == .bool(true))
+        #expect(try await call(client, "board.list", [:])["result"]?["boards"]?.array?.first { $0["board"] == .string(board.id) }?["open"] == .bool(false))
         #expect(try await call(client, "agent.report", ["tile": .string(tile), "kind": "omp", "state": "idle", "seq": 1])["ok"] == .bool(true))
         #expect(board.objects[tile]?.props["lifecycle"]?["state"] == "idle")
         #expect(registry.open(root: board.root) === board)
         #expect(try await subscriber.next() == .object(["event": "board.opened", "board": .string(board.id), "data": .object([:])]))
         #expect(try await call(client, "board.get", ["board": .string(board.id)])["result"]?["closed"] == nil)
+        #expect(try await call(client, "board.list", [:])["result"]?["boards"]?.array?.first { $0["board"] == .string(board.id) }?["open"] == .bool(true))
         #expect(board.objects[tile]?.props["lifecycle"]?["state"] == "idle")
     }
 

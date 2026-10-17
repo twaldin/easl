@@ -44,6 +44,21 @@ func (f *fakeConn) Done() <-chan struct{} { return f.done }
 
 func (f *fakeConn) hangUp() { f.once.Do(func() { close(f.done) }) }
 
+type enqueueGateConn struct {
+	*fakeConn
+	started chan struct{}
+	release chan struct{}
+	gate    sync.Once
+}
+
+func (c *enqueueGateConn) Send(v any) bool {
+	c.gate.Do(func() {
+		close(c.started)
+		<-c.release
+	})
+	return c.fakeConn.Send(v)
+}
+
 // request is the next request the registry sent the client.
 func (f *fakeConn) request(t *testing.T) map[string]any {
 	t.Helper()
@@ -470,5 +485,88 @@ func TestRemoveBoardFailsOnlyItsCallsAndKeepsTheClientServingOtherBoards(t *test
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("other board did not receive its delegated result")
+	}
+}
+
+func TestRemoveBoardCannotRejectThenEnqueueAnOverlappingPrompt(t *testing.T) {
+	r := New()
+	conn := &enqueueGateConn{fakeConn: newConn(), started: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(conn.hangUp)
+	release := sync.OnceFunc(func() { close(conn.release) })
+	t.Cleanup(release)
+	c := attach(t, r, conn, current("0.2.0", "studio", []string{"agent.prompt", "view.get", "text.measure"}, []string{board, "brd_b"}, board))
+	closed := make(chan *Failure, 1)
+	go func() {
+		_, failure := r.Call(context.Background(), c, board, "agent.prompt", map[string]any{"target": "term_a", "text": "late prompt"}, time.Minute)
+		closed <- failure
+	}()
+	select {
+	case <-conn.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("prompt did not reach the enqueue boundary")
+	}
+
+	var queuedAtClose int
+	// Expose an unprotected enqueue to closure, or let a protected enqueue finish first.
+	if r.mu.TryLock() {
+		r.mu.Unlock()
+		r.RemoveBoard(board)
+		queuedAtClose = len(conn.sent)
+		release()
+	} else {
+		release()
+		r.RemoveBoard(board)
+		queuedAtClose = len(conn.sent)
+	}
+	select {
+	case failure := <-closed:
+		expectFailure(t, failure, api.CodeNotFound, "board brd_a was closed")
+	case <-time.After(5 * time.Second):
+		t.Fatal("closed board retained its overlapping prompt")
+	}
+	if got := len(conn.sent); got != queuedAtClose {
+		t.Fatalf("closed board enqueued a prompt after removal returned: %d queued at close, %d afterward", queuedAtClose, got)
+	}
+	request := conn.request(t)
+	params, _ := request["params"].(map[string]any)
+	if request["method"] != "agent.prompt" || params["target"] != "term_a" || params["text"] != "late prompt" {
+		t.Fatalf("client received %v, want the prompt that won dispatch before closure", request)
+	}
+	_, failure := r.Call(context.Background(), c, board, "agent.prompt", map[string]any{"target": "term_a", "text": "must not be typed"}, time.Minute)
+	expectFailure(t, failure, api.CodeNotFound, "board brd_a was closed")
+
+	for _, next := range []struct {
+		board, method, result string
+	}{
+		{"brd_b", "view.get", "other board answer"},
+		{"", "text.measure", "global answer"},
+	} {
+		done := make(chan answer, 1)
+		go func() {
+			result, failure := r.Call(context.Background(), c, next.board, next.method, map[string]any{"board": next.board}, time.Minute)
+			done <- answer{result: result, failure: failure}
+		}()
+		request := conn.request(t)
+		params, _ := request["params"].(map[string]any)
+		if request["method"] != next.method || params["board"] != next.board {
+			t.Fatalf("client received %v after close, want %s on %q", request, next.method, next.board)
+		}
+		r.Answer(conn, map[string]any{"id": request["id"], "ok": true, "result": next.result})
+		select {
+		case got := <-done:
+			if got.failure != nil || got.result != next.result {
+				t.Fatalf("%s after close returned %+v, want %q", next.method, got, next.result)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s after close did not receive its answer", next.method)
+		}
+	}
+	select {
+	case <-conn.Done():
+		t.Fatal("board removal disconnected the client")
+	default:
+	}
+	if got := len(conn.sent); got != 0 {
+		t.Fatalf("client received %d unexpected requests after close", got)
 	}
 }

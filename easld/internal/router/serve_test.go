@@ -87,14 +87,16 @@ func (c *gateClient) Send(v any) bool {
 	if _, ok := request["method"]; !ok {
 		return true
 	}
-	c.got <- struct{}{}
-	<-c.release
-	reply := map[string]any{}
-	for k, val := range c.reply {
-		reply[k] = val
-	}
-	reply["id"] = request["id"]
-	c.router.clients.Answer(c, reply)
+	go func() {
+		c.got <- struct{}{}
+		<-c.release
+		reply := map[string]any{}
+		for k, val := range c.reply {
+			reply[k] = val
+		}
+		reply["id"] = request["id"]
+		c.router.clients.Answer(c, reply)
+	}()
 	return true
 }
 

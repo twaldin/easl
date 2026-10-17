@@ -410,7 +410,7 @@ public final class BoardMirror: BoardHost {
     }
 
     private func markClosed() {
-        let pending = lastHostAvailability == .open ? held : []
+        let pending = availability == .open ? held : []
         lastHostAvailability = .closed
         let previous = state
         invalidate()

@@ -42,7 +42,7 @@ const (
 	requestPrefix       = "easld-"
 )
 
-// Conn is a client's connection.
+// Conn is a client's connection. Send queues without waiting on the peer or calling the registry.
 type Conn interface {
 	Send(v any) bool
 	// Done is closed when the connection closes.
@@ -283,6 +283,8 @@ func (r *Registry) Call(ctx context.Context, c *Client, board, method string, pa
 	pending := &call{conn: c.conn, method: method, board: board, done: make(chan answer, 1)}
 	r.pending[id] = pending
 	name := c.Name()
+	// Capability removal must not reject this call before its request is queued.
+	sent := c.conn.Send(map[string]any{"id": id, "method": method, "params": params})
 	r.mu.Unlock()
 	defer func() {
 		r.mu.Lock()
@@ -290,7 +292,7 @@ func (r *Registry) Call(ctx context.Context, c *Client, board, method string, pa
 		r.mu.Unlock()
 	}()
 	disconnected := &Failure{api.CodeUnavailable, name + " disconnected before answering " + method}
-	if !c.conn.Send(map[string]any{"id": id, "method": method, "params": params}) {
+	if !sent {
 		return nil, disconnected
 	}
 	timer := time.NewTimer(deadline)

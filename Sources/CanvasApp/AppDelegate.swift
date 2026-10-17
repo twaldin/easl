@@ -38,8 +38,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pasteMaintenance: TerminalPaste.Maintenance?
     private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
-        guard let self else { return nil }
-        return (self.controllers.values.first { $0.window === window } ?? self.remoteControllers.values.first { $0.window === window })?.canvas
+        guard let self,
+              let controller = self.controllers.values.first(where: { $0.window === window })
+                ?? self.remoteControllers.values.first(where: { $0.window === window }),
+              !controller.hostBoardClosed else { return nil }
+        return controller.canvas
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

@@ -333,13 +333,16 @@ func (c *scriptedClient) Send(v any) bool {
 	request := v.(map[string]any)
 	if _, isCall := request["method"]; isCall {
 		c.asked = append(c.asked, request)
-		if c.during != nil {
-			c.during()
-		}
+		during := c.during
 		reply := c.replies[0]
 		c.replies = c.replies[1:]
 		reply["id"] = request["id"]
-		c.router.clients.Answer(c, reply)
+		go func() {
+			if during != nil {
+				during()
+			}
+			c.router.clients.Answer(c, reply)
+		}()
 	}
 	return true
 }

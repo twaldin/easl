@@ -1445,7 +1445,7 @@ public final class ApiRouter {
             let boards = stored.map { entry -> JSONValue in
                 var info: [String: JSONValue] = [
                     "board": .string(entry.id), "root": .string(entry.root), "archived": .bool(entry.archived),
-                    "open": .bool(registry.boards[entry.id] != nil), "objects": .number(Double(entry.objectCount)),
+                    "open": .bool(registry.boards[entry.id] != nil && registry.windowIsOpen(entry.id)), "objects": .number(Double(entry.objectCount)),
                 ]
                 if let updatedAt = entry.updatedAt { info["updatedAt"] = .string(updatedAt.formatted(.iso8601)) }
                 if let repo = entry.repo { info["repo"] = .string(repo) }

@@ -1404,9 +1404,11 @@ final class TerminalTile: NSView, TileContent {
     /// A remote terminal's screen as its surface shows it, without styles; nil before it attached.
     private func liveScreen() -> (lines: [TerminalLine], cursorRow: Int?)? {
         if hostBoardClosed { return lastRemoteScreen }
-        let rows = screenRows()
-        guard !rows.isEmpty else { return nil }
-        return (rows.map { TerminalLine(runs: [TerminalRun(text: $0.text, style: TerminalStyle())]) }, nil)
+        guard let surface, let grid, grid.rows > 0 else { return nil }
+        let lines = (0..<grid.rows).map { row in
+            TerminalLine(runs: [TerminalRun(text: surface.viewportRow(row, columns: grid.columns) ?? "", style: TerminalStyle())])
+        }
+        return (lines, nil)
     }
 
     /// Temporarily covers the Metal surface with its text (`prepareSnapshot`) so `cacheDisplay`
