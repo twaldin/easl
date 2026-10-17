@@ -97,7 +97,7 @@ final class BoardMirrorTests {
         let router = router
         server = SocketServer(path: socket) { request, connection in
             if request["method"]?.string == "view.seen", refuse.withLock({ $0 }) {
-                return .object(["id": request["id"] ?? .null, "ok": false,
+                return .object(["id": request["id"] ?? .null, "ok": .bool(false),
                                 "error": .object(["code": "unavailable", "message": "acknowledgment refused"])])
             }
             return await router.handle(request, connection: connection)
@@ -123,7 +123,7 @@ final class BoardMirrorTests {
         mirror.reconnect()
         try await eventually { mirror.state == .online }
         view.markSeen(terminal)
-        try await eventually { host.objects[terminal]?.props["lifecycle"]?["seen"] == true }
+        try await eventually { host.objects[terminal]?.props["lifecycle"]?["seen"]?.bool == true }
         #expect(host.objects[terminal]?.props["lifecycle"]?["state"] == "idle")
     }
 

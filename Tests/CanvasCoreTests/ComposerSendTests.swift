@@ -461,22 +461,21 @@ final class ComposerSendTests {
         let a = code("a.py"), b = code("b.py")
         let first = try board.stage(line(a, "a.py"))
         let second = try board.stage(line(b, "b.py"))
-        var events: [(String, String, [String])] = []
+        var events: [ComposerNotice] = []
         board.onEvent = { event in
-            if case .composer(let notice) = event {
-                events.append((notice.kind == .submitted ? "submitted" : "returned", "\(notice.viewer) \(notice.terminal)", notice.ids))
-            }
+            if case .composer(let notice) = event { events.append(notice) }
         }
-        let queued = board.queueComposerPrompt("[1] one [2] two", to: alpha, mentions: [first, second], viewer: "vw_viewer01")
-        let other = board.queueComposerPrompt("[1] one [2] two", to: beta, mentions: [first, second], viewer: "vw_viewer02")
-        #expect(board.composerPrompts[alpha]?.first?.id == queued)
-        #expect(board.composerPrompts[alpha]?.first?.origins == [first.id, second.id])
-        #expect(board.composerPrompts[alpha]?.first?.mentions.map(\.id) != [first.id, second.id])
+        board.queueComposerPrompt("[1] one [2] two", to: alpha, mentions: [first, second], viewer: "vw_viewer01")
+        board.queueComposerPrompt("[1] one [2] two", to: beta, mentions: [first, second], viewer: "vw_viewer02")
+        board.withdraw([first.id, second.id])
         #expect(try await drain(alpha, "[1] one [2] two") == ["[1] a.py", "[2] b.py"])
-        #expect(events == [("submitted", "vw_viewer01 \(alpha)", [first.id, second.id])])
-        #expect(board.composerPrompts[alpha] == nil)
-        #expect(board.composerPrompts[beta]?.map(\.id) == [other])
-        #expect(board.tray.map(\.id) == [first.id, second.id])
+        let submitted = try #require(events.first)
+        #expect(events.count == 1 && submitted.kind == .submitted)
+        #expect(submitted.viewer == "vw_viewer01" && submitted.terminal == alpha && submitted.ids == [first.id, second.id])
+        #expect(try await drain(alpha, "[1] one [2] two") == [])
+        #expect(try await drain(beta, "[1] one [2] two") == ["[1] a.py", "[2] b.py"])
+        #expect(events.last?.viewer == "vw_viewer02")
+        #expect(board.tray.isEmpty)
     }
 
     @Test func anUnrelatedDrainAndADrainWithoutAPromptLeaveTheQueue() async throws {

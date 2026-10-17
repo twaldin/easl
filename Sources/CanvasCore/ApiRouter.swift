@@ -2249,7 +2249,7 @@ public final class ApiRouter {
                 if op["params"]?["viewer"] != nil || op["params"]?["step"] != nil {
                     throw Failure("invalid_params", "viewer and step mark a remote window's own edit: they aren't taken inside object.batch")
                 }
-                var raw = prepared(method, try Self.replacingReferences(op["params"] ?? .object([:])) { n, _ in updating[n].map(JSONValue.string) })
+                var raw = prepared(method, Self.replacingReferences(op["params"] ?? .object([:])) { n, _ in updating[n].map(JSONValue.string) })
                 if method == "object.upsert" {
                     let key = try string(raw, "key")
                     (method, raw) = try upserted(raw, plan: plan)

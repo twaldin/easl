@@ -6,7 +6,7 @@ extension BoardMirrorTests {
     @Test func undoAndRedoGoThroughTheHostAndAnotherViewerSeesThem() async throws {
         let moved = note("drag me")
         let (mirror, board) = try await mirror()
-        let (watcher, other) = try await mirror()
+        let (watcher, other) = try await self.mirror()
         defer {
             mirror.close()
             watcher.close()
@@ -40,7 +40,7 @@ extension BoardMirrorTests {
         }
         try server.start()
         let (mirror, board) = try await mirror()
-        let (watcher, other) = try await mirror()
+        let (watcher, other) = try await self.mirror()
         defer {
             mirror.close()
             watcher.close()
@@ -91,7 +91,7 @@ extension BoardMirrorTests {
         }
         try server.start()
         let (mirror, board) = try await mirror()
-        let (watcher, other) = try await mirror()
+        let (watcher, other) = try await self.mirror()
         defer {
             mirror.close()
             watcher.close()
@@ -142,7 +142,7 @@ extension BoardMirrorTests {
         }
         try server.start()
         let (mirror, board) = try await mirror()
-        let (watcher, other) = try await mirror()
+        let (watcher, other) = try await self.mirror()
         defer {
             mirror.close()
             watcher.close()
@@ -174,7 +174,7 @@ extension BoardMirrorTests {
     @Test func undoAndRedoKeepAnotherViewersReplacement() async throws {
         let moved = note("original")
         let (mirror, board) = try await mirror()
-        let (watcher, other) = try await mirror()
+        let (watcher, other) = try await self.mirror()
         defer {
             mirror.close()
             watcher.close()
@@ -211,7 +211,7 @@ extension BoardMirrorTests {
         }
         try server.start()
         let (mirror, board) = try await mirror()
-        let (watcher, other) = try await mirror()
+        let (watcher, other) = try await self.mirror()
         defer {
             mirror.close()
             watcher.close()
@@ -359,7 +359,7 @@ extension BoardMirrorTests {
     @Test func bringingTwoNotesToFrontRestacksThemOnTheHostAsOneStep() async throws {
         let back = note("back"), middle = note("middle", at: 400), front = note("front", at: 800)
         let (mirror, board) = try await mirror()
-        let (watcher, other) = try await mirror()
+        let (watcher, other) = try await self.mirror()
         defer {
             mirror.close()
             watcher.close()
