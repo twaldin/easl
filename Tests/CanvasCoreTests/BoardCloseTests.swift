@@ -155,6 +155,52 @@ extension ApiRouterTests {
         #expect(try await inbox.next()["error"]?["code"] == "not_found")
     }
 
+    @Test func anExistingWaitKeepsItsGraceWhileAnAsyncCloseFails() async throws {
+        let tile = terminal()
+        router.firstReportGrace = 0.5
+        let waiter = try connect(), client = try connect()
+        waiter.send(#"{"id":"wait","method":"agent.wait","params":{"target":"\#(tile)","timeoutMs":3000}}"#)
+        waiter.send(#"{"id":"ready","method":"system.ping","params":{}}"#)
+        #expect(try await waiter.next()["id"] == "ready")
+        router.closeBoard = { _, _ in
+            let response = try await waiter.next()
+            #expect(response["error"]?["code"] == "unavailable")
+            #expect(response["error"]?["message"]?.string?.contains("reports no agent lifecycle") == true)
+            throw ApiRouter.Failure("unavailable", "session ending failed")
+        }
+        #expect(try await call(client, "board.close", ["board": .string(board.id), "endSessions": .bool(true)])["error"]?["code"] == "unavailable")
+        #expect(registry.boards[board.id] === board)
+    }
+
+    @Test func aPromptSuspendedBeforeTypingRefusesABoardThatStartedClosing() async throws {
+        let tile = terminal()
+        let client = try connect(), closer = try connect()
+        var started: CheckedContinuation<Void, Never>?
+        var finish: CheckedContinuation<Void, Never>?
+        defer { finish?.resume() }
+        router.closeBoard = { _, _ in
+            started?.resume()
+            await withCheckedContinuation { finish = $0 }
+            throw ApiRouter.Failure("unavailable", "session ending failed")
+        }
+        router.readTerminal = { [self] _, _, _ in
+            await withCheckedContinuation {
+                started = $0
+                closer.send(#"{"id":"close","method":"board.close","params":{"board":"\#(board.id)","endSessions":true}}"#)
+            }
+            return nil
+        }
+        let refused = try await call(client, "agent.prompt", ["target": .string(tile), "text": "must not be typed", "force": .bool(true)])
+        #expect(refused["error"]?["code"] == "conflict")
+        #expect(submitted.isEmpty)
+        finish?.resume()
+        finish = nil
+        #expect(try await closer.next()["error"]?["code"] == "unavailable")
+        router.readTerminal = nil
+        #expect(try await call(client, "agent.prompt", ["target": .string(tile), "text": "board is usable", "force": .bool(true)])["ok"] == .bool(true))
+        #expect(submitted == ["board is usable"])
+    }
+
     @Test func aSecondCloseIsNotFoundAndLeavesTheStoredBoardAlone() async throws {
         _ = terminal()
         let client = try connect()
@@ -212,5 +258,39 @@ extension AgentControlTests {
         #expect(try await call("board.close", ["board": .string(board.id)])["result"]?["kept"] == .array([.object(["id": .string(worker), "name": "worker"])]))
         #expect(restarted.isEmpty)
         #expect(try await call("board.get", ["board": .string(board.id)])["error"]?["code"] == "not_found")
+    }
+
+    @Test func aClosingBoardRefusesConcurrentRequestsAndAFailedCloseReleasesIt() async throws {
+        let worker = terminal(name: "worker", command: ["omp"])
+        let mention = try board.stage(.object(worker))
+        let otherRoot = dir.appendingPathComponent("other")
+        try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
+        let other = registry.open(root: otherRoot)
+        router.closeBoard = { [unowned self] _, _ in
+            let requests: [(String, [String: JSONValue])] = [
+                ("object.create", ["board": .string(board.id), "type": "terminal", "props": .object(["name": "intruder"])]),
+                ("object.create", ["caller": .string(worker), "type": "terminal", "props": .object(["name": "intruder"])]),
+                ("object.create", ["type": "terminal", "props": .object(["name": "intruder"])]),
+                ("agent.prompt", ["target": .string(worker), "text": "must not reach a closing terminal"]),
+                ("board.open", ["root": .string(board.root.path + "/.")]),
+                ("object.update", ["id": .string(worker), "props": .object(["name": "changed"])]),
+                ("tray.unstage", ["id": .string(mention.id)]),
+            ]
+            for (method, params) in requests {
+                let response = try await call(method, params)
+                #expect(response["error"]?["code"] == "conflict", "\(method): \(response)")
+            }
+            let created = try await call("object.create", ["board": .string(other.id), "type": "note", "props": .object(["markdown": "other board stays writable"])])
+            #expect(created["result"]?["object"]?["props"]?["markdown"] == "other board stays writable")
+            throw ApiRouter.Failure("unavailable", "session ending failed")
+        }
+        let response = try await call("board.close", ["board": .string(board.id), "endSessions": .bool(true)])
+        #expect(response["error"]?["code"] == "unavailable")
+        #expect(Set(board.objects.keys) == [worker])
+        #expect(board.objects[worker]?.props["name"] == "worker")
+        #expect(board.tray.map(\.id) == [mention.id])
+        #expect(registry.boards[board.id] === board)
+        let created = try await call("object.create", ["board": .string(board.id), "type": "note", "props": .object(["markdown": "close failed, board is usable"])])
+        #expect(created["result"]?["object"]?["props"]?["markdown"] == "close failed, board is usable")
     }
 }

@@ -472,6 +472,7 @@ func waitCloseFile(t *testing.T, path string) {
 func TestBoardCloseSerializesSessionWorkAndRejectsConcurrentMutation(t *testing.T) {
 	f, state := owning(t)
 	tile := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	mention := f.result("tray.stage", map[string]any{"target": map[string]any{"kind": "object", "object": tile}})["mention"].(map[string]any)["id"].(string)
 	wrapper := filepath.Join(t.TempDir(), "zmx")
 	script := "#!/bin/sh\nif [ \"$1\" = kill ]; then : > \"$ZMX_DIR/.close-kill\"; while [ ! -e \"$ZMX_DIR/.close-release\" ]; do sleep 0.01; done; fi\nexec '" + f.router.Sessions.Zmx + "' \"$@\"\n"
 	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
@@ -511,10 +512,17 @@ func TestBoardCloseSerializesSessionWorkAndRejectsConcurrentMutation(t *testing.
 		"board.open":    {"root": f.board.Root()},
 		"agent.restart": {"target": tile, "mode": "fresh", "force": true},
 		"board.close":   {},
+		"tray.unstage":  {"id": mention},
 	} {
 		if code, message := errorOf(f.call(method, params)); code != "conflict" || !strings.Contains(message, "is closing") {
 			t.Errorf("%s during close: %s %q", method, code, message)
 		}
+	}
+	f.router.reg.Mu.Lock()
+	tray := f.board.Tray()
+	f.router.reg.Mu.Unlock()
+	if len(tray) != 1 || tray[0].ID != mention {
+		t.Errorf("closing board's tray changed: %v", tray)
 	}
 	if err := os.WriteFile(release, nil, 0o600); err != nil {
 		t.Fatal(err)

@@ -257,7 +257,7 @@ public final class ApiRouter {
     /// Terminals agent.restart is killing and relaunching: until it is done nothing else reaches
     /// them (agent.prompt is refused, agent.inbox offers nothing, another restart is refused).
     var restarting: Set<ObjectID> = []
-    var closingBoards: Set<BoardID> = []
+    private var closingBoards: Set<BoardID> = []
     /// Terminals `agent.prompt` is typing into now (its checks, the screen reads, the paste and
     /// Enter), with how many prompts: an unforced restart waits for them (`promptPending`).
     private var typing: [ObjectID: Int] = [:]
@@ -539,7 +539,7 @@ public final class ApiRouter {
     private func recheck(_ token: UUID) {
         guard let index = waiters.firstIndex(where: { $0.token == token }) else { return }
         let waiter = waiters[index]
-        guard let (board, _) = try? agentTile(waiter.tile) else { return }
+        guard let (board, _) = try? resolveAgentTile(waiter.tile) else { return }
         guard let reply = reply(to: waiter, on: board) else {
             if let prompted = pendingPrompts[waiter.tile] { recheck(token, at: prompted.addingTimeInterval(promptStartGrace)) }
             return
@@ -634,6 +634,12 @@ public final class ApiRouter {
     /// The terminal `target` addresses (AgentAddress: a tile id, `name` or `name@board`) on the
     /// open boards; a bare name on `caller`'s board first.
     func agentTile(_ target: String, caller: ObjectID? = nil) throws -> (Board, CanvasObject) {
+        let (board, terminal) = try resolveAgentTile(target, caller: caller)
+        return (try available(board), terminal)
+    }
+
+    // Existing wait timers and sender labels still resolve while their board closes.
+    private func resolveAgentTile(_ target: String, caller: ObjectID? = nil) throws -> (Board, CanvasObject) {
         try AgentAddress.resolve(target, caller: caller, boards: Array(registry.boards.values))
     }
 
@@ -836,6 +842,7 @@ public final class ApiRouter {
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
         if let queued = Self.queued(id, for: terminal.id, on: board) { return try messageResult(queued, to: current, on: board, duplicate: true) }
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
+        try available(board)
         if board.agentExited(terminal.id) { throw Self.agentExited(current) }
         guard PromptTarget.takesMessages(current), board.agentSession(of: terminal.id) == session else {
             throw Failure("unavailable", "\(terminal.id)'s agent session ended while the message was being sent (its agent was released, exited, "
@@ -1059,6 +1066,7 @@ public final class ApiRouter {
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
+        try available(board)
         guard board.agentSession(of: terminal.id) == session else {
             throw Failure("unavailable", "\(terminal.id)'s agent session ended while the prompt was being sent (its agent was released, exited, "
                 + "restarted, or another session took the terminal), so nothing was typed; agent.list shows what runs there now")
@@ -1068,7 +1076,7 @@ public final class ApiRouter {
         var queued: String?
         switch attached {
         case .agent:
-            let senderName = sender.flatMap { try? agentTile($0) }.map { PromptTarget.label($0.1, shownTitle: terminalStatus?($0.0, $0.1.id).title) }
+            let senderName = sender.flatMap { try? resolveAgentTile($0) }.map { PromptTarget.label($0.1, shownTitle: terminalStatus?($0.0, $0.1.id).title) }
             handed = try board.handOff(mentions, to: terminal.id, from: sender, fromName: senderName)
         case .composer(let given, let answer):
             if PromptTarget.drains(current), !PromptTarget.skipsDrain(text, in: current), answer ? PromptTarget.answersAsPrompt(current) : !given.isEmpty {
@@ -1393,6 +1401,9 @@ public final class ApiRouter {
             guard expanded.hasPrefix("/") else { throw Failure("invalid_params", "root must be an absolute path (or start with ~)") }
             let root = URL(fileURLWithPath: expanded).standardizedFileURL
             guard BoardStore.isDirectory(root.path) else { throw Failure("not_found", "no directory at \(root.path)") }
+            if !closingBoards.isEmpty, let existing = registry.boards[BoardStore.boardID(for: root)] {
+                try available(existing)
+            }
             let board = openBoard?(root, p["select"]?.bool ?? false) ?? registry.open(root: root)
             var result: [String: JSONValue] = ["board": .string(board.id), "root": .string(board.root.path), "objects": .number(Double(board.objects.count))]
             if let worktree = GitWorktree.containing(root.path), worktree.commonDir == board.repo?.commonDir {
@@ -1519,6 +1530,7 @@ public final class ApiRouter {
         case "tray.unstage":
             let id = try string(p, "id")
             guard let board = registry.boards.values.first(where: { $0.tray.contains { $0.id == id } }) else { throw BoardError.notFound("mention \(id)") }
+            try available(board)
             try board.unstage(id)
             return .object([:])
 
@@ -2427,20 +2439,26 @@ public final class ApiRouter {
         return value
     }
 
+    @discardableResult
+    private func available(_ board: Board) throws -> Board {
+        guard !closingBoards.contains(board.id) else { throw Failure("conflict", "board \(board.id) is closing") }
+        return board
+    }
+
     /// Target board: explicit `board`, else the caller tile's board, else the frontmost board.
     func board(_ p: JSONValue) throws -> Board {
         if let id = p["board"]?.string {
             guard let board = registry.board(id: id) else { throw BoardError.notFound("board \(id)") }
-            return board
+            return try available(board)
         }
-        if let caller = p["caller"]?.string, let board = registry.board(containing: caller) { return board }
-        if let id = registry.frontmost, let board = registry.boards[id] { return board }
+        if let caller = p["caller"]?.string, let board = registry.board(containing: caller) { return try available(board) }
+        if let id = registry.frontmost, let board = registry.boards[id] { return try available(board) }
         throw Failure("not_found", "no open board")
     }
 
     func board(forObject id: ObjectID) throws -> Board {
         guard let board = registry.board(containing: id) else { throw BoardError.notFound("object \(id)") }
-        return board
+        return try available(board)
     }
 
     /// A caller is only honored when it is a terminal tile, on any open board: an agent working

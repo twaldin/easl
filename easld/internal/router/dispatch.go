@@ -116,6 +116,9 @@ func (r *Router) dispatch(method string, p map[string]any) (any, error) {
 		for _, b := range r.reg.SortedBoards() {
 			for _, m := range b.Tray() {
 				if m.ID == id {
+					if _, err := r.availableBoard(b); err != nil {
+						return nil, err
+					}
 					if err := b.Unstage(id); err != nil {
 						return nil, err
 					}

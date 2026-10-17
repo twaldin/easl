@@ -224,7 +224,6 @@ extension ApiRouter {
     /// the relaunched agent reports is its own.
     func restart(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"), caller: p["caller"]?.string)
-        guard !closingBoards.contains(board.id) else { throw Failure("conflict", "board \(board.id) is closing") }
         let mode = try string(p, "mode")
         guard mode == "resume" || mode == "fresh" else { throw Failure("invalid_params", "mode is resume or fresh, not \(mode)") }
         var args: [String] = []
