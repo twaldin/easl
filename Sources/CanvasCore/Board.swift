@@ -179,6 +179,26 @@ public final class Board {
     var codePreviews: [ObjectID: (tile: ObjectID, rev: Int)] = [:]
     /// The pending check for the earliest open question's `expiresAt` (Question.swift).
     var questionExpiry: DispatchWorkItem?
+    public private(set) var isClosed = false
+
+    func deactivate() {
+        isClosed = true
+        questionExpiry?.cancel()
+        questionExpiry = nil
+        onChange = nil
+        onEvent = nil
+        onTerminalsEnded = nil
+        onMessagesBounced = nil
+        viewport = { nil }
+        arrowPath = nil
+        settleArrows = nil
+        settledRouting = nil
+        pageElements = nil
+        terminalLabel = nil
+        terminalScreen = nil
+        terminalBlockIndex = nil
+        onHostRekey = nil
+    }
 
     public var onEvent: ((BoardEvent) -> Void)?
     /// Content changes by anyone, for ⌘Z; see UndoHistory.

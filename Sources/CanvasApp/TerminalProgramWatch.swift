@@ -26,6 +26,11 @@ final class TerminalProgramWatch {
         DispatchQueue.main.async { self.update() }
     }
 
+    func remove(_ tile: TerminalTile) {
+        tiles.remove(tile)
+        update()
+    }
+
     private func update() {
         let shown = tiles.allObjects.contains { $0.window.map(Self.shows) == true }
         if shown, timer == nil {

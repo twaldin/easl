@@ -67,6 +67,7 @@ type Router struct {
 	// terminal: agent.prompt is refused, agent.inbox offers nothing, another restart is refused.
 	restarts   map[string]uint64
 	restartSeq uint64
+	closing    map[string]*boardClose
 	// typing: the terminals a client is typing an agent.prompt into now, with how many prompts.
 	typing map[string]int
 	// FirstReportGrace: how long agent.wait gives a terminal with no lifecycle to start reporting.
@@ -95,7 +96,7 @@ type Router struct {
 // New is a router over reg; it observes every board's events (agent.wait), and measures the
 // text of reg's boards through its clients.
 func New(reg *board.Registry) *Router {
-	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[messageHold]Conn{}, restarts: map[string]uint64{}, typing: map[string]int{},
+	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[messageHold]Conn{}, restarts: map[string]uint64{}, closing: map[string]*boardClose{}, typing: map[string]int{},
 		FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
 	reg.Hook = r.observe
 	reg.Bounced = r.bounce
@@ -442,15 +443,15 @@ func (r *Router) boardOf(p map[string]any) (*board.Board, error) {
 		if !ok {
 			return nil, board.NotFound("board %s", id)
 		}
-		return b, nil
+		return r.availableBoard(b)
 	}
 	if caller, ok := p["caller"].(string); ok {
 		if b, ok := r.reg.Containing(caller); ok {
-			return b, nil
+			return r.availableBoard(b)
 		}
 	}
 	if b, ok := r.reg.Boards()[r.reg.Frontmost]; ok {
-		return b, nil
+		return r.availableBoard(b)
 	}
 	return nil, fail(api.CodeNotFound, "no open board")
 }
@@ -460,7 +461,7 @@ func (r *Router) boardForObject(id string) (*board.Board, error) {
 	if !ok {
 		return nil, board.NotFound("object %s", id)
 	}
-	return b, nil
+	return r.availableBoard(b)
 }
 
 // callerOf honours a caller only when it is a terminal tile on an open board.

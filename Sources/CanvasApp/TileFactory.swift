@@ -14,11 +14,12 @@ enum TileFactory {
         object.type == .question && QuestionSpec(object.props).archived
     }
 
-    /// Remote HTML runs here; other file-backed tiles show the host's rendering.
+    /// Remote HTML runs here; terminals attach where their sessions run. Other file-backed
+    /// tiles show the host's rendering (docs/design.md "Client mode").
     static func make(_ object: CanvasObject, board: Board, remote: RemoteSource? = nil) -> any TileContent {
         if let remote {
             switch object.type {
-            case .terminal: return TerminalTile(object: object, board: board, attach: remote.attachCommand(for: object.id))
+            case .terminal: return TerminalTile(object: object, board: board, attach: remote.attachCommand(for: object))
             case .note: return NoteTile(object: object, board: board)
             case .question: return QuestionTile(object: object, board: board)
             case .html: return HtmlTile(object: object, board: board, files: remote.files)

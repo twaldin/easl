@@ -16,6 +16,10 @@ import Foundation
 /// is never resent: it may or may not have applied. One link carries every request in order (the
 /// app answers a connection's requests one at a time), so a long `agent.wait` holds up the rest.
 ///
+/// The server's own calls on the link (`{id: "easld-<n>", method, params}`, docs/design/next.md
+/// "Framing": an easld this viewer attached to as its client) go to `serve`'s handler, each in a
+/// task of its own, and each answer goes back with the call's id on the link it came on.
+///
 /// Thread-safe; every link callback runs on one serial queue.
 public final class EaslConnection: @unchecked Sendable {
     public enum State: String, Sendable {
@@ -49,6 +53,17 @@ public final class EaslConnection: @unchecked Sendable {
         }
 
         public var description: String { "\(code): \(message)" }
+    }
+
+    /// A request the server sent on this link: one of `client.attach`'s delegated calls.
+    public struct Call: Sendable {
+        public var method: String
+        public var params: JSONValue
+
+        public init(method: String, params: JSONValue) {
+            self.method = method
+            self.params = params
+        }
     }
 
     /// Waits between attempts: `initial`, doubling after each failed one, at most `maximum`;
@@ -192,6 +207,14 @@ public final class EaslConnection: @unchecked Sendable {
         }
     }
 
+    /// Answers the server's calls with `handler` from now on (nil: each fails `unavailable`). Each
+    /// runs in a task of its own, so a slow one holds up neither the others nor this link's own
+    /// requests and events. An answer goes back on the link its call came on, or nowhere once that
+    /// link is gone: the server answered its caller then, and a new link's ids start again.
+    public func serve(_ handler: (@Sendable (Call) async -> Result<JSONValue, Failure>)?) {
+        queue.async { self.server = handler }
+    }
+
     /// Ends the link and every request, and stops reconnecting. The state ends `offline`, and
     /// `states()` and `events()` finish.
     public func close() {
@@ -240,6 +263,8 @@ public final class EaslConnection: @unchecked Sendable {
     private var cancelled: Set<Int> = []
     private var stateWatchers: [UUID: AsyncStream<State>.Continuation] = [:]
     private var eventWatchers: [UUID: AsyncStream<Event>.Continuation] = [:]
+    /// What answers the server's calls (`serve`).
+    private var server: (@Sendable (Call) async -> Result<JSONValue, Failure>)?
 
     private struct Pending {
         var method: String
@@ -265,6 +290,22 @@ public final class EaslConnection: @unchecked Sendable {
         // The schema's ids are strings.
         let message: JSONValue = .object(["id": .string(String(id)), "method": .string(method), "params": params])
         return ((try? JSONEncoder().encode(message)) ?? Data()) + [0x0A]
+    }
+
+    /// The answer to the server's call `id`: `{id, ok: true, result}` or `{id, ok: false, error}`.
+    private static func answerLine(id: String, _ answer: Result<JSONValue, Failure>) -> Data {
+        var message: [String: JSONValue] = ["id": .string(id)]
+        switch answer {
+        case .success(let result):
+            message["ok"] = .bool(true)
+            message["result"] = result
+        case .failure(let failure):
+            var error: [String: JSONValue] = ["code": .string(failure.code), "message": .string(failure.message)]
+            if let data = failure.data { error["data"] = data }
+            message["ok"] = .bool(false)
+            message["error"] = .object(error)
+        }
+        return ((try? JSONEncoder().encode(JSONValue.object(message))) ?? Data()) + [0x0A]
     }
 
     private func enqueue(_ id: Int, _ method: String, _ params: JSONValue, _ timeout: Duration?, _ continuation: CheckedContinuation<JSONValue, Error>) {
@@ -454,6 +495,10 @@ public final class EaslConnection: @unchecked Sendable {
             for watcher in eventWatchers.values { watcher.yield(event) }
             return
         }
+        if let method = message["method"]?.string {
+            guard let id = message["id"]?.string else { return }
+            return called(Call(method: method, params: message["params"] ?? .object([:])), id: id, on: link)
+        }
         guard let id = message["id"]?.string.flatMap({ Int($0) }) else { return }
         let failure = message["ok"]?.bool == true ? nil : Failure(
             message["error"]?["code"]?.string ?? "internal",
@@ -467,6 +512,20 @@ public final class EaslConnection: @unchecked Sendable {
             return
         }
         finish(id, failure.map { .failure($0) } ?? .success(message["result"] ?? .null))
+    }
+
+    /// Runs the server's call off this queue (its handler may wait on the main actor, which may be
+    /// waiting on this queue), then writes the answer on `link` if that is still the link.
+    private func called(_ call: Call, id: String, on link: Link) {
+        let handler = server
+        Task { [weak self] in
+            let answer = await handler?(call) ?? .failure(Failure("unavailable", "this client serves no calls on this connection"))
+            guard let self else { return }
+            self.queue.async {
+                guard self.link === link else { return }
+                self.write(Self.answerLine(id: id, answer), on: link)
+            }
+        }
     }
 
     private func startHandshake(on link: Link) {

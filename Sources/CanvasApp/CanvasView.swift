@@ -169,6 +169,7 @@ final class CanvasView: NSScrollView {
     /// first turn would record the unplaced view over the real one.
     private var viewPlaced = false
     private var viewportSave: DispatchWorkItem?
+    private var discarded = false
     /// The saved view this board opened with, held until the user first moves the view: the
     /// window can still change size after the board opens (a tab joining the group, the saved
     /// frame, a hidden tab shown), and the view shows that centre through it, not the corner
@@ -280,6 +281,22 @@ final class CanvasView: NSScrollView {
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    func discard() {
+        discarded = true
+        viewportSave?.cancel()
+        activitySettle?.cancel()
+        panAnimation?.cancel()
+        mentionFlash?.cancel()
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+        mouseMonitor = nil
+        NotificationCenter.default.removeObserver(self)
+        for tile in tiles.values {
+            (tile.content as? TerminalTile)?.discard()
+            tile.removeFromSuperview()
+        }
+        tiles.removeAll()
+    }
 
     override func tile() {
         super.tile()
@@ -2358,7 +2375,7 @@ final class CanvasView: NSScrollView {
         guard !livenessScheduled else { return }
         livenessScheduled = true
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, !self.discarded else { return }
             self.livenessScheduled = false
             self.updateScene()
         }

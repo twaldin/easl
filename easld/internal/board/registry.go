@@ -156,7 +156,16 @@ func (r *Registry) load(root, id, commonDir string) (*Board, error) {
 		}
 		b.Repo = rec
 	}
-	b.OnChange = func() { r.Store.ScheduleSave(b.id, b.Snapshot) }
+	b.OnChange = func() {
+		if !b.closed {
+			r.Store.ScheduleSave(b.id, func() *store.Snapshot {
+				if r.boards[b.id] != b {
+					return nil
+				}
+				return b.Snapshot()
+			})
+		}
+	}
 	b.Lock = &r.Mu
 	return b, nil
 }
@@ -184,20 +193,35 @@ func (r *Registry) Containing(id string) (*Board, bool) {
 	return nil, false
 }
 
-// Close saves and closes a board.
-func (r *Registry) Close(id string) {
-	if b, ok := r.boards[id]; ok {
-		delete(r.boards, id)
-		b.StopQuestionExpiry()
-		r.Store.Cancel(id)
-		_ = r.Store.Write(b.Snapshot())
+// Close saves the latest board, commits the caller's durable close state, then evicts it.
+// A failed save or commit leaves the board open. The caller holds Mu.
+func (r *Registry) Close(id string, persistClosed func() error) error {
+	b, ok := r.Board(id)
+	if !ok {
+		return NotFound("board %s", id)
 	}
+	if err := r.Store.Write(b.Snapshot()); err != nil {
+		return err
+	}
+	if persistClosed != nil {
+		if err := persistClosed(); err != nil {
+			return err
+		}
+	}
+	id = b.id
+	delete(r.boards, id)
+	b.closed = true
+	b.StopQuestionExpiry()
+	b.OnChange, b.OnEvent, b.OnMessagesBounced, b.OnTerminals = nil, nil, nil, nil
+	b.Viewport, b.Texts = nil, nil
+	r.Store.Cancel(id)
 	if r.Frontmost == id {
 		r.Frontmost = ""
 		if ids := r.SortedBoards(); len(ids) > 0 {
 			r.Frontmost = ids[0].id
 		}
 	}
+	return nil
 }
 
 // Subscribe adds an event subscriber (board "" for all, events nil for all).

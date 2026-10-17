@@ -13,13 +13,15 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     public var sshTarget: String
     /// The host's easl socket.
     public var socketPath: String
-    /// The host's GUI session TMPDIR, where zmx keeps its sessions; an ssh session's differs on
-    /// a Mac (`getconf DARWIN_USER_TEMP_DIR` finds the GUI's).
+    /// The host's temporary directory. A Mac app's zmx uses its GUI session's TMPDIR,
+    /// found with `getconf DARWIN_USER_TEMP_DIR`, rather than an ssh session's.
     public var tmpdir: String
     /// The host's `easl` CLI.
     public var easlBin: String
     /// The host's zmx: a non-interactive ssh session's PATH may lack Homebrew's directory.
     public var zmxBin: String
+    /// easld's session directory; nil for a Mac app, whose sessions use the GUI TMPDIR.
+    public var zmxDir: String?
     /// The app bundle that owns `socketPath`, which `startCommand` opens; nil when the viewer
     /// can't tell (a development instance's launcher isn't discoverable) or the host isn't a Mac.
     public var appBundle: String?
@@ -27,17 +29,27 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     /// FreeBSD's; Apple's `-N` takes a probe count). Without it `nc -U` outlives a closed stdin, so
     /// a relay the viewer ended could stay on the host.
     public var ncShutdown: Bool
+    /// What answers at `socketPath`: the Mac app, which answers a viewer's delegated calls itself
+    /// and takes no `client.attach`, or easld, whose viewers attach as its clients. Nil for a host
+    /// remembered before easl recorded it (`Recents`): every board opens from a fresh discovery.
+    public var server: Server?
+
+    public enum Server: String, Codable, Sendable {
+        case app, easld
+    }
 
     public init(name: String, sshTarget: String, socketPath: String, tmpdir: String, easlBin: String, zmxBin: String = "zmx",
-                appBundle: String? = nil, ncShutdown: Bool = false) {
+                appBundle: String? = nil, ncShutdown: Bool = false, zmxDir: String? = nil, server: Server? = nil) {
         self.name = name
         self.sshTarget = sshTarget
         self.socketPath = socketPath
         self.tmpdir = tmpdir
         self.easlBin = easlBin
         self.zmxBin = zmxBin
+        self.zmxDir = zmxDir
         self.appBundle = appBundle
         self.ncShutdown = ncShutdown
+        self.server = server
     }
 
     /// The ssh client every remote command runs: `/usr/bin/ssh`, or `EASL_DEV_SSH` (a wrapper
@@ -59,18 +71,46 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         ["-T"] + Self.batchOptions + [sshTarget, "nc", "-U"] + (ncShutdown ? ["-N"] : []) + [Self.quote(socketPath)]
     }
 
-    /// Exit status of `terminalAttachCommand` when the host has no such session (yet).
-    public static let noSessionStatus: Int32 = 75
+    /// The session runs on `props.host` when hosted, otherwise on the board host. Its owner is
+    /// always the board host's home, with this tile and a current or merged board label.
+    public func terminalAttachCommand(for terminal: CanvasObject, board: BoardID, merged: [BoardID]) -> [String] {
+        let tile = terminal.id
+        let home = HostedTerminal.homeLabel((socketPath as NSString).deletingLastPathComponent)
+        let target: String
+        let command: String
+        if let hosted = HostedTerminal.host(of: terminal) {
+            if let problem = Self.problem(withHost: hosted) {
+                return ["/bin/sh", "-c", #"printf '%s\r\n' "$1"; exec sleep 2147483647"#,
+                        "easl-remote", "Not attaching: \(problem)"]
+            }
+            target = hosted
+            command = HostedTerminal.attach(session: "canvas-" + tile, home: home, board: board, tile: tile, merged: merged)
+        } else {
+            target = sshTarget
+            let setup = "export TMPDIR=\(Self.quote(tmpdir))\n"
+                + (zmxDir.map { "export ZMX_DIR=\(Self.quote($0))\n" } ?? "")
+                + "z=\(Self.quote(zmxBin))"
+            command = HostedTerminal.ownershipAttach(session: "canvas-" + tile, home: home,
+                                                    board: board, tile: tile, merged: merged, setup: setup)
+        }
+        return [Self.ssh, "-t"] + Self.batchOptions + [target, command]
+    }
 
-    /// The command a terminal tile runs to show the host's zmx session `session`. It attaches
-    /// only to a session that exists, else exits `noSessionStatus`: `zmx attach` creates a
-    /// missing one (a bare shell without labels), and the host's own tile attaching later would
-    /// find it and never run its agent.
-    public func terminalAttachCommand(session: String) -> [String] {
-        let zmx = Self.quote(zmxBin)
-        let script = "\(zmx) get \"$1\" >/dev/null 2>&1 || { echo \"no session $1 yet\" >&2; exit \(Self.noSessionStatus); }; exec \(zmx) attach \"$1\""
-        return [Self.ssh, "-t", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", sshTarget,
-                "env", "TMPDIR=" + Self.quote(tmpdir), "sh", "-c", Self.quote(script), "sh", Self.quote(session)]
+    /// Retries transport failures and ended sessions until the viewer disposes the surface.
+    /// An ownership refusal holds the notice without retrying or repainting it.
+    public static func terminalCommand(_ attach: [String]) -> String {
+        let loop = #"""
+        while :; do
+          "$@"
+          case $? in
+            \#(HostedTerminal.refused)) exec sleep 2147483647 ;;
+            0) sleep 1; continue ;;
+          esac
+          printf '\r\033[2K[easl] waiting for the host…'
+          sleep 2
+        done
+        """#
+        return ShellWords.quote(["/bin/sh", "-c", loop, "easl-remote"] + attach)
     }
 
     /// Starts the easl whose socket `socketPath` is, without bringing it forward there. Needs a
@@ -130,7 +170,8 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         let directory = support ?? (mac ? home + "/Library/Application Support/Easl" : ((values["state"].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/.local/state") + "/easl"))
         let easl = mac ? macEaslBin : (values["easl"] ?? "easl")
         return RemoteHost(name: name, sshTarget: sshTarget, socketPath: directory + "/easl.sock", tmpdir: tmpdir, easlBin: easl, zmxBin: values["zmx"] ?? "zmx",
-                          appBundle: mac && support == nil ? macApp : nil, ncShutdown: values["ncshutdown"] == "1")
+                          appBundle: mac && support == nil ? macApp : nil, ncShutdown: values["ncshutdown"] == "1",
+                          zmxDir: mac ? nil : directory + "/zmx", server: mac ? .app : .easld)
     }
 
     /// The installed easl app on a Mac.
@@ -216,17 +257,25 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         return named.first.map { ($0.name, $0.sshTarget) } ?? typed(text)
     }
 
-    /// Why `text` can't be a host File › Open Remote… connects to, or nil: a host is one word (a
-    /// tailnet name, an ssh config alias, `user@host`, both parts there), and one starting with
-    /// `-` would be an option to ssh.
+    private static let shellHostCharacters = CharacterSet(charactersIn: "\"'`$\\;&<>|(){}")
+
+    /// An ssh target must be one word, not an option, with both parts of `user@host` present.
+    /// Older ssh clients expand hostnames into shell commands in the user's ssh configuration.
     public static func problem(withHost text: String) -> String? {
         if text.isEmpty { return "host is empty: pass a tailnet name, an ssh config alias or user@host" }
         if text.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) }) {
             return "host \(text.debugDescription) isn't one host: a tailnet name, an ssh config alias or user@host has no spaces"
         }
+        if text.rangeOfCharacter(from: shellHostCharacters) != nil {
+            return "host \(text.debugDescription) contains shell metacharacters"
+        }
         if text.hasPrefix("-") { return "host \(text) starts with -, which ssh would take for an option" }
-        if let at = text.lastIndex(of: "@"), at == text.startIndex || text.index(after: at) == text.endIndex {
-            return "host \(text) needs both parts of user@host"
+        if let at = text.lastIndex(of: "@") {
+            let host = text[text.index(after: at)...]
+            if at == text.startIndex || host.isEmpty {
+                return "host \(text) needs both parts of user@host"
+            }
+            if host.hasPrefix("-") { return "host \(text) has a host part starting with -" }
         }
         return nil
     }

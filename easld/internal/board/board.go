@@ -74,8 +74,9 @@ type refit struct {
 
 // Board is one canvas for one root directory.
 type Board struct {
-	id   string
-	root string
+	id     string
+	root   string
+	closed bool
 
 	objects  map[string]model.Object
 	revision int

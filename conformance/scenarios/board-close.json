@@ -1,0 +1,25 @@
+{
+  "description": "Close keeps terminal objects and sessions, catalogs the stored board as closed, rejects closed targets and malformed params, and reopens the same board. A second board avoids the Mac last-board guard. Reopen before terminal teardown.",
+  "files": { "keeper/.keep": "" },
+  "steps": [
+    { "call": "board.open", "params": { "root": "{{root}}/keeper" } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "kept" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } }, "save": "terminal" },
+    { "call": "board.close", "params": { "board": "{{board}}", "endSessions": null } },
+    { "call": "board.close", "params": { "board": "{{board}}", "endSessions": "true" } },
+    { "call": "board.close", "params": { "board": "{{board}}", "endSessions": 1 } },
+    { "call": "board.close", "params": { "board": "{{board}}", "extra": true } },
+    { "call": "board.close", "params": { "board": "brd_missing" } },
+    { "call": "board.close", "params": { "board": 42 } },
+    { "call": "board.close", "params": { "board": null } },
+    { "call": "board.close", "params": { "board": "" } },
+    { "call": "board.close", "params": { "board": "{{board}}" } },
+    { "call": "board.list", "keep": { "result.boards": { "board": "{{board}}" } }, "ignore": { "response.result.boards.*.updatedAt": "board save time" } },
+    { "call": "board.get", "params": { "board": "{{board}}" } },
+    { "call": "board.close", "params": { "board": "{{board}}" } },
+    { "call": "board.open", "params": { "root": "{{root}}" } },
+    { "call": "object.get", "params": { "id": "{{terminal.object.id}}" } },
+    { "call": "board.close", "params": { "board": "{{board}}", "endSessions": false } },
+    { "call": "board.open", "params": { "root": "{{root}}" } },
+    { "call": "object.get", "params": { "id": "{{terminal.object.id}}" } }
+  ]
+}

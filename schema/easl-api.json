@@ -881,6 +881,7 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "root": { "type": "string" },
+          "merged": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "board ids this repository board took in (`repo.merged`), omitted when empty. A terminal session may still carry one of these original board labels; an attaching client accepts it only when its home and tile labels also match. Absent: only this board's current id owns its terminals" },
           "revision": { "type": "integer" },
           "objects": { "type": "array", "items": { "$ref": "#/definitions/CanvasObject" } },
           "changed": { "type": "array", "items": { "$ref": "#/definitions/Id" } },
@@ -975,6 +976,28 @@
           "window": { "type": "integer", "description": "the tab's window number (each tab is a window), as `screencapture -l` and yabai take it" },
           "alreadyOpen": { "type": "boolean", "description": "the tab was open already: nothing was opened" }
         }
+      }
+    },
+    "board.close": {
+      "description": "Close an open board without quitting the server. Save its latest state and remove it from the open set and open-boards.json, but keep its stored board file and board.list entry with open:false. By default terminals and their sessions stay running; board.open of the same root restores them. The Mac app refuses its last open board with conflict, including while hidden or minimized. A remote tab closes only this viewer and never changes the host; any explicit endSessions, including false, is invalid_params there. Unknown or already closed boards are not_found. An affected agent.restart is conflict. Persistence or session-ending failure is unavailable and leaves the board open, with any partial session effects reported. No new event is emitted and subscriptions stay connected.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "board": { "$ref": "#/definitions/Id", "description": "defaults as board.export: the client's board environment, otherwise the server's default board including its frontmost fallback" },
+          "endSessions": { "type": "boolean", "default": false, "description": "end local terminal sessions and remove their terminal objects, as the sheet's End Sessions does; easld requires --own-terminals or answers unsupported, and keeps hosted terminals it does not own. Forbidden on a remote tab, even false" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["board", "root", "kept", "ended"],
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "root": { "type": "string" },
+          "kept": { "type": "array", "description": "terminals retained with their sessions, sorted by id", "items": { "type": "object", "required": ["id", "name"], "properties": { "id": { "$ref": "#/definitions/Id" }, "name": { "type": "string", "description": "nonempty props.name, otherwise nonempty props.title, otherwise Terminal" } }, "additionalProperties": false } },
+          "ended": { "type": "array", "description": "terminals whose sessions ended and whose objects were removed, sorted by id", "items": { "type": "object", "required": ["id", "name"], "properties": { "id": { "$ref": "#/definitions/Id" }, "name": { "type": "string", "description": "nonempty props.name, otherwise nonempty props.title, otherwise Terminal" } }, "additionalProperties": false } }
+        },
+        "additionalProperties": false
       }
     },
     "board.export": {

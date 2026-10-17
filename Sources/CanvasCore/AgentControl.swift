@@ -112,12 +112,13 @@ struct StoredTerminals: Sendable {
 
 extension ApiRouter {
     /// What agent control adds to an open board's terminal entry (`agentEntry`). A hosted
-    /// terminal's processes are its host's: no pid of this Mac's stands for its agent.
-    func agentControlFields(_ terminal: CanvasObject, status: TerminalStatus?) -> [String: JSONValue] {
-        var fields = Self.reportedFields(terminal.props["agent"])
+    /// terminal's processes are its host's, as are a remote board's terminals': no pid of this
+    /// Mac's stands for its agent, and none is looked for here.
+    static func agentControlFields(_ terminal: CanvasObject, on board: Board, status: TerminalStatus?) -> [String: JSONValue] {
+        var fields = reportedFields(terminal.props["agent"])
         fields["open"] = .bool(true)
         fields["focused"] = .bool(status?.focused ?? false)
-        if HostedTerminal.host(of: terminal) == nil, let pid = Self.agentPid(reported: terminal.props["agent"]?["pid"]?.int, session: status?.pid) {
+        if !board.isRemote, HostedTerminal.host(of: terminal) == nil, let pid = agentPid(reported: terminal.props["agent"]?["pid"]?.int, session: status?.pid) {
             fields["pid"] = .number(Double(pid))
         }
         return fields
