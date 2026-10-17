@@ -35,7 +35,11 @@ final class TerminalTile: NSView, TileContent {
     /// over ssh; its programs, notifications and exit are the host's to watch, not this Mac's.
     let isRemote: Bool
     private(set) var discarded = false
-    var endingSession = false
+    var endingSession = false {
+        didSet {
+            if endingSession { terminal.cancelImageInput() }
+        }
+    }
 
     func discard() {
         guard !discarded else { return }
@@ -120,6 +124,7 @@ final class TerminalTile: NSView, TileContent {
     required init?(coder: NSCoder) { fatalError("unused") }
 
     private func resolvePasteDestination() -> TerminalPasteDestination? {
+        guard !discarded, !endingSession, !board.isClosed else { return nil }
         if let pasteDestination { return pasteDestination }
         let instance: String
         let owner: BoardID
@@ -322,17 +327,23 @@ final class TerminalTile: NSView, TileContent {
         }
     }
 
-    static func endSession(_ object: CanvasObject) async throws {
-        if let host = HostedTerminal.host(of: object) {
-            return try await TerminalHost.named(host).endSession(object.id)
+    static func endSession(_ object: CanvasObject, board: BoardID) async throws {
+        let host = HostedTerminal.host(of: object).map { TerminalHost.named($0) }
+        let machine: TerminalPasteDestination.Machine = host.map { .hosted($0.route) } ?? .local
+        let destination = TerminalPasteDestination(machine: machine, instance: homeLabel, session: pasteSession(board: board, tile: object.id))
+        let tasks = stopPasteInput(destination)
+        if let host {
+            try await host.endSession(object.id)
+        } else {
+            guard let arguments = killArguments(tile: object.id, refusal: "exit \(notOurs)") else {
+                throw ApiRouter.Failure("unavailable", "terminal \(object.id) runs without zmx, so its session cannot be confirmed ended")
+            }
+            let tile = object.id
+            if let failure = await offPool({ endSession(tile: tile, arguments: arguments) }) {
+                throw ApiRouter.Failure("unavailable", failure)
+            }
         }
-        guard let arguments = killArguments(tile: object.id, refusal: "exit \(notOurs)") else {
-            throw ApiRouter.Failure("unavailable", "terminal \(object.id) runs without zmx, so its session cannot be confirmed ended")
-        }
-        let tile = object.id
-        if let failure = await offPool({ endSession(tile: tile, arguments: arguments) }) {
-            throw ApiRouter.Failure("unavailable", failure)
-        }
+        await discardPaste(destination, after: tasks)
     }
 
     /// `/bin/sh` arguments that kill `tile`'s session unless another instance owns it

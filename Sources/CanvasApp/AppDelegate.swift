@@ -362,12 +362,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if endSessions == true {
                     let terminals = board.objects.values.filter { $0.type == .terminal }.sorted { $0.id < $1.id }
                     for terminal in terminals {
+                        (controller?.canvas.tiles[terminal.id]?.content as? TerminalTile)?.endingSession = true
+                    }
+                    defer {
+                        for terminal in terminals {
+                            (controller?.canvas.tiles[terminal.id]?.content as? TerminalTile)?.endingSession = false
+                        }
+                    }
+                    for terminal in terminals {
                         guard board.objects[terminal.id] != nil else { continue }
                         let shown = controller?.canvas.tiles[terminal.id]?.content as? TerminalTile
-                        shown?.endingSession = true
-                        defer { shown?.endingSession = false }
                         do {
-                            try await TerminalTile.endSession(terminal)
+                            try await TerminalTile.endSession(terminal, board: board.id)
                         } catch {
                             let message = (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
                             throw ApiRouter.Failure("unavailable", message)
