@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import CanvasCore
 
+@Suite(.serialized)
 @MainActor
 struct HostGitTests {
     private func cachedHeaders(_ repo: TempRepo, _ path: String) async throws -> [String] {
