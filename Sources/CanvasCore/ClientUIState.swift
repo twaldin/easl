@@ -170,19 +170,50 @@ public struct UISettings: Equatable, Sendable {
 
 /// A remote easld board in the reopen list (`remote-boards.json`): one this Mac opened whose tab
 /// wasn't closed by hand or with `board.close`. Background attach attaches these again at launch.
-/// Only how to reach the board: its host is discovered afresh each time, and nothing the board
-/// holds (root, view, composer, drawings, pages) is kept on this Mac.
+/// Only how to reach the board: its host, the easld there by its home, and the board. The host is
+/// discovered afresh each time, and nothing the board holds (root, view, composer, drawings,
+/// pages) is kept on this Mac.
 public struct RemoteReopen: Codable, Hashable, Sendable {
     /// The host as the user knows it (`RemoteHost.name`).
     public var host: String
     public var sshTarget: String
+    /// The easld's home on the host (`RemoteHost.home`): one host may run several, and two of them
+    /// may have a board with one id. Nil only in an entry saved before easl recorded it.
+    public var home: String?
     public var board: BoardID
 
-    public init(host: String, sshTarget: String, board: BoardID) {
+    public init(host: String, sshTarget: String, home: String?, board: BoardID) {
         self.host = host
         self.sshTarget = sshTarget
+        self.home = home
         self.board = board
     }
+
+    /// `board` on the easld `host` is; nil when `host`'s socket names no home.
+    public init?(board: BoardID, on host: RemoteHost) {
+        guard let home = host.home else { return nil }
+        self.init(host: host.name, sshTarget: host.sshTarget, home: home, board: board)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case host, sshTarget, home, board
+    }
+
+    /// A `home` that is there is a string: a null or another value is damage, never an entry saved
+    /// before easl recorded homes, which would reach the host's default easld.
+    public init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        host = try fields.decode(String.self, forKey: .host)
+        sshTarget = try fields.decode(String.self, forKey: .sshTarget)
+        home = try fields.contains(.home) ? fields.decode(String.self, forKey: .home) : nil
+        board = try fields.decode(BoardID.self, forKey: .board)
+    }
+
+    /// Where background attach looks for the board's easld (`RemoteHost.discover`'s `support`, nil
+    /// for the host's default): the saved home, whatever `devRemoteHome` (`EASL_DEV_REMOTE_HOME`)
+    /// is now. An entry saved before easl recorded homes goes to `devRemoteHome` when there is one,
+    /// so a development instance never reaches the host's default easld through it.
+    public func support(devRemoteHome: String?) -> String? { home ?? devRemoteHome }
 
     /// The reopen list, in the order its boards were opened.
     public struct Store: Sendable {
@@ -192,23 +223,39 @@ public struct RemoteReopen: Codable, Hashable, Sendable {
             self.url = url
         }
 
-        /// An unreadable file is an empty list. A hand-edited entry ssh would misread, or that names
-        /// no board, is left out (`RemoteHost.problem(withHost:)`).
+        /// An unreadable file is an empty list. A hand-edited entry ssh would misread, that names
+        /// no board, or whose home is no absolute path, is left out (`RemoteHost.problem(withHost:)`).
         public func load() -> [RemoteReopen] { (try? read()) ?? [] }
 
         private func read() throws -> [RemoteReopen] {
             do {
                 let entries = try JSONDecoder().decode([RemoteReopen].self, from: Data(contentsOf: url))
-                return entries.filter { RemoteHost.problem(withHost: $0.sshTarget) == nil && ApiRouter.isBoardID($0.board) }
+                return entries.filter {
+                    RemoteHost.problem(withHost: $0.sshTarget) == nil && ApiRouter.isBoardID($0.board) && ($0.home.map(RemoteHost.isHome) ?? true)
+                }
             } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
                 return []
             }
         }
 
-        /// `entry` is in the list: added at the end, or in place of the one for its host and board.
+        public func support(sshTarget: String, board: BoardID, devRemoteHome: String?, recentHome: String?) throws -> String? {
+            let entries = try read().filter { $0.sshTarget == sshTarget && $0.board == board }
+            if entries.count > 1 {
+                if let devRemoteHome, let selected = entries.first(where: { $0.home == devRemoteHome }) { return selected.home }
+                throw ApiRouter.Failure("ambiguous", "\(board) has saved addresses on several easld homes at \(sshTarget)")
+            }
+            if let entry = entries.first { return entry.support(devRemoteHome: devRemoteHome) }
+            return devRemoteHome ?? recentHome
+        }
+
+        /// `entry` is in the list: added at the end, or in place of the one for its board on its
+        /// easld, else of one saved before easl recorded homes for its board on its host.
         public func remember(_ entry: RemoteReopen) throws {
             var entries = try read()
-            if let index = entries.firstIndex(where: { $0.sshTarget == entry.sshTarget && $0.board == entry.board }) {
+            func place(home: String?) -> Int? {
+                entries.firstIndex { $0.sshTarget == entry.sshTarget && $0.board == entry.board && $0.home == home }
+            }
+            if let index = place(home: entry.home) ?? place(home: nil) {
                 guard entries[index] != entry else { return }
                 entries[index] = entry
             } else {
@@ -217,10 +264,13 @@ public struct RemoteReopen: Codable, Hashable, Sendable {
             try save(entries)
         }
 
-        /// No entry for `board` on `sshTarget` is left.
-        public func forget(sshTarget: String, board: BoardID) throws {
+        /// No entry for `entry`'s board on its easld is left, nor one saved before easl recorded
+        /// homes for that board on its host, which may have been that easld's.
+        public func forget(_ entry: RemoteReopen) throws {
             let entries = try read()
-            let kept = entries.filter { $0.sshTarget != sshTarget || $0.board != board }
+            let kept = entries.filter {
+                !($0.sshTarget == entry.sshTarget && $0.board == entry.board && ($0.home == entry.home || $0.home == nil))
+            }
             guard kept.count != entries.count else { return }
             try save(kept)
         }

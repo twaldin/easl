@@ -154,10 +154,12 @@ enum DevInput {
         }
         if fields["kind"] == "remote", let target = fields["target"], let board = fields["board"] {
             // Opens another easl's board as a remote board (`AppDelegate.openRemoteBoard`), its
-            // host found over ssh; `home` is the host's support directory (a development instance).
+            // host found over ssh; `home` is the host's support directory (a development instance),
+            // else `EASL_DEV_REMOTE_HOME`'s, as File › Open Remote… finds it.
             Task { @MainActor in
                 do {
-                    let host = try await RemoteHost.discover(name: target, sshTarget: target, support: fields["home"])
+                    let host = try await RemoteHost.discover(name: target, sshTarget: target, support: fields["home"] ?? AppPaths.devRemoteHome,
+                                                            allowDefault: AppPaths.devRemoteHome == nil)
                     (NSApp.delegate as? AppDelegate)?.openRemoteBoard(host: host, board: board)
                 } catch {
                     NSLog("DevInput: remote %@ not found: %@", target, BoardMirror.reason(error))

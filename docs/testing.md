@@ -80,6 +80,10 @@ scripts/dev.sh restart           # rebuild + relaunch with the same tabs; termin
 scripts/dev.sh stop              # quit and kill this instance's terminal sessions
 ```
 
+A development home isolates its boards, API sockets, and zmx state. Explicit `EASL_DEV_HOME` instances also get separate browser profiles. Both dev launchers persist `ZMX_DIR=<home>/zmx`, `XDG_STATE_HOME=<home>/state`, and `TMPDIR=<home>/tmp` in the copied bundle, so plain macOS relaunches keep the same isolation. zmx 0.8.1 puts session sockets in `ZMX_DIR` and logs in `ZMX_DIR/logs`; terminal attachment and housekeeping use those paths too. The launchers and app refuse paths that escape the home or overlap installed easl or zmx state, including symlinks. `scripts/dev.sh zmx-env zmx version` prints the selected socket and log directories without launching the app.
+
+Use a short home such as `/tmp/easl-dev-a`. macOS zmx permits 103 socket-path bytes; a generated terminal name leaves at most 69 UTF-8 bytes for the development home. Longer homes are refused before launch rather than creating detached terminal tiles.
+
 What it sets up:
 
 - `EASL_HOME=<checkout>/.easl-home` holds this instance's socket, boards, pid, and `app.log`, so it never touches the installed app's boards or another instance's.
@@ -181,16 +185,22 @@ python3 scripts/perf-loop.py --app base=/tmp/a.app --app fix=/tmp/b.app [--board
 
 ### Remote boards
 
-File › Open Remote… against a second development instance on this Mac, through a private sshd (nothing in `~/.ssh` changes): make a host key, a client key and an `ssh_config` with a `Host easl-localhost` (127.0.0.1, its port, `IdentityFile`, `UserKnownHostsFile`) in a scratch directory; run `/usr/sbin/sshd -D -e -f <dir>/sshd_config` as yourself (`Port`, `ListenAddress 127.0.0.1`, `HostKey`, `AuthorizedKeysFile` holding the client key, `UsePAM no`, `StrictModes no`); and point the viewer's ssh at it with a wrapper, `exec /usr/bin/ssh -F <dir>/ssh_config "$@"`. Start the host instance, then the viewer with `EASL_DEV_SSH=<wrapper>` and `EASL_DEV_REMOTE_HOME=<the host's EASL_DEV_HOME>` (the support directory to use on every host instead of its own); then `scripts/dev.sh input mainmenu "File/Open Remote…"`, `input text easl-localhost`, `input key return` (the sheet's default button). `app.log` says what it found (`Open Remote: easl-localhost online, 1 board, …`, counts only) and, after another Return, what `openRemoteBoard` was asked to open. Stop the host to see "easl isn't running"; the viewer comes back online by itself once the host starts again.
+To test File › Open Remote… against another development instance on this Mac, run a private sshd in a scratch directory without changing `~/.ssh`.
+Give it its own host key, client key, `AuthorizedKeysFile`, and `ssh_config` entry named `easl-localhost` for its loopback port.
+Run `/usr/sbin/sshd -D -e -f <dir>/sshd_config` as yourself with `UsePAM no` and `StrictModes no`.
+Point the viewer at a wrapper containing `exec /usr/bin/ssh -F <dir>/ssh_config "$@"`.
+Start the host, then start the viewer with `EASL_DEV_SSH=<wrapper>` and `EASL_DEV_REMOTE_HOME=<host's EASL_DEV_HOME>`.
+Use `scripts/dev.sh input mainmenu "File/Open Remote…"`, `input text easl-localhost`, and `input key return` to list its boards. Another Return opens the selected board.
+Stop the host to see "easl isn't running"; the viewer reconnects when the host starts again.
 
-With `EASL_DEV_REMOTE_HOME` set the host is a development instance whose launcher isn't known, so the sheet doesn't offer Start easl (it runs `open -g /Applications/easl.app`, the installed app and its real home, only for a host without the override). Quit the viewer with the sheet open and `pgrep -fl 'nc -U'` finds no relay left: quitting ends every ssh before the app exits.
+`remote-boards.json` stores each easld board's `host`, `sshTarget`, absolute server `home`, and `board`. Restarting without `EASL_DEV_REMOTE_HOME`, or with a different value, keeps the saved server home. Entries predating `home` use the dev override when set and the host's default only without it. With the override set, discovery refuses the default server even if an entry explicitly names it; it never redirects that address to another server. The picker remembers its most recent server home too. A custom Mac home uses its own `zmx` and `tmp` directories and has no known launcher, so Start easl is unavailable. Quit the viewer with the sheet open and verify that its SSH relays end before the app exits.
 
 ### Testing the updater
 
 easl › Check for Updates… against a local `latest.json` (docs/design.md "Updates"), on a home of its own so the swap replaces that home's bundle, never the checkout's or the installed app. A development instance never checks by itself, and with both bundles ad hoc it skips `spctl` (which refuses every ad hoc app), so no notarizing is needed:
 
 ```sh
-t=$(mktemp -d "$TMPDIR/easl-update.XXXXXX"); mkdir -p "$t/srv"
+t=$(mktemp -d /tmp/easl-update.XXXXXX); mkdir -p "$t/srv"
 EASL_DEV_HOME="$t/home" EASL_UPDATE_URL=http://127.0.0.1:8765/latest.json EASL_DEV_EXTERNAL_OPEN=log scripts/dev.sh start
 # The "newer" release, with the instance's own bundle id (the relaunch keeps its defaults and TCC identity).
 EASL_VERSION=0.2.99 EASL_BUNDLE_APP="$t/new/easl.app" scripts/bundle.sh
@@ -212,17 +222,17 @@ EASL_DEV_HOME="$t/home" scripts/dev.sh input key return                         
 
 ### Terminals and agents
 
-- Terminal text: `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) zmx history canvas-<tileId> | tail -n 40` (zmx keys its socket directory off `TMPDIR`; the GUI app's differs from a terminal's).
+- Terminal text: `scripts/dev.sh zmx-env zmx history canvas-<tileId>`. For a custom home, prefix the command with the same `EASL_DEV_HOME` used at launch.
 - Create an omp tile: `scripts/dev.sh cli object.create --type terminal --json '{"props":{"cwd":"<repo>","command":["omp"]}}'`.
 - Prompt it and wait: `scripts/dev.sh cli agent.prompt --target <tileId> --text "…"`, then `scripts/dev.sh cli agent.wait --target <tileId> --timeoutMs 300000`.
 - Recent terminal text through the API: `scripts/dev.sh cli agent.read --target <tileId> --lines 40`; `--since prompt` gives what followed the last `agent.prompt` (its echo, then the reply); `--final` only the answer.
-- Reboot resume: quit the app (`kill $(cat .easl-home/pid)`), `zmx kill canvas-<tileId> --force`, `scripts/dev.sh start`. A tile whose session is gone reruns `props.command`, or resumes its recorded agent session (`omp --resume=<session file>`, by id when that file is gone, `claude --resume <sessionId>`, `codex resume <sessionId>`) with the options of the tile's `props.command` when it runs that agent (e.g. `-e <checkout extension>` stays, so the resumed omp loads the checkout's extension); options typed in the shell aren't known, so a tile started from its shell resumes without them.
+- Reboot resume: quit this dev instance, run `scripts/dev.sh zmx-env zmx kill canvas-<tileId> --force`, then `scripts/dev.sh start` with the same `EASL_DEV_HOME`. A missing session reruns `props.command` or resumes its recorded agent session with `omp --resume=<session file>`, the recorded id when that file is gone, `claude --resume <sessionId>`, or `codex resume <sessionId>`. The saved command's options are retained, including a checkout extension passed with `-e`. Options typed only in the shell are not recorded, so a shell-started agent resumes without those options.
 - Terminal notifications: `printf '\e]9;Build finished\a'`, `printf '\e]777;notify;Title;Body\a'`, `printf '\a'` in a tile raise an attention marker on it (`app.log`: "terminal … sent a notification" / "rang the bell"; stored in the board file's `attention`). With `EASL_NO_ACTIVATE` the app is never active, so a focused terminal still gets them.
 - Ghostty config: `app.log` logs which files loaded, the theme, font and size ("Ghostty config from …"), each rejected line, and each keybind of a window, tab or split action ("Ghostty keybind … runs easl's New Terminal", "dropped Ghostty keybind …"). Try a scratch config without touching the real one: `XDG_CONFIG_HOME=/tmp/x scripts/dev.sh restart` reads `/tmp/x/ghostty/config` (dev.sh passes `XDG_CONFIG_HOME` through; the Application Support config still loads after it).
 - macOS notifications (agent done/blocked while the app is in the background) are never requested or posted with `EASL_NO_ACTIVATE=1`; `app.log` records "notification suppressed" instead.
 - With the omp extension installed globally (`~/.omp/agent/extensions/easl.ts`, README), test a modified extension from a checkout: launch omp with `["omp", "--no-extensions", "-e", "<checkout>/extensions/omp/easl.ts"]`.
 - Claude Code, Codex, Gemini CLI and opencode integrations (docs/contracts.md "Agent integrations"): type `claude`, `codex`, `gemini` or `opencode` in a tile of your instance; the bundle's wrappers load the integration from that bundle, so no install step. `agent.list` shows the kind and session id after `SessionStart`. To see what a hook does, run it by hand with the tile's variables: `echo '{"session_id":"s","source":"startup"}' | EASL_ENV=1 EASL_TILE_ID=<tile> EASL_SOCKET=<sock> extensions/agent-hooks/run claude SessionStart` prints the context it gives the agent and reports to that instance. The Codex hooks run only while `extensions/codex/config.ts` hashes them the way the installed Codex does: after a Codex update, start `codex` in a tile and check it prints no "hooks need review" warning (`/hooks` lists them as trusted). Keep real agents cheap: scratch repo copies without remotes, a low reasoning effort (`codex -c model_reasoning_effort=low`), and Claude Code against a local stand-in for the Messages API (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, with `CLAUDE_CONFIG_DIR` pointing at a scratch config so first-run and trust dialogs don't touch `~/.claude`) when no login is available.
-- Gemini CLI in a tile: the tile's login shell may pick an older Node (nvm's default) that can't run it; `nvm use` a newer one first. Never run it opted out (`EASL_AGENT_HOOKS=0`) or outside a tile without `general.enableAutoUpdate: false`: a plain Gemini `npm install -g`s its newest version on start (into the active Node's prefix), and 0.60+ refuses easl's settings layer. Answer its approval dialogs without the stage with `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) zmx send canvas-<tile> $'\r'` (Esc: `$'\e'`). opencode: a scratch repo's `opencode.json` with `"permission": {"bash": "ask", "edit": "ask"}` makes it ask when the global config allows everything.
+- Gemini CLI in a tile: the tile's login shell may pick an older Node (nvm's default) that can't run it; `nvm use` a newer one first. Never run it opted out (`EASL_AGENT_HOOKS=0`) or outside a tile without `general.enableAutoUpdate: false`, because it auto-updates its global installation. Version 0.60 and later refuse easl's settings layer. Send approval input only through `scripts/dev.sh zmx-env zmx send canvas-<tile> $'\r'`, using the same `EASL_DEV_HOME` as launch. Use `$'\e'` for Esc. For opencode, a scratch repo's `opencode.json` with `"permission": {"bash": "ask", "edit": "ask"}` exercises approval prompts even when global config allows everything.
 
 ## Optional: a machine shared with other agents
 

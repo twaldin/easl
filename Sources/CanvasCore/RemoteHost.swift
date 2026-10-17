@@ -20,7 +20,7 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     public var easlBin: String
     /// The host's zmx: a non-interactive ssh session's PATH may lack Homebrew's directory.
     public var zmxBin: String
-    /// easld's session directory; nil for a Mac app, whose sessions use the GUI TMPDIR.
+    /// The server's zmx directory; nil for the installed Mac app, which uses the GUI TMPDIR.
     public var zmxDir: String?
     /// The app bundle that owns `socketPath`, which `startCommand` opens; nil when the viewer
     /// can't tell (a development instance's launcher isn't discoverable) or the host isn't a Mac.
@@ -126,16 +126,27 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         return [Self.ssh, "-T"] + Self.batchOptions + [sshTarget, "open", "-g", Self.quote(appBundle)]
     }
 
+    /// easl's socket in its home `home` on a host.
+    public static func socketPath(home: String) -> String { home + "/easl.sock" }
+
+    /// easl's home on the host, where `discover` given it as `support` finds this socket again;
+    /// nil for a socket that isn't `socketPath(home:)`'s, which discovery never answers.
+    public var home: String? {
+        let name = Self.socketPath(home: "")
+        return socketPath.hasSuffix(name) ? String(socketPath.dropLast(name.count)) : nil
+    }
+
     // MARK: Discovery
 
     /// Asks the host where its socket, GUI TMPDIR, easl and zmx are, in one ssh call. `support`
-    /// replaces the host's easl support directory (`EASL_DEV_REMOTE_HOME`: a development
-    /// instance on the host, docs/testing.md). Throws `unavailable` with ssh's reason when the
-    /// host can't be reached, and `CancellationError` (ssh ended) when the calling task is cancelled.
-    public static func discover(name: String, sshTarget: String, support: String? = nil, timeout: TimeInterval = 20) async throws -> RemoteHost {
+    /// replaces the host's easl home: `EASL_DEV_REMOTE_HOME` (a development instance on the host,
+    /// docs/testing.md) or a reopen-list board's (`RemoteReopen.support`). Throws `unavailable` with
+    /// ssh's reason when the host can't be reached, and `CancellationError` (ssh ended) when the
+    /// calling task is cancelled.
+    public static func discover(name: String, sshTarget: String, support: String? = nil, allowDefault: Bool = true, timeout: TimeInterval = 20) async throws -> RemoteHost {
         let result = try await run(ssh, ["-T"] + batchOptions + [sshTarget, "sh", "-c", quote(discoveryScript)], timeout: timeout)
-        guard result.status == 0, let host = parseDiscovery(result.output, name: name, sshTarget: sshTarget, support: support) else {
-            let reason = lastLine(result.errors) ?? (result.status == 0 ? "unexpected answer from \(sshTarget)" : "ssh exited with status \(result.status)")
+        guard result.status == 0, let host = parseDiscovery(result.output, name: name, sshTarget: sshTarget, support: support, allowDefault: allowDefault) else {
+            let reason = lastLine(result.errors) ?? (result.status == 0 ? "discovery refused or unexpected answer from \(sshTarget)\(allowDefault ? "" : "; the default easl server is disabled")" : "ssh exited with status \(result.status)")
             throw EaslConnection.Failure("unavailable", reason)
         }
         return host
@@ -162,9 +173,11 @@ public struct RemoteHost: Codable, Hashable, Sendable {
 
     /// The host the discovery script's `output` describes: a Mac's easl lives in its app bundle
     /// and Application Support; elsewhere easld's home is `$XDG_STATE_HOME/easl`, else
-    /// `~/.local/state/easl`. A `support` directory is a development instance: its launcher isn't
-    /// known, so the host has no app bundle to start. Nil without a home or a TMPDIR.
-    public static func parseDiscovery(_ output: String, name: String, sshTarget: String, support: String? = nil) -> RemoteHost? {
+    /// `~/.local/state/easl`. A `support` directory is that home instead. On a Mac it is a
+    /// development instance: its launcher isn't known, so the host has no app bundle to start, and
+    /// its zmx is in the home (`zmx`, `tmp`) rather than the GUI TMPDIR. Nil without a home or a TMPDIR.
+    public static func parseDiscovery(_ output: String, name: String, sshTarget: String, support: String? = nil, allowDefault: Bool = true) -> RemoteHost? {
+        if let support, !isHome(support) { return nil }
         var values: [String: String] = [:]
         for line in output.split(whereSeparator: \.isNewline) {
             guard let equals = line.firstIndex(of: "=") else { continue }
@@ -172,11 +185,19 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         }
         guard let home = values["home"], !home.isEmpty, let tmpdir = values["tmpdir"], !tmpdir.isEmpty else { return nil }
         let mac = values["os"] == "Darwin"
-        let directory = support ?? (mac ? home + "/Library/Application Support/Easl" : ((values["state"].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/.local/state") + "/easl"))
+        let defaultDirectory = mac ? home + "/Library/Application Support/Easl" : ((values["state"].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/.local/state") + "/easl")
+        let directory = support ?? defaultDirectory
+        let isDefault = (directory as NSString).standardizingPath == (defaultDirectory as NSString).standardizingPath
+        guard allowDefault || !isDefault else { return nil }
         let easl = mac ? macEaslBin : (values["easl"] ?? "easl")
-        return RemoteHost(name: name, sshTarget: sshTarget, socketPath: directory + "/easl.sock", tmpdir: tmpdir, easlBin: easl, zmxBin: values["zmx"] ?? "zmx",
-                          appBundle: mac && support == nil ? macApp : nil, ncShutdown: values["ncshutdown"] == "1",
-                          zmxDir: mac ? nil : directory + "/zmx", server: mac ? .app : .easld)
+        let installedApp = mac && isDefault
+        return RemoteHost(name: name, sshTarget: sshTarget, socketPath: socketPath(home: directory), tmpdir: mac && !installedApp ? directory + "/tmp" : tmpdir,
+                          easlBin: easl, zmxBin: values["zmx"] ?? "zmx", appBundle: installedApp ? macApp : nil, ncShutdown: values["ncshutdown"] == "1",
+                          zmxDir: installedApp ? nil : directory + "/zmx", server: mac ? .app : .easld)
+    }
+
+    static func isHome(_ path: String) -> Bool {
+        path.hasPrefix("/") && !path.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
     }
 
     /// The installed easl app on a Mac.
@@ -209,13 +230,15 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     public struct Candidate: Equatable, Sendable {
         public var name: String
         public var sshTarget: String
+        public var home: String?
         public var detail: String
         /// Reachable as far as the tailnet knows; a host it doesn't list counts as online.
         public var online: Bool
 
-        public init(name: String, sshTarget: String, detail: String, online: Bool) {
+        public init(name: String, sshTarget: String, detail: String, online: Bool, home: String? = nil) {
             self.name = name
             self.sshTarget = sshTarget
+            self.home = home
             self.detail = detail
             self.online = online
         }
@@ -232,34 +255,35 @@ public struct RemoteHost: Codable, Hashable, Sendable {
             var detail = "Mac, online"
             if macs.filter({ $0.name == peer.name }).count > 1 { detail += ", " + peer.sshTarget }
             if used.contains(peer.sshTarget) { detail += ", opened before" }
-            return Candidate(name: peer.name, sshTarget: peer.sshTarget, detail: detail, online: true)
+            return Candidate(name: peer.name, sshTarget: peer.sshTarget, detail: detail, online: true,
+                             home: recents.first { $0.sshTarget == peer.sshTarget }?.home)
         }
         for recent in recents where !macs.contains(where: { $0.sshTarget == recent.sshTarget }) {
             let peer = peers.first { $0.sshTarget == recent.sshTarget }
             rows.append(Candidate(name: recent.name, sshTarget: recent.sshTarget,
                                   detail: peer.map { $0.online ? "\($0.os), online, opened before" : "offline" } ?? "opened before",
-                                  online: peer?.online ?? true))
+                                  online: peer?.online ?? true, home: recent.home))
         }
         return rows
     }
 
     /// A host typed into File › Open Remote… (`user@host`, an ssh config alias, a tailnet name):
     /// ssh connects to it as typed, and it goes by its host part.
-    public static func typed(_ target: String) -> (name: String, sshTarget: String) {
-        (target.split(separator: "@").last.map(String.init) ?? target, target)
+    public static func typed(_ target: String) -> (name: String, sshTarget: String, home: String?) {
+        (target.split(separator: "@").last.map(String.init) ?? target, target, nil)
     }
 
     /// The host `text` names among File › Open Remote…'s rows (`candidates`), as
     /// `board.open_remote` takes it: the row whose ssh target it is, else the one row of that
     /// name, else `text` as an ssh host typed in (`typed`). Tailnet names aren't unique, so a
     /// name two rows have is `ambiguous`, naming their ssh targets.
-    public static func target(_ text: String, among rows: [Candidate]) throws -> (name: String, sshTarget: String) {
-        if let row = rows.first(where: { $0.sshTarget == text }) { return (row.name, row.sshTarget) }
+    public static func target(_ text: String, among rows: [Candidate]) throws -> (name: String, sshTarget: String, home: String?) {
+        if let row = rows.first(where: { $0.sshTarget == text }) { return (row.name, row.sshTarget, row.home) }
         let named = rows.filter { $0.name == text }
         guard named.count < 2 else {
             throw ApiRouter.Failure("ambiguous", "\(text) names \(named.count) hosts: \(named.map(\.sshTarget).joined(separator: ", ")); pass one of these ssh targets as host")
         }
-        return named.first.map { ($0.name, $0.sshTarget) } ?? typed(text)
+        return named.first.map { ($0.name, $0.sshTarget, $0.home) } ?? typed(text)
     }
 
     private static let shellHostCharacters = CharacterSet(charactersIn: "\"'`$\\;&<>|(){}")

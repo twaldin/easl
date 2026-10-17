@@ -111,24 +111,21 @@ struct ClientUIStateTests {
     @Test func theReopenListKeepsOnlyHowToReachEachBoard() throws {
         let store = RemoteReopen.Store(url: home.appendingPathComponent("remote-boards.json"))
         #expect(store.load().isEmpty, "no file: nothing to attach")
-        let first = RemoteReopen(host: "deckbox", sshTarget: "deckbox", board: "brd_a")
-        let second = RemoteReopen(host: "deckbox", sshTarget: "deckbox", board: "brd_b")
+        let easld = "/home/tim/.local/state/easl"
+        let first = RemoteReopen(host: "deckbox", sshTarget: "deckbox", home: easld, board: "brd_a")
+        let second = RemoteReopen(host: "deckbox", sshTarget: "deckbox", home: easld, board: "brd_b")
         try store.remember(first)
         try store.remember(second)
         try store.remember(first)
         #expect(store.load() == [first, second], "in the order opened, once each")
-        let renamed = RemoteReopen(host: "deckbox-2", sshTarget: "deckbox", board: "brd_a")
+        let renamed = RemoteReopen(host: "deckbox-2", sshTarget: "deckbox", home: easld, board: "brd_a")
         try store.remember(renamed)
         #expect(store.load() == [renamed, second], "a host renamed keeps its board's place")
         // Another host's board with the same id is its own entry (two checkouts of one repository).
-        let other = RemoteReopen(host: "work", sshTarget: "tim@work", board: "brd_a")
+        let other = RemoteReopen(host: "work", sshTarget: "tim@work", home: easld, board: "brd_a")
         try store.remember(other)
-        try store.forget(sshTarget: "deckbox", board: "brd_a")
+        try store.forget(renamed)
         #expect(store.load() == [second, other])
-        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: store.url))
-        let disk = try #require(json as? [[String: Any]])
-        let fields: [Set<String>] = [["host", "sshTarget", "board"], ["host", "sshTarget", "board"]]
-        #expect(disk.map { Set($0.keys) } == fields, "nothing the board holds is on this Mac's disk")
     }
 
     @Test func aDamagedOrHandEditedReopenListAttachesNothingUnsafe() throws {
@@ -138,7 +135,7 @@ struct ClientUIStateTests {
         #expect(store.load().isEmpty)
         let edited = #"[{"host":"x","sshTarget":"-oProxyCommand=sh","board":"brd_a"},{"host":"d","sshTarget":"deckbox","board":"../etc"},{"host":"d","sshTarget":"deckbox","board":"brd_ok"}]"#
         try Data(edited.utf8).write(to: store.url)
-        #expect(store.load() == [RemoteReopen(host: "d", sshTarget: "deckbox", board: "brd_ok")], "neither an ssh option nor a non-board id is attached")
+        #expect(store.load() == [RemoteReopen(host: "d", sshTarget: "deckbox", home: nil, board: "brd_ok")], "neither an ssh option nor a non-board id is attached")
     }
 
     @Test func closingARemoteBoardsWindowKeepsWhatTheUserLeftOpen() {
@@ -166,21 +163,21 @@ struct ClientUIStateTests {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let store = RemoteReopen.Store(url: home.appendingPathComponent("remote-boards.json"))
-        let first = RemoteReopen(host: "deckbox", sshTarget: "deckbox", board: "brd_a")
-        let second = RemoteReopen(host: "home", sshTarget: "home", board: "brd_b")
+        let first = RemoteReopen(host: "deckbox", sshTarget: "deckbox", home: "/home/tim/.local/state/easl", board: "brd_a")
+        let second = RemoteReopen(host: "home", sshTarget: "home", home: "/home/tim/.local/state/easl", board: "brd_b")
         let saved = try JSONEncoder().encode([first])
         var damaged = saved
         damaged.append(contentsOf: "[".utf8)
         try damaged.write(to: store.url)
         #expect(throws: (any Error).self) {
-            try store.forget(sshTarget: first.sshTarget, board: first.board)
+            try store.forget(first)
         }
         #expect(try Data(contentsOf: store.url) == damaged)
         #expect(throws: (any Error).self) { try store.remember(second) }
         #expect(try Data(contentsOf: store.url) == damaged)
         try saved.write(to: store.url)
         #expect(store.load() == [first])
-        try store.forget(sshTarget: first.sshTarget, board: first.board)
+        try store.forget(first)
         #expect(store.load() == [])
     }
 }

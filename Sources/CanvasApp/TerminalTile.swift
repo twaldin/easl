@@ -225,6 +225,10 @@ final class TerminalTile: NSView, TileContent {
             // Ghostty's own shell integration (prompt marks), which the scripts above load.
             if let integration = TerminalConfig.shared.shellIntegration { env["EASL_GHOSTTY_INTEGRATION"] = integration }
         }
+        // A development home's socket directory. It has to be set before the strip
+        // in `command`: that removes an inherited `ZMX_DIR`, and zmx would then
+        // create the session in the GUI temp or `/tmp`. Not any other `ZMX_*`.
+        if let zmxDir = AppPaths.devZmxDir { env["ZMX_DIR"] = zmxDir }
         return env
     }
 
@@ -234,7 +238,8 @@ final class TerminalTile: NSView, TileContent {
     /// `environment`: the tile's own variables. `env -u` runs after Ghostty applied them, so an inherited
     /// variable of the same name (a dev instance launched with EASL_SOCKET set) must not unset them.
     /// Everything else the app inherited is unset (`LoginSession.strippedForTile`): the shell starts
-    /// like a fresh login session and the user's startup files set their own variables. The
+    /// like a fresh login session and the user's startup files set their own variables. `ZMX_DIR` is
+    /// kept when it is one of those variables, so attach uses the same directory as `zmx list`. The
     /// initial command gets the PATH of the tile's interactive shell (`commandPath`).
     static func command(session: String, object: CanvasObject, board: Board, environment: [String: String], start initial: String? = nil) -> String {
         let command = initial ?? initialCommand(object)
