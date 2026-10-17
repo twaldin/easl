@@ -1116,7 +1116,11 @@ final class BrowserTile: NSView, TileContent {
     private func load(intent: JSONValue) {
         guard let url = intent["url"]?.string else { return }
         let actor = intent["actor"]
-        if actor?["kind"]?.string == "agent" { credit.agent(actor?["tile"]?.string) } else { credit.user() }
+        switch actor?["kind"]?.string {
+        case "agent": credit.agent(actor?["tile"]?.string)
+        case "system": credit.agent(nil)
+        default: credit.user()
+        }
         load(url)
     }
 
