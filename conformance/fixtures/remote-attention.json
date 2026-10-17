@@ -1,7 +1,7 @@
 {
   "scenario": "remote-attention",
   "description": "board.get carries the attention snapshot, including raisedAt as the marker's identity. view.seen echoes that marker and the terminal rev from the same read: a matching marker clears, a matching rev on a done terminal is seen, a replaced marker and a stale or working rev are left as they are.",
-  "recordedOn": "scratch easld remote-edit integrated host",
+  "recordedOn": "deckbox scratch easld canonical seen acknowledgment",
   "steps": [
     {
       "step": "board.open",
@@ -363,6 +363,41 @@
         "ok": true,
         "result": {
           "cleared": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": true,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
           "seen": true
         }
       },
@@ -773,6 +808,41 @@
         "ok": true,
         "result": {
           "cleared": false,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": true,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:7>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
           "seen": true
         }
       },

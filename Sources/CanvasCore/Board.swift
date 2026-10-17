@@ -1331,7 +1331,6 @@ public final class Board {
     /// The user has looked at this terminal; a `done` agent becomes `idle`. Looking at an agent
     /// that is still working (or waiting on an approval) doesn't count: its answer isn't there
     /// yet, so a turn that ends after the user looked away stays `done` until they look again.
-    /// A remote board's agents are seen on their host (v1: looking here changes nothing there).
     public func markSeen(_ tile: ObjectID) {
         guard let terminal = objects[tile], terminal.type == .terminal else { return }
         if isRemote {

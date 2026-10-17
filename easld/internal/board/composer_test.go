@@ -113,6 +113,7 @@ func TestComposerFoldKeepsMarksNumbersAndShortGraphemeEquality(t *testing.T) {
 		{"combining-contained", "a\u0301bc", "abc", "prefix ÁBC suffix"},
 		{"accent-is-content", "café", "cafe", "CAFE\u0301"},
 		{"substring-grapheme-boundary", "abcक", "abcकि", "prefix abcक suffix"},
+		{"conjunct-short", "क्षमा", "please क्षमा", "क्षमा"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b, terminal, note := composerBoard(t)

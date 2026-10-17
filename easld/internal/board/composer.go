@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/rivo/uniseg"
+	"github.com/clipperhouse/uax29/v2/graphemes"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 
@@ -73,13 +73,18 @@ type composerPattern struct {
 	fallback []int
 }
 
+func composerGraphemeCount(text string) int {
+	count := 0
+	for clusters := graphemes.FromString(text); clusters.Next(); {
+		count++
+	}
+	return count
+}
+
 func compileComposerPattern(text string) composerPattern {
-	pattern := composerPattern{clusters: make([]string, 0, uniseg.GraphemeClusterCount(text))}
-	rest, state := text, -1
-	for rest != "" {
-		var cluster string
-		cluster, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
-		pattern.clusters = append(pattern.clusters, cluster)
+	pattern := composerPattern{clusters: make([]string, 0, composerGraphemeCount(text))}
+	for clusters := graphemes.FromString(text); clusters.Next(); {
+		pattern.clusters = append(pattern.clusters, clusters.Value())
 	}
 	if len(pattern.clusters) < composerShortest {
 		return pattern
@@ -102,10 +107,8 @@ func (p ComposerPrompt) claimedBy(submitted string) bool {
 		return p.Folded == submitted
 	}
 	matched := 0
-	rest, state := submitted, -1
-	for rest != "" {
-		var cluster string
-		cluster, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
+	for clusters := graphemes.FromString(submitted); clusters.Next(); {
+		cluster := clusters.Value()
 		for matched > 0 && cluster != p.match.clusters[matched] {
 			matched = p.match.fallback[matched-1]
 		}
@@ -225,7 +228,7 @@ func (b *Board) claimComposerPrompt(caller, submitted string, now time.Time) *Co
 		for i, prompt := range queue {
 			lengths[i] = strconv.Itoa(len(prompt.match.clusters))
 		}
-		log.Printf("easl: a submission drain from %s matched none of its %d composer prompts (drained %d folded characters; waiting %s)", caller, len(queue), uniseg.GraphemeClusterCount(folded), strings.Join(lengths, ", "))
+		log.Printf("easl: a submission drain from %s matched none of its %d composer prompts (drained %d folded characters; waiting %s)", caller, len(queue), composerGraphemeCount(folded), strings.Join(lengths, ", "))
 		return nil
 	}
 	found := queue[index]

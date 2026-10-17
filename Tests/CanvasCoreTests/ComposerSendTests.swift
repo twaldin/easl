@@ -612,12 +612,12 @@ final class ComposerSendTests {
                 throw BoardError.conflict("rollback")
             }
         }
-        let before = try await call("board.get", #"{"board":"\#(board.id)"}"#)
+        let before = try await call("board.get", #"{"board":"\#(board.id)","viewer":"vw_viewer01"}"#)
         #expect(before["result"]?["composerReceipts"] == nil)
         #expect(board.composerPrompts[alpha]?.first?.origins == [staged.id])
         try board.delete(alpha)
         let notice = try #require(live.first)
-        let after = try await call("board.get", #"{"board":"\#(board.id)"}"#)
+        let after = try await call("board.get", #"{"board":"\#(board.id)","viewer":"vw_viewer01"}"#)
         let recovered = try #require(after["result"]?["composerReceipts"]?.array?.first)
         #expect(recovered["receipt"]?.string == notice.receipt)
         #expect(recovered["event"] == "composer.returned")

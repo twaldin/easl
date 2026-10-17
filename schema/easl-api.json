@@ -1938,7 +1938,11 @@
       "result": {
         "type": "object",
         "required": ["cleared", "seen"],
-        "properties": { "cleared": { "type": "boolean" }, "seen": { "type": "boolean" } },
+        "properties": {
+          "cleared": { "type": "boolean" },
+          "seen": { "type": "boolean" },
+          "object": { "$ref": "#/definitions/Object", "description": "The canonical terminal after an accepted seen acknowledgment whose supplied rev matched its pre-acknowledgment revision. Omitted for stale revisions, missing revisions, marker-only acknowledgments, and rejected seen acknowledgments." }
+        },
         "additionalProperties": false
       }
     },

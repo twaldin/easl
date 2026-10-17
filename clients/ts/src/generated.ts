@@ -1857,6 +1857,8 @@ export type ViewSeenParams = {
 export type ViewSeenResult = {
   cleared: boolean;
   seen: boolean;
+  /** The canonical terminal after an accepted seen acknowledgment whose supplied rev matched its pre-acknowledgment revision. Omitted for stale revisions, missing revisions, marker-only acknowledgments, and rejected seen acknowledgments. */
+  object?: Object;
 };
 
 export type ViewAttentionParams = {

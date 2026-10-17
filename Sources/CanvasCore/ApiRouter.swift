@@ -1710,8 +1710,13 @@ public final class ApiRouter {
                 guard marker.id == id else { throw Failure("invalid_params", "marker.id must be the object being acknowledged") }
                 return marker
             }
+            let matchesRevision = p["rev"]?.int.map { board.objects[id]?.rev == $0 } ?? false
             let acknowledged = board.seen(id, rev: p["rev"]?.int, marker: marker)
-            return .object(["cleared": .bool(acknowledged.cleared), "seen": .bool(acknowledged.seen)])
+            var result: [String: JSONValue] = ["cleared": .bool(acknowledged.cleared), "seen": .bool(acknowledged.seen)]
+            if matchesRevision, acknowledged.seen, let terminal = board.objects[id], terminal.type == .terminal {
+                result["object"] = try JSONValue.encode(board.reported(terminal))
+            }
+            return .object(result)
         case "view.open_url":
             let board = try board(p)
             let raw = try string(p, "url")

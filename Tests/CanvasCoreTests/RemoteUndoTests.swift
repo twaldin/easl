@@ -406,6 +406,44 @@ extension BoardMirrorTests {
         try await eventually { view.objects[edited.id] == host.objects[edited.id] && other.objects[edited.id] == host.objects[edited.id] }
     }
 
+    @Test func aRecoveryReplyLostAfterApplyDoesNotBlockOlderUndoOrRedo() async throws {
+        let edited = note("base")
+        let loseReply = Locked(true)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            guard request["method"]?.string == "object.update", request["params"]?["viewer"] == nil,
+                  loseReply.withLock({ value in defer { value = false }; return value }) else { return reply }
+            return .object(["id": request["id"] ?? .null, "ok": .bool(false),
+                            "error": .object(["code": "unavailable", "message": "reply lost after apply"])])
+        }
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        _ = try view.update(edited.id, frame: Frame(x: 300, y: 0, w: 280, h: 200))
+        try await eventually { view.objects[edited.id] == host.objects[edited.id] && host.objects[edited.id]?.frame.x == 300 }
+        let move = try #require(view.nextUndo).id
+        let session = NoteEditSession(try view.object(edited.id))
+        _ = try host.update(edited.id, props: .object(["markdown": "theirs"]))
+        try await eventually { view.objects[edited.id]?.props["markdown"] == "theirs" }
+        #expect(session.keepTheirs(discarding: "mine", on: view))
+        _ = await mirror.undo(redo: false).value
+        try await eventually { view.objects[edited.id] == host.objects[edited.id] }
+        let applied = try host.object(edited.id)
+        #expect(applied.props["markdown"] == "mine")
+        _ = await mirror.undo(redo: false).value
+        #expect(view.nextUndo?.id == move)
+        #expect(host.objects[edited.id]?.rev == applied.rev)
+        _ = await mirror.undo(redo: false).value
+        #expect(host.objects[edited.id]?.frame == edited.frame)
+        #expect(host.objects[edited.id]?.props["markdown"] == "mine")
+        _ = await mirror.undo(redo: true).value
+        _ = await mirror.undo(redo: true).value
+        #expect(host.objects[edited.id]?.frame.x == 300)
+        #expect(host.objects[edited.id]?.props["markdown"] == "theirs")
+    }
+
     @Test(arguments: [false, true])
     func noteRecoveryRefusesALaterAgentsTextAndKeepsItsStep(redo: Bool) async throws {
         let edited = note("base")

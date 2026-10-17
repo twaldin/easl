@@ -3,6 +3,7 @@ package router
 import (
 	"encoding/json"
 	"maps"
+	"reflect"
 	"testing"
 	"time"
 
@@ -52,12 +53,25 @@ func TestViewSeenStaleMarkerAndRevisionKeepNewerState(t *testing.T) {
 	if stale.(map[string]any)["cleared"] != false || f.board.AttentionMarkers(nil)[0]["raisedAt"] != second.Stamp {
 		t.Fatalf("stale clear %v", stale)
 	}
+	if _, present := stale.(map[string]any)["object"]; present {
+		t.Fatalf("marker-only acknowledgment returned a canonical object: %v", stale)
+	}
 	f.result("agent.report", map[string]any{"tile": term.ID, "kind": "omp", "state": "working"})
 	working := f.result("object.get", map[string]any{"id": term.ID})["object"].(map[string]any)
 	f.result("agent.report", map[string]any{"tile": term.ID, "kind": "omp", "state": "idle"})
 	seen := f.result("view.seen", map[string]any{"id": term.ID, "rev": working["rev"]})
 	if seen["seen"] != false {
 		t.Fatal("stale working rev marked the finished turn seen")
+	}
+	if _, present := seen["object"]; present {
+		t.Fatalf("stale acknowledgment returned a canonical object: %v", seen)
+	}
+	unguarded := f.result("view.seen", map[string]any{"id": term.ID})
+	if unguarded["seen"] != false {
+		t.Fatalf("unguarded acknowledgment marked the terminal seen: %v", unguarded)
+	}
+	if _, present := unguarded["object"]; present {
+		t.Fatalf("unguarded acknowledgment returned a canonical object: %v", unguarded)
 	}
 	done := f.result("object.get", map[string]any{"id": term.ID})["object"].(map[string]any)
 	if done["props"].(map[string]any)["lifecycle"].(map[string]any)["state"] != "done" {
@@ -68,6 +82,13 @@ func TestViewSeenStaleMarkerAndRevisionKeepNewerState(t *testing.T) {
 	lifecycle := after["props"].(map[string]any)["lifecycle"].(map[string]any)
 	if seen["seen"] != true || lifecycle["state"] != "idle" || lifecycle["seen"] != true {
 		t.Fatalf("current acknowledgment did not mark the finished turn seen: %v %v", seen, after)
+	}
+	canonical, ok := seen["object"].(map[string]any)
+	if !ok || !reflect.DeepEqual(canonical, after) {
+		t.Fatalf("accepted acknowledgment did not return the canonical terminal: %v %v", seen, after)
+	}
+	if canonical["rev"] != done["rev"].(float64)+1 {
+		t.Fatalf("acknowledgment revision did not advance once: %v %v", done, canonical)
 	}
 }
 

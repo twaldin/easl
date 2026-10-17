@@ -401,8 +401,16 @@ func (r *Router) viewSeen(p map[string]any) (any, error) {
 		}
 		marker = parsed
 	}
+	before, objectErr := b.Object(id)
+	matchesRevision := objectErr == nil && rev != nil && before.Rev == *rev
 	cleared, seen := b.Seen(id, rev, marker)
-	return map[string]any{"cleared": cleared, "seen": seen}, nil
+	result := map[string]any{"cleared": cleared, "seen": seen}
+	if matchesRevision && seen {
+		if terminal, err := b.Object(id); err == nil && terminal.Type == model.Terminal {
+			result["object"] = objectJSON(b.ReportedOne(terminal))
+		}
+	}
+	return result, nil
 }
 
 // parseISO8601 is Date(text, strategy: .iso8601).

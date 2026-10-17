@@ -157,6 +157,34 @@ final class BoardMirrorTests {
         #expect(notices.count == 1)
     }
 
+    @Test(arguments: [false, true])
+    func ownSeenAckAllowsTheNextPropsEditButNotACrossedAgentEdit(crossed: Bool) async throws {
+        let terminal = host.create(type: .terminal, props: .object(["name": "worker"])).id
+        try host.reportLifecycle(tile: terminal, kind: "omp", state: .working, message: nil, seq: nil, source: nil)
+        try host.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            guard request["method"]?.string == "view.seen", let reply else { return reply }
+            pending.withLock { $0 = { connection.send(reply) } }
+            return nil
+        }
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        view.markSeen(terminal)
+        _ = try view.update(terminal, props: .object(["name": "viewer rename"]))
+        try await eventually { pending.withLock { $0 != nil } }
+        if crossed { _ = try host.update(terminal, props: .object(["name": "agent replacement"])) }
+        pending.withLock { $0 }?()
+        let expected = crossed ? "agent replacement" : "viewer rename"
+        try await eventually { view.objects[terminal]?.props["name"]?.string == expected && view.objects[terminal] == host.objects[terminal] }
+        #expect(host.objects[terminal]?.props["name"]?.string == expected)
+        #expect(host.objects[terminal]?.props["lifecycle"]?["seen"] == .bool(true))
+    }
+
     @Test func anAcknowledgmentOfADeletedObjectLeavesEditingAndUndoUsable() async throws {
         let deleted = note("gone"), kept = note("kept", at: 400)
         _ = try host.raiseAttention(deleted.id, message: "look", caller: nil)
@@ -365,6 +393,22 @@ final class BoardMirrorTests {
         try await eventually { other.tray.map(\.target) == [.object(quoted.id)] }
         #expect(other.tray.map(\.id) == [second.id])
         #expect(view.tray.count == 1)
+    }
+
+    @Test func aComposerReturnWhileTheHostWindowIsClosedRestoresPrivateMentions() async throws {
+        let terminal = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        try host.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        let quoted = note("captured before closing")
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let original = try view.stage(.object(quoted.id))
+        try await mirror.prompt("review [1]", to: terminal, mentions: view.withdraw([original.id]), answer: false)
+        registry.setWindowOpen(false, board: host.id)
+        try await eventually { mirror.availability == .closed }
+        try host.releaseAgent(tile: terminal)
+        try await eventually { view.tray.map(\.id) == [original.id] }
+        #expect(view.tray.map(\.target) == [.object(quoted.id)])
+        #expect(mirror.availability == .closed && host.tray.isEmpty)
     }
 
     @Test func aReturnBeforeAFailedReplyCannotReleaseTheNextDelivery() async throws {
