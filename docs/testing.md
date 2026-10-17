@@ -80,6 +80,8 @@ scripts/dev.sh restart           # rebuild + relaunch with the same tabs; termin
 scripts/dev.sh stop              # quit and kill this instance's terminal sessions
 ```
 
+Each development home owns its boards, API sockets, browser profile, and zmx state. Both dev launchers persist `ZMX_DIR=<home>/zmx`, `XDG_STATE_HOME=<home>/state`, and `TMPDIR=<home>/tmp` in the copied bundle, so plain macOS relaunches keep the same isolation. zmx 0.8.1 puts session sockets in `ZMX_DIR` and logs in `ZMX_DIR/logs`; terminal attachment and housekeeping use those paths too. The launchers and app refuse paths that escape the home or overlap installed easl or zmx state, including symlinks. `scripts/dev.sh zmx-env zmx version` prints the selected socket and log directories without launching the app.
+
 What it sets up:
 
 - `EASL_HOME=<checkout>/.easl-home` holds this instance's socket, boards, pid, and `app.log`, so it never touches the installed app's boards or another instance's.
@@ -181,9 +183,15 @@ python3 scripts/perf-loop.py --app base=/tmp/a.app --app fix=/tmp/b.app [--board
 
 ### Remote boards
 
-File › Open Remote… against a second development instance on this Mac, through a private sshd (nothing in `~/.ssh` changes): make a host key, a client key and an `ssh_config` with a `Host easl-localhost` (127.0.0.1, its port, `IdentityFile`, `UserKnownHostsFile`) in a scratch directory; run `/usr/sbin/sshd -D -e -f <dir>/sshd_config` as yourself (`Port`, `ListenAddress 127.0.0.1`, `HostKey`, `AuthorizedKeysFile` holding the client key, `UsePAM no`, `StrictModes no`); and point the viewer's ssh at it with a wrapper, `exec /usr/bin/ssh -F <dir>/ssh_config "$@"`. Start the host instance, then the viewer with `EASL_DEV_SSH=<wrapper>` and `EASL_DEV_REMOTE_HOME=<the host's EASL_DEV_HOME>` (the support directory to use on every host instead of its own); then `scripts/dev.sh input mainmenu "File/Open Remote…"`, `input text easl-localhost`, `input key return` (the sheet's default button). `app.log` says what it found (`Open Remote: easl-localhost online, 1 board, …`, counts only) and, after another Return, what `openRemoteBoard` was asked to open. Stop the host to see "easl isn't running"; the viewer comes back online by itself once the host starts again.
+To test File › Open Remote… against another development instance on this Mac, run a private sshd in a scratch directory without changing `~/.ssh`.
+Give it its own host key, client key, `AuthorizedKeysFile`, and `ssh_config` entry named `easl-localhost` for its loopback port.
+Run `/usr/sbin/sshd -D -e -f <dir>/sshd_config` as yourself with `UsePAM no` and `StrictModes no`.
+Point the viewer at a wrapper containing `exec /usr/bin/ssh -F <dir>/ssh_config "$@"`.
+Start the host, then start the viewer with `EASL_DEV_SSH=<wrapper>` and `EASL_DEV_REMOTE_HOME=<host's EASL_DEV_HOME>`.
+Use `scripts/dev.sh input mainmenu "File/Open Remote…"`, `input text easl-localhost`, and `input key return` to list its boards. Another Return opens the selected board.
+Stop the host to see "easl isn't running"; the viewer reconnects when the host starts again.
 
-With `EASL_DEV_REMOTE_HOME` set the host is a development instance whose launcher isn't known, so the sheet doesn't offer Start easl (it runs `open -g /Applications/easl.app`, the installed app and its real home, only for a host without the override). Quit the viewer with the sheet open and `pgrep -fl 'nc -U'` finds no relay left: quitting ends every ssh before the app exits.
+`remote-boards.json` stores each easld board's `host`, `sshTarget`, absolute server `home`, and `board`. Restarting without `EASL_DEV_REMOTE_HOME`, or with a different value, keeps the saved server home. Entries predating `home` use the dev override when set and the host's default only without it. With the override set, discovery refuses the default server even if an entry explicitly names it; it never redirects that address to another server. The picker remembers its most recent server home too. A custom Mac home uses its own `zmx` and `tmp` directories and has no known launcher, so Start easl is unavailable. Quit the viewer with the sheet open and verify that its SSH relays end before the app exits.
 
 ### Testing the updater
 

@@ -44,8 +44,8 @@ enum AppPaths {
     /// The remote easld boards background attach attaches again (`RemoteReopen`): how to reach each
     /// one, never what it holds.
     static let remoteBoards = support.appendingPathComponent("remote-boards.json")
-    /// Testing only: the easl support directory to use on every remote host instead of its own
-    /// (a development instance there, docs/testing.md).
+    /// Testing only: the home for new remote hosts and legacy saved addresses. Fully saved
+    /// addresses keep their home; the host's default server is refused while this is set.
     static let devRemoteHome: String? = ProcessInfo.processInfo.environment["EASL_DEV_REMOTE_HOME"].flatMap { $0.isEmpty ? nil : $0 }
     /// Where this client left each board's view (`SavedViewport`), one `<boardId>.json` per board.
     /// Client state, not the board's: a board is shared by every client that opens it.
@@ -86,10 +86,7 @@ enum AppPaths {
         return (["/opt/homebrew/bin/zmx", "/usr/local/bin/zmx"] + path).first { FileManager.default.isExecutableFile(atPath: $0) }
     }()
 
-    /// This development home's zmx socket directory, `<EASL_HOME>/zmx`. Nil for the
-    /// installed app. Taken from `EASL_HOME`, not from a `ZMX_DIR` already in the
-    /// launch environment: startup sets that variable with `setenv`, which
-    /// `ProcessInfo` does not show.
+    /// This development home's zmx socket directory. Nil for the installed app.
     static let devZmxDir: String? = {
         guard let home = ProcessInfo.processInfo.environment["EASL_HOME"] else { return nil }
         return ZmxIsolation.layout(home: home)?.zmxDir
