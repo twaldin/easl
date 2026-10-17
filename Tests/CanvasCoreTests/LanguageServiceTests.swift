@@ -148,6 +148,17 @@ final class LoginShellTests {
         #expect(start.duration(to: .now) < deadline / 3)
     }
 
+    @Test func childrenCannotHoldUnrelatedPipesOpen() async throws {
+        var descriptors: [Int32] = [-1, -1]
+        try #require(pipe(&descriptors) == 0)
+        defer { descriptors.forEach { close($0) } }
+        let login = LoginShell(shell: try shell("""
+        if [ -e /dev/fd/\(descriptors[1]) ]; then exit 1; fi
+        eval "$2"
+        """))
+        #expect(await offPool { login.resolve("ls") } == URL(fileURLWithPath: "/bin/ls"))
+    }
+
     @Test func aHangingShellIsKilledAtTheDeadline() async throws {
         // Not killed at the deadline, it would hang for the shell's 60 s.
         let deadline: Duration = .seconds(1)
