@@ -7,7 +7,7 @@ import CanvasCore
 /// to the canvas so marquee selection still starts inside it. Title and border are in document
 /// space: they scale with the canvas like everything on it and never redraw for a zoom.
 @MainActor
-final class GroupView: NSView {
+final class GroupView: NSView, NSViewToolTipOwner {
     let objectID: ObjectID
     private(set) var spec: GroupSpec
     var members: [ObjectID] { spec.members }
@@ -77,7 +77,11 @@ final class GroupView: NSView {
 
     private func refreshToolTip() {
         removeAllToolTips()
-        if let author, let rect = authorRect { addToolTip(rect, owner: AuthorMark.toolTip(author) as NSString, userData: nil) }
+        if let rect = authorRect { addToolTip(rect, owner: self, userData: nil) }
+    }
+
+    nonisolated func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        MainActor.assumeIsolated { author.map(AuthorMark.toolTip) ?? "" }
     }
 
     /// The title's hit and draw area in view coordinates. Hit testing asks on every scroll event
