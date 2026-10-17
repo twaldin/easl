@@ -16,6 +16,11 @@ public final class HostFileWatch {
         task = Task { @MainActor [metadata] in
             var prior = baseline
             while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: interval)
+                } catch {
+                    return
+                }
                 let observation: HostFileObservation
                 do {
                     observation = .version(try await files.read(metadata).version)
@@ -31,11 +36,6 @@ public final class HostFileWatch {
                     changed(observation)
                 }
                 prior = observation
-                do {
-                    try await Task.sleep(for: interval)
-                } catch {
-                    return
-                }
             }
         }
     }

@@ -149,6 +149,12 @@ struct HostFilesTests {
             let result = try await files.read(HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage(path)))
             #expect(result.data == bytes)
         }
+        try fixture.write("shot-06:15.png", Data("colon filename".utf8))
+        for bytes in [true, false] {
+            let request = HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage("shot-06:15.png"), bytes: bytes)
+            let result = try await files.read(request)
+            #expect(result.data == (bytes ? Data("colon filename".utf8) : Data()))
+        }
         let outside = fixture.temp.appendingPathComponent("outside.png")
         try Data("outside".utf8).write(to: outside)
         let sibling = fixture.directory.appendingPathComponent("root-evil.png")
@@ -461,5 +467,19 @@ struct RemoteHtmlChannelTests {
         let unknownOpen = try await HtmlChannel.handle(.openCode(path: "file.txt", lines: nil, symbol: nil), tile: html.id, board: board, files: files)
         let unknownCode = try board.object(try #require(unknownOpen["tile"]?.string))
         #expect(unknownCode.props == .object(["path": "file.txt", "ref": "unknown"]))
+    }
+}
+
+@MainActor
+struct RemoteImageMentionTests {
+    @Test func aRemotePixelMentionDoesNotReadTheSameNamedViewerImage() async throws {
+        let fixture = try HostFileFixture()
+        try fixture.write("chart.svg", Data(#"<svg xmlns="http://www.w3.org/2000/svg" width="999" height="777"/>"#.utf8))
+        let host = HtmlTestHost()
+        let board = Board(remote: "brd_image_host", root: fixture.root, host: host)
+        let image = board.create(type: .image, props: .object(["path": "chart.svg"]))
+        let mention = try board.stage(.image(object: image.id, path: "chart.svg", x: 7, y: 9))
+        let resolved = await MentionContext.resolve(mention, index: 1, on: board)
+        #expect(resolved.summary == "[1] image chart.svg · pixel (7, 9), from its top-left · tile \(image.id)")
     }
 }

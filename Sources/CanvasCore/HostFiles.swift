@@ -336,7 +336,7 @@ public struct HostFiles: Sendable {
         if (input.startsWith('file:')) {
           try { input = require('node:url').fileURLToPath(input); }
           catch { fail('refused'); }
-        } else if (/^[a-z][a-z0-9+.-]*:/i.test(input)) fail('refused');
+        } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) fail('refused');
         if (input.includes('\0')) fail('refused');
         const base = resolved(root), candidate = resolved(path.resolve(root, input));
         if (candidate === base || !inside(base, candidate)) fail('refused');

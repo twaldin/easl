@@ -19,7 +19,7 @@ final class ImageTile: NSView, TileContent {
     private let source: FileSource
     private var live = true
     /// The loaded picture and its natural size (pixels for bitmaps, points for SVG and PDF).
-    private var picture: (image: NSImage, size: CGSize)?
+    private var picture: (image: NSImage, size: CGSize, path: String)?
     /// The picture's mean relative luminance, nil when it is mostly transparent (the tile's
     /// background shows): what drawings in the default ink over it contrast with.
     private(set) var surfaceLuminance: Double?
@@ -61,7 +61,7 @@ final class ImageTile: NSView, TileContent {
     // MARK: Loading
 
     /// Reads the file off the main thread; the newest read wins.
-    private func reload(triggeredBy observation: HostFileObservation? = nil) {
+    private func reload() {
         loadTask?.cancel()
         hostWatch?.cancel()
         hostWatch = nil
@@ -75,6 +75,7 @@ final class ImageTile: NSView, TileContent {
         loadTask = Task { [weak self] in
             var read: (data: Data, size: CGSize)?
             var failure: String?
+            var readFailure: HostFileError?
             var baseline: HostFileObservation?
             if path.isEmpty {
                 failure = "no image path"
@@ -99,8 +100,8 @@ final class ImageTile: NSView, TileContent {
                         return
                     } catch {
                         let error = error as? HostFileError ?? .unavailable(String(describing: error))
-                        // Content can fail while metadata succeeds. Preserve the observed state to avoid a reload loop.
-                        baseline = observation ?? .failure(error)
+                        readFailure = error
+                        baseline = .failure(error)
                         failure = Self.hostFailure(error, path: path)
                     }
                 }
@@ -109,10 +110,11 @@ final class ImageTile: NSView, TileContent {
             self.loaded = true
             if let read, let image = NSImage(data: read.data) {
                 image.size = read.size
-                self.picture = (image, read.size)
+                self.picture = (image, read.size, path)
                 self.failure = nil
             } else {
-                self.picture = nil
+                let unavailable = if case .unavailable? = readFailure { true } else { false }
+                if !unavailable || self.picture?.path != path { self.picture = nil }
                 self.failure = failure ?? "not a readable image: \(path)"
             }
             let luminance = self.picture.flatMap { Self.meanLuminance($0.image) }
@@ -181,9 +183,9 @@ final class ImageTile: NSView, TileContent {
             hostWatch?.cancel()
             let generation = loadGeneration
             let request = HostFileRequest(source: .directory(root), policy: .boardImage(path))
-            hostWatch = HostFileWatch(files: files, request: request, baseline: baseline) { [weak self] observation in
+            hostWatch = HostFileWatch(files: files, request: request, baseline: baseline) { [weak self] _ in
                 guard let self, self.live, self.window != nil, self.path == path, self.loadGeneration == generation else { return }
-                self.reload(triggeredBy: observation)
+                self.reload()
             }
         }
     }
@@ -253,10 +255,18 @@ final class ImageTile: NSView, TileContent {
         bounds.fill()
         if let picture, let rect = pictureRect(bounds.size) {
             picture.image.drawUpright(in: rect)
-        } else if loaded, let failure {
-            let text = NSAttributedString(string: failure, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
-            let size = text.size()
-            text.draw(at: CGPoint(x: max(8, (bounds.width - size.width) / 2), y: max(8, (pictureArea(bounds.size).height - size.height) / 2)))
+        }
+        if loaded, let failure {
+            let text = NSAttributedString(string: failure, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: picture == nil ? NSColor.secondaryLabelColor : NSColor.systemOrange])
+            if picture != nil {
+                let area = CGRect(x: 8, y: 8, width: max(0, bounds.width - 16), height: 40)
+                NSColor.textBackgroundColor.withAlphaComponent(0.9).setFill()
+                area.fill()
+                text.draw(with: area.insetBy(dx: 6, dy: 4), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+            } else {
+                let size = text.size()
+                text.draw(at: CGPoint(x: max(8, (bounds.width - size.width) / 2), y: max(8, (pictureArea(bounds.size).height - size.height) / 2)))
+            }
         }
         guard let caption else { return }
         let style = NSMutableParagraphStyle()
@@ -283,6 +293,7 @@ final class ImageTile: NSView, TileContent {
             reload()
             await loadTask?.value
         }
+        guard loaded, !stale else { return .placeholder(request, "image read was cancelled") }
         let image = request.image { bounds in paint(in: bounds) }
         guard let image else { return TileRender(image: nil, contentSize: request.size, state: .failed, reason: "bitmap allocation failed") }
         return TileRender(image: image, contentSize: request.size, state: .rendered)

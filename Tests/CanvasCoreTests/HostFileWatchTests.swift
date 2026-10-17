@@ -48,8 +48,9 @@ struct HostFileWatchTests {
         let completed = requests(in: log).count
         try #require(await eventually { requests(in: log).count >= completed + 3 })
         #expect(observations == [expected])
-        let polls = requests(in: log).filter { $0["bytes"] == .bool(false) }
-        #expect(polls.count == requests(in: log).count - 1)
+        let completedRequests = requests(in: log)
+        let polls = completedRequests.filter { $0["bytes"] == .bool(false) }
+        #expect(polls.count == completedRequests.count - 1)
         #expect(polls.first?["policy"] == .object(["kind": "boardImage", "path": "chart.png"]))
         watch.cancel()
         try fixture.write("chart.png", Data("after cancel".utf8))
@@ -66,7 +67,7 @@ struct HostFileWatchTests {
         try fixture.write("chart.png", Data("new image".utf8))
         let expected = HostFileObservation.version(try await files.read(request).version)
         var observations: [HostFileObservation] = []
-        let watch = HostFileWatch(files: files, request: request, baseline: baseline, interval: .seconds(30)) { observations.append($0) }
+        let watch = HostFileWatch(files: files, request: request, baseline: baseline, interval: .milliseconds(20)) { observations.append($0) }
         defer { watch.cancel() }
         try #require(await eventually { observations.count == 1 })
         #expect(observations == [expected])
@@ -99,7 +100,7 @@ struct HostFileWatchTests {
         try FileManager.default.removeItem(at: target)
         try #require(await eventually { observations.count == 3 })
         #expect(observations == [.failure(.refused), .version(read.version), .failure(.notFound(commit: nil))])
-        try fixture.write("chart.png", Data("recreated image".utf8))
+        try Data("recreated image".utf8).write(to: target, options: .atomic)
         try #require(await eventually { observations.count == 4 })
         let recreated = try await files.read(request)
         #expect(recreated.data == Data("recreated image".utf8))
@@ -117,7 +118,7 @@ struct HostFileWatchTests {
         defer { watch.cancel() }
         try #require(await eventually { requests(in: log).count >= 3 })
         #expect(observations == [])
-        try fixture.write("chart.png", Data("small".utf8))
+        try Data("small".utf8).write(to: fixture.root.appendingPathComponent("chart.png"), options: .atomic)
         try #require(await eventually { observations.count == 1 })
         let read = try await files.read(request)
         #expect(read.data == Data("small".utf8))
