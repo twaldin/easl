@@ -539,7 +539,7 @@ public final class ApiRouter {
     private func recheck(_ token: UUID) {
         guard let index = waiters.firstIndex(where: { $0.token == token }) else { return }
         let waiter = waiters[index]
-        guard let (board, _) = try? resolveAgentTile(waiter.tile) else { return }
+        guard let (board, _) = try? agentTileIncludingClosing(waiter.tile) else { return }
         guard let reply = reply(to: waiter, on: board) else {
             if let prompted = pendingPrompts[waiter.tile] { recheck(token, at: prompted.addingTimeInterval(promptStartGrace)) }
             return
@@ -634,12 +634,11 @@ public final class ApiRouter {
     /// The terminal `target` addresses (AgentAddress: a tile id, `name` or `name@board`) on the
     /// open boards; a bare name on `caller`'s board first.
     func agentTile(_ target: String, caller: ObjectID? = nil) throws -> (Board, CanvasObject) {
-        let (board, terminal) = try resolveAgentTile(target, caller: caller)
+        let (board, terminal) = try agentTileIncludingClosing(target, caller: caller)
         return (try available(board), terminal)
     }
 
-    // Existing wait timers and sender labels still resolve while their board closes.
-    private func resolveAgentTile(_ target: String, caller: ObjectID? = nil) throws -> (Board, CanvasObject) {
+    private func agentTileIncludingClosing(_ target: String, caller: ObjectID? = nil) throws -> (Board, CanvasObject) {
         try AgentAddress.resolve(target, caller: caller, boards: Array(registry.boards.values))
     }
 
@@ -1076,7 +1075,7 @@ public final class ApiRouter {
         var queued: String?
         switch attached {
         case .agent:
-            let senderName = sender.flatMap { try? resolveAgentTile($0) }.map { PromptTarget.label($0.1, shownTitle: terminalStatus?($0.0, $0.1.id).title) }
+            let senderName = sender.flatMap { try? agentTileIncludingClosing($0) }.map { PromptTarget.label($0.1, shownTitle: terminalStatus?($0.0, $0.1.id).title) }
             handed = try board.handOff(mentions, to: terminal.id, from: sender, fromName: senderName)
         case .composer(let given, let answer):
             if PromptTarget.drains(current), !PromptTarget.skipsDrain(text, in: current), answer ? PromptTarget.answersAsPrompt(current) : !given.isEmpty {
