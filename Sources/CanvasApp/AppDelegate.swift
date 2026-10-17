@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = Self.makeMenu()
+        registry.drawingMachine = ClientIdentity.thisMac.drawingMachine
         MainMetricsBatch.shared.start()
         UserIdleWatch.shared.start()
         // `kill <pid>` (scripts, logout) quits through the normal path so boards are flushed.

@@ -124,6 +124,7 @@ func run(args []string, stderr io.Writer) int {
 		return fail(err)
 	}
 	r.StartSessions()
+	defer r.CloseOwnedSockets()
 	owns := ""
 	if r.Owns != nil {
 		owns = "; it starts and ends their terminals"

@@ -19,6 +19,11 @@ public enum IDs {
         let random = (0..<8).map { _ in alphabet[Int.random(in: 0..<alphabet.count)] }
         return "\(prefix)_\(time)\(String(random))"
     }
+
+    /// Whether `text` is an id as the schema's `Id` has them: lowercase letters, `_`, then letters and digits.
+    public static func isID(_ text: String) -> Bool {
+        text.range(of: "^[a-z]+_[0-9A-Za-z]+$", options: .regularExpression) != nil
+    }
 }
 
 public struct Frame: Codable, Equatable, Sendable {
@@ -86,7 +91,7 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
     public var knownProps: Set<String> {
         let own: Set<String> = switch self {
         case .terminal: ["cwd", "command", "zmxSession", "host", "title", "name", "agent", "lifecycle", "follow", "zoom", "worktree", "branch"]
-        case .browser: ["url", "title", "pageTitle", "zoom", "profile", "reloadOnChange"]
+        case .browser: ["url", "title", "pageTitle", "drawingMachine", "zoom", "profile", "reloadOnChange"]
         case .code: ["path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "ref", "refSha", "zoom"]
         case .note: ["markdown", "title", "root", "ref", "refSha", "zoom"]
         case .html: ["html", "title", "root", "ref", "refSha", "allowNetwork", "state", "zoom"]

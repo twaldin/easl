@@ -8,13 +8,39 @@ public enum RemoteWrite: Equatable, Sendable {
     /// `seen`: the object's revision as the board showed it when the user made the change.
     case update(ObjectID, seen: Int?, frame: Frame?, z: Double?, props: JSONValue?)
     case delete(ObjectID)
+    /// A browser tile's page as this Mac runs it (`Board.reportPage`): the one write-back of the
+    /// app's own that a remote board sends to its host.
+    case page(ObjectID, BrowserReport)
 
     /// The object written, by its id on this board.
     var object: ObjectID {
         switch self {
         case .create(let object): object.id
-        case .update(let id, _, _, _, _), .delete(let id): id
+        case .update(let id, _, _, _, _), .delete(let id), .page(let id, _): id
         }
+    }
+}
+
+/// What a browser tile's drawing Mac reports of its page (`browser.report`): an address it
+/// committed, credited to whoever drove the page there, or the page's own title (nil: none).
+public enum BrowserReport: Equatable, Sendable {
+    case url(String, by: ActivityActor)
+    case title(String?)
+
+    func params(_ id: ObjectID) -> [String: JSONValue] {
+        var params: [String: JSONValue] = ["id": .string(id)]
+        switch self {
+        case .url(let url, let actor):
+            params["url"] = .string(url)
+            switch actor {
+            case .agent(let tile): params["caller"] = .string(tile)
+            case .user: params["actor"] = .string("user")
+            case .system: params["actor"] = .string("system")
+            }
+        case .title(let title):
+            params["pageTitle"] = title.map(JSONValue.string) ?? .null
+        }
+        return params
     }
 }
 
@@ -68,6 +94,13 @@ public final class BoardMirror: BoardHost {
     /// This viewer as the board's easld's client (docs/design/next.md "The client protocol");
     /// nil until `serve`, and on a Mac host, which answers those calls itself.
     public private(set) var attachment: Attachment?
+    /// The machine identities of the Macs attached to the board that run its browser tiles' pages
+    /// (`client.list`, then each `client.changed`): attached as easld's clients serving the board
+    /// and `browser.call`. Nil until heard after `serve`, and while the link is down; never stored.
+    public private(set) var drawingMachines: Set<String>?
+    /// `drawingMachines` changed: the tiles that say where their page runs say it again.
+    public var onDrawingMachines: (() -> Void)?
+    private var presenceHeard = 0
 
     /// Where this viewer's `client.attach` stands on the board's link.
     public enum Attachment: Equatable, Sendable {
@@ -203,7 +236,13 @@ public final class BoardMirror: BoardHost {
             redrawDue = true
         }
         if calls != nil {
-            if state == .online { attach() } else { attachment = .waiting }
+            if state == .online {
+                attach()
+                listClients()
+            } else {
+                attachment = .waiting
+                setDrawingMachines(nil)
+            }
         }
         if self.state != previous { onState?(self.state) }
         if state == .online, stale { Task { await reread() } }
@@ -255,7 +294,12 @@ public final class BoardMirror: BoardHost {
         connection.serve { [weak calls] call in
             await calls?.answer(call) ?? .failure(EaslConnection.Failure("unavailable", "\(call.method): this board's window closed"))
         }
-        if linkState == .online { attach() } else { attachment = .waiting }
+        if linkState == .online {
+            attach()
+            listClients()
+        } else {
+            attachment = .waiting
+        }
     }
 
     /// The user is looking at this board (its window became key): an accepted attach goes again
@@ -282,6 +326,7 @@ public final class BoardMirror: BoardHost {
             "boards": .array([.string(boardID)]),
         ]
         if let app = identity.app { fields["app"] = .string(app) }
+        if let id = identity.id { fields["identity"] = .string(id) }
         if focused || calls.window.focused() { fields["focused"] = .string(boardID) }
         let params = JSONValue.object(fields)
         Task {
@@ -302,9 +347,40 @@ public final class BoardMirror: BoardHost {
         }
     }
 
+    private func listClients() {
+        let heard = presenceHeard, drop = drops
+        Task {
+            guard let reply = try? await connection.request("client.list") else { return }
+            guard heard == presenceHeard, drop == drops, linkState == .online, calls != nil else { return }
+            setDrawingMachines(drawingMachines(in: reply["clients"]))
+        }
+    }
+
+    private func clientsChanged(_ event: EaslConnection.Event) {
+        guard calls != nil, event.board == nil || event.board == sessionBoardID || event.board == boardID else { return }
+        presenceHeard += 1
+        setDrawingMachines(drawingMachines(in: event.data["clients"]))
+    }
+
+    private func drawingMachines(in clients: JSONValue?) -> Set<String> {
+        let boards: Set<BoardID> = [boardID, sessionBoardID]
+        return Set((clients?.array ?? []).compactMap { entry -> String? in
+            guard let identity = entry["identity"]?.string, entry["serves"]?.array?.contains(.string("browser.call")) == true,
+                  entry["boards"]?.array?.contains(where: { $0.string.map { boards.contains($0) } == true }) == true else { return nil }
+            return identity
+        })
+    }
+
+    private func setDrawingMachines(_ machines: Set<String>?) {
+        guard machines != drawingMachines else { return }
+        drawingMachines = machines
+        onDrawingMachines?()
+    }
+
     // MARK: The host's changes
 
     private func received(_ event: EaslConnection.Event) {
+        if event.name == "client.changed" { return clientsChanged(event) }
         if reading != nil || creating > 0 { return held.append(event) }
         guard event.board == nil || event.board == sessionBoardID else { return }
         switch event.name {
@@ -497,6 +573,7 @@ public final class BoardMirror: BoardHost {
                 "frame": RenderMath.json(provisional.frame),
             ]
             if let parent = provisional.parent { params["parent"] = .string(parent) }
+            if provisional.type == .browser, case .agent(let tile) = provisional.createdBy { params["caller"] = .string(tile) }
             // Its object's event, ahead of the answer, waits for it (`creating`).
             creating += 1
             defer {
@@ -543,6 +620,16 @@ public final class BoardMirror: BoardHost {
                 await refused(target, error, doing: "deleted")
             }
             return (target, nil)
+        case .page(let id, let report):
+            guard let target = target(id) else { return (nil, nil) }
+            do {
+                let object = try await request("browser.report", report.params(target))
+                learn(object)
+                return (target, object.rev)
+            } catch {
+                NSLog("easl: %@ took no page report for browser tile %@ (%@)", hostName, target, (error as? EaslConnection.Failure)?.code ?? "unavailable")
+                return (target, nil)
+            }
         }
     }
 

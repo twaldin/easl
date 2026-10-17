@@ -219,7 +219,7 @@ func TestSendNeverBlocksOnAClientThatStopsReading(t *testing.T) {
 	conns := make(chan *Conn, 1)
 	l := defaultLimits
 	l.pending = 1 << 20
-	s, err := listen(socketPath(t), func(req any, c *Conn) any { conns <- c; return nil }, nil, l)
+	s, err := listen(socketPath(t), func(req any, c *Conn) any { conns <- c; return nil }, nil, nil, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestCloseRemovesOnlyItsOwnSocketFile(t *testing.T) {
 func TestOverlongLineIsAnsweredThenTheConnectionCloses(t *testing.T) {
 	l := defaultLimits
 	l.line = 1024
-	s, err := listen(socketPath(t), echo, nil, l)
+	s, err := listen(socketPath(t), echo, nil, nil, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +482,7 @@ func TestReadingPausesWhileTheInboxIsFull(t *testing.T) {
 	s, err := listen(socketPath(t), func(req any, c *Conn) any {
 		once.Do(func() { conns <- c; <-release })
 		return echo(req, c)
-	}, nil, l)
+	}, nil, nil, l)
 	if err != nil {
 		t.Fatal(err)
 	}

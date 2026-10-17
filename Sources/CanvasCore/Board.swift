@@ -271,6 +271,17 @@ public final class Board {
     /// How deep the user's write calls are nested on a remote board: only the outermost one goes
     /// to the host (its cascades, a group re-fit or an arrow detaching, are the host's to make).
     private var hostWriteDepth = 0
+    /// The Mac whose app hosts this board, which runs every one of its browser tiles' pages: a
+    /// browser tile without a drawing machine takes this one (`BrowserProps.drawingMachine`),
+    /// made with it or once this is set. Nil on a remote board: its own host assigns them.
+    public var hostMachine: DrawingMachine? {
+        didSet {
+            guard let hostMachine else { return }
+            for object in objects.values.sorted(by: { $0.id < $1.id }) where object.type == .browser && DrawingMachine(object.props) == nil {
+                commitBookkeeping(object, props: .object(["drawingMachine": hostMachine.json]))
+            }
+        }
+    }
 
     public init(id: BoardID, root: URL) {
         self.id = id
@@ -373,9 +384,10 @@ public final class Board {
             size = Self.defaultSize(type)
         }
         let z = (objects.values.map(\.z).max() ?? 0) + 1
-        // A remote board's terminal is stamped by its host, which knows its checkouts.
+        var stamped = type == .terminal && !isRemote ? stampingWorktree(props) : props
+        if type == .browser, let hostMachine, DrawingMachine(props) == nil { stamped = props.merging(.object(["drawingMachine": hostMachine.json])) }
         var object = CanvasObject(id: IDs.make("obj"), type: type, frame: frame ?? Frame(x: 0, y: 0, w: size.w, h: size.h), z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(),
-                                  props: type == .terminal && !isRemote ? stampingWorktree(props) : props)
+                                  props: stamped)
         if let fitted = fittedFrame(ofGroup: object) {
             object.frame = fitted
         } else if frame == nil {
@@ -427,6 +439,23 @@ public final class Board {
             throw BoardError.invalidParams("\(before.type.rawValue) bookkeeping is \(allowed.sorted()), not \(props.object.map { $0.keys.sorted() } ?? [])")
         }
         commitBookkeeping(before, props: props)
+    }
+
+    /// A page's committed URL or title, credited to its driver. Remote reports wait for the
+    /// host's object event rather than creating optimistic board revisions.
+    public func reportPage(_ id: ObjectID, _ report: BrowserReport) throws {
+        if isRemote {
+            _ = try object(id)
+            if hostWriteDepth == 0 { host?.send(.page(id, report)) }
+            return
+        }
+        switch report {
+        case .url(let url, let actor):
+            let caller: ObjectID? = if case .agent(let tile) = actor { tile } else { nil }
+            _ = try update(id, props: .object(["url": .string(url)]), caller: caller, actor: actor)
+        case .title(let title):
+            try writeBookkeeping(id, props: .object(["pageTitle": title.map(JSONValue.string) ?? .null]))
+        }
     }
 
     /// A code tile's range re-found by content (`NoteAnchor`, from the tile's reload of its

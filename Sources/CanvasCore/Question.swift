@@ -111,7 +111,6 @@ public struct QuestionSpec: Equatable, Sendable {
 
     // MARK: Validation
 
-    private static let idPattern = "^[a-z]+_[0-9A-Za-z]+$"
     private static let optionKeys: Set<String> = ["id", "label", "why"]
     private static let contextKeys: Set<String> = ["object", "url", "path", "lines"]
     private static let askerKeys: Set<String> = ["tile", "name", "host"]
@@ -212,7 +211,7 @@ public struct QuestionSpec: Equatable, Sendable {
     }
 
     private static func isID(_ value: JSONValue?) -> Bool {
-        value?.string?.range(of: idPattern, options: .regularExpression) != nil
+        value?.string.map(IDs.isID) ?? false
     }
 
     private static func validAsker(_ asker: JSONValue) -> Bool {

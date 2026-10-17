@@ -359,7 +359,7 @@ func (r *Router) snapshot(p map[string]any) (any, error) {
 // openURL is view.open_url: an http(s) address shown in a browser tile beside the caller's
 // terminal (Board.OpenLink), or the tile already showing it. Revealing the tile is the window's
 // (ApiRouter.showOpenedLink), and easld has none.
-func (r *Router) openURL(p map[string]any) (any, error) {
+func (r *Router) openURL(p map[string]any, from Conn) (any, error) {
 	b, err := r.boardOf(p)
 	if err != nil {
 		return nil, err
@@ -377,7 +377,14 @@ func (r *Router) openURL(p map[string]any) (any, error) {
 	if _, ok := b.Objects()[caller]; ok {
 		source = caller
 	}
-	o, existing := b.OpenLink(url, source, caller, nil)
+	extra, err := r.withDrawing(b, nil, from)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := extra["drawingMachine"]; !ok {
+		extra = nil
+	}
+	o, existing := b.OpenLink(url, source, caller, extra)
 	return map[string]any{"object": objectJSON(b.ReportedOne(o)), "existing": existing}, nil
 }
 
@@ -417,7 +424,7 @@ func (r *Router) reload(p map[string]any) (any, error) {
 		}
 		return nil, fail(api.CodeUnavailable, "%s", need)
 	}
-	return r.forward("object.reload", b.ID(), p, millis(timeout)+clients.ReloadGrace, "object.reload reloads the page in its browser tile")
+	return r.reloadBrowser(b, o, p, timeout)
 }
 
 // measure is object.measure: the intrinsic frame size for a type and props.

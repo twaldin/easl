@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "c59ee41dc4b308bd"
+const SchemaHash = "d6eccec31a5df6db"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -20,8 +20,10 @@ const (
 	CodeUnsupported = "unsupported"
 	// target exists but cannot act right now (e.g. a terminal tile without an attached surface), or the app is not running: no attached client (client.attach) serves the call, it didn't answer in time, or it disconnected before answering.
 	CodeUnavailable = "unavailable"
-	// agent.wait deadline passed before the agent reached a requested state.
+	// agent.wait or browser.wait deadline passed before the requested state.
 	CodeTimeout = "timeout"
+	// a browser page script failed.
+	CodeJsError = "js_error"
 	// unexpected server failure.
 	CodeInternal = "internal"
 	// an address (a terminal's name, `name@board`, a board's name, `board.open_remote`'s host name) matches more than one terminal, open board or host; the message lists each candidate (a terminal as `name@board (tile id)`, a host by its ssh target), so the caller can name one.
@@ -249,12 +251,20 @@ var Methods = map[string]ParamSpec{
 		Required: nil,
 	},
 	"client.attach": {
-		Accepted: []string{"version", "schema", "app", "host", "serves", "boards", "focused"},
+		Accepted: []string{"version", "schema", "app", "host", "identity", "serves", "boards", "focused"},
 		Required: []string{"version", "schema", "serves"},
 	},
 	"client.list": {
 		Accepted: nil,
 		Required: nil,
+	},
+	"browser.call": {
+		Accepted: []string{"id", "method", "params", "caller"},
+		Required: []string{"id", "method", "params"},
+	},
+	"browser.report": {
+		Accepted: []string{"id", "url", "pageTitle", "caller", "actor"},
+		Required: []string{"id"},
 	},
 	"text.measure": {
 		Accepted: []string{"items", "board"},
@@ -425,13 +435,22 @@ type TerminalProps struct {
 	Branch *string `json:"branch,omitempty"`
 }
 
+type DrawingMachine struct {
+	// the drawing Mac's persistent client.attach identity, independent of its connection id and hostname
+	ID Id `json:"id"`
+	// the machine's display name, retained for offline notices; never used for routing
+	Host string `json:"host"`
+}
+
 type BrowserProps struct {
 	URL string `json:"url"`
 	// names the tile; the app never overwrites it
 	Title *string `json:"title,omitempty"`
 	// written by the app: the page's own title; shown when `title` is unset; never bumps rev
 	PageTitle *string `json:"pageTitle,omitempty"`
-	Zoom      *Zoom   `json:"zoom,omitempty"`
+	// the Mac that runs this page in its own browser profile. A Mac-hosted board defaults to its host. Easld persists the creating Mac's identity, or the first eligible attached Mac for an existing unassigned tile. Disconnect never moves a page to another machine
+	DrawingMachine *DrawingMachine `json:"drawingMachine,omitempty"`
+	Zoom           *Zoom           `json:"zoom,omitempty"`
 	// a named browser profile: its own cookies, logins and storage, shared by every tile that names it; absent: the default profile. Tiles a page opens (links, popups) take it
 	Profile *string `json:"profile,omitempty"`
 	// a page served from this Mac (localhost, 127.x, [::1], a .localhost name, a file) reloads when a file under the board root (a file page: its folder) changes; hidden files and folders and node_modules don't count

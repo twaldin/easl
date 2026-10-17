@@ -54,6 +54,7 @@ enum AppPaths {
     }
     /// The app's own settings (`UISettings`): the chrome text scale and background attach.
     static let uiSettings = support.appendingPathComponent("ui-settings.json")
+    static let clientID = support.appendingPathComponent("client-id")
     /// easl › Check for Updates…'s downloads (`Updater`): one folder per version with the zip,
     /// the unpacked app, the app it replaced and the helper's result, deleted at the next launch.
     static let updates = support.appendingPathComponent("updates", isDirectory: true)

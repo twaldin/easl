@@ -373,6 +373,8 @@ final class CanvasView: NSScrollView {
             } else if TileFactory.hidden(object) {
                 // Archived: the tile goes, the object stays (unarchiving brings it back).
                 if tiles[object.id] != nil { removeTile(object.id) }
+            } else if let tile = tiles[object.id], object.type == .browser, let remote, (tile.content is BrowserTile) != remote.drawsPage(object) {
+                remount(object)
             } else if let tile = tiles[object.id] {
                 // The user's own resize already laid the content out at this size; any other
                 // (an agent's update or fit, undo) re-aims a code tile at its range.
@@ -415,6 +417,19 @@ final class CanvasView: NSScrollView {
     /// Every remote image tile asks the host for a fresh drawing (`BoardMirror.onRedraw`).
     func redrawRemoteTiles() {
         for tile in tiles.values { (tile.content as? RemoteImageTile)?.redraw() }
+    }
+
+    func drawingMachinesChanged() {
+        for tile in tiles.values { (tile.content as? RemoteBrowserTile)?.drawingMachinesChanged() }
+    }
+
+    private func remount(_ object: CanvasObject) {
+        tiles.removeValue(forKey: object.id)?.removeFromSuperview()
+        add(object)
+        restack()
+        guard selection.contains(object.id) else { return }
+        tiles[object.id]?.isSelected = !chromeHidden
+        refreshRings()
     }
 
     /// A tile's view off the board (its object deleted, or an archived question), out of the

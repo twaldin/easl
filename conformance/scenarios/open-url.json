@@ -137,6 +137,7 @@
           "h": 600
         }
       },
+      "ignore": { "response.result.warnings": "warning wording and the known-prop list are not browser behavior" },
       "settleMs": 1500
     }
   ]

@@ -64,7 +64,7 @@ func current(app, host string, serves []string, boards []string, focused string)
 
 func attach(t *testing.T, r *Registry, conn Conn, a Attachment) *Client {
 	t.Helper()
-	c, err := r.Attach(conn, a)
+	c, _, err := r.Attach(conn, a)
 	if err != nil {
 		t.Fatalf("attach %+v: %v", a, err)
 	}
@@ -131,11 +131,11 @@ func TestAttachRefusesAnOlderSchemaVersionAndTakesTheSameOrANewerOne(t *testing.
 	r := New()
 	older := current("0.1.0", "studio", []string{"view.get"}, []string{board}, board)
 	older.Version, older.Schema = api.SchemaVersion-1, "5a0c1d7e9b3f2a64"
-	_, err := r.Attach(newConn(), older)
+	_, _, err := r.Attach(newConn(), older)
 	failure, _ := err.(*Failure)
 	expectFailure(t, failure, api.CodeUnavailable, fmt.Sprintf("easl 0.1.0 on studio is older than this board's server (schema version %d, the server's %d); update it", api.SchemaVersion-1, api.SchemaVersion))
 	unnamed := Attachment{Version: api.SchemaVersion - 1, Schema: older.Schema, Serves: older.Serves}
-	_, err = r.Attach(newConn(), unnamed)
+	_, _, err = r.Attach(newConn(), unnamed)
 	failure, _ = err.(*Failure)
 	expectFailure(t, failure, api.CodeUnavailable, fmt.Sprintf("a client is older than this board's server (schema version %d, the server's %d); update it", api.SchemaVersion-1, api.SchemaVersion))
 	if r.Clients() != 0 || r.Choose("view.get", board) != nil {
@@ -162,9 +162,68 @@ func TestAttachRefusesAnOlderSchemaVersionAndTakesTheSameOrANewerOne(t *testing.
 
 func TestAttachRefusesAFocusOutsideItsBoards(t *testing.T) {
 	r := New()
-	_, err := r.Attach(newConn(), current("0.2.0", "studio", []string{"view.get"}, []string{"brd_a"}, "brd_b"))
+	_, _, err := r.Attach(newConn(), current("0.2.0", "studio", []string{"view.get"}, []string{"brd_a"}, "brd_b"))
 	failure, _ := err.(*Failure)
 	expectFailure(t, failure, api.CodeInvalidParams, "focused names brd_b, which isn't one of boards")
+}
+
+func TestExactLookupTakesTheNewestEligibleLinkAndEarliestIgnoresFocus(t *testing.T) {
+	r := New()
+	olderConn := newConn()
+	older := current("0.2.0", "home", []string{"browser.call", "object.reload"}, []string{board}, board)
+	older.Identity = "mch_home"
+	olderClient := attach(t, r, olderConn, older)
+	later := current("0.2.0", "work", []string{"browser.call", "object.reload"}, []string{board}, board)
+	later.Identity = "mch_work"
+	attach(t, r, newConn(), later)
+	again := current("0.2.0", "home", []string{"browser.call"}, []string{board}, "")
+	again.Identity = "mch_home"
+	newest := attach(t, r, newConn(), again)
+	if got := r.ChooseExact("mch_home", board, "browser.call"); got != newest {
+		t.Fatalf("exact browser.call = %v, want the newest home link %s", got, newest.ID)
+	}
+	if got := r.ChooseExact("mch_home", board, "object.reload"); got != olderClient {
+		t.Fatalf("exact object.reload = %v, want the older link that still serves it", got)
+	}
+	if r.ChooseExact("mch_home", "brd_other", "browser.call") != nil || r.ChooseExact("mch_missing", board, "browser.call") != nil {
+		t.Fatal("exact lookup matched the wrong board or identity")
+	}
+	if r.Choose("object.reload", board) == nil {
+		t.Fatal("focus routing still has to work for non-browser calls")
+	}
+	owner, ok := r.Earliest(board)
+	if !ok || owner.Identity != "mch_home" || owner.Host != "home" {
+		t.Fatalf("earliest %+v %v, want home", owner, ok)
+	}
+	listed := r.List()
+	if len(listed) != 3 || listed[0].Identity == "" {
+		t.Fatalf("list omitted identity: %+v", listed)
+	}
+}
+
+func TestDetachHookRunsAfterTheRegistryLockIsReleased(t *testing.T) {
+	r := New()
+	ran := make(chan []string, 1)
+	r.OnPresence(func(boards []string) {
+		r.List()
+		ran <- boards
+	})
+	conn := newConn()
+	a := current("0.2.0", "home", []string{"browser.call"}, []string{board}, "")
+	a.Identity = "mch_home"
+	attach(t, r, conn, a)
+	conn.hangUp()
+	select {
+	case boards := <-ran:
+		if len(boards) != 1 || boards[0] != board {
+			t.Fatalf("detach boards %v", boards)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("detach hook did not run after releasing the registry lock")
+	}
+	if r.HasIdentity("mch_home", board) {
+		t.Fatal("the hung-up client was still attached")
+	}
 }
 
 func TestCallRelaysTheClientsResultOrError(t *testing.T) {
@@ -315,7 +374,7 @@ func TestAnAnswerIsNotQueuedBehindTheClientsOwnRequest(t *testing.T) {
 		m := req.(map[string]any)
 		switch m["method"] {
 		case "attach":
-			if _, err := r.Attach(c, current("0.2.0", "studio", []string{"text.measure"}, nil, "")); err != nil {
+			if _, _, err := r.Attach(c, current("0.2.0", "studio", []string{"text.measure"}, nil, "")); err != nil {
 				return map[string]any{"id": m["id"], "ok": false, "error": map[string]any{"code": "internal", "message": err.Error()}}
 			}
 			return map[string]any{"id": m["id"], "ok": true, "result": map[string]any{}}

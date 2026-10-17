@@ -24,7 +24,9 @@ import (
 )
 
 // Delegated are the methods a client can serve (client.attach `serves`).
-var Delegated = []string{"view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "object.measure", "text.measure"}
+// browser.call is the drawing Mac's page commands; without it, and without a
+// persistent identity, a client cannot own a browser tile.
+var Delegated = []string{"view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "object.measure", "text.measure", "browser.call"}
 
 // Deadlines without a caller's timeoutMs (object.reload and view.render add theirs).
 const (
@@ -59,8 +61,11 @@ type Attachment struct {
 	Version   int
 	Schema    string
 	App, Host string
-	Serves    []string
-	Boards    []string
+	// Identity is the app home's persistent machine id. Empty is a legacy client:
+	// it can still attach, and cannot own a browser tile.
+	Identity string
+	Serves   []string
+	Boards   []string
 	// Focused is the board the user is looking at; "" leaves the client's last focus.
 	Focused string
 }
@@ -70,11 +75,12 @@ type Client struct {
 	ID        string
 	conn      Conn
 	app, host string
+	identity  string
 	schema    string
 	serves    map[string]bool
 	boards    map[string]bool
 	// focused is the board its user focused last, at focusedAt (0: never); attachedAt orders
-	// clients that never focused.
+	// clients that never focused. attachedAt is the connection's, not bumped on reattach.
 	focused    string
 	focusedAt  uint64
 	attachedAt uint64
@@ -120,6 +126,7 @@ type Registry struct {
 	labels map[string]measure.TextSize
 	// MeasureDeadline is how long text.measure waits for a client before the glyph table answers.
 	MeasureDeadline time.Duration
+	onPresence      func([]string)
 }
 
 // New is a registry with no clients.
@@ -127,11 +134,20 @@ func New() *Registry {
 	return &Registry{clients: map[Conn]*Client{}, pending: map[string]*call{}, labels: map[string]measure.TextSize{}, MeasureDeadline: MeasureDeadline}
 }
 
+// OnPresence sets the detach hook. It runs without the registry lock, after the client is
+// gone, so the caller can take the board lock.
+func (r *Registry) OnPresence(fn func([]string)) {
+	r.mu.Lock()
+	r.onPresence = fn
+	r.mu.Unlock()
+}
+
 // Attach makes conn a client, or updates the client it already is: what it serves (names it
-// doesn't know are dropped), the boards it shows, and its focus. A client built from an older
-// schema version than the server's is refused; a newer one is accepted and speaks the server's
-// version (the reply names it), using what both know.
-func (r *Registry) Attach(conn Conn, a Attachment) (*Client, error) {
+// doesn't know are dropped), the boards it shows, its identity, and its focus. A client built
+// from an older schema version than the server's is refused; a newer one is accepted and speaks
+// the server's version (the reply names it), using what both know. The returned boards are the
+// union of the boards it showed before and the boards it shows now.
+func (r *Registry) Attach(conn Conn, a Attachment) (*Client, []string, error) {
 	if a.Version < api.SchemaVersion {
 		who := "a client"
 		if a.App != "" {
@@ -140,21 +156,24 @@ func (r *Registry) Attach(conn Conn, a Attachment) (*Client, error) {
 		if a.Host != "" {
 			who += " on " + a.Host
 		}
-		return nil, &Failure{api.CodeUnavailable, fmt.Sprintf("%s is older than this board's server (schema version %d, the server's %d); update it", who, a.Version, api.SchemaVersion)}
+		return nil, nil, &Failure{api.CodeUnavailable, fmt.Sprintf("%s is older than this board's server (schema version %d, the server's %d); update it", who, a.Version, api.SchemaVersion)}
 	}
 	if a.Focused != "" && !slices.Contains(a.Boards, a.Focused) {
-		return nil, &Failure{api.CodeInvalidParams, "focused names " + a.Focused + ", which isn't one of boards"}
+		return nil, nil, &Failure{api.CodeInvalidParams, "focused names " + a.Focused + ", which isn't one of boards"}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c, known := r.clients[conn]
+	var before []string
 	if !known {
 		r.seq++
 		c = &Client{ID: model.NewID("cli"), conn: conn, attachedAt: r.seq}
 		r.clients[conn] = c
 		go r.detachWhenClosed(conn)
+	} else {
+		before = boardIDs(c.boards)
 	}
-	c.app, c.host, c.schema = a.App, a.Host, a.Schema
+	c.app, c.host, c.schema, c.identity = a.App, a.Host, a.Schema, a.Identity
 	c.serves = map[string]bool{}
 	for _, m := range a.Serves {
 		if slices.Contains(Delegated, m) {
@@ -169,14 +188,45 @@ func (r *Registry) Attach(conn Conn, a Attachment) (*Client, error) {
 		r.seq++
 		c.focused, c.focusedAt = a.Focused, r.seq
 	}
-	return c, nil
+	return c, unionIDs(before, boardIDs(c.boards)), nil
 }
 
 func (r *Registry) detachWhenClosed(conn Conn) {
 	<-conn.Done()
 	r.mu.Lock()
-	delete(r.clients, conn)
+	c := r.clients[conn]
+	var boards []string
+	if c != nil {
+		boards = boardIDs(c.boards)
+		delete(r.clients, conn)
+	}
+	notify := r.onPresence
 	r.mu.Unlock()
+	if notify != nil && len(boards) > 0 {
+		notify(boards)
+	}
+}
+
+func boardIDs(boards map[string]bool) []string {
+	out := make([]string, 0, len(boards))
+	for id := range boards {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func unionIDs(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, id := range append(append([]string{}, a...), b...) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Choose is the client a call of method on board goes to ("" board: any client, for
@@ -208,6 +258,103 @@ func (r *Registry) Choose(method, board string) *Client {
 	return candidates[0]
 }
 
+// Owner is a drawing machine copied out of the registry lock.
+type Owner struct {
+	Identity, Host string
+}
+
+// ChooseExact is the newest attached link with identity, showing board, that serves method.
+// Focus is never a fallback. Nil when none match.
+func (r *Registry) ChooseExact(identity, board, method string) *Client {
+	if identity == "" || board == "" || method == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var best *Client
+	for _, c := range r.clients {
+		if c.identity != identity || !c.boards[board] || !c.serves[method] {
+			continue
+		}
+		if best == nil || c.attachedAt > best.attachedAt {
+			best = c
+		}
+	}
+	return best
+}
+
+// HasIdentity reports whether any link with identity shows board, whatever it serves.
+func (r *Registry) HasIdentity(identity, board string) bool {
+	if identity == "" || board == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.clients {
+		if c.identity == identity && c.boards[board] {
+			return true
+		}
+	}
+	return false
+}
+
+// Eligible is the client on conn when it has a persistent identity, serves browser.call, and
+// shows board. Host is the retained offline label.
+func (r *Registry) Eligible(conn Conn, board string) (Owner, bool) {
+	if conn == nil || board == "" {
+		return Owner{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c := r.clients[conn]
+	if c == nil || c.identity == "" || !c.serves["browser.call"] || !c.boards[board] {
+		return Owner{}, false
+	}
+	return Owner{Identity: c.identity, Host: c.host}, true
+}
+
+// Reporter is the client on conn, for browser.report's authority check. ok is false when
+// conn is not attached.
+func (r *Registry) Reporter(conn Conn) (identity string, boards map[string]bool, ok bool) {
+	if conn == nil {
+		return "", nil, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c := r.clients[conn]
+	if c == nil {
+		return "", nil, false
+	}
+	boards = map[string]bool{}
+	for id := range c.boards {
+		boards[id] = true
+	}
+	return c.identity, boards, true
+}
+
+// Earliest is the eligible client that attached first on board: a persistent identity, serving
+// browser.call. The zero Owner and false when none.
+func (r *Registry) Earliest(board string) (Owner, bool) {
+	if board == "" {
+		return Owner{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var best *Client
+	for _, c := range r.clients {
+		if c.identity == "" || !c.serves["browser.call"] || !c.boards[board] {
+			continue
+		}
+		if best == nil || c.attachedAt < best.attachedAt {
+			best = c
+		}
+	}
+	if best == nil {
+		return Owner{}, false
+	}
+	return Owner{Identity: best.identity, Host: best.host}, true
+}
+
 // Clients is how many clients are attached.
 func (r *Registry) Clients() int {
 	r.mu.Lock()
@@ -218,8 +365,8 @@ func (r *Registry) Clients() int {
 // ListedClient is one attached client as client.list reports it. Focused is the board
 // its user focused last, empty when it never has. Boards and Serves are sorted.
 type ListedClient struct {
-	ID, App, Host, Focused string
-	Boards, Serves         []string
+	ID, Identity, App, Host, Focused string
+	Boards, Serves                   []string
 }
 
 // List is a stable snapshot of the attached clients, sorted by id.
@@ -229,7 +376,7 @@ func (r *Registry) List() []ListedClient {
 	out := make([]ListedClient, 0, len(r.clients))
 	for _, c := range r.clients {
 		item := ListedClient{
-			ID: c.ID, App: c.app, Host: c.host, Focused: c.focused,
+			ID: c.ID, Identity: c.identity, App: c.app, Host: c.host, Focused: c.focused,
 			Boards: make([]string, 0, len(c.boards)),
 			Serves: make([]string, 0, len(c.serves)),
 		}

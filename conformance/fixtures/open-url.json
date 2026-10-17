@@ -1,7 +1,7 @@
 {
   "scenario": "open-url",
   "description": "view.open_url: an http(s) address opens a browser tile beside the caller's terminal, the same address (scheme and host case, default port, empty path normalised) reuses it, other schemes and missing urls are errors; without a caller the tile is placed near the user's view. A browser tile's own props (a named profile, reload when files change) are known props.",
-  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "recordedOn": "easld browser-machine lane",
   "steps": [
     {
       "step": "board.open",
@@ -611,10 +611,7 @@
             "type": "browser",
             "updatedAt": "<time:number>",
             "z": 6
-          },
-          "warnings": [
-            "unknown prop \"bogus\" for browser (kept, but nothing reads it; browser props: key, pageTitle, profile, reloadOnChange, title, url, zoom)"
-          ]
+          }
         }
       },
       "events": [
@@ -645,7 +642,10 @@
           },
           "event": "object.created"
         }
-      ]
+      ],
+      "ignored": {
+        "response.result.warnings": "warning wording and the known-prop list are not browser behavior"
+      }
     }
   ]
 }

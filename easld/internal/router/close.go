@@ -79,6 +79,7 @@ func (r *Router) boardClose(p map[string]any) (any, error) {
 	if err := r.reg.Close(b.ID(), func() error { return r.forgetClosed(b) }); err != nil {
 		return nil, closing.failure(err)
 	}
+	r.dropOwnedSockets(closing.terminals)
 	r.closedBoard(closing)
 	kept := []any{}
 	for _, terminal := range sortedTerminals(b) {
@@ -172,6 +173,26 @@ func (r *Router) forgetClosed(b *board.Board) error {
 		return fmt.Errorf("can't record the boards to reopen: %w", err)
 	}
 	return nil
+}
+
+func (r *Router) dropOwnedSockets(terminals []model.Object) {
+	if r.Owns == nil {
+		return
+	}
+	var tiles []string
+	for _, terminal := range terminals {
+		if board.TerminalHost(terminal) == "" {
+			tiles = append(tiles, terminal.ID)
+		}
+	}
+	if len(tiles) == 0 {
+		return
+	}
+	r.queueSession(func() {
+		for _, tile := range tiles {
+			r.removeCmux(tile)
+		}
+	})
 }
 
 func (r *Router) closedBoard(closing *boardClose) {

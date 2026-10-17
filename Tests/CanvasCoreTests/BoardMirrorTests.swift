@@ -932,7 +932,9 @@ final class BoardMirrorTests {
     /// (accepted as easld accepts it, or else left to the router, which has no such method), and
     /// the composer's `agent.prompt` and, when `measuresWrites`, `object.update` sent on to the
     /// attached client and answered once it answers. Its answers are taken as they come, ahead of
-    /// the link's requests, as easld's reader takes them.
+    /// the link's requests, as easld's reader takes them. `client.list` answers `clients` as they
+    /// were when it was asked, at once or once `answerLists`; `announce` sends `client.changed`;
+    /// a page's address in `browser.report` lands as easld lands it, an update credited as reported.
     final class Easld: @unchecked Sendable {
         let accepts: Bool
         let measuresWrites: Bool
@@ -943,6 +945,9 @@ final class BoardMirrorTests {
         private var attachLog: [JSONValue] = []
         private var promptLog: [JSONValue] = []
         private var answerLog: [JSONValue] = []
+        private var listed: JSONValue = .array([])
+        private var holdingLists = false
+        private var heldLists: [@Sendable () -> Void] = []
 
         init(accepts: Bool = true, measuresWrites: Bool = false) {
             self.accepts = accepts
@@ -955,6 +960,15 @@ final class BoardMirrorTests {
         var prompts: [JSONValue] { lock.withLock { promptLog } }
         /// The client's answers to easld's calls, in order.
         var answers: [JSONValue] { lock.withLock { answerLog } }
+        var clients: JSONValue {
+            get { lock.withLock { listed } }
+            set { lock.withLock { listed = newValue } }
+        }
+        var holdsLists: Bool {
+            get { lock.withLock { holdingLists } }
+            set { lock.withLock { holdingLists = newValue } }
+        }
+        var waitingLists: Int { lock.withLock { heldLists.count } }
 
         func attaching(_ params: JSONValue, on connection: SocketServer.Connection) {
             lock.withLock {
@@ -965,6 +979,29 @@ final class BoardMirrorTests {
 
         func prompted(_ params: JSONValue) {
             lock.withLock { promptLog.append(params) }
+        }
+
+
+        func list(_ id: JSONValue, on connection: SocketServer.Connection) -> JSONValue? {
+            lock.withLock { () -> JSONValue? in
+                let reply: JSONValue = .object(["id": id, "ok": .bool(true), "result": .object(["clients": listed])])
+                guard holdingLists else { return reply }
+                heldLists.append { connection.send(reply) }
+                return nil
+            }
+        }
+
+        func answerLists() {
+            let held = lock.withLock { () -> [@Sendable () -> Void] in
+                defer { heldLists = [] }
+                return heldLists
+            }
+            for answer in held { answer() }
+        }
+
+        func announce(_ clients: JSONValue, board: BoardID) {
+            let client = lock.withLock { self.client }
+            client?.send(.object(["event": "client.changed", "board": .string(board), "data": .object(["clients": clients])]))
         }
 
         /// Sends the attached client `method`; `then` gets its answer.
@@ -1022,6 +1059,12 @@ final class BoardMirrorTests {
                     if let reply = await router.handle(request, connection: connection) { connection.send(reply) }
                 }
                 return nil
+            case "client.list"?:
+                return easld.list(id, on: connection)
+            case "browser.report"?:
+                var update: [String: JSONValue] = ["id": params["id"] ?? .null, "props": .object(["url": params["url"] ?? .null])]
+                if let caller = params["caller"] { update["caller"] = caller }
+                return await router.handle(.object(["id": id, "method": "object.update", "params": .object(update)]), connection: connection)
             default:
                 return await router.handle(request, connection: connection)
             }
@@ -1029,7 +1072,7 @@ final class BoardMirrorTests {
         try server.start()
     }
 
-    let identity = ClientIdentity(app: "0.2.7", host: "studio")
+    let identity = ClientIdentity(app: "0.2.7", host: "studio", id: "mch_01STUDIO")
 
     /// A board's window for `serve`: key while `focused` says, its terminals typed into by `submit`.
     func window(focused: @escaping () -> Bool = { false }, submit: @escaping (ObjectID, String) async -> Bool = { _, _ in false }) -> ViewerWindow {
@@ -1037,6 +1080,7 @@ final class BoardMirrorTests {
                      render: { _, _ in throw ApiRouter.Failure("unavailable", "nothing is drawn here") }, hostPicture: { _ in false },
                      measureHTML: { _, _ in throw ApiRouter.Failure("unavailable", "no page is laid out here") },
                      reload: { id, _, _ in throw ApiRouter.Failure("unavailable", "browser tile \(id) isn't shown here") },
+                     browse: { id, _, _ in throw ApiRouter.Failure("unavailable", "browser tile \(id) isn't shown here") },
                      submit: submit, surfaceTail: { _, _ in nil },
                      block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") }, status: { _ in nil })
     }
@@ -1085,8 +1129,8 @@ final class BoardMirrorTests {
         mirror.serve(window(focused: { key }), as: identity)
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
         let attach: JSONValue = .object([
-            "version": 1, "schema": .string(ApiParams.schemaHash), "app": "0.2.7", "host": "studio",
-            "serves": ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure"], "boards": [.string(host.id)],
+            "version": 1, "schema": .string(ApiParams.schemaHash), "app": "0.2.7", "host": "studio", "identity": "mch_01STUDIO",
+            "serves": ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure", "browser.call"], "boards": [.string(host.id)],
         ])
         #expect(easld.attaches == [attach])
         key = true
@@ -1173,5 +1217,69 @@ final class BoardMirrorTests {
         #expect(easld.answers.first == .object(["id": "easld-1", "ok": .bool(true), "result": .object(["sizes": [
             .object(["w": .number(size.width), "h": .number(size.height), "tableShortfall": 0]),
         ]])]))
+    }
+
+
+    func client(_ identity: String?, serving board: BoardID, serves: [String] = ["agent.prompt", "browser.call", "object.reload"]) -> JSONValue {
+        var entry: [String: JSONValue] = ["id": "cli_2", "boards": [.string(board)], "serves": .array(serves.map(JSONValue.string))]
+        if let identity { entry["identity"] = .string(identity) }
+        return .object(entry)
+    }
+
+    @Test func theBoardsDrawingMacsFollowEasldsLatestSnapshot() async throws {
+        let easld = Easld()
+        easld.clients = [client("mch_01HOME", serving: host.id)]
+        easld.holdsLists = true
+        try serveEasld(easld)
+        let (mirror, _) = try await mirror()
+        defer { mirror.close() }
+        mirror.serve(window(), as: identity)
+        try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) && easld.waitingLists == 1 }
+        #expect(mirror.drawingMachines == nil)
+        easld.announce([
+            client("mch_01STUDIO", serving: host.id),
+            client("mch_01OLDER", serving: host.id, serves: ["agent.prompt", "object.reload"]),
+            client(nil, serving: host.id),
+            client("mch_01ELSEWHERE", serving: "brd_elsewhere"),
+        ], board: host.id)
+        try await eventually { mirror.drawingMachines == ["mch_01STUDIO"] }
+        easld.answerLists()
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(mirror.drawingMachines == ["mch_01STUDIO"], "the list asked before the snapshot is older")
+        server.stop()
+        try await eventually { mirror.drawingMachines == nil }
+        easld.holdsLists = false
+        try serveEasld(easld)
+        try await eventually { mirror.drawingMachines == ["mch_01HOME"] }
+    }
+
+    @Test func aDrawingMacsPageReportsReachEasldInOrderWithTheirCredit() async throws {
+        let easld = Easld()
+        try serveEasld(easld)
+        let agent = host.create(type: .terminal, props: .object(["cwd": .string(dir.path), "name": "worker"])).id
+        let page = host.create(type: .browser, props: .object(["url": "https://a.example/"])).id
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        try board.reportPage(page, .url("https://b.example/", by: .user))
+        try board.reportPage(page, .url("https://c.example/", by: .system))
+        try board.reportPage(page, .url("https://d.example/", by: .agent(agent)))
+        #expect(board.objects[page]?.props["url"] == "https://a.example/")
+        try await eventually { host.objects[page]?.props["url"] == "https://d.example/" }
+        try await eventually { board.objects[page] == host.objects[page] }
+        #expect(host.objects[page]?.props["url"] == "https://d.example/")
+        #expect(host.objects[page]?.updatedBy == .agent(tile: agent))
+    }
+
+    @Test func aPageOpenedOnTheDrawingMacIsCreditedToItsAgent() async throws {
+        let agent = host.create(type: .terminal, props: .object(["cwd": .string(dir.path), "name": "worker"])).id
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        let props: JSONValue = .object(["url": "https://example.com/login", "profile": "work", "drawingMachine": .object(["id": "mch_01STUDIO", "host": "studio"])])
+        let opened = board.create(type: .browser, props: props, caller: agent)
+        try await eventually { host.objects.values.contains { $0.type == .browser } }
+        let created = try #require(host.objects.values.first { $0.type == .browser })
+        #expect(created.createdBy == .agent(tile: agent))
+        #expect(created.props == props)
+        try await eventually { board.objects[created.id] != nil && board.objects[opened.id] == nil }
     }
 }

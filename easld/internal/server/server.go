@@ -91,9 +91,9 @@ type Conn struct {
 	done    chan struct{} // closed once the connection is closed (see Done)
 	written chan struct{} // closed when the writer has finished and the socket is closed
 
-	inbox inbox
-	// answers takes answer lines (see Answers); nil: every line is a request.
+	inbox   inbox
 	answers Answers
+	text    TextLine
 
 	// unanswered are the requests handed to the handler whose reply hasn't been sent yet, in
 	// arrival order (guarded by mu): a reply from any path (the handler's return, a direct
@@ -139,6 +139,10 @@ func (c *Conn) Send(v any) bool {
 	}
 	c.answered(v, len(data)+1)
 	return c.write(append(data, '\n'))
+}
+
+func (c *Conn) sendRaw(line string) bool {
+	return c.write(append([]byte(line), '\n'))
 }
 
 // expect starts a request's accounting: `api.<method>` counts it when its reply is sent, with
@@ -266,6 +270,11 @@ type request struct {
 	arrived   time.Time
 }
 
+type textLine struct{ line string }
+
+// TextLine answers a non-JSON line with a raw reply, without its newline.
+type TextLine func(line string, c *Conn) string
+
 // push queues r, waiting while the queue is full; a request pushed after finish is dropped.
 func (b *inbox) push(r request) {
 	b.mu.Lock()
@@ -316,6 +325,12 @@ func (c *Conn) serve(h Handler) {
 		r, ok := c.inbox.next()
 		if !ok {
 			return
+		}
+		if line, ok := r.value.(textLine); ok {
+			if c.text != nil {
+				c.sendRaw(c.text(line.line, c))
+			}
+			continue
 		}
 		if r.malformed {
 			c.Send(malformedLine)
@@ -392,6 +407,10 @@ func (c *Conn) readLoop() {
 		}
 		var value any
 		if json.Unmarshal(line, &value) != nil {
+			if c.text != nil {
+				c.inbox.push(request{value: textLine{string(line)}, size: len(line), arrived: time.Now()})
+				continue
+			}
 			c.inbox.push(request{malformed: true})
 			continue
 		}
@@ -444,6 +463,7 @@ type Server struct {
 	listener *net.UnixListener
 	handler  Handler
 	answers  Answers
+	text     TextLine
 	limits   limits
 	// bound is the socket file Listen created: instances sharing a directory bind the same
 	// path in turn, so Close removes the path only while it is still this file.
@@ -470,10 +490,15 @@ func sunPathMax() int {
 // replaces only a stale socket (one nothing listens on, left by a crashed server): a path that
 // isn't a socket, or a socket another server answers on, is refused.
 func Listen(path string, h Handler, answers Answers) (*Server, error) {
-	return listen(path, h, answers, defaultLimits)
+	return listen(path, h, answers, nil, defaultLimits)
 }
 
-func listen(path string, h Handler, answers Answers, l limits) (*Server, error) {
+// ListenText is Listen, and non-JSON lines go to text instead of a malformed-JSON error.
+func ListenText(path string, h Handler, text TextLine) (*Server, error) {
+	return listen(path, h, nil, text, defaultLimits)
+}
+
+func listen(path string, h Handler, answers Answers, text TextLine, l limits) (*Server, error) {
 	if len(path) >= sunPathMax() {
 		return nil, &net.OpError{Op: "listen", Net: "unix", Addr: &net.UnixAddr{Name: path, Net: "unix"}, Err: syscall.ENAMETOOLONG}
 	}
@@ -488,7 +513,7 @@ func listen(path string, h Handler, answers Answers, l limits) (*Server, error) 
 		return nil, err
 	}
 	listener.SetUnlinkOnClose(false)
-	s := &Server{path: path, listener: listener, handler: h, answers: answers, limits: l, conns: map[*Conn]struct{}{}}
+	s := &Server{path: path, listener: listener, handler: h, answers: answers, text: text, limits: l, conns: map[*Conn]struct{}{}}
 	if info, err := os.Lstat(path); err == nil {
 		s.bound = info
 	}
@@ -555,6 +580,7 @@ func (s *Server) acceptLoop() {
 		}
 		c := newConn(nc, s.limits)
 		c.answers = s.answers
+		c.text = s.text
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()

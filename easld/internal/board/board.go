@@ -541,6 +541,21 @@ func (b *Board) Update(id string, rev *int, frame *model.Frame, z *float64, prop
 	return b.write(id, rev, frame, z, props, caller, actor, "", nil)
 }
 
+// Announce sends an ephemeral event. Nothing is stored.
+func (b *Board) Announce(name string, data any) { b.emit(name, data) }
+
+// WriteQuiet stores props without a rev bump, undo step or activity entry. A fill of a
+// missing drawing machine uses it: the choice is visible and saved, and disconnect does
+// not move it.
+func (b *Board) WriteQuiet(id string, props map[string]any) error {
+	before, err := b.Object(id)
+	if err != nil {
+		return err
+	}
+	b.commitBookkeeping(before, props)
+	return nil
+}
+
 // WriteBookkeeping writes props the app keeps about an object rather than its content: stored,
 // announced, but no rev, undo step or log.
 func (b *Board) WriteBookkeeping(id string, props map[string]any) error {

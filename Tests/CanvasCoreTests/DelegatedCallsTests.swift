@@ -29,6 +29,14 @@ final class DelegatedCallsTests {
     /// The widths the window laid pages out at, in order.
     var laidOut: [CGFloat] = []
     var reloaded: [ObjectID] = []
+    var browsed: [Browsed] = []
+    var pageAnswer: (CmuxBrowserCommand) throws -> JSONValue = { _ in .object([:]) }
+
+    struct Browsed: Equatable {
+        var id: ObjectID
+        var command: CmuxBrowserCommand
+        var caller: ObjectID?
+    }
 
     init() throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -57,6 +65,10 @@ final class DelegatedCallsTests {
             reload: { [unowned self] id, _, _ in
                 reloaded.append(id)
                 return .object(["id": .string(id), "loaded": .bool(true)])
+            },
+            browse: { [unowned self] id, command, caller in
+                browsed.append(Browsed(id: id, command: command, caller: caller))
+                return try pageAnswer(command)
             },
             submit: { [unowned self] id, text in
                 guard surface, id == terminal else { return false }
@@ -231,5 +243,28 @@ final class DelegatedCallsTests {
         page = { _, width in CGSize(width: width, height: 9000) }
         #expect(try await measure(.object(["html": "<p>long</p>"])) == .object(["w": 640, "h": 4000]))
         #expect(code(await answer(calls, "object.measure", .object(["board": "brd_host", "type": "note", "props": .object(["markdown": "hi"])]))) == "unsupported")
+    }
+
+
+    @Test func aBrowserCallFailsWithThePagesOwnCodeOrBeforeReachingIt() async throws {
+        tile("obj_page", .browser, at: 0)
+        tile("obj_note", .note, at: 400)
+        pageAnswer = { command in
+            if case .eval = command { throw CmuxError("js_error", "ReferenceError: missing is not defined") }
+            throw CmuxError("timeout", "timed out waiting for #done")
+        }
+        let calls = delegated()
+        func call(_ id: ObjectID, _ method: String, _ params: JSONValue) async -> Result<JSONValue, EaslConnection.Failure> {
+            await answer(calls, "browser.call", .object(["id": .string(id), "method": .string(method), "params": params]))
+        }
+        #expect(await call("obj_page", "browser.eval", .object(["script": "missing"])) == .failure(EaslConnection.Failure("js_error", "ReferenceError: missing is not defined")))
+        #expect(await call("obj_page", "browser.wait", .object(["selector": "#done", "timeout_ms": 50])) == .failure(EaslConnection.Failure("timeout", "timed out waiting for #done")))
+        #expect(browsed.map(\.command) == [.eval(script: "missing"), .wait(.selector("#done"), timeoutMs: 50)])
+        browsed = []
+        #expect(await call("obj_page", "browser.wait", .object(["selector": "#done", "load_state": "complete"])) == .failure(EaslConnection.Failure("invalid_params", "browser.wait takes exactly one of load_state, url_contains, selector")))
+        #expect(code(await call("obj_page", "browser.open_split", .object(["url": "https://example.com/"]))) == "invalid_params")
+        #expect(code(await call("obj_note", "browser.url.get", .object([:]))) == "not_found")
+        #expect(code(await call("obj_gone", "browser.url.get", .object([:]))) == "not_found")
+        #expect(browsed.isEmpty)
     }
 }

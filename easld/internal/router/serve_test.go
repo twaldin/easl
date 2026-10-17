@@ -424,7 +424,7 @@ func TestReloadForwardsBrowsersAndRefusesDiagrams(t *testing.T) {
 	app := &scriptedClient{router: f.router, replies: []map[string]any{
 		{"ok": true, "result": map[string]any{"id": web, "loaded": true, "url": "https://example.com/"}},
 	}}
-	attachApp(f, app, map[string]any{"serves": []any{"object.reload"}, "focused": f.board.ID()})
+	attachApp(f, app, map[string]any{"host": "studio", "identity": "mch_studio", "serves": []any{"object.reload", "browser.call"}, "focused": f.board.ID()})
 	code, message := errorOf(f.call("object.reload", map[string]any{"id": diagram}))
 	if code != "unavailable" || message != "object.reload computes the diagram through its language servers" || len(app.asked) != 0 {
 		t.Fatalf("diagram: %s %s asked %d", code, message, len(app.asked))

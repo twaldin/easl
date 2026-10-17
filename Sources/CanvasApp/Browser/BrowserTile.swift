@@ -643,18 +643,14 @@ final class BrowserTile: NSView, TileContent {
         guard let url = webView?.url?.absoluteString else { return }
         if !chrome.isEditing { chrome.setAddress(url) }
         guard url != object.props["url"]?.string else { return }
-        let props = JSONValue.object(["url": .string(url)])
-        switch credit.actor() {
-        case .agent(let tile): _ = try? board.update(objectID, props: props, caller: tile)
-        case let actor: _ = try? board.update(objectID, props: props, actor: actor)
-        }
+        try? board.reportPage(objectID, .url(url, by: credit.actor()))
     }
 
     /// The page named itself: bookkeeping (`props.pageTitle`), not anyone's edit, so the tile's
     /// `rev` stays and an agent's own `title` keeps its place.
     private func commitTitle(_ title: String?) {
         guard let title, !title.isEmpty, title != object.props["pageTitle"]?.string else { return }
-        try? board.writeBookkeeping(objectID, props: .object(["pageTitle": .string(title)]))
+        try? board.reportPage(objectID, .title(title))
     }
 
     // MARK: Pages that don't load
@@ -675,7 +671,7 @@ final class BrowserTile: NSView, TileContent {
         failureView.show(failure)
         failureView.isHidden = false
         if !chrome.isEditing { chrome.setAddress(url.absoluteString) }
-        if object.props["pageTitle"] != nil { try? board.writeBookkeeping(objectID, props: .object(["pageTitle": .null])) }
+        if object.props["pageTitle"] != nil { try? board.reportPage(objectID, .title(nil)) }
         NSLog("easl: browser %@ %@", objectID, failure.summary)
         retryTask?.cancel()
         retryTask = nil
@@ -747,20 +743,23 @@ final class BrowserTile: NSView, TileContent {
     }
 
     /// A link opened beside this one (⌘-click, `target=_blank`), credited like a navigation, in
-    /// this tile's profile: a tile on the board already showing that address in the same profile
-    /// is reused (`Board.openLink`; a second click while the first tile appears gets it too).
-    /// One the user opened (`onOpenedTile`) is shown and selected, since it may be out of view.
+    /// this tile's profile and on its drawing machine: a tile on the board already showing that
+    /// address in the same profile is reused (`Board.openLink`; a second click while the first tile
+    /// appears gets it too). One the user opened (`onOpenedTile`) is shown and selected, since it
+    /// may be out of view.
     private func openTile(_ url: URL) {
         let actor = credit.actor()
         let caller: ObjectID? = if case .agent(let tile) = actor { tile } else { nil }
-        let opened = board.openLink(url, near: objectID, caller: caller, props: profileProps)
+        let opened = board.openLink(url, near: objectID, caller: caller, props: childProps)
         if opened.existing { NSLog("easl: browser %@ link %@ reuses %@", objectID, url.absoluteString, opened.object.id) }
         if actor == .user { onOpenedTile?(opened.object.id) }
     }
 
-    /// `props.profile` for the tiles this page opens: they share its cookies and logins.
-    private var profileProps: [String: JSONValue] {
-        webViewProfile.map { ["profile": .string($0)] } ?? [:]
+    private var childProps: [String: JSONValue] {
+        var props: [String: JSONValue] = [:]
+        if let webViewProfile { props["profile"] = .string(webViewProfile) }
+        if let machine = object.props["drawingMachine"] { props["drawingMachine"] = machine }
+        return props
     }
 
     /// A page's `window.open` (a sign-in popup, a share dialog): a new tile beside this one
@@ -773,7 +772,7 @@ final class BrowserTile: NSView, TileContent {
         let size = Board.defaultSize(.browser)
         let caller: ObjectID? = if case .agent(let tile) = actor { tile } else { nil }
         let address = url.map(\.absoluteString).flatMap { $0.isEmpty ? nil : $0 } ?? "about:blank"
-        let opened = board.create(type: .browser, props: .object(["url": .string(address)].merging(profileProps) { $1 }),
+        let opened = board.create(type: .browser, props: .object(["url": .string(address)].merging(childProps) { $1 }),
                                   frame: board.place(width: size.w, height: size.h, near: objectID), caller: caller)
         NSLog("easl: browser %@ opened popup %@ (%@)", objectID, opened.id, address)
         if actor == .user { onOpenedTile?(opened.id) }

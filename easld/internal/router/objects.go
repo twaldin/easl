@@ -21,8 +21,8 @@ import (
 // write is object.create/update/upsert as ApiRouter.handle runs them: an upsert resolved to its
 // create or update, paths taken into the caller's checkout, refs resolved, note ranges
 // anchored, a duplicate changes tile reused, `size: "fit"` measured, overlaps reported.
-func (r *Router) write(method string, p map[string]any) (any, error) {
-	result, err := r.writeObject(method, p)
+func (r *Router) write(method string, p map[string]any, from Conn) (any, error) {
+	result, err := r.writeObject(method, p, from)
 	if err == nil {
 		r.reanchorCode(asMap(asMap(result)["object"])["id"])
 	}
@@ -45,7 +45,7 @@ func (r *Router) reanchorCode(id any) {
 	}
 }
 
-func (r *Router) writeObject(method string, p map[string]any) (any, error) {
+func (r *Router) writeObject(method string, p map[string]any, from Conn) (any, error) {
 	upsert := method == "object.upsert"
 	params := p
 	if upsert {
@@ -88,7 +88,7 @@ func (r *Router) writeObject(method string, p map[string]any) (any, error) {
 				if err != nil {
 					return nil, err
 				}
-				res, err := r.dispatch("object.update", fitted)
+				res, err := r.dispatch("object.update", fitted, from)
 				if err != nil {
 					return nil, err
 				}
@@ -120,7 +120,7 @@ func (r *Router) writeObject(method string, p map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := r.dispatch(method, fitted)
+	res, err := r.dispatch(method, fitted, from)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func withApproximate(result map[string]any, size *fit) map[string]any {
 	return result
 }
 
-func (r *Router) create(p map[string]any) (any, error) {
+func (r *Router) create(p map[string]any, from Conn) (any, error) {
 	b, err := r.boardOf(p)
 	if err != nil {
 		return nil, err
@@ -202,6 +202,12 @@ func (r *Router) create(p map[string]any) (any, error) {
 			return nil, err
 		}
 	}
+	if typ == model.Browser {
+		props, err = r.withDrawing(b, props, from)
+		if err != nil {
+			return nil, err
+		}
+	}
 	parent, _ := optStr(p, "parent")
 	o := b.Create(typ, props, frame, parent, caller)
 	return withWarnings(map[string]any{"object": objectJSON(b.ReportedOne(o))}, typ.UnknownPropWarnings(props)), nil
@@ -232,6 +238,11 @@ func (r *Router) update(p map[string]any) (any, error) {
 		frame = &f
 	}
 	props := asMap(p["props"])
+	if props != nil {
+		if err := validateDrawing(props["drawingMachine"]); err != nil {
+			return nil, err
+		}
+	}
 	if root, ok := props["root"].(string); ok && root != "" && (current.Type == model.Note || current.Type == model.HTML) {
 		if err := b.CheckLinkRoot(root); err != nil {
 			return nil, err
@@ -429,7 +440,7 @@ func (r *Router) objectGet(p map[string]any) (any, error) {
 // A browser's page report, a terminal's last command (app closures) and a changes tile's
 // `changes` (git diff, ChangeSet) aren't there.
 func (r *Router) get(p map[string]any) (any, error) {
-	res, err := r.dispatch("object.get", p)
+	res, err := r.dispatch("object.get", p, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -453,7 +464,7 @@ func (r *Router) get(p map[string]any) (any, error) {
 		if !ok {
 			return result, nil
 		}
-		current, err := r.dispatch("object.get", p)
+		current, err := r.dispatch("object.get", p, nil)
 		if err != nil {
 			return nil, err
 		}

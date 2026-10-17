@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/api"
@@ -94,18 +95,23 @@ type Router struct {
 	renderScratch int
 	// lifecycle runs owned terminals' sessions off the lock.
 	lifecycle lifecycle
+	cmuxMu    sync.Mutex
+	cmux      map[string]*cmuxSocket
+	adopted   map[string]int
 }
 
 // New is a router over reg; it observes every board's events (agent.wait), and measures the
 // text of reg's boards through its clients.
 func New(reg *board.Registry) *Router {
 	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[messageHold]Conn{}, restarts: map[string]uint64{}, closing: map[string]*boardClose{}, typing: map[string]int{},
+		cmux: map[string]*cmuxSocket{}, adopted: map[string]int{},
 		FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
 	reg.Hook = r.observe
 	reg.Bounced = r.bounce
 	reg.Terminals = r.terminals
 	reg.Opened = r.opened
 	reg.Texts = r.clients
+	r.clients.OnPresence(r.clientsChanged)
 	return r
 }
 
@@ -279,13 +285,17 @@ func (r *Router) call(id any, method string, raw any, c Conn) (any, error) {
 	case "object.reload":
 		return r.reload(p)
 	case "object.batch":
-		return r.batch(p)
+		return r.batch(p, c)
 	case "layout.check":
 		return r.check(p)
 	case "object.create", "object.update", "object.upsert":
-		return r.write(method, p)
+		return r.write(method, p, c)
+	case "browser.call":
+		return r.browserCall(p)
+	case "browser.report":
+		return r.browserReport(p, c)
 	}
-	return r.dispatch(method, p)
+	return r.dispatch(method, p, c)
 }
 
 func okReply(id, result any) map[string]any {

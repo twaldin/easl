@@ -17,8 +17,12 @@ public struct ViewerWindow {
     /// An HTML page laid out by this Mac's WebKit, its excerpts and images read on the board's host.
     public var measureHTML: ObjectMeasure.PageMeasurer
     /// A browser tile's page loaded again, when this Mac runs the page (`object.reload`, credited to
-    /// the caller); throws `Failure` for a tile showing the host's page.
+    /// the caller); throws `Failure` for a tile whose page another Mac runs.
     public var reload: (ObjectID, _ caller: ObjectID?, _ timeoutMs: Int) async throws -> JSONValue
+    /// A cmux page command run on a browser tile's page, when this Mac runs the page
+    /// (`browser.call`, credited to the caller): the command's own result; throws its own
+    /// `CmuxError` (`timeout`, `js_error`, …), or `Failure` for a tile whose page another Mac runs.
+    public var browse: (ObjectID, CmuxBrowserCommand, _ caller: ObjectID?) async throws -> JSONValue
     /// Types text into a terminal tile's surface (bracketed paste) and presses Enter once the paste
     /// landed; false when the tile has no surface.
     public var submit: (ObjectID, _ text: String) async -> Bool
@@ -34,6 +38,7 @@ public struct ViewerWindow {
     public init(focused: @escaping () -> Bool, viewState: @escaping () -> ViewState?,
                 render: @escaping (RenderRequest, ImageFormat) async throws -> RenderOutput, hostPicture: @escaping (ObjectID) -> Bool,
                 measureHTML: @escaping ObjectMeasure.PageMeasurer, reload: @escaping (ObjectID, ObjectID?, Int) async throws -> JSONValue,
+                browse: @escaping (ObjectID, CmuxBrowserCommand, ObjectID?) async throws -> JSONValue,
                 submit: @escaping (ObjectID, String) async -> Bool, surfaceTail: @escaping (ObjectID, Int) -> TerminalTail.Tail?,
                 block: @escaping (ObjectID, Int) throws -> (command: TerminalCommand, output: String), status: @escaping (ObjectID) -> TerminalStatus?) {
         self.focused = focused
@@ -42,6 +47,7 @@ public struct ViewerWindow {
         self.hostPicture = hostPicture
         self.measureHTML = measureHTML
         self.reload = reload
+        self.browse = browse
         self.submit = submit
         self.surfaceTail = surfaceTail
         self.block = block
@@ -49,15 +55,19 @@ public struct ViewerWindow {
     }
 }
 
-/// How this viewer names itself to easld (`client.attach` `app` and `host`).
+/// How this viewer names itself to easld (`client.attach` `app`, `host` and `identity`).
 public struct ClientIdentity: Equatable, Sendable {
     /// The app's version; nil outside an app bundle.
     public var app: String?
     public var host: String
+    /// The app home's persistent machine identity (`MachineIdentity`); nil when it couldn't be
+    /// kept: this viewer attaches as an older one does and runs no browser tile's page.
+    public var id: String?
 
-    public init(app: String?, host: String) {
+    public init(app: String?, host: String, id: String?) {
         self.app = app
         self.host = host
+        self.id = id
     }
 }
 
@@ -70,7 +80,7 @@ public struct ClientIdentity: Equatable, Sendable {
 final class DelegatedCalls {
     /// A snapshot would put the window's picture on the viewer's disk: not a capability of a
     /// remote board's viewer.
-    static let served = ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure"]
+    static let served = ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure", "browser.call"]
     /// The longest line easld reads from a client (`easld/internal/server`, `defaultLimits`): past
     /// it easld closes the link, failing every call on it.
     static let maxReply = 64 << 20
@@ -101,6 +111,7 @@ final class DelegatedCalls {
             case "view.render": return .success(try await render(p))
             case "object.measure": return .success(try await measureObject(p))
             case "object.reload": return .success(try await reload(p))
+            case "browser.call": return .success(try await browse(p))
             default: throw ApiRouter.Failure("unsupported", "\(call.method) isn't served by this board's viewer")
             }
         } catch {
@@ -157,9 +168,6 @@ final class DelegatedCalls {
         return .object(["w": .number(size.width), "h": .number(size.height)])
     }
 
-    /// `object.reload` of a browser tile whose page this Mac runs. A remote board's browsers show
-    /// the host's page and its diagrams are computed there: they fail `unavailable`, and nothing
-    /// here asks the host.
     private func reload(_ p: JSONValue) async throws -> JSONValue {
         let id = p["id"]?.string ?? ""
         guard let object = board.objects[id] else { throw ApiRouter.Failure("not_found", "object \(id) isn't on this board's viewer") }
@@ -169,6 +177,22 @@ final class DelegatedCalls {
         let timeout = p["timeoutMs"]?.int ?? ApiRouter.reloadTimeoutMs
         guard timeout >= 0 else { throw ApiRouter.Failure("invalid_params", "timeoutMs must be 0 or more") }
         return try await window.reload(id, p["caller"]?.string, timeout)
+    }
+
+
+    private func browse(_ p: JSONValue) async throws -> JSONValue {
+        let id = p["id"]?.string ?? ""
+        guard board.objects[id]?.type == .browser else { throw ApiRouter.Failure("not_found", "browser tile \(id) isn't on this board's viewer") }
+        let method = p["method"]?.string ?? ""
+        guard let params = p["params"], params.object != nil else { throw ApiRouter.Failure("invalid_params", "params must be an object") }
+        do {
+            guard let command = try CmuxBrowserCommand.parse(method: method, params: params) else {
+                throw ApiRouter.Failure("invalid_params", "\(method) isn't a browser page command")
+            }
+            return try await window.browse(id, command, p["caller"]?.string)
+        } catch let error as CmuxError {
+            throw ApiRouter.Failure(error.code, error.message)
+        }
     }
 
     /// Types the prompt into the terminal's surface, as the app's own `agent.prompt` does once its

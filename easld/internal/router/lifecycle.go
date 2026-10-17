@@ -168,9 +168,10 @@ func (r *Router) runSessions() {
 	}
 }
 
-// startSession starts owned terminal `o`'s session (`spawn`, ownedSpawn's) and notes in easld's
-// log what it runs (startNote); what fails is logged in its board's history.
 func (r *Router) startSession(b *board.Board, o model.Object, spawn session.SpawnRequest) {
+	if path, ok := r.ensureCmux(o.ID); ok {
+		spawn.Env = cmuxEnv(spawn.Env, path, o.ID, b.ID())
+	}
 	_, created, err := r.Sessions.Spawn(spawn)
 	if err != nil {
 		r.sessionFailed(b, o, "easld couldn't start its session: "+err.Error())
@@ -212,6 +213,7 @@ func startNote(props map[string]any) string {
 // one of `merged`, the boards b took in) is left alone, and so is its log. What fails is logged
 // in the board's history.
 func (r *Router) endSession(b *board.Board, o model.Object, labels map[string]string, merged []string, spool string) {
+	r.removeCmux(o.ID)
 	if _, err := r.Sessions.End(o.ID, labels, merged...); err != nil {
 		r.sessionFailed(b, o, "easld couldn't end its session: "+err.Error())
 	}
