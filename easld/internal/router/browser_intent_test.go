@@ -290,3 +290,33 @@ func TestBrowserUnrelatedRollbackPreservesRedirectedIntent(t *testing.T) {
 		t.Fatalf("unrelated edits survived rollback: %v", restored)
 	}
 }
+
+func TestCrossBoardURLIntentReportsKeepTheirAcceptedDriver(t *testing.T) {
+	f := newFixture(t)
+	home := &scriptedClient{router: f.router}
+	attachDrawing(f, home, "mch_home", "home", true, "browser.call")
+	sourceBoard, _ := f.openBoard("caller")
+	caller := idOf(f.result("object.create", map[string]any{
+		"board": sourceBoard, "type": "terminal", "props": map[string]any{}, "frame": browserFrame(),
+	}))
+	page := idOf(f.result("object.create", map[string]any{
+		"type": "browser", "props": map[string]any{"url": "about:blank"}, "frame": browserFrame(),
+	}))
+	assigned := f.result("object.update", map[string]any{
+		"id": page, "caller": caller, "props": map[string]any{"url": "https://example.com/requested"},
+	})["object"].(map[string]any)
+	actor := map[string]any{"kind": "agent", "tile": caller}
+	intent := map[string]any{"url": "https://example.com/requested", "rev": 2.0, "actor": actor}
+	assertBrowserIntent(t, assigned, "https://example.com/requested", 2, intent)
+	reply := f.as(home, "browser.report", map[string]any{
+		"id": page, "url": "https://example.com/redirected", "caller": caller,
+	})
+	if reply["ok"] != true {
+		t.Fatalf("accepted driver could not report its redirected page: %v", reply)
+	}
+	reported := reply["result"].(map[string]any)["object"].(map[string]any)
+	assertBrowserIntent(t, reported, "https://example.com/redirected", 3, intent)
+	if !reflect.DeepEqual(reported["updatedBy"], actor) {
+		t.Fatalf("redirect lost its global caller: %v", reported["updatedBy"])
+	}
+}

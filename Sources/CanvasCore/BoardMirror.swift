@@ -143,6 +143,7 @@ public final class BoardMirror: BoardHost {
     /// Creates sent and not answered yet: the created object's event comes ahead of the answer
     /// that says it is the user's provisional one, so events wait until then.
     private var creating = 0
+    private var deferredObjects: Set<ObjectID> = []
     /// The host's events that arrived while the board was being read or a create was in flight,
     /// applied in order once neither is (`release`), so nothing they say is undone or doubled.
     private var held: [EaslConnection.Event] = []
@@ -325,7 +326,7 @@ public final class BoardMirror: BoardHost {
     }
 
     private func admitted(through sequence: UInt64) -> Bool {
-        reading == nil && receivedEventSequence >= sequence
+        reading == nil && deferredObjects.isEmpty && receivedEventSequence >= sequence
             && !held.contains { $0.sequence <= sequence }
     }
 
@@ -524,14 +525,24 @@ public final class BoardMirror: BoardHost {
         }
         for object in objects where !read.deleted.contains(object.id) {
             learn(object)
-            if !busy(object.id), let current = known[object.id] { board.applyHost(current) }
+            // A reread can learn a create before its answer. Keep the provisional view until rekey.
+            if creating > 0, board.objects[object.id] == nil {
+                deferredObjects.insert(object.id)
+            } else if !busy(object.id), let current = known[object.id] {
+                board.applyHost(current)
+            }
         }
     }
 
     /// The events that waited (`held`), in the order they came, once nothing holds them.
     private func release() {
         defer { releaseAdmissions() }
-        guard reading == nil, creating == 0, !held.isEmpty else { return }
+        guard reading == nil, creating == 0 else { return }
+        for id in deferredObjects.sorted() where !busy(id) {
+            if let object = known[id] { board?.applyHost(object) }
+        }
+        deferredObjects.removeAll(keepingCapacity: true)
+        guard !held.isEmpty else { return }
         let waiting = held
         held = []
         for event in waiting { received(event) }

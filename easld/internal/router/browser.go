@@ -236,8 +236,7 @@ func (r *Router) browserCall(p map[string]any) (any, error) {
 		return nil, r.drawingUnavailable(machine, host, b.ID(), "browser.call")
 	}
 	forward := map[string]any{"id": id, "method": method, "params": params}
-	caller, _ := optStr(p, "caller")
-	if terminal, ok := b.Objects()[caller]; ok && terminal.Type == model.Terminal {
+	if caller := r.callerOf(p); caller != "" {
 		forward["caller"] = caller
 	}
 	return r.await(c, "browser.call", forward, browserDeadline(method, params))
@@ -267,14 +266,10 @@ func (r *Router) browserReport(p map[string]any, c Conn) (any, error) {
 	}
 	caller := ""
 	if hasCaller {
-		caller, err = str(p, "caller")
-		if err != nil {
+		if _, err := str(p, "caller"); err != nil {
 			return nil, err
 		}
-		terminal, ok := b.Objects()[caller]
-		if !ok || terminal.Type != model.Terminal {
-			return nil, invalid("caller must be a terminal tile on this board")
-		}
+		caller = r.callerOf(p)
 	}
 	actor := board.SystemActor
 	if hasActor {
@@ -332,9 +327,9 @@ func (r *Router) reloadBrowser(b *board.Board, o model.Object, p map[string]any,
 	if c == nil {
 		return nil, r.drawingUnavailable(machine, host, b.ID(), "object.reload")
 	}
-	caller, _ := optStr(p, "caller")
+	caller := r.callerOf(p)
 	delete(p, "caller")
-	if terminal, ok := b.Objects()[caller]; ok && terminal.Type == model.Terminal {
+	if caller != "" {
 		p["caller"] = caller
 	}
 	return r.await(c, "object.reload", p, millis(timeout)+clients.ReloadGrace)

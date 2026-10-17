@@ -35,7 +35,7 @@ final class BrowserTile: NSView, TileContent {
     let board: Board
     private(set) var object: CanvasObject
     private(set) var webView: WKWebView?
-    private var pendingURLIntent: String?
+    private var pendingURLIntent: JSONValue?
     /// The loaded page's background luminance (`PageSurface`), kept while the page is detached.
     private(set) var surfaceLuminance: Double?
     private let chrome = BrowserChrome()
@@ -281,9 +281,9 @@ final class BrowserTile: NSView, TileContent {
     func ensureWebView() -> WKWebView {
         if let webView { return webView }
         let view = makeWebView()
-        let address = pendingURLIntent ?? object.props["url"]?.string ?? "about:blank"
+        let intent = pendingURLIntent
         pendingURLIntent = nil
-        load(address)
+        if let intent { load(intent: intent) } else { load(object.props["url"]?.string ?? "about:blank") }
         return view
     }
 
@@ -1076,7 +1076,7 @@ final class BrowserTile: NSView, TileContent {
         let previous = self.object.props["url"]?.string
         let intent = object.props["urlIntent"]
         let newIntent = board.isRemote && intent != self.object.props["urlIntent"]
-        if newIntent { pendingURLIntent = intent?["url"]?.string }
+        if newIntent { pendingURLIntent = intent }
         self.object = object
         if CGFloat(object.zoom) != zoom {
             zoom = CGFloat(object.zoom)
@@ -1092,7 +1092,7 @@ final class BrowserTile: NSView, TileContent {
         let url: String?
         if board.isRemote {
             guard newIntent else { return }
-            url = pendingURLIntent
+            url = pendingURLIntent?["url"]?.string
         } else {
             url = object.props["url"]?.string
             guard url != previous else { return }
@@ -1103,13 +1103,20 @@ final class BrowserTile: NSView, TileContent {
         pendingURLIntent = nil
         guard url != webView.url?.absoluteString else { return }
         if board.isRemote {
-            let actor = intent?["actor"]
-            if actor?["kind"]?.string == "agent" { credit.agent(actor?["tile"]?.string) } else { credit.user() }
+            if let intent { load(intent: intent) }
+            return
         } else if case .agent(let tile) = object.updatedBy {
             credit.agent(tile)
         } else {
             credit.user()
         }
+        load(url)
+    }
+
+    private func load(intent: JSONValue) {
+        guard let url = intent["url"]?.string else { return }
+        let actor = intent["actor"]
+        if actor?["kind"]?.string == "agent" { credit.agent(actor?["tile"]?.string) } else { credit.user() }
         load(url)
     }
 

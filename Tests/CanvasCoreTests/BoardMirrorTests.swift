@@ -255,6 +255,45 @@ final class BoardMirrorTests {
         #expect(shownProblem == nil)
     }
 
+    @Test func aRereadDoesNotInstallAnUnansweredCreationsSecondTile() async throws {
+        _ = host.create(type: .html, props: .object(["html": .string("<p>Refresh</p>")]))
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        server.stop()
+        try await eventually { mirror.state != .online }
+        let refuse = Locked(true)
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "object.get", refuse.withLock({ value in
+                defer { value = false }
+                return value
+            }) {
+                return .object(["id": request["id"] ?? .null, "ok": .bool(false),
+                                "error": .object(["code": .string("unavailable"), "message": .string("Refresh failed")])])
+            }
+            let response = await router.handle(request, connection: connection)
+            if request["method"]?.string == "object.create", let response {
+                pending.withLock { $0 = { connection.send(response) } }
+                return nil
+            }
+            return response
+        }
+        try server.start()
+        try await eventually { !refuse.withLock { $0 } && mirror.reading == nil }
+        #expect(mirror.connection.state == .online)
+        #expect(mirror.state == .offline)
+        let provisional = board.create(type: .browser, props: .object(["url": .string("https://popup.example/")]))
+        try await eventually { pending.withLock { $0 != nil } }
+        let canonical = try #require(host.objects.values.first { $0.type == .browser }?.id)
+        mirror.reconnect()
+        try await eventually { mirror.state == .online && mirror.reading == nil }
+        #expect(board.objects[provisional.id] != nil)
+        #expect(board.objects[canonical] == nil, "a snapshot must not construct a second live page before rekey")
+        pending.withLock { $0 }?()
+        try await eventually { board.objects[provisional.id] == nil && board.objects[canonical] == host.objects[canonical] }
+    }
+
     @Test func htmlRefreshFailureDoesNotPreventClientAttachmentOrTerminalPrompts() async throws {
         let page = host.create(type: .html, props: .object(["html": .string("<p>Before</p>")]),
                                frame: Frame(x: 0, y: 0, w: 600, h: 400))
