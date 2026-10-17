@@ -646,7 +646,6 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 	}
 	b.markMentionsEdited(before, o)
 	data := o.APIJSON()
-	b.reanchorShown(before, o)
 	b.emit(EventObjectUpdated, data)
 	if o.Type == model.Question {
 		b.questionWritten(before, o)
