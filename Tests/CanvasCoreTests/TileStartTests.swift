@@ -43,19 +43,24 @@ final class TileStartTests {
 
     /// Runs a tile's session command `argv` from launchd's environment, without a terminal (the
     /// login shell after the command reads stdin's end and exits): what it printed.
+    /// Keep launch and exit wait on one thread; an await between them can strand the exit wait.
     func spawn(_ argv: [String], shell: String) async throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["-i", "HOME=\(home)", "USER=\(NSUserName())", "SHELL=\(shell)", "PATH=\(Self.launchdPath)"] + argv
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        process.standardInput = FileHandle.nullDevice
-        try process.run()
-        let reader = output.fileHandleForReading
-        let data = await offPool { reader.readDataToEndOfFile() }
-        process.waitUntilExit()
-        return String(decoding: data, as: UTF8.self)
+        let arguments = ["-i", "HOME=\(home)", "USER=\(NSUserName())", "SHELL=\(shell)", "PATH=\(Self.launchdPath)"] + argv
+        return try await offPool {
+            Result {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                process.arguments = arguments
+                let output = Pipe()
+                process.standardOutput = output
+                process.standardError = output
+                process.standardInput = FileHandle.nullDevice
+                try process.run()
+                let data = output.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                return String(decoding: data, as: UTF8.self)
+            }
+        }.get()
     }
 
     @Test(arguments: ["/bin/zsh", "/bin/bash"])
