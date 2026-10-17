@@ -101,6 +101,7 @@ final class ChangesLineCache {
 @MainActor
 struct ChangesPainter {
     let set: ChangeSet
+    let canPickBase: Bool
     let rows: ChangeRows
     let collapsed: Set<String>
     /// `props.viewed`: files marked Viewed (checked while their diff is the one marked).
@@ -116,6 +117,7 @@ struct ChangesPainter {
     var discardAsked: (file: Int, hunk: Int?, hint: String)?
     /// The tile holds the keyboard: the header says which keys work.
     var focused = false
+    var undoable = true
     /// The filter's text; `drawsFilter` draws its box (cards and renders, where no field is).
     let filter: String
     var drawsFilter = true
@@ -124,8 +126,9 @@ struct ChangesPainter {
 
     /// `laidOut`: rows and names worked out for the same set, folds, width, filter, and list
     /// (the live tile keeps them while only the current hunk or selection changes).
-    init(set: ChangeSet, collapsed: Set<String>, width: CGFloat, filter: String, listOpen: Bool, laidOut: (rows: ChangeRows, names: [String])?) {
+    init(set: ChangeSet, canPickBase: Bool, collapsed: Set<String>, width: CGFloat, filter: String, listOpen: Bool, laidOut: (rows: ChangeRows, names: [String])?) {
         self.set = set
+        self.canPickBase = canPickBase
         self.collapsed = collapsed
         self.filter = filter
         names = laidOut?.names ?? set.files.map(Self.name)
@@ -232,7 +235,7 @@ struct ChangesPainter {
                     : "Click to compare with another base: the uncommitted changes, everything the branch changed, or a commit or ref"
                 return [set.baseDescription ?? set.lead, what].joined(separator: "\n")
             }
-            return [set.baseDescription, set.comparesCommits ? ChangesTile.readingTooltip : ChangesTile.tooltip].compactMap { $0 }.joined(separator: "\n")
+            return [set.baseDescription, set.comparesCommits ? ChangesTile.readingTooltip : undoable ? ChangesTile.tooltip : ChangesTile.remoteTooltip].compactMap { $0 }.joined(separator: "\n")
         }
         switch hit(at: point, width: width, scroll: scroll) {
         case .button(let action, let file, let hunk)?:
@@ -314,7 +317,7 @@ struct ChangesPainter {
             rest = "\(selection.lines.count) line\(selection.lines.count == 1 ? "" : "s") selected · " + (set.comparesCommits ? "m mention" : "s stage · u unstage · r ⌘⌫ discard · m mention")
             color = .controlAccentColor
         } else {
-            lead = set.repository == nil ? nil : set.lead + " ▾"
+            lead = canPickBase ? set.lead + " ▾" : nil
             rest = lead == nil ? set.summary : set.counts.isEmpty ? "" : " · " + set.counts
             color = .secondaryLabelColor
         }

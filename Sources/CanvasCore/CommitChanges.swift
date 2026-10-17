@@ -109,7 +109,7 @@ extension ChangeSet {
                 mappings = await offPool { UnifiedDiff.parse(patch).mappings }
             }
             let known = mappings
-            files.append(await offPool { file(entry, blobs: blobs, mappings: known, root: root, toplevel: toplevel) })
+            files.append(await offPool { file(entry, blobs: blobs, mappings: known) { Board.relativePath(toplevel.appendingPathComponent($0).path, root: root) } })
         }
         let set = listing(files, omitted: omitted)
         return highlight ? await offPool { set.highlighted() } : set
@@ -178,7 +178,7 @@ extension ChangeSet {
     /// A changed file between two commits: its sides' texts from `blobs`, its hunks from
     /// `mappings` (a -U0 diff; none: the file is new or gone, or its content didn't change),
     /// every hunk `committed`, and nothing of it actionable (`ChangedFile.readOnly`).
-    static func file(_ entry: Entry, blobs: [String: Blob], mappings: [LineRangeMapping]?, root: URL, toplevel: URL) -> ChangedFile {
+    static func file(_ entry: Entry, blobs: [String: Blob], mappings: [LineRangeMapping]?, boardPath: (String) -> String) -> ChangedFile {
         func side(_ id: String?) -> Blob? { id.map { blobs[$0] ?? .tooLarge } }
         let oldSide = side(entry.oldBlob), newSide = side(entry.newBlob)
         var old = SideText(""), new = SideText("")
@@ -218,7 +218,6 @@ extension ChangeSet {
             change.id = unique
             return change
         }
-        func boardPath(_ path: String) -> String { Board.relativePath(toplevel.appendingPathComponent(path).path, root: root) }
         return ChangedFile(path: entry.path, oldPath: entry.oldPath, boardPath: boardPath(entry.path), oldBoardPath: entry.oldPath.map(boardPath),
                            status: entry.status, old: old, new: new, oldMode: entry.oldMode, newMode: entry.newMode, tracked: true, hunks: hunks, notice: notice,
                            blobs: ChangedFile.Blobs(old: entry.oldBlob, new: entry.newBlob))

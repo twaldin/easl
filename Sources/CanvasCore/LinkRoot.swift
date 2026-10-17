@@ -29,7 +29,7 @@ extension Board {
         return .directory(Self.hostPath(props["root"]?.string ?? root.path, under: root.path))
     }
 
-    static func hostPath(_ path: String, under root: String) -> String {
+    nonisolated static func hostPath(_ path: String, under root: String) -> String {
         let absolute = path.hasPrefix("/") ? path : root + "/" + path
         var parts: [Substring] = []
         for part in absolute.split(separator: "/") {

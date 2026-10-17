@@ -1543,12 +1543,13 @@ public final class Board {
     /// through a symlink: git, language servers and shells report resolved paths (/private/tmp
     /// for a /tmp root), so a path outside the root as written is compared resolved as well.
     public func relativePath(_ path: String) -> String {
-        if isRemote {
-            let absolute = Self.hostPath(path, under: root.path)
-            let base = Self.hostPath(root.path, under: "/")
-            return absolute.hasPrefix(base + "/") ? String(absolute.dropFirst(base.count + 1)) : absolute
-        }
-        return Self.relativePath(path, root: root)
+        isRemote ? Self.hostRelativePath(path, root: root.path) : Self.relativePath(path, root: root)
+    }
+
+    nonisolated static func hostRelativePath(_ path: String, root: String) -> String {
+        let absolute = hostPath(path, under: root)
+        let base = hostPath(root, under: "/")
+        return absolute.hasPrefix(base + "/") ? String(absolute.dropFirst(base.count + 1)) : absolute
     }
 
     /// `path` (absolute, or relative to `root`) relative to `root` when it lies under it, else absolute.

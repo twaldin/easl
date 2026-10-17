@@ -19,6 +19,8 @@ protocol CodeNavigationHost: AnyObject {
     func reveal(line: Int)
 }
 
+enum CodeNavigationMode { case local, remoteUnavailable }
+
 /// Language features for one code view, answered by the app's shared language servers:
 ///  - hover (pointer still for ~500 ms) shows the server's hover docs; moving cancels the request
 ///  - ⌘-click goes to the definition: this tile re-aims when it is plain navigation surface
@@ -77,13 +79,15 @@ final class CodeNavigation: NSObject {
     /// Where a context menu was opened, for its actions.
     private var menuContext: (position: (line: Int, character: Int)?, anchor: NSPoint)?
     private var actionTask: Task<Void, Never>?
+    private let mode: CodeNavigationMode
 
     /// `accessories` is the host's header: the Outline button goes at its top right, inside the
     /// trailing `reservedWidth` points the host keeps free.
-    init(host: CodeNavigationHost, board: Board, tile: ObjectID, accessories: NSView, reservedWidth: CGFloat) {
+    init(host: CodeNavigationHost, board: Board, tile: ObjectID, accessories: NSView, reservedWidth: CGFloat, mode: CodeNavigationMode = .local) {
         self.host = host
         self.board = board
         self.tile = tile
+        self.mode = mode
         let codeView = host.navigationView
         self.codeView = codeView
         super.init()
@@ -100,6 +104,7 @@ final class CodeNavigation: NSObject {
     func setActive(_ active: Bool) {
         guard active != (hoverArea != nil), let codeView else { return }
         if active {
+            guard mode == .local else { return }
             let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
             codeView.addTrackingArea(area)
             hoverArea = area
@@ -572,6 +577,7 @@ final class CodeNavigation: NSObject {
     private func run(anchor: NSPoint, _ action: @escaping @MainActor (URL, URL) async throws -> Void) {
         cancelPendingHover()
         dismissHover()
+        guard mode == .local else { return showMessage("not yet on remote boards", anchor: anchor) }
         guard let file else { return }
         let root = board.root
         lease(file)

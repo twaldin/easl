@@ -52,11 +52,23 @@ final class CodeTile: NSView, TileContent {
     /// The repository whose default branch the base picker last read, and that branch.
     private var knownDefaultBranch: (repository: String, branch: String?)?
 
+    private let git: HostGit?
+    private var hostWatch: HostFileWatch?
+    private var hostRetry: Task<Void, Never>?
+    private var hostDefaultBranch: String?
+    private var hostRefShas: [String: String] = [:]
+    private enum HostFailure {
+        case retained(String)
+        case unavailable
+    }
+    private var hostFailure: HostFailure?
+
     static let flashDuration: TimeInterval = 3
 
-    init(object: CanvasObject, board: Board) {
+    init(object: CanvasObject, board: Board, git: HostGit? = nil) {
         self.object = object
         self.board = board
+        self.git = git
         let aim = Self.aim(object.props) ?? Aim(path: "", range: nil)
         displayed = aim
         propsAim = aim
@@ -80,12 +92,15 @@ final class CodeTile: NSView, TileContent {
         header.onPin = { [weak self] in self?.pin() }
         header.onCatchUp = { [weak self] in self?.catchUp() }
         header.onLocation = { [weak self] location in self?.userAim(location) }
-        NotificationCenter.default.addObserver(self, selector: #selector(baseChanged), name: .gitDiffBaseChanged, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(refsMoved(_:)), name: .gitRefsMoved, object: nil)
+        if git == nil {
+            NotificationCenter.default.addObserver(self, selector: #selector(baseChanged), name: .gitDiffBaseChanged, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(refsMoved(_:)), name: .gitRefsMoved, object: nil)
+        }
         header.show(caption: object.props["caption"]?.string)
         refreshHeader()
         resizeSubviews(withOldSize: .zero)
-        navigation = CodeNavigation(host: self, board: board, tile: object.id, accessories: header, reservedWidth: CodeHeaderBar.reservedTrailing)
+        navigation = CodeNavigation(host: self, board: board, tile: object.id, accessories: header, reservedWidth: CodeHeaderBar.reservedTrailing,
+                                    mode: git == nil ? .local : .remoteUnavailable)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -94,12 +109,25 @@ final class CodeTile: NSView, TileContent {
     /// batch, zoomed out or offscreen) loads when it first becomes live instead.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if git != nil, window == nil {
+            generation += 1
+            loadTask?.cancel()
+            loadTask = nil
+            hostWatch?.cancel()
+            hostWatch = nil
+            hostRetry?.cancel()
+            hostRetry = nil
+            reloadWork?.cancel()
+            reloadWork = nil
+            needsLoad = true
+        }
         if window != nil, isLive, needsLoad { load() }
     }
 
     deinit {
         loadTask?.cancel()
         vanishCheck?.cancel()
+        hostRetry?.cancel()
         if watcherSuspended { watcher?.resume() }
         watcher?.cancel()
         if let heldRepository { Task { await GitDiffEngine.shared.release(heldRepository) } }
@@ -332,11 +360,12 @@ final class CodeTile: NSView, TileContent {
     /// Diff the file against its base, or read it at its pinned commit (git, off the main
     /// thread), build the model off the main thread, and install it. Deferred until the tile is live.
     private func load() {
-        guard isLive else {
+        guard isLive, git == nil || window != nil else {
             needsLoad = true
             return
         }
         needsLoad = false
+        if let git { return loadFromHost(git) }
         let path = displayed.path
         let url = board.absoluteURL(path)
         let source = source, boardRoot = board.root, refSha = object.props["refSha"]?.string
@@ -367,23 +396,108 @@ final class CodeTile: NSView, TileContent {
         }
     }
 
+    private func loadFromHost(_ git: HostGit) {
+        let path = displayed.path, source = source
+        let read = hostRead(path: path, source: source)
+        generation += 1
+        let current = generation
+        loadTask?.cancel()
+        hostRetry?.cancel()
+        hostRetry = nil
+        loadTask = Task { [weak self] in
+            let result: Result<HostCodeLoad, HostFileError>
+            do {
+                result = .success(try await git.code(read))
+            } catch let error as HostFileError {
+                result = .failure(error)
+            } catch {
+                return
+            }
+            await MainTurns.next()
+            guard let self, !Task.isCancelled, current == self.generation, self.isLive else { return }
+            self.loadTask = nil
+            switch result {
+            case .success(let load): self.installHost(load, source: source, git: git)
+            case .failure(let error): self.hostLoadFailed(error, path: path, source: source)
+            }
+        }
+    }
+
+    private func hostRead(path: String, source: Source) -> HostCodeRead {
+        HostCodeRead(boardRoot: board.root.path, path: path, base: source.base, pinned: source.pinned, ref: source.ref,
+                     refSha: source.ref.flatMap { hostRefShas[$0] } ?? object.props["refSha"]?.string)
+    }
+
+    private func learn(_ load: HostCodeLoad, source: Source) {
+        hostDefaultBranch = load.defaultBranch
+        if let ref = source.ref, let sha = load.refSha { hostRefShas[ref] = sha }
+        if hostFailure != nil {
+            hostFailure = nil
+            refreshHeader()
+        }
+    }
+
+    private func installHost(_ load: HostCodeLoad, source: Source, git: HostGit) {
+        learn(load, source: source)
+        install(load.document, source: source)
+        hostWatch?.cancel()
+        hostWatch = nil
+        guard let probe = load.probe else { return }
+        guard window != nil else {
+            needsLoad = true
+            return
+        }
+        hostWatch = HostFileWatch(baseline: load.baseline, probe: { await git.stamp(probe) }) { [weak self] _ in self?.scheduleReload() }
+    }
+
+    private func hostLoadFailed(_ error: HostFileError, path: String, source: Source) {
+        let message = if case .unavailable(let why) = error { why } else { "\(error)" }
+        if let document, document.path == path, document.diff.state != .unreadable {
+            hostFailure = .retained(message)
+            refreshHeader()
+        } else {
+            hostFailure = .unavailable
+            let diff = FileDiff(state: .unreadable, base: nil, baseLabel: "host unavailable: \(message)", old: SideText(""), new: SideText(""), hunks: [])
+            install(CodeDocument(path: path, diff: diff), source: source)
+        }
+        let current = generation
+        hostRetry = Task { [weak self] in
+            guard (try? await Task.sleep(for: .seconds(2))) != nil, let self, current == self.generation, self.isLive, self.window != nil else { return }
+            self.hostRetry = nil
+            self.load()
+        }
+    }
+
     /// Whether `document` is the file as it is now: a live tile watches its file and bases, and
     /// nothing is pending. Off screen or zoomed out nothing is watched, so a render or card
     /// reloads (a view.render of an offscreen tile must show the file on disk, never the last
     /// thing drawn).
     private var documentIsCurrent: Bool {
-        isLive && !needsLoad && loadTask == nil && reloadWork == nil && showsCurrent && loadedSource == source && document != nil
+        isLive && !needsLoad && loadTask == nil && reloadWork == nil && showsCurrent && loadedSource == source && document != nil && hostFailure == nil
     }
 
     /// The model without holding the repository, for renders and cards of tiles that aren't live.
     private func loadOffscreen() async -> CodeDocument? {
         if documentIsCurrent, let document { return document }
-        let path = displayed.path, source = source, boardRoot = board.root
-        let located = await source.locate(url: board.absoluteURL(path), path: path, boardRoot: boardRoot, refSha: object.props["refSha"]?.string)
-        if let resolved = located.ref { board.recordRefSha(object.id, ref: resolved.ref, sha: resolved.resolution.sha) }
-        let document = await source.document(path: path, located: located, boardRoot: boardRoot)
+        let path = displayed.path, source = source, current = generation
+        let document: CodeDocument
+        var hostLoad: HostCodeLoad?
+        if let git {
+            guard let load = try? await git.code(hostRead(path: path, source: source)) else { return nil }
+            hostLoad = load
+            document = load.document
+        } else {
+            let boardRoot = board.root
+            let located = await source.locate(url: board.absoluteURL(path), path: path, boardRoot: boardRoot, refSha: object.props["refSha"]?.string)
+            if let resolved = located.ref { board.recordRefSha(object.id, ref: resolved.ref, sha: resolved.resolution.sha) }
+            document = await source.document(path: path, located: located, boardRoot: boardRoot)
+        }
         await MainTurns.next()
-        guard path == displayed.path, source == self.source else { return nil }
+        guard !Task.isCancelled, current == generation, path == displayed.path, source == self.source else { return nil }
+        // A live host tile installs only from its own load. This read answers the card or render
+        // that asked, and must not replace the document, watch baseline, or ref cache.
+        if git != nil, isLive { return document }
+        if let hostLoad { learn(hostLoad, source: source) }
         if !showsCurrent || loadedSource != source || reanchorPending || self.document?.text != document.text || self.document?.signs != document.signs {
             install(document, source: source)
             // Not live: the next time it is, revalidate against the watched file and bases.
@@ -403,7 +517,7 @@ final class CodeTile: NSView, TileContent {
         self.document = document
         loadedSource = source
         reanchor()
-        rowsView.canEdit = document.side == .new && !document.isPinned
+        rowsView.canEdit = git == nil && document.side == .new && !document.isPinned
         // Laid-out lines are keyed by line number, which a new text reassigns.
         rowsView.cache.removeAll()
         // Another pinned commit is another text, not an edit.
@@ -438,7 +552,7 @@ final class CodeTile: NSView, TileContent {
     /// (`Board.codeFileVanished`; the user's own tiles stay). Checked again a moment later, so
     /// a save that deletes and re-creates the file isn't taken for a delete.
     private func fileVanished(_ path: String) {
-        guard vanishCheck == nil else { return }
+        guard git == nil, vanishCheck == nil else { return }
         let url = board.absoluteURL(path)
         let candidates = FollowFallback.candidates(object.props["history"]?.array ?? [], vanished: path).map { ($0, board.absoluteURL($0)) }
         vanishCheck = Task { [weak self] in
@@ -747,8 +861,13 @@ extension CodeTile {
     }
 
     private func showHeader(for document: CodeDocument?) {
+        var warnings = [staleReason.map { "stale: \($0)" }, document?.warning].compactMap { $0 }
+        if git != nil, document != nil {
+            if case .retained(let message) = hostFailure { warnings.append("host unavailable: \(message)") }
+            warnings.append("code navigation not yet on remote boards")
+        }
+        let warning = warnings.joined(separator: " · ")
         // A pinned tile, or one reading its ref's objects, has no diff base to pick.
-        let warning = [staleReason.map { "stale: \($0)" }, document?.warning].compactMap { $0 }.joined(separator: " · ")
         let readOnly = pinnedCommit != nil || (source.ref != nil && document.map { $0.isPinned || $0.diff.state == .pinUnavailable } ?? true)
         header.show(diffBase: readOnly ? nil : diffBaseProp, defaultBranch: defaultBranch(for: document), baseDescription: document?.baseDescription,
                     status: document?.status ?? "loading…", warning: warning.isEmpty ? nil : warning, changes: !(document?.signs.isEmpty ?? true), follow: followOf != nil, missed: lock.missed)
@@ -761,6 +880,10 @@ extension CodeTile {
     /// The default branch the base picker names (`Branch vs origin/main`): the one the
     /// merge-base was taken with, else as the repository's files say (read once per repository).
     private func defaultBranch(for document: CodeDocument?) -> String? {
+        if git != nil {
+            guard let diff = document?.diff else { return nil }
+            return diff.baseLabel.flatMap(GitDiffEngine.ResolvedBase.mergeBaseBranch) ?? hostDefaultBranch
+        }
         guard let diff = document?.diff, let repository = diff.repository else { return nil }
         if let branch = diff.baseLabel.flatMap(GitDiffEngine.ResolvedBase.mergeBaseBranch) { return branch }
         if let known = knownDefaultBranch, known.repository == repository { return known.branch }
@@ -813,7 +936,7 @@ extension CodeTile {
     /// Open the user's editor (`$VISUAL`/`$EDITOR` from the login shell, else nvim or vi) at the
     /// clicked line in a terminal tile beside this one, in view (`CanvasView.openForUser`).
     private func editHere(at point: NSPoint) {
-        guard let document, showsCurrent, document.side == .new, !document.isPinned else { return }
+        guard git == nil, let document, showsCurrent, document.side == .new, !document.isPinned else { return }
         board.keepCode(object.id)
         let line = displayedLine(atY: point.y) ?? displayed.range?.start ?? 1
         let path = document.readPath
@@ -912,6 +1035,11 @@ extension CodeTile {
             stopFlash()
             vanishCheck?.cancel()
             vanishCheck = nil
+            if hostWatch != nil || hostRetry != nil { needsLoad = true }
+            hostWatch?.cancel()
+            hostWatch = nil
+            hostRetry?.cancel()
+            hostRetry = nil
             // Nothing with tracking areas, tooltips, or a backing store stays in the window: the
             // card covers the tile, and pans would otherwise update them every frame.
             navigation?.setActive(false)

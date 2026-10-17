@@ -79,7 +79,10 @@ public struct RefSource: Equatable, Sendable {
 
     /// The header's words for the state: `live in <worktree>`, `<ref> @ <sha>`, `merged in <sha>`,
     /// `branch gone, showing <sha>`.
-    public var label: String {
+    public var label: String { Self.label(ref: ref, resolution: resolution) }
+
+    /// `label` for `ref` resolved to `resolution`, here or on a remote board's host.
+    public static func label(ref: String, resolution: GitRefs.Resolution) -> String {
         switch resolution.state {
         case .live: "live in \(resolution.worktree?.lastPathComponent ?? "worktree")"
         case .objects: "\(ref) @ \(resolution.sha.prefix(7))"

@@ -543,6 +543,9 @@ public struct CodeDocument: Sendable {
         case .pinUnavailable:
             status = "pinned"
             notice = "\(path): \(diff.baseLabel ?? "pinned commit unavailable")"
+        case .unreadable:
+            status = ""
+            notice = "\(path): \(diff.baseLabel ?? "unreadable on the host")"
         }
         self.notice = notice
         self.warning = warning

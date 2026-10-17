@@ -203,13 +203,7 @@ public actor GitDiffEngine {
             return result(isSubmodule ? .submodule : .missing, base: nil, label: nil)
         }
         let resolved = await resolve(base, in: repository)
-        let binary = data.map(Self.looksBinary) ?? false
-        guard let sha = resolved.sha else {
-            // No commit to compare with (unborn HEAD, no default branch): plain source.
-            if data == nil { return result(.missing, base: nil, label: resolved.label) }
-            if binary { return result(.binary, base: nil, label: resolved.label) }
-            return result(.noBase, base: nil, label: resolved.label, new: new)
-        }
+        guard let sha = resolved.sha else { return Self.sourceOnly(data: data, new: new, label: resolved.label, toplevel: toplevel) }
         let path = Self.relative(Self.realPath(file), to: repository.toplevel)
         let hash = await offPool { data.map { Data(SHA256.hash(data: $0)) } ?? Data() }
         let key = CacheKey(toplevel: toplevel, path: path, base: sha, content: hash)
@@ -223,43 +217,52 @@ public actor GitDiffEngine {
         // Taken before git status runs: an index written meanwhile retires the entry next time.
         let index = Self.indexStamp(repository.gitDir)
         let patch = await patch(path, in: repository, base: sha)
-        let patchData = patch.patch
-        let parsed = await offPool { UnifiedDiff.parse(patchData) }
-        let diff: FileDiff
-        if patch.entry == .gitlink || parsed.gitlink {
-            diff = result(.submodule, base: sha, label: resolved.label)
-        } else if patch.tooLarge {
-            // A deleted file's only text is the oversized base; otherwise show the file as source.
-            diff = result(data == nil ? .tooLarge : .diffTooLarge, base: sha, label: resolved.label, new: data == nil ? SideText("") : new)
-        } else if parsed.binary || binary {
-            diff = result(.binary, base: sha, label: resolved.label)
-        } else if data == nil {
-            guard patch.entry != .absent else { return result(.missing, base: sha, label: resolved.label) }
-            // Deleted from the working tree: the patch removes every base line.
-            guard let old = await offPool({ UnifiedDiff.reconstructOld(new: new, parsed: parsed) }) else { return nil }
-            diff = result(.deleted, base: sha, label: resolved.label, old: old, new: new, hunks: UnifiedDiff.hunks(parsed.mappings))
-        } else if patch.entry == .absent {
-            // New since the base: an agent's new file, tracked yet or not, is work of the branch;
-            // a file git ignores (a node_modules frame) isn't, and shows as plain source.
-            if patch.status == "!!" {
-                diff = result(.ignored, base: sha, label: resolved.label, new: new)
-            } else {
-                var added = result(.added, base: sha, label: resolved.label, new: new, hunks: LineRangeMapping.whole(new).map { DiffHunk(mappings: [$0]) })
-                added.untracked = patch.status == "??"
-                diff = added
-            }
-        } else if parsed.mappings.isEmpty {
-            // Mode-only changes and identical content alike: nothing to show line by line.
-            diff = result(.unchanged, base: sha, label: resolved.label, old: new, new: new)
-        } else {
-            guard let old = await offPool({ UnifiedDiff.reconstructOld(new: new, parsed: parsed) }) else { return nil }
-            diff = result(.modified, base: sha, label: resolved.label, old: old, new: new, hunks: UnifiedDiff.hunks(parsed.mappings))
-        }
+        guard let diff = await Self.diff(data: data, new: new, base: sha, label: resolved.label, patch: patch, toplevel: toplevel) else { return nil }
+        if diff.state == .missing { return diff }
         // git read the file some time after we did; only a file still identical afterwards
         // proves the patch describes the text we captured.
         guard await offPool({ Self.read(file).data }) == data else { return nil }
         store(Cached(diff: diff, index: diff.state == .added || diff.state == .ignored ? index : nil), for: key)
         return diff
+    }
+
+    static func sourceOnly(data: Data?, new: SideText, label: String, toplevel: String?) -> FileDiff {
+        func result(_ state: FileDiff.State, new: SideText = SideText("")) -> FileDiff {
+            FileDiff(state: state, base: nil, baseLabel: label, old: SideText(""), new: new, hunks: [], repository: toplevel)
+        }
+        if data == nil { return result(.missing) }
+        if data.map(looksBinary) ?? false { return result(.binary) }
+        return result(.noBase, new: new)
+    }
+
+    static func diff(data: Data?, new: SideText, base sha: String, label: String, patch: PatchResult, toplevel: String?) async -> FileDiff? {
+        func result(_ state: FileDiff.State, old: SideText = SideText(""), new: SideText = SideText(""), hunks: [DiffHunk] = []) -> FileDiff {
+            FileDiff(state: state, base: sha, baseLabel: label, old: old, new: new, hunks: hunks, repository: toplevel)
+        }
+        let patchData = patch.patch
+        let parsed = await offPool { UnifiedDiff.parse(patchData) }
+        if patch.entry == .gitlink || parsed.gitlink { return result(.submodule) }
+        // A deleted file's only text is the oversized base; otherwise show the file as source.
+        if patch.tooLarge { return result(data == nil ? .tooLarge : .diffTooLarge, new: data == nil ? SideText("") : new) }
+        if parsed.binary || (data.map(looksBinary) ?? false) { return result(.binary) }
+        if data == nil {
+            guard patch.entry != .absent else { return result(.missing) }
+            // Deleted from the working tree: the patch removes every base line.
+            guard let old = await offPool({ UnifiedDiff.reconstructOld(new: new, parsed: parsed) }) else { return nil }
+            return result(.deleted, old: old, new: new, hunks: UnifiedDiff.hunks(parsed.mappings))
+        }
+        if patch.entry == .absent {
+            // New since the base: an agent's new file, tracked yet or not, is work of the branch;
+            // a file git ignores (a node_modules frame) isn't, and shows as plain source.
+            if patch.status == "!!" { return result(.ignored, new: new) }
+            var added = result(.added, new: new, hunks: LineRangeMapping.whole(new).map { DiffHunk(mappings: [$0]) })
+            added.untracked = patch.status == "??"
+            return added
+        }
+        // Mode-only changes and identical content alike: nothing to show line by line.
+        if parsed.mappings.isEmpty { return result(.unchanged, old: new, new: new) }
+        guard let old = await offPool({ UnifiedDiff.reconstructOld(new: new, parsed: parsed) }) else { return nil }
+        return result(.modified, old: old, new: new, hunks: UnifiedDiff.hunks(parsed.mappings))
     }
 
     /// `file` as of `revision` for a code tile pinned to it (`pinnedCommit`): the whole text at
@@ -328,7 +331,7 @@ public actor GitDiffEngine {
     }
 
     /// git's own heuristic: a NUL byte in the first 8000 bytes.
-    private static func looksBinary(_ data: Data) -> Bool {
+    static func looksBinary(_ data: Data) -> Bool {
         data.prefix(8000).contains(0)
     }
 
@@ -360,47 +363,54 @@ public actor GitDiffEngine {
         if let listing = try? await GitRunner.shared.run(["--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", key.base, "--"] + paths, in: toplevel) {
             entries = Self.parseTree(listing)
         }
-        var results: [String: PatchResult] = [:]
-        var diffPaths: [String] = []
-        var absentPaths: [String] = []
-        for path in paths {
-            let entry = entries[path] ?? .absent
-            var result = PatchResult(entry: entry)
-            switch entry {
-            case .gitlink: break
-            case .blob(let size) where size > Self.maxFileSize: result.tooLarge = true
-            case .absent:
-                absentPaths.append(path)
-                diffPaths.append(path)
-            default: diffPaths.append(path)
-            }
-            results[path] = result
-        }
+        let diffPaths = paths.filter { Self.diffs(entries[$0] ?? .absent) }
+        let absentPaths = paths.filter { entries[$0] == nil }
         // Whether the files the base lacks are tracked yet, untracked, or ignored: one status.
+        var codes: [String: String] = [:]
         if !absentPaths.isEmpty,
            let listing = try? await GitRunner.shared.run(["--literal-pathspecs", "status", "--porcelain=v1", "-z", "--ignored=matching", "--untracked-files=all", "--"] + absentPaths, in: toplevel) {
-            let codes = Self.parseStatus(listing)
-            for path in absentPaths {
-                // An ignored directory is listed as itself (`node_modules/`), not file by file.
-                results[path]?.status = codes[path] ?? codes.first { $0.key.hasSuffix("/") && path.hasPrefix($0.key) }?.value
-            }
+            codes = Self.parseStatus(listing)
         }
+        var sections: [String: Data] = [:]
+        var tooLarge = false
         if !diffPaths.isEmpty {
             diffRuns += 1
             let args = Self.changeRecords + [key.base, "--"] + diffPaths
             do {
                 let output = try await GitRunner.shared.run(args, in: toplevel, maxOutput: diffPaths.count * 3 * Self.maxFileSize)
-                let sections = await offPool { Self.split(output) }
-                for (path, section) in sections where results[path] != nil {
-                    results[path]?.patch = section
-                }
+                sections = await offPool { Self.split(output) }
             } catch GitError.outputTooLarge {
-                for path in diffPaths { results[path]?.tooLarge = true }
+                tooLarge = true
             } catch {}
         }
+        let results = Self.patchResults(paths, entries: entries, codes: codes, sections: sections, diffTooLarge: tooLarge)
         for request in requests {
             request.continuation.resume(returning: results[request.path] ?? PatchResult())
         }
+    }
+
+    static func diffs(_ entry: BaseEntry) -> Bool {
+        switch entry {
+        case .gitlink: false
+        case .blob(let size): size <= maxFileSize
+        case .absent, .other: true
+        }
+    }
+
+    static func patchResults(_ paths: [String], entries: [String: BaseEntry], codes: [String: String], sections: [String: Data], diffTooLarge: Bool) -> [String: PatchResult] {
+        var results: [String: PatchResult] = [:]
+        for path in paths {
+            let entry = entries[path] ?? .absent
+            var result = PatchResult(entry: entry)
+            if case .blob(let size) = entry, size > maxFileSize { result.tooLarge = true }
+            if diffs(entry) {
+                // An ignored directory is listed as itself (`node_modules/`), not file by file.
+                if entry == .absent { result.status = codes[path] ?? codes.first { $0.key.hasSuffix("/") && path.hasPrefix($0.key) }?.value }
+                if diffTooLarge { result.tooLarge = true } else { result.patch = sections[path] ?? Data() }
+            }
+            results[path] = result
+        }
+        return results
     }
 
     /// `git diff` giving pure change records: -U0 with zero inter-hunk context whatever the

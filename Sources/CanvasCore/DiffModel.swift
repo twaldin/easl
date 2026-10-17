@@ -136,6 +136,9 @@ public struct FileDiff: Sendable, Equatable {
         /// A pinned commit that can't be shown: `baseLabel` says why (unknown commit, the file
         /// isn't in it, outside git, binary or too large).
         case pinUnavailable
+        /// A remote board's host refused the path (outside the board, an escaping symlink) or
+        /// couldn't read it: `baseLabel` says why. Nothing of the file is shown.
+        case unreadable
     }
 
     public var state: State
