@@ -136,16 +136,57 @@ final class CanvasTerminalView: TerminalView {
     var imageDestination: (() -> TerminalPasteDestination?)?
     var onImageProblem: ((String) -> Void)?
 
+    private final class SubmissionCancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        var isCancelled: Bool { lock.withLock { cancelled } }
+        func cancel() { lock.withLock { cancelled = true } }
+    }
+
+    private final class Submission {
+        let id: UUID
+        let paste: @MainActor () -> Bool
+        let delay: Duration
+        let cancellation: SubmissionCancellation
+        private var continuation: CheckedContinuation<Bool, Never>?
+
+        init(id: UUID, paste: @escaping @MainActor () -> Bool, delay: Duration, cancellation: SubmissionCancellation, continuation: CheckedContinuation<Bool, Never>) {
+            self.id = id
+            self.paste = paste
+            self.delay = delay
+            self.cancellation = cancellation
+            self.continuation = continuation
+        }
+
+        var isPending: Bool { continuation != nil && !cancellation.isCancelled }
+
+        func resolve(_ result: Bool) {
+            let continuation = continuation
+            self.continuation = nil
+            continuation?.resume(returning: result)
+        }
+
+        deinit { continuation?.resume(returning: false) }
+    }
+
     private enum Input {
         case key(NSEvent)
         case text(String)
-        case paste
         case images([TerminalImageInput], TerminalPasteDestination)
+        case submission(Submission)
         case problem(String)
     }
+
+    private struct ActiveInput {
+        let token: UUID
+        let task: Task<Void, Never>
+        let submission: Submission?
+    }
+
     private var pendingInput: [Input] = []
     private var inputIndex = 0
-    private var imageTask: Task<Void, Never>?
+    private var activeInput: ActiveInput?
     private var pasteKeyUp: UInt16?
     private static var imageUploads: [String: [UUID: Task<Void, Never>]] = [:]
 
@@ -161,11 +202,16 @@ final class CanvasTerminalView: TerminalView {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    deinit { imageTask?.cancel() }
+    deinit { activeInput?.task.cancel() }
 
     func cancelImageInput() {
-        imageTask?.cancel()
-        imageTask = nil
+        let active = activeInput
+        activeInput = nil
+        active?.task.cancel()
+        active?.submission?.resolve(false)
+        for input in pendingInput[inputIndex...] {
+            if case .submission(let submission) = input { submission.resolve(false) }
+        }
         pendingInput.removeAll()
         inputIndex = 0
     }
@@ -176,17 +222,50 @@ final class CanvasTerminalView: TerminalView {
         return tasks
     }
 
-    func afterImageInput(_ body: () -> Bool) async -> Bool {
-        while let task = imageTask {
-            await task.value
-            guard !Task.isCancelled else { return false }
+    func submitOrdered(_ paste: @escaping @MainActor () -> Bool, delay: Duration) async -> Bool {
+        let id = UUID()
+        let cancellation = SubmissionCancellation()
+        let result = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                enqueue(.submission(Submission(id: id, paste: paste, delay: delay, cancellation: cancellation, continuation: continuation)))
+            }
+        } onCancel: {
+            cancellation.cancel()
+            Task { @MainActor [weak self] in self?.cancelSubmission(id) }
         }
-        return body()
+        return result && !Task.isCancelled
+    }
+
+    private func cancelSubmission(_ id: UUID) {
+        if let active = activeInput, active.submission?.id == id {
+            activeInput = nil
+            active.task.cancel()
+            active.submission?.resolve(false)
+            drainInput()
+            return
+        }
+        for input in pendingInput[inputIndex...] {
+            if case .submission(let submission) = input, submission.id == id {
+                submission.resolve(false)
+                return
+            }
+        }
+    }
+
+    private func finishInput(_ token: UUID, result: Bool = false) {
+        guard let active = activeInput, active.token == token else { return }
+        activeInput = nil
+        active.submission?.resolve(result)
+        drainInput()
     }
 
     @discardableResult
     func pasteOrdered(_ text: String) -> Bool {
-        guard imageTask != nil else { return paste(text: text) }
+        guard activeInput != nil else { return paste(text: text) }
         guard !text.isEmpty else { return false }
         enqueue(.text(text))
         return true
@@ -242,8 +321,8 @@ final class CanvasTerminalView: TerminalView {
 
     @IBAction override func paste(_ sender: Any?) {
         if pasteImages(from: .general) { return }
-        if imageTask != nil {
-            enqueue(.paste)
+        if activeInput != nil {
+            if let text = TerminalPasteboardContent.text() { enqueue(.text(text)) }
         } else {
             super.paste(sender)
         }
@@ -269,7 +348,7 @@ final class CanvasTerminalView: TerminalView {
     }
 
     private func drainInput() {
-        guard imageTask == nil else { return }
+        guard activeInput == nil else { return }
         while inputIndex < pendingInput.count {
             let input = pendingInput[inputIndex]
             inputIndex += 1
@@ -283,10 +362,34 @@ final class CanvasTerminalView: TerminalView {
                 }
             case .text(let text):
                 if !super.paste(text: text) { onImageProblem?("The terminal isn't ready to receive pasted text") }
-            case .paste:
-                super.paste(nil)
             case .problem(let problem):
                 onImageProblem?(problem)
+            case .submission(let submission):
+                guard submission.isPending else {
+                    submission.resolve(false)
+                    continue
+                }
+                let token = submission.id
+                let task = Task { [weak self] in
+                    guard self?.activeInput?.token == token else { return }
+                    guard !Task.isCancelled, submission.isPending, submission.paste() else {
+                        self?.finishInput(token)
+                        return
+                    }
+                    do {
+                        try await Task.sleep(for: submission.delay)
+                    } catch {
+                        self?.finishInput(token)
+                        return
+                    }
+                    guard !Task.isCancelled, submission.isPending, let self, self.activeInput?.token == token else {
+                        self?.finishInput(token)
+                        return
+                    }
+                    self.finishInput(token, result: self.sendKey(.enter))
+                }
+                activeInput = ActiveInput(token: token, task: task, submission: submission)
+                return
             case .images(let images, let destination):
                 let ticket = UUID()
                 let key = destination.key
@@ -294,21 +397,20 @@ final class CanvasTerminalView: TerminalView {
                     defer {
                         Self.imageUploads[key]?[ticket] = nil
                         if Self.imageUploads[key]?.isEmpty == true { Self.imageUploads[key] = nil }
+                        self?.finishInput(ticket)
                     }
                     do {
                         let text = try await destination.stage(images)
-                        guard !Task.isCancelled else { return }
-                        if let self, !self.paste(text: text) {
+                        guard !Task.isCancelled, let self, self.activeInput?.token == ticket else { return }
+                        if !self.paste(text: text) {
                             self.onImageProblem?("The terminal isn't ready to receive the copied image paths")
                         }
                     } catch {
-                        guard !Task.isCancelled else { return }
-                        self?.onImageProblem?((error as? EaslConnection.Failure)?.message ?? error.localizedDescription)
+                        guard !Task.isCancelled, let self, self.activeInput?.token == ticket else { return }
+                        self.onImageProblem?((error as? EaslConnection.Failure)?.message ?? error.localizedDescription)
                     }
-                    self?.imageTask = nil
-                    self?.drainInput()
                 }
-                imageTask = task
+                activeInput = ActiveInput(token: ticket, task: task, submission: nil)
                 Self.imageUploads[key, default: [:]][ticket] = task
                 return
             }
@@ -440,19 +542,20 @@ final class CanvasTerminalView: TerminalView {
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
         if event.charactersIgnoringModifiers?.lowercased() == "v" {
+            if !event.isARepeat { pasteKeyUp = nil }
             if modifiers == [.command] || modifiers == [.control] {
                 if pasteImages(from: .general, imageOnly: modifiers == [.control]) {
                     pasteKeyUp = event.keyCode
                     return
                 }
-                if modifiers == [.command], imageTask != nil {
+                if modifiers == [.command], activeInput != nil {
                     pasteKeyUp = event.keyCode
-                    enqueue(.paste)
+                    if let text = TerminalPasteboardContent.text() { enqueue(.text(text)) }
                     return
                 }
             }
         }
-        if imageTask != nil {
+        if activeInput != nil {
             enqueue(.key(event))
             return
         }
@@ -468,11 +571,11 @@ final class CanvasTerminalView: TerminalView {
             pasteKeyUp = nil
             return
         }
-        if imageTask != nil { enqueue(.key(event)) } else { super.keyUp(with: event) }
+        if activeInput != nil { enqueue(.key(event)) } else { super.keyUp(with: event) }
     }
 
     override func flagsChanged(with event: NSEvent) {
-        if imageTask != nil { enqueue(.key(event)) } else { super.flagsChanged(with: event) }
+        if activeInput != nil { enqueue(.key(event)) } else { super.flagsChanged(with: event) }
         guard let window else { return }
         updateHover(at: convert(window.mouseLocationOutsideOfEventStream, from: nil), command: event.modifierFlags.contains(.command))
     }

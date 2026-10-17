@@ -58,6 +58,41 @@ struct TerminalPasteTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: (first as NSString).deletingLastPathComponent) == ["image.png"])
     }
 
+    @Test func incompleteTransferWithClosedStderrLeavesNoImageOrPartial() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let input = directory.appendingPathComponent("input")
+        try Data([1]).write(to: input)
+        let result: (status: Int32, output: Data) = try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(with: Result {
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+                    process.arguments = ["-c", TerminalPaste.script, "easl"]
+                        + TerminalPaste.stageArguments(instance: "mac-1234", session: "canvas-obj_1", name: "short.png", size: 1024)
+                    process.environment = ["EASL_PASTE_BASE": directory.path, "PATH": "/usr/bin:/bin"]
+                    let source = try FileHandle(forReadingFrom: input)
+                    defer { try? source.close() }
+                    process.standardInput = source
+                    let output = Pipe()
+                    process.standardOutput = output
+                    let errors = Pipe()
+                    try errors.fileHandleForReading.close()
+                    defer { try? errors.fileHandleForWriting.close() }
+                    process.standardError = errors.fileHandleForWriting
+                    try process.run()
+                    let data = output.fileHandleForReading.readDataToEndOfFile()
+                    process.waitUntilExit()
+                    return (process.terminationStatus, data)
+                })
+            }
+        }
+        #expect(result.status != 0)
+        #expect(result.output.isEmpty)
+        let session = directory.appendingPathComponent("easl-paste-\(getuid())/mac-1234/canvas-obj_1")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: session.path) == [])
+    }
+
     @Test func concurrentStagesKeepTheirOwnBytesAndNames() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

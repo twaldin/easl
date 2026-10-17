@@ -318,15 +318,7 @@ final class TerminalHost {
             throw ApiRouter.Failure("unavailable", "\(target) is offline: terminal \(id)'s session there can't be restarted until it is back")
         }
         try killing()
-        _ = try await call("session.kill", .object(["tile": .string(id), "home": .string(TerminalTile.homeLabel)]))
-        var waited = 0
-        while await hasSession(id) != false {
-            waited += 1
-            guard waited <= 30 else {
-                throw ApiRouter.Failure("unavailable", "\(target) still lists terminal \(id)'s session 3 s after ending it")
-            }
-            try? await Task.sleep(for: .milliseconds(100))
-        }
+        try await endSession(id)
         try ended()
         // The session is gone, so merge history cannot matter; older easld accepts this relaunch.
         guard let params = tile.hostedSpawnParams(home: home, run: run, argv: argv, merged: []) else {
@@ -348,15 +340,15 @@ final class TerminalHost {
         NSLog("easl: %@ restarted %@ on %@", id, result["session"]?.string ?? "", target)
     }
 
-    /// Ends `tile`'s session (owner-guarded by this instance's home label); logged when the host
-    /// can't be reached, and the session keeps running there.
-    func kill(_ tile: ObjectID) {
-        Task {
-            do {
-                _ = try await call("session.kill", .object(["tile": .string(tile), "home": .string(TerminalTile.homeLabel)]))
-            } catch {
-                NSLog("easl: couldn't end %@'s session on %@: %@", tile, target, "\(error)")
+    func endSession(_ tile: ObjectID) async throws {
+        _ = try await call("session.kill", .object(["tile": .string(tile), "home": .string(TerminalTile.homeLabel)]))
+        var waited = 0
+        while await hasSession(tile) != false {
+            waited += 1
+            guard waited <= 30 else {
+                throw ApiRouter.Failure("unavailable", "\(target) still lists terminal \(tile)'s session 3 s after ending it")
             }
+            try? await Task.sleep(for: .milliseconds(100))
         }
     }
 

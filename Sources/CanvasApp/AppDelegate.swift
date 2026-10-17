@@ -67,8 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Every delete of a terminal (UI close, API, batch, undo/redo) ends its zmx session (a
         // hosted one's on its host), and with it any report its agent spooled here
         // (`AgentReportSpool`), which nothing would replay.
-        registry.onTerminalsEnded = { _, ended in
-            for terminal in ended { TerminalTile.killSession(terminal) }
+        registry.onTerminalsEnded = { board, ended in
+            for terminal in ended { TerminalTile.killSession(terminal, board: board.id) }
             let spooled = ended.map { AppPaths.agentReports.appendingPathComponent($0.id, isDirectory: true) }
             Task.detached { for folder in spooled { try? FileManager.default.removeItem(at: folder) } }
         }

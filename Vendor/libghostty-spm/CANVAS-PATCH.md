@@ -72,4 +72,8 @@ this one):
 easl overrides it to copy pasted images to the terminal's host before pasting their paths.
 The default Ghostty paste action is unchanged for other hosts and ordinary text.
 
+The existing AppKit `TerminalPasteboardContent.text(from:)` reader is public so easl can snapshot
+queued text pastes at the keypress. It retains the same URL precedence and shell escaping as
+Ghostty's clipboard callback without changing the pasteboard.
+
 To update, copy the new tag's files as above, reapply the patches, and drop the test target again.

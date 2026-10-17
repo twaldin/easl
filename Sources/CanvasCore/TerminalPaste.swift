@@ -128,7 +128,7 @@ public enum TerminalPaste {
         fi
         part=$(mktemp "$dir/.part.XXXXXX") || fail 'cannot create image file'
         trap 'rm -f -- "$part"' EXIT
-        trap 'exit 1' HUP INT TERM
+        trap 'exit 1' HUP INT TERM PIPE
         cat > "$part" || fail 'image transfer failed'
         actual=$(wc -c < "$part" | tr -d '[:space:]')
         [ "$actual" = "$size" ] || fail 'image arrived incomplete'
@@ -137,7 +137,7 @@ public enum TerminalPaste {
         [ ! -e "$dest" ] && [ ! -L "$dest" ] || fail 'image name already exists'
         ln "$part" "$dest" 2>/dev/null || fail 'image name already exists'
         rm -f -- "$part"
-        trap - EXIT HUP INT TERM
+        trap - EXIT HUP INT TERM PIPE
         printf '%s\n' "$dest"
         """#
 }

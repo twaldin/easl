@@ -107,15 +107,18 @@ final class TerminalTile: NSView, TileContent {
     private func resolvePasteDestination() -> TerminalPasteDestination? {
         if let pasteDestination { return pasteDestination }
         let instance: String
+        let owner: BoardID
         var remoteHost: RemoteHost?
         if isRemote {
             var ancestor = superview
             while let view = ancestor, !(view is CanvasView) { ancestor = view.superview }
             guard let remote = (ancestor as? CanvasView)?.remote else { return nil }
             remoteHost = remote.host
+            owner = remote.mirror.sessionBoardID
             instance = HostedTerminal.homeLabel(URL(fileURLWithPath: remote.host.socketPath).deletingLastPathComponent().path)
         } else {
             instance = Self.homeLabel
+            owner = board.id
         }
         let machine: TerminalPasteDestination.Machine
         if let target = pasteHostTarget {
@@ -126,9 +129,13 @@ final class TerminalTile: NSView, TileContent {
         } else {
             machine = .local
         }
-        let destination = TerminalPasteDestination(machine: machine, instance: instance, session: sessionName)
+        let destination = TerminalPasteDestination(machine: machine, instance: instance, session: Self.pasteSession(board: owner, tile: objectID))
         pasteDestination = destination
         return destination
+    }
+
+    private static func pasteSession(board: BoardID, tile: ObjectID) -> String {
+        "\(board)-\(sessionName(tile))"
     }
 
     private static func stopPasteInput(_ destination: TerminalPasteDestination) -> [Task<Void, Never>] {
@@ -268,24 +275,18 @@ final class TerminalTile: NSView, TileContent {
     /// UI, API, batch, undo/redo), then deletes zmx's log of it (`Housekeeping.sessionLog`), which
     /// zmx keeps forever. Never another instance's session or log (`ownerGuard`). A hosted
     /// terminal's session is ended by its host's easld (`session.kill`).
-    static func killSession(_ object: CanvasObject) {
+    static func killSession(_ object: CanvasObject, board: BoardID) {
         let target = HostedTerminal.host(of: object)
         guard target.map({ RemoteHost.problem(withHost: $0) == nil }) ?? true else { return }
         let machine: TerminalPasteDestination.Machine = target
             .map { .hosted(TerminalHost.named($0).route) } ?? .local
-        let destination = TerminalPasteDestination(machine: machine, instance: homeLabel, session: sessionName(object.id))
+        let destination = TerminalPasteDestination(machine: machine, instance: homeLabel, session: pasteSession(board: board, tile: object.id))
         let tasks = stopPasteInput(destination)
         if let target {
             let host = TerminalHost.named(target)
             Task {
                 do {
-                    _ = try await host.call("session.kill", .object(["tile": .string(object.id), "home": .string(homeLabel)]))
-                    var waited = 0
-                    while await host.hasSession(object.id) != false {
-                        waited += 1
-                        guard waited <= 30 else { return }
-                        try? await Task.sleep(for: .milliseconds(100))
-                    }
+                    try await host.endSession(object.id)
                     await discardPaste(destination, after: tasks)
                 } catch {
                     NSLog("easl: couldn't end %@'s session on %@: %@", object.id, target, "\(error)")
@@ -432,16 +433,13 @@ final class TerminalTile: NSView, TileContent {
     /// its prompt a one-line command is typed instead (`ShellTyping`), so no bracketed-paste
     /// marker can reach its line editor in pieces.
     func submit(_ text: String) async -> Bool {
-        let pasted = await terminal.afterImageInput { [self] in
+        await terminal.submitOrdered({ [self] in
             refreshProgram()
             if shell != nil, program == nil, let typing = ShellTyping.action(text) {
                 return terminal.performBindingAction(typing)
             }
             return terminal.paste(text: text)
-        }
-        guard pasted else { return false }
-        try? await Task.sleep(for: Self.submitDelay)
-        return await terminal.afterImageInput { [self] in terminal.sendKey(.enter) }
+        }, delay: Self.submitDelay)
     }
 
     func focus() {
