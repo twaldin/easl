@@ -18,7 +18,7 @@ final class NoteTile: NSView, TileContent {
     private let displayScroll = OverlayScrollView()
     private let display = NoteDisplayView(usingTextLayoutManager: true)
     private let layoutDelegate = NoteLayoutDelegate()
-    private let editorScroll = NSScrollView()
+    private let editorScroll = OverlayScrollView()
     private let editor = NoteEditor(usingTextLayoutManager: true)
     private let banner = NSTextField(labelWithString: "")
 
@@ -854,17 +854,6 @@ private extension NSTextView {
     func wrapping(_ size: NSSize) -> NSSize {
         guard let clip = superview as? NSClipView else { return size }
         return NSSize(width: clip.bounds.width, height: size.height)
-    }
-}
-
-/// The rendered note's scroll view keeps overlay scrollers whatever the system setting, so the
-/// text always wraps at the width `ObjectMeasure` fits notes at. A legacy scroller (a mouse
-/// attached, or "Show scroll bars: Always") took its width from the text once a note overflowed,
-/// even briefly, and the narrower wrap kept it a line taller than its fitted frame: clipped.
-final class OverlayScrollView: NSScrollView {
-    override var scrollerStyle: NSScroller.Style {
-        get { .overlay }
-        set { super.scrollerStyle = .overlay }
     }
 }
 

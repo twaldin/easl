@@ -24,7 +24,7 @@ final class NavigationPanel: NSView {
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: height))
         let bodyFrame = bounds.insetBy(dx: Self.inset, dy: Self.inset)
         if contentSize.height > Self.maxSize.height || contentSize.width > Self.maxSize.width {
-            let scroll = NSScrollView(frame: bodyFrame)
+            let scroll = OverlayScrollView(frame: bodyFrame)
             scroll.drawsBackground = false
             scroll.hasVerticalScroller = contentSize.height > Self.maxSize.height
             scroll.hasHorizontalScroller = contentSize.width > Self.maxSize.width
