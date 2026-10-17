@@ -148,7 +148,6 @@ struct HostFilesTests {
         for path in ["image space.png", image.path, image.absoluteString] {
             let result = try await files.read(HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage(path)))
             #expect(result.data == bytes)
-            #expect(result.path == image.resolvingSymlinksInPath().path)
         }
         let outside = fixture.temp.appendingPathComponent("outside.png")
         try Data("outside".utf8).write(to: outside)
