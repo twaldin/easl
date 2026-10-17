@@ -563,7 +563,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let (controller, alreadyOpen) = try await openRemoteBoard(host: host, board: board, select: select)
             return try Self.opened(controller, alreadyOpen: alreadyOpen)
         } catch let failure as ApiRouter.Failure {
-            NSLog("easl: board.open_remote: %@ on %@ failed (%@)", board, host.sshTarget, failure.code)
+            NSLog("easl: board.open_remote: %@ failed (%@)", host.sshTarget, failure.code)
             throw ApiRouter.Failure(failure.code, "couldn't open \(board) on \(host.name): \(failure.message)")
         }
     }

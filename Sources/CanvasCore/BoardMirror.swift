@@ -290,14 +290,14 @@ public final class BoardMirror: BoardHost {
                 guard number == attaches, attachment == .attaching else { return }
                 let client = reply["client"]?.string ?? "", version = reply["version"]?.int ?? ApiParams.schemaVersion
                 attachment = .attached(client: client, version: version)
-                NSLog("easl: %@ on %@: attached to its easld as %@ (schema version %ld)", boardID, hostName, client, version)
                 if refocused { attach(focused: true) }
             } catch {
                 // A link that dropped refused nothing (the next one attaches); nor did a closed one.
                 guard number == attaches, attachment == .attaching, connection.state == .online else { return }
                 let reason = Self.reason(error)
                 attachment = .refused(reason)
-                NSLog("easl: %@ on %@: its easld refused this viewer as a client: %@", boardID, hostName, reason)
+                let code = (error as? EaslConnection.Failure)?.code ?? "unavailable"
+                NSLog("easl: %@ refused this viewer as a client (%@)", hostName, code)
             }
         }
     }
