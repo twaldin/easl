@@ -246,8 +246,8 @@ extension Board {
         let copies = answer ? [] : mentions.map { Mention(id: IDs.make("men"), target: $0.target, label: $0.label, stagedAt: $0.stagedAt, edited: $0.edited) }
         let origins = answer ? [] : mentions.map(\.id)
         let blocked = objects[terminal]?.props["lifecycle"]?["state"]?.string == LifecycleState.blocked.rawValue
-        let prompt = ComposerPrompt(id: IDs.make("cmp"), prompt: text, folded: ComposerPrompt.fold(text), mentions: copies, origins: origins, answer: answer, queuedAt: now,
-                                    answerSettledAt: answer && !blocked ? now : nil, viewer: viewer)
+        let prompt = ComposerPrompt(id: IDs.make("cmp"), prompt: text, folded: ComposerPrompt.fold(text), mentions: copies, answer: answer, queuedAt: now,
+                                    answerSettledAt: answer && !blocked ? now : nil, origins: origins, viewer: viewer)
         composerPrompts[terminal, default: []].append(prompt)
         return prompt.id
     }
