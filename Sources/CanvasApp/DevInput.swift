@@ -73,6 +73,19 @@ enum DevInput {
         return view.subviews.lazy.compactMap { button(in: $0, keyEquivalent: key) }.first
     }
 
+    private static func performMenu(_ menu: NSMenu?, path: String) {
+        var menu = menu
+        var titles = path.replacingOccurrences(of: "//", with: "\u{0}").split(separator: "/").map { $0.replacingOccurrences(of: "\u{0}", with: "/") }
+        while let current = menu, !titles.isEmpty {
+            current.delegate?.menuNeedsUpdate?(current)
+            let title = titles.removeFirst()
+            guard let index = current.items.firstIndex(where: { $0.title == title }) else {
+                return NSLog("DevInput: no menu item %@ in [%@]", title, current.items.map(\.title).joined(separator: ", "))
+            }
+            if titles.isEmpty { current.performActionForItem(at: index) } else { menu = current.items[index].submenu }
+        }
+    }
+
     static func replay(_ fields: [String: String]) {
         guard fields["pid"] == String(getpid()) else { return }
         // `--repeat N --interval ms`: a burst like a trackpad's event stream. The log line reports
@@ -152,6 +165,16 @@ enum DevInput {
             }
             return
         }
+        if fields["kind"] == "close", let number = Int(fields["window"] ?? "") {
+            guard let window = NSApp.window(withWindowNumber: number) else {
+                return NSLog("DevInput: no window %d", number)
+            }
+            window.performClose(nil)
+            return
+        }
+        if fields["kind"] == "mainmenu" {
+            return performMenu(NSApp.mainMenu, path: fields["path"] ?? "")
+        }
         guard let window = CanvasWindowController.frontmost?.window, let content = window.contentView else { return }
         let flags = modifiers(fields["mods"])
         func number(_ key: String) -> CGFloat { CGFloat(Double(fields[key] ?? "") ?? 0) }
@@ -181,32 +204,13 @@ enum DevInput {
             let at = point("x", "y")
             mouse(.rightMouseDown, at)
             mouse(.rightMouseUp, at)
-        case "menu", "mainmenu":
-            // A shown context menu runs a tracking loop posted events can't drive: build the menu
-            // a right-click at x,y would show (the hit view, then its superviews), or for
-            // `mainmenu` take the menu bar, and perform the item at `path`, titles separated by
-            // "/" (e.g. "Content Zoom/150%", "Edit/Send Mentions To/codex"; "//" is a slash in a
-            // title: "Review Changes/Branch vs origin//main"). Submenus filled as they open
-            // (their delegate's `menuNeedsUpdate`) are filled first.
-            var menu: NSMenu?
-            if fields["kind"] == "mainmenu" {
-                menu = NSApp.mainMenu
-            } else {
-                let at = point("x", "y")
-                guard let frame = content.superview, let hit = content.hitTest(frame.convert(at, from: nil)),
-                      let event = NSEvent.mouseEvent(with: .rightMouseDown, location: at, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
-                                                     windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
-                menu = CodeNavigation.menu(for: event) ?? sequence(first: hit, next: \.superview).lazy.compactMap { $0.menu(for: event) }.first
-            }
-            var titles = (fields["path"] ?? "").replacingOccurrences(of: "//", with: "\u{0}").split(separator: "/").map { $0.replacingOccurrences(of: "\u{0}", with: "/") }
-            while let current = menu, !titles.isEmpty {
-                current.delegate?.menuNeedsUpdate?(current)
-                let title = titles.removeFirst()
-                guard let index = current.items.firstIndex(where: { $0.title == title }) else {
-                    return NSLog("DevInput: no menu item %@ in [%@]", title, current.items.map(\.title).joined(separator: ", "))
-                }
-                if titles.isEmpty { current.performActionForItem(at: index) } else { menu = current.items[index].submenu }
-            }
+        case "menu":
+            let at = point("x", "y")
+            guard let frame = content.superview, let hit = content.hitTest(frame.convert(at, from: nil)),
+                  let event = NSEvent.mouseEvent(with: .rightMouseDown, location: at, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+            let menu = CodeNavigation.menu(for: event) ?? sequence(first: hit, next: \.superview).lazy.compactMap { $0.menu(for: event) }.first
+            performMenu(menu, path: fields["path"] ?? "")
         case "move":
             // Tracking-area events come from the window server; a posted mouseMoved never reaches
             // their owners. Deliver them to the areas under the point directly: mouseMoved, and

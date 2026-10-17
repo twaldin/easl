@@ -506,6 +506,25 @@ struct RemoteHtmlChannelTests {
         let unknownCode = try board.object(try #require(unknownOpen["tile"]?.string))
         #expect(unknownCode.props == .object(["path": "file.txt", "ref": "unknown"]))
     }
+
+    /// A page measured before its tile exists (`Board.measuring`) reads the host's files as its
+    /// tile will, under its own root, and nothing it does reaches the board's host.
+    @Test func aPageMeasuredBeforeItsTileExistsReadsUnderItsOwnRoot() async throws {
+        let fixture = try HostFileFixture()
+        try fixture.write("file.swift", Data("func page() {\n    print(\"board root\")\n}\n".utf8))
+        try fixture.write("pkg/file.swift", Data("func page() {\n    print(2)\n}\n".utf8))
+        let files = try fixture.reader()
+        let host = HtmlTestHost()
+        let board = Board(remote: "brd_remote", root: fixture.root, host: host)
+        let page = CanvasObject(id: "obj_page", type: .html, frame: Frame(x: 0, y: 0, w: 640, h: 27), z: 0, createdBy: .user, createdAt: Date(),
+                                props: .object(["html": "<canvas-code/>", "root": "pkg"]))
+        let scratch = Board.measuring(page, on: board)
+        let excerpt = try await HtmlChannel.handle(.excerpt(path: "file.swift", lines: nil, symbol: "page"), tile: page.id, board: scratch, files: files)
+        #expect(excerpt["lines"] == .array(["func page() {", "    print(2)", "}"]))
+        _ = try await HtmlChannel.handle(.setState(key: "seen", value: .bool(true)), tile: page.id, board: scratch, files: files)
+        #expect(host.writes.isEmpty)
+        #expect(board.objects.isEmpty)
+    }
 }
 
 @MainActor

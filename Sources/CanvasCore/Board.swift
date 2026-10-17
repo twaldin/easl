@@ -279,7 +279,7 @@ public final class Board {
     }
 
     /// An empty remote board (`BoardMirror` fills it with `applyHost`).
-    init(remote id: BoardID, root: URL, host: BoardHost) {
+    init(remote id: BoardID, root: URL, host: BoardHost?) {
         self.id = id
         self.root = root
         isRemote = true

@@ -1033,7 +1033,11 @@ final class BoardMirrorTests {
 
     /// A board's window for `serve`: key while `focused` says, its terminals typed into by `submit`.
     func window(focused: @escaping () -> Bool = { false }, submit: @escaping (ObjectID, String) async -> Bool = { _, _ in false }) -> ViewerWindow {
-        ViewerWindow(focused: focused, viewState: { nil }, submit: submit, surfaceTail: { _, _ in nil },
+        ViewerWindow(focused: focused, viewState: { nil },
+                     render: { _, _ in throw ApiRouter.Failure("unavailable", "nothing is drawn here") }, hostPicture: { _ in false },
+                     measureHTML: { _, _ in throw ApiRouter.Failure("unavailable", "no page is laid out here") },
+                     reload: { id, _, _ in throw ApiRouter.Failure("unavailable", "browser tile \(id) isn't shown here") },
+                     submit: submit, surfaceTail: { _, _ in nil },
                      block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") }, status: { _ in nil })
     }
 
@@ -1082,7 +1086,7 @@ final class BoardMirrorTests {
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
         let attach: JSONValue = .object([
             "version": 1, "schema": .string(ApiParams.schemaHash), "app": "0.2.7", "host": "studio",
-            "serves": ["view.get", "agent.prompt", "agent.read", "text.measure"], "boards": [.string(host.id)],
+            "serves": ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure"], "boards": [.string(host.id)],
         ])
         #expect(easld.attaches == [attach])
         key = true

@@ -320,7 +320,15 @@
     return track(mermaidReady.then((mermaid) => mermaid.run({ nodes })).catch((error) => console.error(error)));
   }
 
-  const start = () => { renderMermaid(); settle(); };
+  const start = () => {
+    const images = [...document.images].filter((image) => !image.complete).map((image) => new Promise((resolve) => {
+      image.addEventListener('load', resolve, { once: true });
+      image.addEventListener('error', resolve, { once: true });
+    }));
+    track(Promise.all([document.fonts.ready, ...images]));
+    renderMermaid();
+    settle();
+  };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();
 })();

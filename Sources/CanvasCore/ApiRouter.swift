@@ -1188,19 +1188,34 @@ public final class ApiRouter {
     private func render(_ p: JSONValue) async throws -> JSONValue {
         let inline = p["inline"]?.bool == true
         if inline, p["out"] != nil { throw Failure("invalid_params", "inline returns the image in the reply and out writes it to a file: pass one of them") }
+        let (board, request) = try Self.renderRequest(p) { id in
+            if let id, p["board"] == nil { return try self.board(forObject: id) }
+            return try self.board(p)
+        }
+        let (format, out) = try Self.imageDestination(p, name: "render")
+        guard let renderView else { throw Failure("unsupported", "rendering needs the app UI") }
+        let output = try await renderView(board, request, format)
+        let image = inline ? Self.inlined(output) : try await Self.deliver(output, to: out)
+        return Self.rendered(output, image)
+    }
+
+    /// `view.render`'s params checked as the app checks them, as a request on the board `find`
+    /// gives for the first target id (nil for a rect): the router's own lookup, or the one board
+    /// a remote board's viewer answers for (`DelegatedCalls`).
+    static func renderRequest(_ p: JSONValue, board find: (ObjectID?) throws -> Board) throws -> (Board, RenderRequest) {
         let board: Board
         let target: RenderTarget
         switch p["target"] {
         case .string(let id)?:
-            board = try p["board"] == nil ? self.board(forObject: id) : self.board(p)
+            board = try find(id)
             target = .objects([id])
         case .array(let values)?:
             let ids = values.compactMap(\.string)
             guard !ids.isEmpty, ids.count == values.count else { throw Failure("invalid_params", "target list must be object ids") }
-            board = try p["board"] == nil ? self.board(forObject: ids[0]) : self.board(p)
+            board = try find(ids[0])
             target = .objects(ids)
         case .object?:
-            board = try self.board(p)
+            board = try find(nil)
             let rect = try p["target"]!.decode(Frame.self)
             guard rect.w > 0, rect.h > 0 else { throw Failure("invalid_params", "target rect must have a positive size") }
             target = .rect(rect)
@@ -1214,12 +1229,14 @@ public final class ApiRouter {
         guard (0.1...4).contains(scale) else { throw Failure("invalid_params", "scale must be between 0.1 and 4") }
         let exclude = try RenderExclusion(p["exclude"]?.array ?? [], objects: board.objects)
         let timeout = min(max(p["timeoutMs"]?.int ?? 8000, 0), 60_000)
-        let request = RenderRequest(target: target, scale: scale, full: p["full"]?.bool ?? false, exclude: exclude,
-                                    padding: max(0, p["padding"]?.number ?? 0), timeout: .milliseconds(timeout))
-        let (format, out) = try Self.imageDestination(p, name: "render")
-        guard let renderView else { throw Failure("unsupported", "rendering needs the app UI") }
-        let output = try await renderView(board, request, format)
-        var result = inline ? Self.inlined(output) : try await Self.deliver(output, to: out)
+        return (board, RenderRequest(target: target, scale: scale, full: p["full"]?.bool ?? false, exclude: exclude,
+                                     padding: max(0, p["padding"]?.number ?? 0), timeout: .milliseconds(timeout)))
+    }
+
+    /// `view.render`'s answer: the image as delivered (`inlined`, or the file written), and where
+    /// the board and its objects landed in it.
+    static func rendered(_ output: RenderOutput, _ image: [String: JSONValue]) -> JSONValue {
+        var result = image
         result["canvasRect"] = RenderMath.json(output.canvasRect)
         result["scale"] = .number(output.scale)
         result["objects"] = .array(output.objects.map(\.json))
@@ -1289,14 +1306,17 @@ public final class ApiRouter {
             guard let format = ImageFormat(path: out) else { throw Failure("invalid_params", "out must end in .png, .jpg, or .jpeg") }
             return (format, out)
         }
-        var format = ImageFormat.png
-        if let requested = p["format"]?.string {
-            guard let named = ImageFormat(rawValue: requested) else { throw Failure("invalid_params", "format must be png or jpeg") }
-            format = named
-        }
+        let format = try imageFormat(p)
         scratchCount += 1
         let file = "\(name)-\(Int(Date().timeIntervalSince1970 * 1000))-\(scratchCount).\(format == .png ? "png" : "jpg")"
         return (format, scratchImages.appendingPathComponent(file).path)
+    }
+
+    /// `format` (default png): what an image without `out` is encoded as.
+    static func imageFormat(_ p: JSONValue) throws -> ImageFormat {
+        guard let requested = p["format"]?.string else { return .png }
+        guard let format = ImageFormat(rawValue: requested) else { throw Failure("invalid_params", "format must be png or jpeg") }
+        return format
     }
 
     /// Numbers scratch images, so renders in the same millisecond never overwrite each other.

@@ -549,10 +549,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         remote.mirror.serve(ViewerWindow(self), as: identity)
     }
 
-    /// The board's tab or window closed (not app quit, which closes nothing).
+    /// The board's tab or window closed (not app quit, which closes nothing). A remote board's
+    /// attachment ends or stays as the app delegate decides (`RemoteClose`).
     var onClose: (() -> Void)?
     var apiCloseInProgress = false
     var isBoardOpen = true
+    /// A remote board's close as the user asked for it, taken before AppKit changes the window's
+    /// tab group (`CanvasWindow.close`); nil while the window isn't closing.
+    var closing: RemoteClose?
 
     var isLastOpenBoard: Bool {
         guard let window, isBoardOpen else { return false }
@@ -576,16 +580,16 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// on working, headless) and come back when the folder is opened again. With any terminal on
     /// the board a sheet says so first, naming what keeps running: Keep Running (Return), End
     /// Sessions (⌘⌫: its terminals close as in the close-terminal sheet, then the tab), Cancel (Esc).
-    /// Closing the last board window quits easl, which the sheet says; the next launch reopens
-    /// the board (`AppDelegate.saveOpenBoards`).
+    /// Closing the last board window quits easl, unless background attach keeps a remote board
+    /// attached, which the sheet says; the next launch reopens the board (`AppDelegate.saveOpenBoards`).
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard !apiCloseInProgress else { return false }
-        // A remote board's terminals are its host's: closing the window detaches from them, nothing more.
+        // A remote board's terminals are its host's: closing the window ends nothing on the host.
         guard remote == nil else { return true }
         let terminals = canvas.tiles.values.compactMap { $0.content as? TerminalTile }.sorted { $0.objectID < $1.objectID }
         guard !terminals.isEmpty else { return true }
         let tabs = sender.tabbedWindows?.count ?? 1
-        let last = isLastOpenBoard
+        let last = isLastOpenBoard && (NSApp.delegate as? AppDelegate)?.holdsBackgroundAttachments != true
         let keep = SessionProcesses.keepRunningText(terminals.map { $0.sessionProcesses() })
         let alert = NSAlert()
         alert.messageText = "Close “\(board.root.lastPathComponent)” and keep \(terminals.count == 1 ? "its terminal" : "its terminals") running?"
@@ -613,9 +617,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         isBoardOpen = false
-        if let remote {
-            remote.mirror.close()
-        } else {
+        if remote == nil {
             canvas.saveViewport()
             composer.save()
         }
@@ -1373,6 +1375,9 @@ final class CanvasWindow: NSWindow {
 
     override func close() {
         let app = NSApp.delegate as? AppDelegate
+        if let controller = windowController as? CanvasWindowController, controller.remote != nil, controller.closing == nil {
+            controller.closing = (tabGroup?.windows.count ?? 1) > 1 ? .tab : .window
+        }
         guard app?.holdNativeClose(self) != true else { return }
         super.close()
         app?.releaseHeldCloses()
