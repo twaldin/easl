@@ -1299,7 +1299,7 @@
         },
         "additionalProperties": false
       },
-      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "reused": { "const": true, "description": "a changes tile: the caller's existing tile for the same root, base, and paths came back (updated) instead of a new one" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "diagram": { "type": "object", "description": "a diagram created with `size: fit` before it had a graph: object.reload's result for its first one (`loaded` false: still computing when the wait ended, the tile left at its default size, and `warnings` says so)" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "`size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids" }, "approximate": { "const": true, "description": "the frame was measured (`size: fit`, a note's automatic height) from easld's glyph table rather than by an attached Mac client, as object.measure's `approximate`" } } }
+      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "reused": { "const": true, "description": "a changes tile: the caller's existing tile for the same root, base, and paths came back (updated) instead of a new one" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "diagram": { "type": "object", "description": "a diagram created with `size: fit` before it had a graph: object.reload's result for its first one (`loaded` false: still computing when the wait ended, the tile left at its default size, and `warnings` says so)" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "`size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids" }, "approximate": { "const": true, "description": "the frame was measured (`size: fit`, a note's automatic height) from easld's glyph table or a client's fallback HTML layout, rather than exact Mac layout, as object.measure's `approximate`" } } }
     },
     "object.update": {
       "description": "Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 1546; image: at most `frame.w`, default 960; never their current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: \"fit\"` in the same update to refit its height to the new content.",
@@ -1366,7 +1366,7 @@
         "properties": {
           "w": { "type": "number" },
           "h": { "type": "number" },
-          "approximate": { "const": true, "description": "text in it (a note, a text shape or a shape's label, a code tile's caption) was measured from easld's glyph table, because no attached Mac client serves text.measure (or it didn't answer in time): a few points off what the app draws, and a line near the edge may wrap differently. Absent when exact" }
+          "approximate": { "const": true, "description": "the size uses easld's glyph-table text approximation or a client's fallback HTML layout, rather than exact Mac layout. Absent when exact. easld itself has no fallback HTML layout engine" }
         },
         "additionalProperties": false
       }
@@ -2028,7 +2028,7 @@
       "result": { "type": "object", "properties": {} }
     },
     "client.attach": {
-      "description": "Make this connection a client that serves what only the Mac app can answer: the window (view.get, view.snapshot), drawing (view.render), live terminal surfaces (agent.prompt, agent.read's screen modes, agent.restart; interim: easld takes them over with zmx sessions, behind the same methods and errors), WebKit and language servers (object.reload), and AppKit text measurement (text.measure). A client built from an older schema `version` than the server's is refused `unavailable` (\"easl 0.1.0 on studio is older than this board's server …; update it\"); a newer one is accepted and speaks the server's `version` (the reply's), and with the same `version` the two work together whatever their `schema` hashes. Either way each uses what both know: params and `serves` names the server doesn't know are ignored. From then on the server sends this connection requests for the methods in `serves` (transport `clients`): a call that needs a client goes, after the server's own checks, to one that serves its method and shows its board (text.measure: any that serves it), the one whose user focused that board last, else the one focused most recently, else the one attached last. The call is forwarded as the same method with the caller's params (`board` and agent `target` resolved to ids; agent.prompt without `mentions`, which the server queues), and the client's result or error is the caller's. The server waits for object.reload's and view.render's `timeoutMs` plus 5 s and 30 s, else 5 s (view.get), 30 s (view.snapshot), 10 s (agent.prompt, agent.read, agent.restart), 2 s (text.measure); past that, or when the client disconnects first, the call fails `unavailable` (text.measure falls back to the glyph table). With no client for its board a delegated call fails `unavailable` saying what it needs. Attach again whenever `serves`, `boards` or `focused` change: each call replaces the last; closing the connection detaches. Answer text.measure without waiting on the server, which may hold a board while it measures. For the Mac app; agents never need it.",
+      "description": "Make this connection a client that serves what only the Mac app can answer: the window (view.get, view.snapshot), drawing (view.render), live terminal surfaces (agent.prompt, agent.read's screen modes, agent.restart; interim: easld takes them over with zmx sessions, behind the same methods and errors), browser pages (object.reload), WebKit HTML layout (object.measure), and AppKit text measurement (text.measure). A client built from an older schema `version` than the server's is refused `unavailable` (\"easl 0.1.0 on studio is older than this board's server …; update it\"); a newer one is accepted and speaks the server's `version` (the reply's), and with the same `version` the two work together whatever their `schema` hashes. Either way each uses what both know: params and `serves` names the server doesn't know are ignored. From then on the server sends this connection requests for the methods in `serves` (transport `clients`): a call that needs a client goes, after the server's own checks, to one that serves its method and shows its board (text.measure: any that serves it), the one whose user focused that board last, else the one focused most recently, else the one attached last. The call is forwarded as the same method (`board` and agent `target` resolved to ids; agent.prompt without `mentions`, which the server queues). HTML measurement receives resolved candidate props and width, including fitted writes. Rendering receives `inline:true` with no `out`: the client returns image data and the server writes any caller-requested file on its own host. Other client results and errors pass through. The server waits for object.reload's and view.render's `timeoutMs` plus 5 s and 30 s, else 5 s (view.get), 30 s (view.snapshot), 25 s (HTML object.measure), 10 s (agent.prompt, agent.read, agent.restart), 2 s (text.measure); past that, or when the client disconnects first, the call fails `unavailable` (text.measure falls back to the glyph table). Diagram reload is unavailable until easld has language servers. With no client for its board a delegated call fails `unavailable` saying what it needs. Attach again whenever `serves`, `boards` or `focused` change: each call replaces the last; closing the connection detaches. Answer text.measure without waiting on the server, which may hold a board while it measures. For the Mac app; agents never need it.",
       "params": {
         "type": "object",
         "required": ["version", "schema", "serves"],
@@ -2037,13 +2037,40 @@
           "schema": { "type": "string", "description": "the client's schema hash: the first 16 hex digits of the SHA-256 of its schema/easl-api.json (generated: ApiParams.schemaHash)" },
           "app": { "type": "string", "description": "the client's easl version, e.g. \"0.2.0\", for messages" },
           "host": { "type": "string", "description": "the machine it runs on, for messages" },
-          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, text.measure (others are ignored)" },
-          "boards": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "the boards it shows (open in one of its windows or tabs), each open on the server; default none" },
+          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure (others are ignored)" },
+          "boards": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "the boards this client serves, in a window, tab, or background attachment, each open on the server; default none" },
           "focused": { "$ref": "#/definitions/Id", "description": "the board its user is looking at now (the key window's selected tab), one of `boards`; the client focused last on a board serves that board first" }
         },
         "additionalProperties": true
       },
       "result": { "type": "object", "required": ["client", "version", "schema"], "properties": { "client": { "$ref": "#/definitions/Id", "description": "this client, cli_…" }, "version": { "type": "integer", "description": "the server's schema version" }, "schema": { "type": "string", "description": "the server's schema hash" } } }
+    },
+    "client.list": {
+      "description": "The clients attached to easld, including background viewers. Each entry names its app, host, served boards and methods. Entries, boards and methods are sorted by id or name. The Mac app answers unsupported.",
+      "params": { "type": "object", "properties": {}, "additionalProperties": false },
+      "result": {
+        "type": "object",
+        "required": ["clients"],
+        "properties": {
+          "clients": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "boards", "serves"],
+              "properties": {
+                "id": { "$ref": "#/definitions/Id" },
+                "app": { "type": "string", "description": "the client's easl version, absent when not reported" },
+                "host": { "type": "string", "description": "the client's machine, absent when not reported" },
+                "boards": { "type": "array", "items": { "$ref": "#/definitions/Id" } },
+                "serves": { "type": "array", "items": { "type": "string" } },
+                "focused": { "$ref": "#/definitions/Id", "description": "the board this client last focused, absent when it never focused" }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "text.measure": {
       "description": "Sizes of text as the board lays it out, in board points: an attached Mac client that serves text.measure (client.attach) measures it with AppKit, exactly as it draws; with none, or when it doesn't answer within 2 s, the server approximates from its glyph table (advance widths of the app's fonts, extracted on a Mac; no kerning) and says `approximate: true`. object.measure, `size: fit`, layout.check and arrow routing measure through it. note: `text` is markdown laid out as a note `width` wide (default 280) with its live fences and images read under `root`: the size is the note's whole frame (title bar included) and `tableShortfall` how much wider it would have to be to show every table cell whole; text: a text shape's text at `textSize` (default 1: 20 pt Shantell Sans) wrapped at `width` (default unwrapped): its bounds rounded up, plus 2; label: a rect's or ellipse's label (18 pt, centered) wrapped at `width`, likewise; arrowLabel: an arrow's caption (15 pt, centered, wrapped at 240): its chip, 8 wider than the text; caption: a code tile's caption strip (`inline code` in the code font): the narrowest frame that shows it whole, and the strip's height.",

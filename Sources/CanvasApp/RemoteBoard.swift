@@ -33,6 +33,26 @@ extension ViewerWindow {
         self.init(
             focused: { [weak controller] in controller?.window?.isKeyWindow == true },
             viewState: { [weak controller] in controller?.canvas.viewState },
+            render: { [weak controller] request, format in
+                guard let canvas = controller?.canvas else { throw ApiRouter.Failure("unavailable", "this board's window closed") }
+                return try await canvas.render(request, format: format, hostPictures: false)
+            },
+            hostPicture: { [weak controller] id in controller?.canvas.showsHostPicture(id) ?? false },
+            measureHTML: { [weak controller] props, width in
+                guard let controller, let files = controller.remote?.files else { throw ApiRouter.Failure("unavailable", "this board's window closed") }
+                return try await HtmlTile.measure(props: props, width: width, remote: controller.board, files: files)
+            },
+            reload: { [weak controller] id, caller, timeoutMs in
+                guard let content = controller?.canvas.tiles[id]?.content else { throw ApiRouter.Failure("unavailable", "browser tile \(id) isn't shown by this viewer") }
+                guard let browser = content as? BrowserTile else {
+                    throw ApiRouter.Failure("unavailable", "browser tile \(id) shows the host's page, which this viewer doesn't load")
+                }
+                do {
+                    return try await browser.reloadPage(driver: caller, timeoutMs: timeoutMs)
+                } catch let error as CmuxError {
+                    throw ApiRouter.Failure(error.code, error.message)
+                }
+            },
             submit: { id, text in await terminal(id)?.submit(text) ?? false },
             surfaceTail: { id, lines in terminal(id)?.surfaceTail(lines: lines) },
             block: { id, index in

@@ -18,7 +18,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var openedOrder: [String] = []
     /// Remote boards' windows (docs/design.md "Client mode"), by host and board (`remoteKey`):
     /// another host's board may have the id of one of ours (two checkouts of one repository).
+    /// With background attach a closed window stays here attached, `isBoardOpen` false, as a local
+    /// board's closed window stays in `controllers`.
     private var remoteControllers: [String: CanvasWindowController] = [:]
+    /// The remote easld boards to attach again (`RemoteReopen`), whether or not they are attached now.
+    private let reopenList = RemoteReopen.Store(url: AppPaths.remoteBoards)
+    private let settings = UISettings.Store(url: AppPaths.uiSettings)
+    /// easl › Keep Remote Boards Attached (`UISettings.backgroundAttach`).
+    private lazy var backgroundAttach = settings.load().backgroundAttach
+    /// Reopen-list boards being read to attach with no window shown, by `remoteKey`. Cancelling
+    /// one (its board opened by the user, the setting off, quit) keeps it from attaching when its read ends.
+    private var backgroundLoads: [String: Task<Void, Never>] = [:]
     /// Tab switches waiting for their tab group's Space to be the active one (`selectTab`), by
     /// tab group.
     private var heldTabs: [ObjectIdentifier: HeldTab] = [:]
@@ -251,6 +261,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let migration {
             for (id, controller) in controllers { migration.notice(for: id).map(controller.canvas.showNotice) }
         }
+        // The reopen list's remote boards attach again with no window shown (background attach).
+        if backgroundAttach { attachInBackground() }
         // After the windows open, so a failed update's reason has a window for its sheet: the
         // last update's leftovers, then a check a minute from now and daily (`Updater`).
         Updater.shared.start()
@@ -284,7 +296,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cmuxServer?.stop()
         // Normal quitting closes no sheet or connection, and a relay left to see its stdin close
         // may outlive the app (an `nc` without `-N`): end every ssh before exiting, and wait.
+        // Every remote board's attachment ends with its links; the reopen list stays for the next launch.
         OpenRemotePanel.shutdown()
+        for load in backgroundLoads.values { load.cancel() }
+        backgroundLoads = [:]
+        for load in remoteLoads.values { load.cancel() }
+        remoteLoads = [:]
+        for controller in remoteControllers.values { controller.remote?.mirror.close() }
         RemoteProcesses.shared.terminateAll()
         // Hosted terminals' connections; their sessions keep running on their hosts.
         TerminalHost.closeAll()
@@ -298,7 +316,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var terminating = false
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// Not while background attach keeps a remote board attached with its window closed, or is
+    /// still reading one to attach.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !holdsBackgroundAttachments }
+
+    var holdsBackgroundAttachments: Bool {
+        !backgroundLoads.isEmpty || remoteControllers.values.contains { !$0.isBoardOpen }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !terminating else { return false }
+        guard !flag else { return true }
+        if let retained = remoteControllers.first(where: { !$0.value.isBoardOpen }) {
+            _ = shownRemote(retained.key, select: true)
+        } else {
+            open(root: Self.savedOpenBoards().first ?? keyController?.board.root ?? Self.initialRoot())
+        }
+        return false
+    }
 
     /// Opens a directory's board as a tab of the frontmost board window (its own window when it's
     /// the first). `select` brings its tab forward; the API's `board.open` leaves the user's
@@ -358,12 +393,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func closeBoard(_ id: BoardID, endSessions: Bool?) async throws -> BoardCloseResult {
         guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
+        if registry.board(id: id) == nil {
+            let opening = remoteLoads.compactMap { $0.key.board == id ? $0.value : nil }
+            for load in opening { load.cancel() }
+            let loads = reopenList.load().filter { $0.board == id }.compactMap {
+                backgroundLoads[Self.remoteKey($0.sshTarget, $0.board)]
+            }
+            for load in loads { await load.value }
+            for load in opening { _ = try? await load.value }
+            guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
+        }
         let target = try closeTarget(id)
         if case .remote = target, endSessions != nil {
             throw ApiRouter.Failure("invalid_params", "board \(id) is a remote tab: its host owns its sessions, so omit endSessions")
         }
         func refuseLastBoard() throws {
-            if target.controller?.isLastOpenBoard == true {
+            if target.controller?.isLastOpenBoard == true, !holdsBackgroundAttachments {
                 throw ApiRouter.Failure("conflict", "board \(id) is easl's last open board: closing it would quit easl; open another board first")
             }
         }
@@ -426,31 +471,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 throw ApiRouter.Failure(failure.code, "\(failure.message); ended terminal sessions [\(ids)]")
             }
         case .remote(let key, let controller):
+            // Out of the reopen list first: a board closed with `board.close` stays detached.
+            if let host = controller.remote?.host {
+                do {
+                    try reopenList.forget(sshTarget: host.sshTarget, board: controller.board.id)
+                } catch {
+                    throw ApiRouter.Failure("unavailable", "cannot save remote-boards.json before closing \(id): \(error.localizedDescription)")
+                }
+            }
             result = BoardCloseResult(board: controller.board)
             remoteControllers.removeValue(forKey: key)
             openedOrder.removeAll { $0 == key }
         }
-        if let controller = target.controller {
-            controller.onClose = nil
-            controller.isBoardOpen = false
-            controller.discard()
-            if let window = controller.window {
-                let name = window.frameAutosaveName
-                if !name.isEmpty {
-                    window.saveFrame(usingName: name)
-                    window.setFrameAutosaveName("")
-                }
-                window.isExcludedFromWindowsMenu = true
-                window.close()
-            }
-        }
+        if let controller = target.controller { retire(controller) }
         return result
+    }
+
+    /// Ends a board's window for good (`board.close`, a closed remote board detached).
+    private func retire(_ controller: CanvasWindowController) {
+        controller.onClose = nil
+        controller.isBoardOpen = false
+        controller.discard()
+        guard let window = controller.window else { return }
+        let name = window.frameAutosaveName
+        if !name.isEmpty {
+            window.saveFrame(usingName: name)
+            window.setFrameAutosaveName("")
+        }
+        window.isExcludedFromWindowsMenu = true
+        window.close()
     }
 
     private static func removeSpooledReports(_ terminals: [CanvasObject]) {
         let folders = terminals.map { AppPaths.agentReports.appendingPathComponent($0.id, isDirectory: true) }
         Task.detached { for folder in folders { try? FileManager.default.removeItem(at: folder) } }
     }
+
+    /// Forget a manual tab close before AppKit can detach it or hold its native window.
+    func prepareNativeClose(_ controller: CanvasWindowController) -> Bool {
+        guard !terminating, controller.isBoardOpen, let host = controller.remote?.host,
+              controller.closing?.outcome(backgroundAttach: backgroundAttach, server: host.server) == .forget else { return true }
+        do {
+            try reopenList.forget(sshTarget: host.sshTarget, board: controller.board.id)
+            return true
+        } catch {
+            controller.closing = nil
+            let alert = NSAlert()
+            alert.messageText = "Couldn't close the remote tab"
+            alert.informativeText = "Cannot save remote-boards.json. The tab is still open. \(error.localizedDescription)"
+            if let window = controller.window { alert.beginSheetModal(for: window, completionHandler: nil) }
+            return false
+        }
+    }
+
     // AppKit orders a selected tab's replacement onto the active Space, even without activation.
     // Keep that native window as the group's anchor until a close cannot promote an off-Space tab.
     func holdNativeClose(_ window: NSWindow) -> Bool {
@@ -466,7 +539,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.isExcludedFromWindowsMenu = true
             if controller.isBoardOpen {
                 saveOpenBoards(closing: window)
-                if controller.remote == nil { controller.onClose = nil }
+                if let host = controller.remote?.host {
+                    let key = Self.remoteKey(host.sshTarget, controller.board.id)
+                    remoteControllers.removeValue(forKey: key)
+                    openedOrder.removeAll { $0 == key }
+                    controller.onClose = nil
+                    controller.isBoardOpen = false
+                    controller.discard()
+                } else {
+                    controller.onClose = nil
+                }
             }
         }
         return true
@@ -488,6 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func cancelHeldManualClose(_ window: NSWindow) {
         heldCloses.removeAll { $0.window === window && $0.isBoardOpen }
+        (window.windowController as? CanvasWindowController)?.closing = nil
         if window.isExcludedFromWindowsMenu { window.isExcludedFromWindowsMenu = false }
     }
 
@@ -624,6 +707,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor [weak self] in
             do {
                 _ = try await self?.openRemoteBoard(host: host, board: board, select: true)
+            } catch is CancellationError {
+                return
             } catch {
                 let alert = NSAlert()
                 alert.messageText = "Couldn't open the board on \(host.name)"
@@ -636,93 +721,240 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// `board.open_remote`: the host `name` names as File › Open Remote… would connect to it
     /// (`RemoteHost.target` among the picker's rows: the hosts opened before and the tailnet's
-    /// Macs), then `board` there as the picker opens it. A tab open already is answered without
-    /// asking the host; else the picker's host discovery, which remembers the host
-    /// (`AppPaths.remoteHosts`), then `openRemoteBoard(host:board:select:)`.
+    /// Macs), then `board` there as the picker opens it. A board attached already (its tab open,
+    /// or background attach's with its window closed) is answered without asking the host; else
+    /// the picker's host discovery, which remembers the host (`AppPaths.remoteHosts`), then
+    /// `openRemoteBoard(host:board:select:)`.
     func openRemoteBoard(named name: String, board: BoardID, select: Bool) async throws -> OpenedRemoteBoard {
-        let recents = RemoteHost.Recents.load(AppPaths.remoteHosts)
-        // The picker lists the tailnet's Macs when Tailscale answers, else only the hosts opened before.
-        let peers = (try? await Tailnet.peers()) ?? []
-        let target = try RemoteHost.target(name, among: RemoteHost.candidates(peers: peers, recents: recents))
-        if let open = shownRemote(Self.remoteKey(target.sshTarget, board), select: select) {
-            return try Self.opened(open, alreadyOpen: true)
+        try checkRemoteOpen()
+        let intent = RemoteOpenIntent.named(name, board)
+        if let loading = remoteLoads[intent] {
+            let open = try await loading.value
+            try checkRemoteOpen()
+            guard !loading.isCancelled else { throw CancellationError() }
+            if select, let window = open.controller.window { bringForward(window) }
+            return try opened(open.controller, alreadyOpen: true)
         }
-        let host: RemoteHost
-        do {
-            host = try await RemoteHost.discover(name: target.name, sshTarget: target.sshTarget, support: AppPaths.devRemoteHome)
-        } catch let failure as EaslConnection.Failure {
-            NSLog("easl: board.open_remote: %@ unreachable: %@", target.sshTarget, failure.message)
-            throw ApiRouter.Failure(failure.code, "\(target.name) is offline: \(failure.message)")
+        let loading: RemoteLoad = Task { @MainActor in
+            try self.checkRemoteOpen()
+            let recents = RemoteHost.Recents.load(AppPaths.remoteHosts)
+            // The picker lists the tailnet's Macs when Tailscale answers, else only the hosts opened before.
+            let peers = (try? await Tailnet.peers()) ?? []
+            try self.checkRemoteOpen()
+            let target = try RemoteHost.target(name, among: RemoteHost.candidates(peers: peers, recents: recents))
+            if let open = self.shownRemote(Self.remoteKey(target.sshTarget, board), select: select) { return open }
+            let host: RemoteHost
+            do {
+                host = try await RemoteHost.discover(name: target.name, sshTarget: target.sshTarget, support: AppPaths.devRemoteHome)
+            } catch let failure as EaslConnection.Failure {
+                NSLog("easl: board.open_remote: %@ unreachable: %@", target.sshTarget, failure.message)
+                throw ApiRouter.Failure(failure.code, "\(target.name) is offline: \(failure.message)")
+            }
+            try self.checkRemoteOpen()
+            RemoteHost.Recents.remember(host, in: AppPaths.remoteHosts)
+            do {
+                let open = try await self.openRemoteBoard(host: host, board: board, select: select)
+                try self.checkRemoteOpen()
+                return open
+            } catch let failure as ApiRouter.Failure {
+                NSLog("easl: board.open_remote: %@ failed (%@)", host.sshTarget, failure.code)
+                throw ApiRouter.Failure(failure.code, "couldn't open \(board) on \(host.name): \(failure.message)")
+            }
         }
-        RemoteHost.Recents.remember(host, in: AppPaths.remoteHosts)
-        do {
-            let (controller, alreadyOpen) = try await openRemoteBoard(host: host, board: board, select: select)
-            return try Self.opened(controller, alreadyOpen: alreadyOpen)
-        } catch let failure as ApiRouter.Failure {
-            NSLog("easl: board.open_remote: %@ failed (%@)", host.sshTarget, failure.code)
-            throw ApiRouter.Failure(failure.code, "couldn't open \(board) on \(host.name): \(failure.message)")
+        remoteLoads[intent] = loading
+        defer { remoteLoads[intent] = nil }
+        let open = try await loading.value
+        try checkRemoteOpen()
+        guard !loading.isCancelled else { throw CancellationError() }
+        return try opened(open.controller, alreadyOpen: open.alreadyOpen)
+    }
+
+    private enum RemoteOpenIntent: Hashable {
+        case named(String, BoardID)
+        case host(String, BoardID)
+
+        var board: BoardID {
+            switch self {
+            case .named(_, let board), .host(_, let board): board
+            }
         }
     }
 
-    /// Remote boards being read before their window opens, by `remoteKey`: a second open of one
-    /// waits for that read instead of opening the board again.
-    private var remoteLoads: [String: Task<CanvasWindowController, Error>] = [:]
+    /// Named discovery and resolved-host reads share the lifetime cancelled by `board.close`.
+    private typealias RemoteLoad = Task<(controller: CanvasWindowController, alreadyOpen: Bool), Error>
+    private var remoteLoads: [RemoteOpenIntent: RemoteLoad] = [:]
+
+    private func checkRemoteOpen() throws {
+        try Task.checkCancellation()
+        guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
+    }
 
     /// Opens a window mirroring `board` on `host` (docs/design.md "Client mode"): a tab of the
     /// frontmost board window, or its own window when there's none, its tab brought forward when
     /// `select`. One open (or opening) already isn't opened again (`alreadyOpen`): its tab comes
     /// forward when `select`. The board is read before the window opens, so a host that can't be
     /// reached, or that has no such board, throws its failure instead (`BoardMirror.load`:
-    /// `unavailable`, `not_found`). Nothing about the board is written on this Mac.
+    /// `unavailable`, `not_found`). Nothing the board holds is written on this Mac: an easld board
+    /// goes in the reopen list by its host and id (`RemoteReopen`).
     func openRemoteBoard(host: RemoteHost, board: BoardID, select: Bool) async throws -> (controller: CanvasWindowController, alreadyOpen: Bool) {
+        try checkRemoteOpen()
         let key = Self.remoteKey(host.sshTarget, board)
-        if let open = shownRemote(key, select: select) { return (open, true) }
-        if let loading = remoteLoads[key] {
-            let controller = try await loading.value
-            if select, let window = controller.window { bringForward(window) }
-            return (controller, true)
+        let intent = RemoteOpenIntent.host(host.sshTarget, board)
+        if let open = shownRemote(key, select: select) { return open }
+        if let loading = remoteLoads[intent] {
+            let open = try await loading.value
+            try checkRemoteOpen()
+            guard !loading.isCancelled, open.controller.isBoardOpen, remoteControllers[key] === open.controller else { throw CancellationError() }
+            if select, let window = open.controller.window { bringForward(window) }
+            return (open.controller, true)
         }
-        let loading = Task { @MainActor in try await self.loadRemoteBoard(host: host, board: board, key: key, select: select) }
-        remoteLoads[key] = loading
-        defer { remoteLoads[key] = nil }
-        return (try await loading.value, false)
+        // This read shows the board: one in the background would attach a second copy of it.
+        backgroundLoads.removeValue(forKey: key)?.cancel()
+        let loading: RemoteLoad = Task { @MainActor in
+            let controller = try await self.loadRemoteBoard(host: host, board: board, key: key, select: select)
+            return (controller: controller, alreadyOpen: false)
+        }
+        remoteLoads[intent] = loading
+        defer { remoteLoads[intent] = nil }
+        let open = try await loading.value
+        try checkRemoteOpen()
+        guard !loading.isCancelled else { throw CancellationError() }
+        return open
     }
 
-    /// The open window of the remote board `key`, its tab brought forward when `select`.
-    private func shownRemote(_ key: String, select: Bool) -> CanvasWindowController? {
-        guard let open = remoteControllers[key], let window = open.window else { return nil }
+    /// The remote board `key`'s window, its tab brought forward when `select`. One attached with its
+    /// window closed (background attach) opens as a new board's does (`show`): its tab wasn't open.
+    private func shownRemote(_ key: String, select: Bool) -> (controller: CanvasWindowController, alreadyOpen: Bool)? {
+        guard let controller = remoteControllers[key], let window = controller.window else { return nil }
         cancelHeldManualClose(window)
+        rememberReopen(controller)
+        guard controller.isBoardOpen else {
+            controller.isBoardOpen = true
+            if !openedOrder.contains(key) { openedOrder.append(key) }
+            show(controller, select: select)
+            return (controller, false)
+        }
         if select { bringForward(window) }
-        return open
+        return (controller, true)
     }
 
     /// Reads the board, then shows its window (`openRemoteBoard(host:board:select:)`).
     private func loadRemoteBoard(host: RemoteHost, board: BoardID, key: String, select: Bool) async throws -> CanvasWindowController {
+        try checkRemoteOpen()
         let mirror = BoardMirror(hostName: host.name, board: board, connection: host.connection(), renders: host.connection())
         let loaded: Board
         do {
             loaded = try await mirror.load()
+            try checkRemoteOpen()
         } catch {
             mirror.close()
             throw error
         }
-        let controller = CanvasWindowController(board: loaded, registry: registry, remote: RemoteSource(host: host, mirror: mirror))
-        remoteControllers[key] = controller
+        let controller = makeRemoteController(host: host, mirror: mirror, board: loaded, key: key, open: true)
         if !openedOrder.contains(key) { openedOrder.append(key) }
-        loaded.onEvent = { [weak controller] event in controller?.apply(event) }
-        controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
-        controller.onClose = { [weak self] in
-            self?.remoteControllers.removeValue(forKey: key)
-            self?.openedOrder.removeAll { $0 == key }
-        }
         show(controller, select: select)
         controller.serveHost()
+        rememberReopen(controller)
         return controller
     }
 
+    /// A remote board's window, under `key` in `remoteControllers`; not shown. `open` false: a
+    /// window closed from the start, which background attach keeps attached.
+    private func makeRemoteController(host: RemoteHost, mirror: BoardMirror, board loaded: Board, key: String, open: Bool) -> CanvasWindowController {
+        let controller = CanvasWindowController(board: loaded, registry: registry, remote: RemoteSource(host: host, mirror: mirror))
+        // Before it is in `remoteControllers`: a closed window must never host a new tab (`tabHost`).
+        controller.isBoardOpen = open
+        remoteControllers[key] = controller
+        loaded.onEvent = { [weak controller] event in controller?.apply(event) }
+        controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
+        controller.onClose = { [weak self, weak controller] in
+            guard let self, let controller else { return }
+            self.remoteWindowClosed(controller, key: key)
+        }
+        return controller
+    }
+
+    /// A remote board's window closed by hand (`RemoteClose`, taken when the close was asked for):
+    /// its tab beside others forgets the board; the window's only tab keeps it in the reopen list,
+    /// attached while background attach is on.
+    private func remoteWindowClosed(_ controller: CanvasWindowController, key: String) {
+        openedOrder.removeAll { $0 == key }
+        guard !terminating, let host = controller.remote?.host else { return }
+        let close = controller.closing ?? .tab
+        controller.closing = nil
+        switch close.outcome(backgroundAttach: backgroundAttach, server: host.server) {
+        case .forget, .detach:
+            remoteControllers.removeValue(forKey: key)
+            controller.onClose = nil
+            controller.discard()
+        case .retain:
+            controller.window?.isExcludedFromWindowsMenu = true
+        }
+    }
+
+    /// An easld board opened by the user stays in the reopen list until its tab is closed.
+    private func rememberReopen(_ controller: CanvasWindowController) {
+        guard let host = controller.remote?.host, host.server == .easld else { return }
+        try? reopenList.remember(RemoteReopen(host: host.name, sshTarget: host.sshTarget, board: controller.board.id))
+    }
+
+    /// Attaches every reopen-list board that has no window here, with its window closed and never
+    /// shown (background attach). Each one's host is discovered again.
+    private func attachInBackground() {
+        for entry in reopenList.load() {
+            let key = Self.remoteKey(entry.sshTarget, entry.board)
+            guard remoteControllers[key] == nil, remoteLoads[.host(entry.sshTarget, entry.board)] == nil, backgroundLoads[key] == nil else { continue }
+            backgroundLoads[key] = Task { await self.attachInBackground(entry, key: key) }
+        }
+    }
+
+    private func attachInBackground(_ entry: RemoteReopen, key: String) async {
+        // A cancelled load was taken out of `backgroundLoads` by whoever cancelled it.
+        defer { if !Task.isCancelled { backgroundLoads[key] = nil } }
+        do {
+            let host = try await RemoteHost.discover(name: entry.host, sshTarget: entry.sshTarget, support: AppPaths.devRemoteHome)
+            guard !Task.isCancelled, !terminating else { return }
+            guard host.server == .easld else {
+                return NSLog("easl: background attach skips %@: not an easld host", entry.sshTarget)
+            }
+            let mirror = BoardMirror(hostName: host.name, board: entry.board, connection: host.connection(), renders: host.connection())
+            let loaded: Board
+            do {
+                loaded = try await mirror.load()
+            } catch {
+                mirror.close()
+                throw error
+            }
+            guard !Task.isCancelled, !terminating else { return mirror.close() }
+            let controller = makeRemoteController(host: host, mirror: mirror, board: loaded, key: key, open: false)
+            controller.window?.isExcludedFromWindowsMenu = true
+            // Never shown, so never laid out: `view.get` and drawings see the window's own size.
+            controller.window?.contentView?.layoutSubtreeIfNeeded()
+            controller.serveHost()
+        } catch {
+            guard !Task.isCancelled else { return }
+            let code = (error as? ApiRouter.Failure)?.code ?? (error as? EaslConnection.Failure)?.code ?? "unavailable"
+            NSLog("easl: background attach to %@ failed (%@)", entry.sshTarget, code)
+        }
+    }
+
+    /// Background attach off: closed windows' attachments end and reads in progress stop. Shown
+    /// windows stay attached until they close; the reopen list stays.
+    private func endBackgroundAttachments() {
+        for load in backgroundLoads.values { load.cancel() }
+        backgroundLoads = [:]
+        // Each retire closes a window, which can release a held close that changes `remoteControllers`.
+        let closed = remoteControllers.filter { !$0.value.isBoardOpen }
+        for (key, controller) in closed where remoteControllers[key] === controller {
+            remoteControllers.removeValue(forKey: key)
+            retire(controller)
+        }
+    }
+
     /// What `board.open_remote` answers for a remote board's window.
-    private static func opened(_ controller: CanvasWindowController, alreadyOpen: Bool) throws -> OpenedRemoteBoard {
+    private func opened(_ controller: CanvasWindowController, alreadyOpen: Bool) throws -> OpenedRemoteBoard {
         guard let remote = controller.remote else { throw ApiRouter.Failure("internal", "\(controller.board.id)'s window mirrors no host") }
+        guard controller.isBoardOpen, remoteControllers[Self.remoteKey(remote.host.sshTarget, controller.board.id)] === controller else { throw CancellationError() }
         return OpenedRemoteBoard(host: remote.host.name, sshTarget: remote.host.sshTarget, board: controller.board.id, root: controller.board.root.path,
                                  title: remote.title(of: controller.board), window: controller.window?.windowNumber ?? 0, alreadyOpen: alreadyOpen)
     }
@@ -914,6 +1146,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func findInPage(_ sender: Any?) { keyController?.findInPage(sender) }
     /// easl › Check for Updates…: says what it found (`Updater`).
     @objc func checkForUpdates(_ sender: Any?) { Updater.shared.check(manual: true) }
+    /// easl › Keep Remote Boards Attached: background attach, saved in the app's settings
+    /// (`UISettings`). Off ends the closed windows' attachments now; on attaches the reopen list's
+    /// boards again with their windows closed.
+    @objc func toggleBackgroundAttach(_ sender: Any?) {
+        let on = !backgroundAttach
+        do {
+            try settings.update { $0.backgroundAttach = on }
+        } catch {
+            NSLog("easl: cannot save background attach to %@: %@", settings.url.path, error.localizedDescription)
+            return
+        }
+        backgroundAttach = on
+        if on { attachInBackground() } else { endBackgroundAttachments() }
+    }
     @objc func clearBrowsingData(_ sender: Any?) {
         guard let controller = keyController, let window = controller.window else { return }
         let profiles = Set(registry.boards.values.flatMap { $0.objects.values }.filter { $0.type == .browser }.compactMap { BrowserProfile.name(in: $0.props) })
@@ -968,6 +1214,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         submenu("easl", [
             // easl.sh/latest.json now (`Updater`); it also checks a minute after launch and daily.
             item("Check for Updates…", #selector(checkForUpdates(_:)), ""),
+            .separator(),
+            // Remote easld boards stay attached with their windows closed, for agents' renders
+            // and measures (`toggleBackgroundAttach`).
+            item("Keep Remote Boards Attached", #selector(toggleBackgroundAttach(_:)), ""),
             .separator(),
             // Every browser tile's cookies, storage and caches (`BrowserProfile`), after a sheet.
             item("Clear Browsing Data…", #selector(clearBrowsingData(_:)), ""),
@@ -1150,6 +1400,9 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(resetChromeText(_:)): return ChromeText.scale != ChromeTextScale.normal
         case #selector(togglePerformanceHUD(_:)):
             item.state = MetricsHUD.shared.isShown ? .on : .off
+            return true
+        case #selector(toggleBackgroundAttach(_:)):
+            item.state = backgroundAttach ? .on : .off
             return true
         case #selector(openRemote(_:)), #selector(checkForUpdates(_:)): return true
         default: return keyController?.validate(item) ?? false

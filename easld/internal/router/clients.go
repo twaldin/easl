@@ -145,6 +145,28 @@ func noClient(board, need string) error {
 	return fail(api.CodeUnavailable, "no app shows board %s: %s", board, need)
 }
 
+// clientList is client.list: every attached client, including a background viewer.
+// Absent app, host, and focused are omitted. Focused is the board the client focused
+// last; a later attach that doesn't name one leaves it (clients.Registry.Attach).
+func (r *Router) clientList() any {
+	listed := r.clients.List()
+	out := make([]any, len(listed))
+	for i, c := range listed {
+		entry := map[string]any{"id": c.ID, "boards": c.Boards, "serves": c.Serves}
+		if c.App != "" {
+			entry["app"] = c.App
+		}
+		if c.Host != "" {
+			entry["host"] = c.Host
+		}
+		if c.Focused != "" {
+			entry["focused"] = c.Focused
+		}
+		out[i] = entry
+	}
+	return map[string]any{"clients": out}
+}
+
 // client is the client a delegated method on board goes to (clients.Registry.Choose).
 func (r *Router) client(method, board, need string) (*clients.Client, error) {
 	if c := r.clients.Choose(method, board); c != nil {

@@ -41,6 +41,9 @@ enum AppPaths {
     /// The hosts File › Open Remote… connected to, newest first (`RemoteHost.Recents`): how to
     /// reach them, never their boards.
     static let remoteHosts = support.appendingPathComponent("remote-hosts.json")
+    /// The remote easld boards background attach attaches again (`RemoteReopen`): how to reach each
+    /// one, never what it holds.
+    static let remoteBoards = support.appendingPathComponent("remote-boards.json")
     /// Testing only: the easl support directory to use on every remote host instead of its own
     /// (a development instance there, docs/testing.md).
     static let devRemoteHome: String? = ProcessInfo.processInfo.environment["EASL_DEV_REMOTE_HOME"].flatMap { $0.isEmpty ? nil : $0 }
@@ -49,7 +52,7 @@ enum AppPaths {
     static func viewport(of board: BoardID) -> URL {
         support.appendingPathComponent("viewport", isDirectory: true).appendingPathComponent("\(board).json")
     }
-    /// The app's own settings (`ChromeTextScale`).
+    /// The app's own settings (`UISettings`): the chrome text scale and background attach.
     static let uiSettings = support.appendingPathComponent("ui-settings.json")
     /// easl › Check for Updates…'s downloads (`Updater`): one folder per version with the zip,
     /// the unpacked app, the app it replaced and the helper's result, deleted at the next launch.

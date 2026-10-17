@@ -334,7 +334,6 @@ final class HtmlTile: NSView, TileContent {
     /// `<canvas-code>` excerpts settled), measures it, and snapshots it: the tile's window at
     /// its scroll position, or with `full` the whole page height.
     func render(_ request: TileRenderRequest) async -> TileRender {
-        guard let window else { return .placeholder(request, "the tile has no window") }
         guard await beginOffscreen() else { return .placeholder(request, "timed out waiting for another render of this tile") }
         let started = Metrics.now()
         defer {
@@ -359,8 +358,9 @@ final class HtmlTile: NSView, TileContent {
             _ = await Self.wait(until: { [unowned self] in offscreenSettled }, limit: .seconds(1))
         }
         guard !Task.isCancelled else { return .placeholder(request, "timed out") }
+        // WebKit snapshots at the backing scale of the window the page is parked in, the stage's.
         let shot = WKSnapshotConfiguration()
-        shot.snapshotWidth = NSNumber(value: Double(web.bounds.width * request.scale / max(window.backingScaleFactor, 1)))
+        shot.snapshotWidth = NSNumber(value: Double(web.bounds.width * request.scale / max(web.window?.backingScaleFactor ?? 1, 1)))
         guard let page = try? await web.takeSnapshot(configuration: shot) else {
             return TileRender(image: nil, contentSize: content, state: .failed, reason: "WebKit produced no snapshot")
         }
@@ -387,6 +387,31 @@ final class HtmlTile: NSView, TileContent {
             Metrics.shared.record("html.measure.cached")
             return known.size
         }
+        let extent = try await measure(measuredPage(props, width: width), on: Board(id: IDs.make("brd"), root: root), files: nil)
+        if let key {
+            if measured.count >= 64 { measured = measured.filter { ContinuousClock.now - $0.value.at < measureReuse } }
+            measured[key] = (extent, ContinuousClock.now)
+        }
+        return extent
+    }
+
+    /// The same for a page on remote board `board`, as its viewer measures it for the board's
+    /// easld: on a scratch board of its own (`Board.measuring`), its `<canvas-code>` excerpts and
+    /// images read on the host through `files` under the page's own root, ref and refSha, never
+    /// from this Mac's disk. Its page is never a pooled one (`loadOffscreen`), and its extent is
+    /// never reused: `measured` is keyed by path, and a path names another file on another host.
+    static func measure(props: JSONValue, width: CGFloat, remote board: Board, files: HostFiles) async throws -> CGSize {
+        let page = measuredPage(props, width: width)
+        return try await measure(page, on: .measuring(page, on: board), files: files)
+    }
+
+    /// The throwaway object a page is measured in: `width` wide, its body 1 pt tall.
+    private static func measuredPage(_ props: JSONValue, width: CGFloat) -> CanvasObject {
+        CanvasObject(id: IDs.make("obj"), type: .html, frame: Frame(x: 0, y: 0, w: Double(width), h: RenderMath.tileTitleHeight + 1),
+                     z: 0, createdBy: .user, createdAt: Date(), props: props)
+    }
+
+    private static func measure(_ page: CanvasObject, on board: Board, files: HostFiles?) async throws -> CGSize {
         let queued = Metrics.now()
         while measuring >= maxMeasuring {
             try Task.checkCancellation()
@@ -399,21 +424,15 @@ final class HtmlTile: NSView, TileContent {
             measuring -= 1
             Metrics.shared.record("html.measure", ms: (Metrics.now() - started) * 1000)
         }
-        let object = CanvasObject(id: IDs.make("obj"), type: .html, frame: Frame(x: 0, y: 0, w: Double(width), h: RenderMath.tileTitleHeight + 1),
-                                  z: 0, createdBy: .user, createdAt: Date(), props: props)
-        let tile = HtmlTile(object: object, board: Board(id: IDs.make("brd"), root: root), live: false)
+        let tile = HtmlTile(object: page, board: board, live: false, files: files)
         guard await tile.beginOffscreen() else { throw ObjectMeasure.Failure.unavailable("the page is busy") }
         var measuredFine = false
         // A page that failed or was cancelled may be stuck (a script that never yields): it is
         // discarded, never emptied for reuse (`HtmlMeasurePool`).
         defer { tile.endOffscreen(keepPage: measuredFine && !Task.isCancelled) }
-        switch await tile.loadOffscreen(size: CGSize(width: width, height: 1), appearance: NSApp.effectiveAppearance, limit: measureLimit, pooled: true) {
+        switch await tile.loadOffscreen(size: CGSize(width: page.frame.w, height: 1), appearance: NSApp.effectiveAppearance, limit: measureLimit, pooled: true) {
         case .success(let extent):
             measuredFine = true
-            if let key {
-                if measured.count >= 64 { measured = measured.filter { ContinuousClock.now - $0.value.at < measureReuse } }
-                measured[key] = (extent, ContinuousClock.now)
-            }
             return extent
         case .failure(.rules(let reason)), .failure(.unsettled(let reason)): throw ObjectMeasure.Failure.unavailable("cannot measure the page: \(reason)")
         }
@@ -512,8 +531,15 @@ final class HtmlTile: NSView, TileContent {
         web.load(URLRequest(url: pageURL))
         guard await Self.wait(until: { [unowned self] in offscreenSettled }, limit: limit) else { return .failure(.unsettled("the page did not finish rendering")) }
         let measure = "[Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0), Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)]"
-        let extent = (try? await web.evaluateJavaScript(measure)) as? [Double] ?? []
-        return .success(CGSize(width: extent.first ?? size.width, height: extent.count > 1 ? extent[1] : size.height))
+        do {
+            guard let extent = try await web.evaluateJavaScript(measure) as? [Double],
+                  extent.count == 2, extent.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
+                return .failure(.unsettled("cannot read the page's dimensions"))
+            }
+            return .success(CGSize(width: extent[0], height: extent[1]))
+        } catch {
+            return .failure(.unsettled("cannot read the page's dimensions"))
+        }
     }
 
     /// Polls `condition` until it holds, the task is cancelled (the render deadline), or `limit` passes.

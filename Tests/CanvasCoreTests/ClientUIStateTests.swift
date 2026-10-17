@@ -74,16 +74,110 @@ struct ClientUIStateTests {
     }
 
     @Test func chromeTextScalePersistsAndSnapsToALevel() throws {
-        let store = ChromeTextScale.Store(url: home.appendingPathComponent("ui-settings.json"))
-        #expect(store.load() == ChromeTextScale.normal, "no file: 100%")
-        try store.save(1.3)
-        #expect(store.load() == 1.3)
+        let store = UISettings.Store(url: home.appendingPathComponent("ui-settings.json"))
+        #expect(store.load().chromeTextScale == ChromeTextScale.normal, "no file: 100%")
+        try store.update { $0.chromeTextScale = 1.3 }
+        #expect(store.load().chromeTextScale == 1.3)
         // A hand-edited value in between lands on the nearest level; a damaged file means 100%.
         try Data(#"{"scale":1.42}"#.utf8).write(to: store.url)
-        #expect(store.load() == 1.5)
+        #expect(store.load().chromeTextScale == 1.5)
         try Data(#"{"scale":-9}"#.utf8).write(to: store.url)
-        #expect(store.load() == 1)
+        #expect(store.load().chromeTextScale == 1)
         try Data("garbage".utf8).write(to: store.url)
-        #expect(store.load() == ChromeTextScale.normal)
+        #expect(store.load().chromeTextScale == ChromeTextScale.normal)
+    }
+
+    @Test func eachSettingsWriteKeepsTheOtherSetting() throws {
+        let url = home.appendingPathComponent("ui-settings.json")
+        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1, backgroundAttach: true), "no file: 100%, background attach on")
+        // A file from before background attach holds only the scale.
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try Data(#"{"scale":1.3}"#.utf8).write(to: url)
+        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.3, backgroundAttach: true))
+        // The menu's background attach and View's chrome text size each write the one file.
+        try UISettings.Store(url: url).update { $0.backgroundAttach = false }
+        try UISettings.Store(url: url).update { $0.chromeTextScale = 1.5 }
+        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.5, backgroundAttach: false))
+        try UISettings.Store(url: url).update { $0.backgroundAttach = true }
+        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.5, backgroundAttach: true))
+        // A damaged field is that setting's default; the other one stands.
+        try Data(#"{"scale":1.15,"backgroundAttach":"no"}"#.utf8).write(to: url)
+        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.15, backgroundAttach: true))
+    }
+
+    @Test func theReopenListKeepsOnlyHowToReachEachBoard() throws {
+        let store = RemoteReopen.Store(url: home.appendingPathComponent("remote-boards.json"))
+        #expect(store.load().isEmpty, "no file: nothing to attach")
+        let first = RemoteReopen(host: "deckbox", sshTarget: "deckbox", board: "brd_a")
+        let second = RemoteReopen(host: "deckbox", sshTarget: "deckbox", board: "brd_b")
+        try store.remember(first)
+        try store.remember(second)
+        try store.remember(first)
+        #expect(store.load() == [first, second], "in the order opened, once each")
+        let renamed = RemoteReopen(host: "deckbox-2", sshTarget: "deckbox", board: "brd_a")
+        try store.remember(renamed)
+        #expect(store.load() == [renamed, second], "a host renamed keeps its board's place")
+        // Another host's board with the same id is its own entry (two checkouts of one repository).
+        let other = RemoteReopen(host: "work", sshTarget: "tim@work", board: "brd_a")
+        try store.remember(other)
+        try store.forget(sshTarget: "deckbox", board: "brd_a")
+        #expect(store.load() == [second, other])
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: store.url))
+        let disk = try #require(json as? [[String: Any]])
+        let fields: [Set<String>] = [["host", "sshTarget", "board"], ["host", "sshTarget", "board"]]
+        #expect(disk.map { Set($0.keys) } == fields, "nothing the board holds is on this Mac's disk")
+    }
+
+    @Test func aDamagedOrHandEditedReopenListAttachesNothingUnsafe() throws {
+        let store = RemoteReopen.Store(url: home.appendingPathComponent("remote-boards.json"))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try Data("not json".utf8).write(to: store.url)
+        #expect(store.load().isEmpty)
+        let edited = #"[{"host":"x","sshTarget":"-oProxyCommand=sh","board":"brd_a"},{"host":"d","sshTarget":"deckbox","board":"../etc"},{"host":"d","sshTarget":"deckbox","board":"brd_ok"}]"#
+        try Data(edited.utf8).write(to: store.url)
+        #expect(store.load() == [RemoteReopen(host: "d", sshTarget: "deckbox", board: "brd_ok")], "neither an ssh option nor a non-board id is attached")
+    }
+
+    @Test func closingARemoteBoardsWindowKeepsWhatTheUserLeftOpen() {
+        #expect(RemoteClose.tab.outcome(backgroundAttach: true, server: .easld) == .forget, "a tab closed beside others is done with")
+        #expect(RemoteClose.tab.outcome(backgroundAttach: false, server: .easld) == .forget)
+        #expect(RemoteClose.window.outcome(backgroundAttach: true, server: .easld) == .retain, "the window's only tab stays attached")
+        #expect(RemoteClose.window.outcome(backgroundAttach: false, server: .easld) == .detach, "setting off: detached, still in the reopen list")
+        #expect(RemoteClose.window.outcome(backgroundAttach: true, server: .app) == .detach, "a Mac host takes no client")
+        #expect(RemoteClose.window.outcome(backgroundAttach: true, server: nil) == .detach)
+    }
+
+    @Test func changingSettingsDoesNotOverwriteAnUnreadableFile() throws {
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = UISettings.Store(url: home.appendingPathComponent("ui-settings.json"))
+        let damaged = Data(#"{"scale":1.3,"backgroundAttach":false"#.utf8)
+        try damaged.write(to: store.url)
+        #expect(throws: (any Error).self) {
+            try store.update { $0.chromeTextScale = 1.5 }
+        }
+        #expect(try Data(contentsOf: store.url) == damaged)
+    }
+
+    @Test func changingTheReopenListCannotSucceedWithoutReadingIt() throws {
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = RemoteReopen.Store(url: home.appendingPathComponent("remote-boards.json"))
+        let first = RemoteReopen(host: "deckbox", sshTarget: "deckbox", board: "brd_a")
+        let second = RemoteReopen(host: "home", sshTarget: "home", board: "brd_b")
+        let saved = try JSONEncoder().encode([first])
+        var damaged = saved
+        damaged.append(contentsOf: "[".utf8)
+        try damaged.write(to: store.url)
+        #expect(throws: (any Error).self) {
+            try store.forget(sshTarget: first.sshTarget, board: first.board)
+        }
+        #expect(try Data(contentsOf: store.url) == damaged)
+        #expect(throws: (any Error).self) { try store.remember(second) }
+        #expect(try Data(contentsOf: store.url) == damaged)
+        try saved.write(to: store.url)
+        #expect(store.load() == [first])
+        try store.forget(sshTarget: first.sshTarget, board: first.board)
+        #expect(store.load() == [])
     }
 }
