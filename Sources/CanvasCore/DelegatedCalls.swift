@@ -73,7 +73,7 @@ final class DelegatedCalls {
     static let served = ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure"]
     /// The longest line easld reads from a client (`easld/internal/server`, `defaultLimits`): past
     /// it easld closes the link, failing every call on it.
-    static let maxReply = 64 << 20
+    nonisolated static let maxReply = 64 << 20
 
     let board: Board
     let window: ViewerWindow
@@ -127,14 +127,14 @@ final class DelegatedCalls {
         }
         let output = try await window.render(request, format)
         let result = ApiRouter.rendered(output, ApiRouter.inlined(output))
-        try Self.checkReplySize(result)
+        try await offPool { Result { try Self.checkReplySize(result) } }.get()
         return result
     }
 
     /// A reply easld would read as one line longer than `maxReply` fails instead of dropping the
     /// link. Counted as the answer line carries it: the base64 with each `/` escaped
     /// (`JSONEncoder`), the rest of the result, and room for the answer's id and keys.
-    private static func checkReplySize(_ result: JSONValue) throws {
+    nonisolated private static func checkReplySize(_ result: JSONValue) throws {
         guard var fields = result.object, let data = fields.removeValue(forKey: "data")?.string else { return }
         let slash = UInt8(ascii: "/")
         let image = data.utf8.reduce(0) { $0 + ($1 == slash ? 2 : 1) }

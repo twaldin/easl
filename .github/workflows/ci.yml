@@ -20,7 +20,7 @@ jobs:
       - name: Build
         run: swift build -j 2
       - name: Test
-        run: swift run -j 2 CanvasCoreTests --no-parallel
+        run: swift run -j 2 CanvasCoreTests
       - name: Generated clients are current
         run: bun scripts/gen-clients.ts --check
       - name: Python client tests
