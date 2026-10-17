@@ -115,6 +115,7 @@ scripts/dev.sh input rightclick <x> <y>             # opens the context menu on 
 scripts/dev.sh input menu <x> <y> "Content Zoom/150%"   # performs that context-menu item without opening the menu (over code: "Find References", "Outline"; "//" is a slash in a title: "Review Changes/Branch vs origin//main")
 scripts/dev.sh input mainmenu "Edit/Send Mentions To/codex"   # performs that menu-bar item (menus AppKit fills as they open are filled first)
 scripts/dev.sh input flags <x> <y> --mods hyper     # hold Hyper over x,y (hover outline); omit --mods to release
+scripts/dev.sh input close <window id>              # native close of this instance's window, without activation
 scripts/dev.sh input move <x> <y>                   # pointer move over tracking areas: moved, entered and exited (code navigation hover, a tile's − % + control)
 scripts/dev.sh input text "hello"                   # insert into the first responder
 scripts/dev.sh input command insertNewline:
