@@ -20,7 +20,7 @@ Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`;
 | [tree-sitter-go](https://github.com/tree-sitter/tree-sitter-go) | 0.23.4 | MIT | (c) 2014 Max Brunsfeld |
 | [tree-sitter-rust](https://github.com/tree-sitter/tree-sitter-rust) | 0.24.2 | MIT | (c) 2017 Maxim Sokolov |
 
-### Go packages
+### Composer grapheme segmentation
 
 | Package | Version | License | Copyright |
 | --- | --- | --- | --- |
