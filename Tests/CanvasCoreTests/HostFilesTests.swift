@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import CanvasCore
 
-private final class HostFileFixture: @unchecked Sendable {
+final class HostFileFixture: @unchecked Sendable {
     let directory: URL
     let root: URL
     let temp: URL
@@ -102,6 +102,99 @@ struct HostFilesTests {
         #expect(result.commit == nil)
         let checked = try await files.read(fixture.request(name, bytes: false))
         #expect(checked.path == result.path && checked.data.isEmpty)
+        #expect(checked.version == result.version)
+    }
+
+    @Test func descriptorVersionsPreserveExactNanosecondsAndDetectSameSizeChanges() async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.reader()
+        let path = fixture.root.appendingPathComponent("chart.png")
+        try fixture.write("chart.png", Data("first".utf8))
+        let request = HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage("chart.png"))
+        let first = try await files.read(request)
+        var metadata = stat()
+        #expect(lstat(path.path, &metadata) == 0)
+        let mtime = Int64(metadata.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(metadata.st_mtimespec.tv_nsec)
+        let ctime = Int64(metadata.st_ctimespec.tv_sec) * 1_000_000_000 + Int64(metadata.st_ctimespec.tv_nsec)
+        #expect(first.stamp == "\(metadata.st_dev):\(metadata.st_ino):5:\(mtime):\(ctime)")
+        var check = request
+        check.bytes = false
+        let unchanged = try await files.read(check)
+        #expect(unchanged.version == first.version)
+        #expect(unchanged.data == Data())
+
+        try fixture.write("chart.png", Data("other".utf8))
+        let modified = Date(timeIntervalSince1970: 1_700_000_000)
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: path.path)
+        let edited = try await files.read(check)
+        #expect(edited.version != first.version)
+        #expect(edited.version == (try await files.read(request)).version)
+        #expect(try await files.read(request).data == Data("other".utf8))
+
+        try Data("third".utf8).write(to: path, options: .atomic)
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: path.path)
+        let replacement = try await files.read(check)
+        #expect(replacement.version != edited.version)
+        #expect(replacement.version == (try await files.read(request)).version)
+        #expect(try await files.read(request).data == Data("third".utf8))
+    }
+
+    @Test func imageTilesReadOnlyInsideTheBoardIncludingAbsoluteAndFileURLs() async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.reader()
+        let bytes = Data("board image".utf8)
+        try fixture.write("image space.png", bytes)
+        let image = fixture.root.appendingPathComponent("image space.png")
+        for path in ["image space.png", image.path, image.absoluteString] {
+            let result = try await files.read(HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage(path)))
+            #expect(result.data == bytes)
+            #expect(result.path == image.resolvingSymlinksInPath().path)
+        }
+        let outside = fixture.temp.appendingPathComponent("outside.png")
+        try Data("outside".utf8).write(to: outside)
+        let sibling = fixture.directory.appendingPathComponent("root-evil.png")
+        try Data("sibling".utf8).write(to: sibling)
+        try FileManager.default.createSymbolicLink(at: fixture.root.appendingPathComponent("escape.png"), withDestinationURL: outside)
+        for path in [outside.path, outside.absoluteString, "../host-temp/outside.png", sibling.path, "escape.png", "https://example.com/image.png", "~/image.png", "image\0.png"] {
+            for bytes in [true, false] {
+                let request = HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage(path), bytes: bytes)
+                await #expect(throws: HostFileError.refused) { try await files.read(request) }
+            }
+        }
+        let page = HostFileRequest(source: .directory(fixture.root.path), policy: .pageImage(relative: nil, absolute: outside.path, temps: [fixture.temp.path]))
+        #expect(try await files.read(page).data == Data("outside".utf8))
+        try FileManager.default.createSymbolicLink(atPath: fixture.root.appendingPathComponent("alias.png").path, withDestinationPath: image.lastPathComponent)
+        #expect(try await files.read(HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage("alias.png"))).data == bytes)
+    }
+
+    @Test func imageTileMetadataRetainsSizeRefusalsAndRecoversMissingFiles() async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.reader()
+        let request = HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage("chart.png"))
+        var metadata = request
+        metadata.bytes = false
+        for read in [request, metadata] {
+            await #expect(throws: HostFileError.notFound(commit: nil)) { try await files.read(read) }
+        }
+        try fixture.write("chart.png", Data("created".utf8))
+        let created = try await files.read(request)
+        #expect(created.data == Data("created".utf8))
+        #expect(try await files.read(metadata).version == created.version)
+        try fixture.write("chart.png", Data(repeating: 65, count: SourceExcerpt.maxFileBytes + 1))
+        for read in [request, metadata] {
+            await #expect(throws: HostFileError.tooLarge(limit: 4 * 1024 * 1024)) { try await files.read(read) }
+        }
+    }
+
+    @Test func imageTileReadsAndMetadataRefuseIntermediateDirectorySwaps() async throws {
+        for bytes in [true, false] {
+            let fixture = try HostFileFixture()
+            try fixture.write("pkg/chart.png", Data("allowed".utf8))
+            let files = try fixture.readerSwappingDirectory(containing: "pkg/chart.png", afterCanonicalization: 2)
+            let request = HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage("pkg/chart.png"), bytes: bytes)
+            await #expect(throws: HostFileError.refused) { try await files.read(request) }
+            #expect(try FileManager.default.attributesOfItem(atPath: fixture.root.appendingPathComponent("pkg").path)[.type] as? FileAttributeType == .typeSymbolicLink)
+        }
     }
 
     @Test func sandboxRefusesUnsafeRequestsOnTheHostItself() async throws {
@@ -246,6 +339,7 @@ struct HostFilesTests {
         let repo = try await TempRepo()
         defer { try? FileManager.default.removeItem(at: repo.root) }
         try await repo.write("pkg/file.txt", "base\n")
+        try await repo.write("pkg/other.txt", "other\n")
         try await repo.commit("base")
         let worktree = fixture.directory.appendingPathComponent("work tree ' live")
         try await repo.git("worktree", "add", "-q", "-b", "feature", worktree.path)
@@ -260,6 +354,13 @@ struct HostFilesTests {
             #expect(result.commit == local.commit)
             #expect(URL(fileURLWithPath: result.root).resolvingSymlinksInPath() == local.root.resolvingSymlinksInPath())
             #expect(String(decoding: result.data, as: UTF8.self) == expected)
+            let metadata = try await files.read(fixture.request("file.txt", source: .ref(ref, lastKnownSha: sha, boardRoot: boardRoot.path), bytes: false))
+            #expect(metadata.version == result.version)
+            #expect(metadata.data == Data())
+            if result.commit != nil {
+                #expect(result.path == "file.txt")
+                #expect(result.stamp == nil)
+            }
             let imageRoot = try await files.read(fixture.request("file.txt", source: .liveRoot(ref: ref, boardRoot: boardRoot.path)))
             let expectedRoot = RefSource.liveRoot(ref: ref, boardRoot: boardRoot) ?? boardRoot
             #expect(URL(fileURLWithPath: imageRoot.root).resolvingSymlinksInPath() == expectedRoot.resolvingSymlinksInPath())
@@ -269,6 +370,15 @@ struct HostFilesTests {
         try await repo.git("worktree", "remove", "--force", worktree.path)
         try await compare("feature", sha: nil, expected: "committed\n")
         let objects = HostFileRequest.Source.ref("feature", lastKnownSha: nil, boardRoot: boardRoot.path)
+        let immutable = try await files.read(fixture.request("file.txt", source: objects))
+        let other = try await files.read(fixture.request("other.txt", source: objects))
+        #expect(other.version == HostFileVersion(root: immutable.root, path: "other.txt", commit: tip))
+        #expect(other.version != immutable.version)
+        let imageRequest = HostFileRequest(source: objects, policy: .boardImage("file.txt"))
+        var imageMetadata = imageRequest
+        imageMetadata.bytes = false
+        #expect(try await files.read(imageRequest).version == immutable.version)
+        #expect(try await files.read(imageMetadata).version == immutable.version)
         await #expect(throws: HostFileError.notFound(commit: tip)) {
             try await files.read(fixture.request("missing.txt", source: objects))
         }
