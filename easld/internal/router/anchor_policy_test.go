@@ -81,7 +81,7 @@ func TestCreateAndUpdateDoNotAnchorOutsideFiles(t *testing.T) {
 	}
 }
 
-func TestSourceOverrideDoesNotAuthorizeOutsideTheBoard(t *testing.T) {
+func TestSourceRootSymlinkCannotCrossBoardAreas(t *testing.T) {
 	parent := t.TempDir()
 	repo := filepath.Join(parent, "repo")
 	outside := filepath.Join(parent, "outside")

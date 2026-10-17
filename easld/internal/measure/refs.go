@@ -212,7 +212,7 @@ func mergeCommit(sha, branch, dir string) (string, bool) {
 	return shas[0], true
 }
 
-// LinkReading is where a note's (or HTML tile's) referenced files are read (Board.linkSource).
+// LinkReading resolves a note's file paths and pins under its board's areas.
 type LinkReading struct {
 	Root string
 	// Board is the authorization root. Root resolves relative paths and is not itself a grant:
@@ -274,20 +274,6 @@ func (r LinkReading) Fence(f Fence) Fence {
 		f.Commit = new(r.FailedRef)
 	}
 	return f
-}
-
-// Read is LinkReading.read: the text of path as read here. The board areas authorize it;
-// Root is not a second root.
-func (r LinkReading) Read(path string) (string, error) {
-	areas := boardAreas(r.Board)
-	if areaOf(areas, r.Root) == nil {
-		return "", &SourceError{Kind: "refused"}
-	}
-	file := path
-	if strings.HasPrefix(path, "/") && r.Ref != nil {
-		file = r.Ref.URLFor(path)
-	}
-	return readNoteFile(file, r.Commit(), r.Root, areas)
 }
 
 // CodeExcerptSource is the code tile's range read as object.get's rangeStatus reads it: through

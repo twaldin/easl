@@ -5,12 +5,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"unicode/utf8"
-
-	"golang.org/x/sys/unix"
 )
 
 // pathRefused is the stale reason for a note fence the board file policy will not read.
@@ -344,45 +341,4 @@ func classifyOpenErr(err error) error {
 		return &SourceError{Kind: "refused"}
 	}
 	return &SourceError{Kind: "unreadable"}
-}
-
-func openNoFollow(path string) (int, error) {
-	path = StandardPath(path)
-	if !strings.HasPrefix(path, "/") || path == "/" {
-		return -1, syscall.ELOOP
-	}
-	parts := strings.Split(path[1:], "/")
-	dir, err := syscall.Open("/", dirOpenFlags(), 0)
-	if err != nil {
-		return -1, err
-	}
-	for _, component := range parts[:len(parts)-1] {
-		if component == "" || component == "." || component == ".." {
-			syscall.Close(dir)
-			return -1, syscall.ELOOP
-		}
-		next, err := unix.Openat(dir, component, dirOpenFlags(), 0)
-		syscall.Close(dir)
-		if err != nil {
-			return -1, err
-		}
-		dir = next
-	}
-	last := parts[len(parts)-1]
-	if last == "" || last == "." || last == ".." {
-		syscall.Close(dir)
-		return -1, syscall.ELOOP
-	}
-	fd, err := unix.Openat(dir, last, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
-	syscall.Close(dir)
-	return fd, err
-}
-
-func dirOpenFlags() int {
-	flags := syscall.O_DIRECTORY | syscall.O_NOFOLLOW | syscall.O_CLOEXEC
-	if runtime.GOOS == "linux" {
-		// O_PATH is missing from syscall on amd64. Search the directory; do not follow it.
-		return flags | 0x200000
-	}
-	return flags | syscall.O_RDONLY
 }
