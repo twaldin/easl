@@ -1,6 +1,9 @@
 {
   "description": "Swift-host browser surface lifecycle on the existing about:blank page. Validate before mutation, require same-connection subscription and stream ownership, hold initial credit until ack0, deliver fenced full images, deduplicate input and stop without deleting the page.",
-  "serve": {"/dialog": "<!doctype html><script>document.title=confirm('Surface dialog without a listener')?'Unexpected host answer':'Surface dialog dismissed'</script>"},
+  "serve": {
+    "/dialog": "<!doctype html><script>document.title=confirm('Surface dialog without a listener')?'Unexpected host answer':'Surface dialog dismissed'</script>",
+    "/selection": "<!doctype html><body>Surface selection survives native keys<script>const r=document.createRange();r.selectNodeContents(document.body.firstChild);const s=getSelection();s.removeAllRanges();s.addRange(r);document.addEventListener('keydown',e=>e.preventDefault());document.title='Selection ready'</script>"
+  },
   "steps": [
     {
       "call": "object.create",
@@ -143,6 +146,22 @@
       "call": "object.get", "params": {"id": "{{browser.object.id}}"},
       "expect": {"response.ok": true, "response.result.object.props.pageTitle": "Surface dialog dismissed", "response.result.page.loaded": true},
       "ignore": {"response.result.page.cursor": "The browser log cursor is per-navigation runtime state.", "response.result.page.vitals": "Page load timing is unrelated to dialog dismissal."}
+    },
+    {
+      "call": "surface.input", "conn": "frameOnly", "params": {"stream": "{{silentStream.stream}}", "events": [{"kind": "navigate", "seq": 2, "url": "http://{{httpHost}}/selection"}]},
+      "settleMs": 1500, "noEvents": true,
+      "expect": {"response.ok": true, "response.result.accepted": 1}
+    },
+    {
+      "call": "object.get", "params": {"id": "{{browser.object.id}}"},
+      "expect": {"response.ok": true, "response.result.object.props.pageTitle": "Selection ready", "response.result.page.loaded": true},
+      "ignore": {"response.result.page.cursor": "The browser log cursor is per-navigation runtime state.", "response.result.page.vitals": "Page load timing is unrelated to selection copy."}
+    },
+    {
+      "call": "surface.input", "conn": "frameOnly",
+      "params": {"stream": "{{silentStream.stream}}", "events": [{"kind": "focus", "seq": 3, "on": true}, {"kind": "key", "seq": 4, "action": "down", "code": 0, "chars": "a", "plain": "a"}, {"kind": "key", "seq": 5, "action": "up", "code": 0, "chars": "a", "plain": "a"}, {"kind": "command", "seq": 6, "name": "copy"}]},
+      "expect": {"response.ok": true, "response.result.accepted": 4, "response.result.text": "Surface selection survives native keys", "eventCount": 0},
+      "note": "Native key telemetry may be unavailable on this WebKit. It must not permanently disable bounded selection reads or falsely confirm the frame watermark."
     },
     {
       "call": "surface.stop", "conn": "frameOnly", "params": {"stream": "{{silentStream.stream}}"},

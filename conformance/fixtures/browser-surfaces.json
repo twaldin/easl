@@ -1,7 +1,7 @@
 {
   "scenario": "browser-surfaces",
   "description": "Swift-host browser surface lifecycle on the existing about:blank page. Validate before mutation, require same-connection subscription and stream ownership, hold initial credit until ack0, deliver fenced full images, deduplicate input and stop without deleting the page.",
-  "recordedOn": "Swift 6.3.3 Mac app, lane easl-browser-stream-1, real WKWebView, 2026-10-17",
+  "recordedOn": "Swift 6.3.3 macOS26.6, product0cec6fc, real WKWebView including native-key copy regression, 2026-10-17",
   "steps": [
     {
       "step": "board.open",
@@ -826,6 +826,121 @@
       }
     },
     {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "frameOnly",
+      "request": {
+        "events": [
+          {
+            "kind": "navigate",
+            "seq": 2,
+            "url": "http://<http-host>/selection"
+          }
+        ],
+        "stream": "<str:2>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "accepted": 1
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "pageTitle": "Selection ready",
+              "url": "http://<http-host>/selection"
+            },
+            "rev": "<rev:4>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "page": {
+            "entries": [],
+            "errors": 0,
+            "loaded": true,
+            "url": "http://<http-host>/selection",
+            "visibility": "driven",
+            "warnings": 0
+          }
+        }
+      },
+      "ignored": {
+        "response.result.page.cursor": "The browser log cursor is per-navigation runtime state.",
+        "response.result.page.vitals": "Page load timing is unrelated to selection copy."
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "frameOnly",
+      "request": {
+        "events": [
+          {
+            "kind": "focus",
+            "on": true,
+            "seq": 3
+          },
+          {
+            "action": "down",
+            "chars": "a",
+            "code": 0,
+            "kind": "key",
+            "plain": "a",
+            "seq": 4
+          },
+          {
+            "action": "up",
+            "chars": "a",
+            "code": 0,
+            "kind": "key",
+            "plain": "a",
+            "seq": 5
+          },
+          {
+            "kind": "command",
+            "name": "copy",
+            "seq": 6
+          }
+        ],
+        "stream": "<str:2>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "accepted": 4,
+          "text": "Surface selection survives native keys"
+        }
+      }
+    },
+    {
       "step": "surface.stop",
       "method": "surface.stop",
       "conn": "frameOnly",
@@ -833,7 +948,7 @@
         "stream": "<str:2>"
       },
       "response": {
-        "id": "r4",
+        "id": "r6",
         "ok": true,
         "result": {
           "stopped": true
