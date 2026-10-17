@@ -34,7 +34,6 @@ extension ViewerWindow {
         self.init(
             focused: { [weak controller] in controller?.window?.isKeyWindow == true },
             viewState: { [weak controller] in controller?.canvas.viewState },
-            snapshot: { [weak controller] format in await controller?.snapshot(format: format) },
             submit: { id, text in await terminal(id)?.submit(text) ?? false },
             surfaceTail: { id, lines in terminal(id)?.surfaceTail(lines: lines) },
             block: { id, index in

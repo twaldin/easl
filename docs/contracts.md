@@ -389,11 +389,11 @@ A browser tile's Snapshot to Image (its object menu; File › Snapshot Page to I
 
 A remote board's window (docs/design.md "Client mode") speaks the host's API over two `EaslConnection`s per board. One carries `events.subscribe`, reads, writes and prompts; the other carries renders.
 
-When the host is easld, the viewer also sends `client.attach` on the mirror's main connection. It advertises only `agent.prompt`, `agent.read`, `view.get`, `view.snapshot` and `text.measure`. The terminal methods use the viewer's attached surface; the view methods describe that board's window; text measurement uses AppKit without a round trip to easld. `view.render` and `object.reload` remain unsupported by the viewer, including for live HTML pages. Other remote tile types remain host-drawn images. A Mac host receives no attach. A refused attach leaves board reads and edits working, without an attach retry loop.
+When the host is easld, the viewer also sends `client.attach` on the mirror's main connection. It advertises only `agent.prompt`, `agent.read`, `view.get` and `text.measure`. The terminal methods use the viewer's attached surface; `view.get` describes that board's window; text measurement uses AppKit without a round trip to easld. `view.render`, `view.snapshot` and `object.reload` remain unsupported by the viewer, including for live HTML pages. Other remote tile types remain host-drawn images. A Mac host receives no attach. A refused attach leaves board reads and edits working, without an attach retry loop.
 
 The attached viewer measures plain-text notes exactly. If any item in a `text.measure` batch needs an anchored fence or an image from the host, it returns `unavailable` and easld approximates the whole batch on the host. The viewer never reads a same-named local path for a host file.
 
-A delegated `view.snapshot` writes its image in the viewer Mac's scratch directory. Its returned `path` is on that Mac, not easld's host. A supplied `out` fails `unavailable`; this protocol cannot deliver the image to that host path.
+The remote viewer does not serve `view.snapshot`: a viewer-local scratch image would persist host content on the wrong Mac. With no other capable client, the host returns `unavailable` without creating an image. Local-board snapshots and explicit local exports are unchanged.
 
 Delegated `agent.read` reads the attached surface's scrollback, not zmx history on either machine. Its `since: "prompt"` mark belongs to this viewer. If the marked context is gone or ambiguous after scrollback trimming, the reply returns the available tail with `truncated: true`. Command blocks use the surface's shell-integration log and stop before a command that is still running.
 

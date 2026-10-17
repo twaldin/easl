@@ -12,6 +12,8 @@ final class HtmlTile: NSView, TileContent {
     private(set) var object: CanvasObject
     private let board: Board
     let files: HostFiles?
+    /// Remote documents and every scheme response share this in-memory policy.
+    private(set) var contentSecurityPolicy: String?
     private(set) var webView: WKWebView?
     /// `html.webviews` while `webView` exists; released with it, or with the tile when the tile
     /// goes without a `detach` (deleted from the board).
@@ -49,6 +51,9 @@ final class HtmlTile: NSView, TileContent {
         self.board = board
         self.live = live
         self.files = files
+        contentSecurityPolicy = board.isRemote
+            ? HtmlKit.contentSecurityPolicy(allow: object.props["allowNetwork"]?.array?.compactMap(\.string) ?? [])
+            : nil
         super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
@@ -66,7 +71,7 @@ final class HtmlTile: NSView, TileContent {
     var html: String { object.props["html"]?.string ?? "" }
     private var allowNetwork: [String] { object.props["allowNetwork"]?.array?.compactMap(\.string) ?? [] }
     var document: String {
-        HtmlKit.document(html: html, policy: board.isRemote ? HtmlKit.contentSecurityPolicy(allow: allowNetwork) : nil)
+        HtmlKit.document(html: html, policy: contentSecurityPolicy)
     }
     var hostImageSource: HostFileRequest.Source { board.hostSource(props: object.props, objects: false) }
     var isRemote: Bool { board.isRemote }
@@ -530,9 +535,12 @@ final class HtmlTile: NSView, TileContent {
 
     func update(_ object: CanvasObject) {
         let previous = self.object
-        self.object = object
-        guard let web = webView else { return }
         let networkChanged = (object.props["allowNetwork"] ?? .array([])) != (previous.props["allowNetwork"] ?? .array([]))
+        self.object = object
+        if networkChanged, board.isRemote {
+            contentSecurityPolicy = HtmlKit.contentSecurityPolicy(allow: allowNetwork)
+        }
+        guard let web = webView else { return }
         if !live, networkChanged || object.props["html"] != previous.props["html"] {
             // A parked page would load again unseen: release it; the card shows the change.
             detach()
@@ -653,7 +661,7 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     private func followed(_ action: WKNavigationAction, in webView: WKWebView) -> Bool {
         guard let url = action.request.url, WebLink.isWeb(url), let click = (webView as? HtmlWebView)?.recentClick() else { return false }
         if click.union(action.modifierFlags).contains(.option) {
-            ExternalOpen.open(url, because: "html \(object.id) link (⌥-click)", naming: !board.isRemote)
+            ExternalOpen.open(url, because: board.isRemote ? "remote html link (⌥-click)" : "html \(object.id) link (⌥-click)", naming: !board.isRemote)
         } else {
             let opened = board.openLink(url, near: object.id, caller: nil)
             if !board.isRemote {

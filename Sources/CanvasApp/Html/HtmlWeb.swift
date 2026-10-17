@@ -83,10 +83,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     private func notFound(_ task: any WKURLSchemeTask, url: URL) {
-        let response = HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/plain"])!
-        task.didReceive(response)
-        task.didReceive(Data("not found".utf8))
-        task.didFinish()
+        respond(task, url: url, data: Data("not found".utf8), type: "text/plain", cache: "no-store", status: 404)
     }
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
@@ -94,9 +91,12 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
         hostReads.removeValue(forKey: ObjectIdentifier(task))?.cancel()
     }
 
-    private func respond(_ task: any WKURLSchemeTask, url: URL, data: Data, type: String, cache: String) {
-        let headers = ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": cache]
-        task.didReceive(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers)!)
+    private func respond(_ task: any WKURLSchemeTask, url: URL, data: Data, type: String, cache: String, status: Int = 200) {
+        guard let tile else { return task.didFailWithError(URLError(.cancelled)) }
+        var headers = ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": cache]
+        // A framed SVG is its own active document and does not inherit the page's meta CSP.
+        if let policy = tile.contentSecurityPolicy { headers["Content-Security-Policy"] = policy }
+        task.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)
         task.didReceive(data)
         task.didFinish()
     }

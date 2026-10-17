@@ -19,7 +19,6 @@ final class DelegatedCallsTests {
     var screen = ["$ omp", "> ready"]
     var reply: [String] = []
     var view: ViewState?
-    var shot: (output: RenderOutput, viewport: Viewport)?
 
     init() throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -34,7 +33,6 @@ final class DelegatedCallsTests {
         DelegatedCalls(board: board, window: ViewerWindow(
             focused: { false },
             viewState: { [unowned self] in view },
-            snapshot: { [unowned self] _ in shot },
             submit: { [unowned self] id, text in
                 guard surface, id == terminal else { return false }
                 screen += ["> \(text)"] + reply
@@ -116,26 +114,6 @@ final class DelegatedCallsTests {
         #expect(screen == ["$ omp", "> ready"])
     }
 
-    /// The picture is saved on this Mac. A caller's `out` names a file on easld's machine: nothing
-    /// is written at that path here.
-    @Test func aSnapshotIsSavedOnThisMacAndAnOutIsRefused() async throws {
-        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-        let viewport = Viewport(rect: Frame(x: 100, y: 50, w: 600, h: 400), zoom: 1)
-        shot = (RenderOutput(image: png, format: .png, width: 1200, height: 800, canvasRect: viewport.rect, scale: 2, objects: []), viewport)
-        let calls = delegated()
-        let out = dir.appendingPathComponent("shot.png").path
-        let refused = await answer(calls, "view.snapshot", .object(["board": "brd_host", "out": .string(out)]))
-        #expect(code(refused) == "unavailable")
-        #expect(!FileManager.default.fileExists(atPath: out))
-        let saved = try await answer(calls, "view.snapshot", .object(["board": "brd_host"])).get()
-        let path = try #require(saved["path"]?.string)
-        defer { try? FileManager.default.removeItem(atPath: path) }
-        #expect(URL(fileURLWithPath: path).deletingLastPathComponent().path == ApiRouter.scratchImages.path)
-        #expect(FileManager.default.contents(atPath: path) == png)
-        #expect(saved["viewport"] == viewport.json)
-        #expect(saved["scale"] == .number(2))
-    }
-
     /// A batch needing the host's files fails even when the same paths exist on this Mac.
     @Test func aNoteNeedingTheHostsFilesFailsTheWholeBatch() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("src"), withIntermediateDirectories: true)
@@ -161,6 +139,10 @@ final class DelegatedCallsTests {
         #expect(code(await answer(calls, "view.get", .object(["board": "brd_host", "zoom": 2]))) == "invalid_params")
         #expect(code(await answer(calls, "text.measure", .object(["items": [.object(["kind": "label", "text": "x", "font": "Menlo"])]]))) == "invalid_params")
         #expect(code(await answer(calls, "view.render", .object(["board": "brd_host", "target": .string(terminal)]))) == "unsupported")
+        #expect(code(await answer(calls, "view.snapshot", .object(["board": "brd_host"]))) == "unsupported")
+        let output = dir.appendingPathComponent("shot.png")
+        #expect(code(await answer(calls, "view.snapshot", .object(["board": "brd_host", "out": .string(output.path)]))) == "unsupported")
+        #expect(!FileManager.default.fileExists(atPath: output.path))
         let shown = try await answer(calls, "view.get", .object(["board": "brd_host"])).get()
         #expect(shown == .object([
             "board": "brd_host", "viewport": .object(["rect": .object(["x": 0, "y": 0, "w": 1200, "h": 800]), "zoom": 1]),
