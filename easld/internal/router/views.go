@@ -250,6 +250,13 @@ func decodeRender(c *clients.Client, raw, answered, format string, width, height
 	var data []byte
 	var reader io.Reader
 	if inline {
+		// NewDecoder accepts separately padded blocks; a reply is one base64 value.
+		if first := strings.IndexByte(raw, '='); first >= 0 {
+			tail := raw[first:]
+			if strings.Trim(tail, "=\r\n") != "" || strings.Count(tail, "=") > 2 {
+				return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with image data that is not base64", c.Name())
+			}
+		}
 		reader = base64.NewDecoder(base64.StdEncoding, strings.NewReader(raw))
 	} else {
 		var err error
@@ -377,8 +384,6 @@ func (r *Router) openURL(p map[string]any) (any, error) {
 const reloadTimeoutMs = 15_000
 const diagramTimeoutMs = 60_000
 
-// reload is object.reload: a browser's page and a diagram's language-server graph are a client's
-// to reload.
 func (r *Router) reload(p map[string]any) (any, error) {
 	id, err := str(p, "id")
 	if err != nil {

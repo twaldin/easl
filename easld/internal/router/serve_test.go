@@ -384,6 +384,24 @@ func TestViewRenderWritesTheDaemonFileAndRelaysTargetErrors(t *testing.T) {
 	}
 }
 
+func TestInlineRenderRejectsSeparatelyPaddedFragments(t *testing.T) {
+	f := newFixture(t)
+	id := idOf(f.result("object.create", note(0, map[string]any{"markdown": "draw"})))
+	png, err := base64.StdEncoding.DecodeString(pixelPNG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := base64.StdEncoding.EncodeToString(png[:4]) + base64.StdEncoding.EncodeToString(png[4:])
+	app := &scriptedClient{router: f.router, replies: []map[string]any{
+		{"ok": true, "result": map[string]any{"data": raw, "format": "png", "width": 1.0, "height": 1.0}},
+	}}
+	attachApp(f, app, nil)
+	code, message := errorOf(f.call("view.render", map[string]any{"target": id, "inline": true}))
+	if code != "internal" || !strings.Contains(message, "not base64") {
+		t.Fatalf("separately padded fragments: %s %s", code, message)
+	}
+}
+
 func jpegBytes(t *testing.T) []byte {
 	t.Helper()
 	var buf bytes.Buffer
