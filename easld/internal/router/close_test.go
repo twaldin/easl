@@ -85,7 +85,7 @@ func TestBoardClosePrunesClientBoardsWithoutDisconnectingOtherBoardsOrSubscripti
 	f.on(client, "events.subscribe", map[string]any{"board": f.board.ID(), "events": []any{"board.closed", "board.opened"}})
 	presence := &conn{}
 	f.on(presence, "events.subscribe", map[string]any{"board": other, "events": []any{"client.changed"}})
-	before := len(client.messages())
+	before, beforePresence := len(client.messages()), len(presence.messages())
 	f.result("board.close", map[string]any{"board": f.board.ID()})
 	want := []any{map[string]any{"id": id, "boards": []string{other}, "serves": []string{"view.get"}}}
 	if got := f.result("client.list", map[string]any{})["clients"]; !reflect.DeepEqual(got, want) {
@@ -95,7 +95,7 @@ func TestBoardClosePrunesClientBoardsWithoutDisconnectingOtherBoardsOrSubscripti
 		"event": "client.changed", "board": other,
 		"data": map[string]any{"clients": want},
 	}}
-	if got := presence.messages(); !reflect.DeepEqual(got, wantPresence) {
+	if got := presence.messages()[beforePresence:]; !reflect.DeepEqual(got, wantPresence) {
 		t.Fatalf("surviving board retained stale client boards or focus: %v, want %v", got, wantPresence)
 	}
 	if !client.IsOpen() || f.router.clients.Choose("view.get", other) == nil || f.router.clients.Choose("view.get", f.board.ID()) != nil {
