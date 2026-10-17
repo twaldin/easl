@@ -225,8 +225,15 @@ struct HostFilesTests {
         let files = try fixture.reader(body: "echo $$ > \(RemoteHost.quote(pidFile.path)); exec /bin/sleep 30")
         let task = Task { try await files.read(fixture.request("waiting.txt")) }
         defer { task.cancel() }
-        for _ in 0..<300 where !FileManager.default.fileExists(atPath: pidFile.path) { try await Task.sleep(for: .milliseconds(10)) }
-        let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        let deadline = ContinuousClock.now + .seconds(20)
+        var started: Int32?
+        while started == nil, ContinuousClock.now < deadline {
+            started = (try? String(contentsOf: pidFile, encoding: .utf8)).flatMap {
+                Int32($0.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            if started == nil { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        let pid = try #require(started, "the host-file client must start before cancellation is exercised")
         #expect(kill(pid, 0) == 0)
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
