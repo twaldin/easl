@@ -86,6 +86,47 @@ final class BoardMirrorTests {
         mirror.close()
     }
 
+    @Test func aRefusedSeenAckRequiresRefreshAndCanBeAcknowledgedAgain() async throws {
+        let note = self.note("look")
+        let marker = try host.raiseAttention(note.id, message: nil, caller: nil).marker
+        let terminal = host.create(type: .terminal, props: .object([:])).id
+        try host.reportLifecycle(tile: terminal, kind: "omp", state: .working, message: nil, seq: nil, source: nil)
+        try host.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        server.stop()
+        let refuse = Locked(true)
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "view.seen", refuse.withLock({ $0 }) {
+                return .object(["id": request["id"] ?? .null, "ok": false,
+                                "error": .object(["code": "unavailable", "message": "acknowledgment refused"])])
+            }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        view.clearAttention(note.id)
+        try await eventually { mirror.problem != nil }
+        #expect(mirror.state == .offline && mirror.connection.state == .online)
+        #expect(host.attention[note.id]?.stamp == marker.stamp)
+        refuse.withLock { $0 = false }
+        mirror.reconnect()
+        try await eventually { mirror.state == .online && view.attention[note.id]?.stamp == marker.stamp }
+        view.clearAttention(note.id)
+        try await eventually { host.attention[note.id] == nil }
+
+        refuse.withLock { $0 = true }
+        view.markSeen(terminal)
+        try await eventually { mirror.problem != nil }
+        #expect(host.objects[terminal]?.props["lifecycle"]?["state"] == "done")
+        refuse.withLock { $0 = false }
+        mirror.reconnect()
+        try await eventually { mirror.state == .online }
+        view.markSeen(terminal)
+        try await eventually { host.objects[terminal]?.props["lifecycle"]?["seen"] == true }
+        #expect(host.objects[terminal]?.props["lifecycle"]?["state"] == "idle")
+    }
+
     @Test func composerReturnedRestagesOnlyThisViewersTerminal() async throws {
         let alpha = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
         let beta = host.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
