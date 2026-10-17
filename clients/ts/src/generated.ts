@@ -234,6 +234,12 @@ export type DrawingMachine = {
 
 export type BrowserProps = {
   url: string;
+  /** Host-owned easld navigation intent, distinct from the observed url. An explicit string URL update stamps the assigned URL, resulting object rev and actor credited with that assignment; URL removal or non-string replacement clears it. Undo or rollback restoration of an existing browser whose URL or intent changed stamps the restored observed URL, new object rev and restored snapshot's updatedBy or createdBy actor, or clears the marker when the restored URL is absent or non-string. Browser reports and unrelated edits or restorations preserve the complete marker, including its original actor. Caller-supplied markers are discarded on creation/import and ignored on update. Mac-hosted boards do not consume this marker */
+  urlIntent?: {
+    url: string;
+    rev: number;
+    actor: Actor;
+  };
   /** names the tile; the app never overwrites it */
   title?: string;
   /** written by the app: the page's own title; shown when `title` is unset; never bumps rev */

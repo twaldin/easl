@@ -118,7 +118,8 @@ public final class BoardMirror: BoardHost {
     /// The board's delegated calls, answered from its window; nil until `serve`.
     private var calls: DelegatedCalls?
     private var identity: ClientIdentity?
-    private var awaitingObjects: [ObjectID: [CheckedContinuation<Void, Error>]] = [:]
+    private var receivedEventSequence: UInt64 = 0
+    private var awaitingEvents: [(through: UInt64, continuation: CheckedContinuation<Void, Error>)] = []
     /// The latest attach's number: an older one's answer changes nothing.
     private var attaches = 0
     /// The user focused the board while an attach was out: once it is accepted, attach again.
@@ -203,7 +204,7 @@ public final class BoardMirror: BoardHost {
     /// Ends both links, and with the board's link this viewer's attachment; the board stays as
     /// last seen. Asks for drawings not sent yet are answered `unavailable`.
     public func close() {
-        failAwaitingObjects(ApiRouter.Failure("unavailable", "this board's viewer closed"))
+        failAwaitingEvents(ApiRouter.Failure("unavailable", "this board's viewer closed"))
         for task in listeners { task.cancel() }
         listeners = []
         calls = nil
@@ -233,7 +234,7 @@ public final class BoardMirror: BoardHost {
         if state != .online { refreshFailure = nil }
         guard board != nil else { return }
         if state != .online {
-            failAwaitingObjects(ApiRouter.Failure("unavailable", "\(hostName) disconnected before displaying the browser tile"))
+            failAwaitingEvents(ApiRouter.Failure("unavailable", "\(hostName) disconnected before applying the browser target"))
             stale = true
             drops += 1
             redrawDue = true
@@ -310,8 +311,8 @@ public final class BoardMirror: BoardHost {
 
     private func answer(_ call: EaslConnection.Call, using calls: DelegatedCalls) async -> Result<JSONValue, EaslConnection.Failure> {
         do {
-            if call.method == "browser.call" || call.method == "object.reload", let id = call.params["id"]?.string {
-                try await admit(id)
+            if call.method == "browser.call" || call.method == "object.reload" {
+                try await admit(through: call.eventsThrough)
             }
             return await calls.answer(call)
         } catch {
@@ -320,29 +321,38 @@ public final class BoardMirror: BoardHost {
         }
     }
 
-    /// easld accepted this target, but its creation may still be in our event stream.
-    private func admit(_ id: ObjectID) async throws {
-        if board?.objects[id] != nil { return }
+    /// Apply the events preceding the call, not an unseen creation that may already be deleted.
+    private func admit(through sequence: UInt64) async throws {
         guard linkState == .online, calls != nil else {
             throw ApiRouter.Failure("unavailable", "\(hostName) is not connected")
         }
-        try await withCheckedThrowingContinuation { awaitingObjects[id, default: []].append($0) }
-    }
-
-    private func failAwaitingObjects(_ failure: ApiRouter.Failure) {
-        for waiters in awaitingObjects.values {
-            for waiter in waiters { waiter.resume(throwing: failure) }
+        if admitted(through: sequence) { return }
+        try await withCheckedThrowingContinuation {
+            awaitingEvents.append((sequence, $0))
         }
-        awaitingObjects.removeAll(keepingCapacity: true)
-    }
-
-    private func apply(_ object: CanvasObject) {
-        guard let board else { return }
-        board.applyHost(object)
-        if let waiters = awaitingObjects.removeValue(forKey: object.id) {
-            for waiter in waiters { waiter.resume() }
+        guard linkState == .online, calls != nil else {
+            throw ApiRouter.Failure("unavailable", "\(hostName) is not connected")
         }
     }
+
+    private func admitted(through sequence: UInt64) -> Bool {
+        reading == nil && receivedEventSequence >= sequence
+            && !held.contains { $0.sequence <= sequence }
+    }
+
+    private func releaseAdmissions() {
+        awaitingEvents.removeAll { waiting in
+            guard admitted(through: waiting.through) else { return false }
+            waiting.continuation.resume()
+            return true
+        }
+    }
+
+    private func failAwaitingEvents(_ failure: ApiRouter.Failure) {
+        for waiting in awaitingEvents { waiting.continuation.resume(throwing: failure) }
+        awaitingEvents.removeAll(keepingCapacity: true)
+    }
+
 
     /// The user is looking at this board (its window became key): an accepted attach goes again
     /// naming it, one still out goes again once it is accepted. A refused link asks nothing.
@@ -422,6 +432,8 @@ public final class BoardMirror: BoardHost {
     // MARK: The host's changes
 
     private func received(_ event: EaslConnection.Event) {
+        receivedEventSequence = max(receivedEventSequence, event.sequence)
+        defer { releaseAdmissions() }
         if event.name == "client.changed" { return clientsChanged(event) }
         if reading != nil || creating > 0 { return held.append(event) }
         guard event.board == nil || event.board == sessionBoardID else { return }
@@ -453,16 +465,11 @@ public final class BoardMirror: BoardHost {
     private func hostChanged(_ object: CanvasObject) {
         learn(object)
         guard !busy(object.id), let current = known[object.id] else { return }
-        apply(current)
+        board?.applyHost(current)
     }
 
     private func hostDeleted(_ id: ObjectID) {
         known.removeValue(forKey: id)
-        if let waiters = awaitingObjects.removeValue(forKey: id) {
-            for waiter in waiters {
-                waiter.resume(throwing: ApiRouter.Failure("not_found", "browser tile \(id) was deleted"))
-            }
-        }
         guard !busy(id) else { return }
         board?.removeHost(id)
     }
@@ -476,7 +483,7 @@ public final class BoardMirror: BoardHost {
     private func settle(_ id: ObjectID) {
         guard let board else { return }
         if let current = known[id] {
-            apply(current)
+            board.applyHost(current)
         } else {
             board.removeHost(id)
         }
@@ -528,12 +535,13 @@ public final class BoardMirror: BoardHost {
         }
         for object in objects where !read.deleted.contains(object.id) {
             learn(object)
-            if !busy(object.id), let current = known[object.id] { apply(current) }
+            if !busy(object.id), let current = known[object.id] { board.applyHost(current) }
         }
     }
 
     /// The events that waited (`held`), in the order they came, once nothing holds them.
     private func release() {
+        defer { releaseAdmissions() }
         guard reading == nil, creating == 0, !held.isEmpty else { return }
         let waiting = held
         held = []

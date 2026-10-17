@@ -362,21 +362,15 @@ final class CanvasView: NSScrollView {
     func apply(_ event: BoardEvent) {
         switch event {
         case .objectCreated(let object):
-            let carried = rekeyed.removeValue(forKey: object.id)
-            let provisional = carried?.browser?.objectID
-            add(object, reusing: carried?.browser)
-            restack()
-            scheduleGeometry()
-            if let carried {
-                if carried.selected {
-                    var selected = selection
-                    if let provisional { selected.remove(provisional) }
-                    selected.insert(object.id)
-                    setSelection(selected)
-                }
-                if let draft = carried.draft { (tiles[object.id]?.content as? NoteTile)?.resume(draft) }
-            }
+            installCanonicalTile(object)
         case .objectUpdated(let object):
+            if rekeyed[object.id] != nil {
+                let selected = selection.contains(object.id)
+                removeTile(object.id)
+                if selected { rekeyed[object.id]?.selected = true }
+                installCanonicalTile(object)
+                return
+            }
             if object.type == .group {
                 groups[object.id]?.update(object)
             } else if TileFactory.hidden(object) {
@@ -420,6 +414,23 @@ final class CanvasView: NSScrollView {
         case .attentionChanged(let id, let marker):
             if let marker { showMarker(id, message: marker.message) } else { hideMarker(id) }
         default: break
+        }
+    }
+
+    private func installCanonicalTile(_ object: CanvasObject) {
+        let carried = rekeyed.removeValue(forKey: object.id)
+        let provisional = carried?.browser?.objectID
+        add(object, reusing: carried?.browser)
+        restack()
+        scheduleGeometry()
+        if let carried {
+            if carried.selected {
+                var selected = selection
+                if let provisional { selected.remove(provisional) }
+                selected.insert(object.id)
+                setSelection(selected)
+            }
+            if let draft = carried.draft { (tiles[object.id]?.content as? NoteTile)?.resume(draft) }
         }
     }
 

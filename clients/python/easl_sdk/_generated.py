@@ -140,6 +140,7 @@ class DrawingMachine(TypedDict):
 
 class BrowserProps(TypedDict):
     url: Required[str]
+    urlIntent: NotRequired[dict[str, Any]]
     title: NotRequired[str]
     pageTitle: NotRequired[str]
     drawingMachine: NotRequired["DrawingMachine"]

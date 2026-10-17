@@ -1286,6 +1286,25 @@ final class BoardMirrorTests {
         try await eventually { mirror.drawingMachines == ["mch_01HOME"] }
     }
 
+    @Test func aBrowserDeletedBeforeItsDelegatedCallIsAdmittedFailsAsDeleted() async throws {
+        let easld = Easld()
+        try serveEasld(easld)
+        let page = host.create(type: .browser, props: .object(["url": "about:blank"]))
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        mirror.serve(window(), as: identity)
+        try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
+        try host.delete(page.id)
+        try await eventually { board.objects[page.id] == nil }
+        let answer = Locked<JSONValue?>(nil)
+        easld.call("browser.call", .object([
+            "id": .string(page.id), "method": "browser.url.get", "params": .object([:]),
+        ])) { reply in answer.withLock { $0 = reply } }
+        try await eventually { answer.withLock { $0 != nil } }
+        let reply = try #require(answer.withLock { $0 })
+        #expect(reply["error"]?["code"] == "not_found")
+    }
+
     @Test func aDrawingMacsPageReportsReachEasldInOrderWithTheirCredit() async throws {
         let easld = Easld()
         try serveEasld(easld)

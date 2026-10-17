@@ -35,6 +35,7 @@ final class BrowserTile: NSView, TileContent {
     let board: Board
     private(set) var object: CanvasObject
     private(set) var webView: WKWebView?
+    private var pendingURLIntent: String?
     /// The loaded page's background luminance (`PageSurface`), kept while the page is detached.
     private(set) var surfaceLuminance: Double?
     private let chrome = BrowserChrome()
@@ -280,7 +281,9 @@ final class BrowserTile: NSView, TileContent {
     func ensureWebView() -> WKWebView {
         if let webView { return webView }
         let view = makeWebView()
-        load(object.props["url"]?.string ?? "about:blank")
+        let address = pendingURLIntent ?? object.props["url"]?.string ?? "about:blank"
+        pendingURLIntent = nil
+        load(address)
         return view
     }
 
@@ -1067,10 +1070,13 @@ final class BrowserTile: NSView, TileContent {
 
     var takesKeyboardFocus: Bool { true }
 
-    /// Someone else changed `props.url` (an agent's object.update): go there, credited to them.
+    /// Remote navigation follows host URL intent, never observed URL metadata.
     /// Another `profile` builds the page again in that profile's store (from `props.url`).
     func update(_ object: CanvasObject) {
         let previous = self.object.props["url"]?.string
+        let intent = object.props["urlIntent"]
+        let newIntent = board.isRemote && intent != self.object.props["urlIntent"]
+        if newIntent { pendingURLIntent = intent?["url"]?.string }
         self.object = object
         if CGFloat(object.zoom) != zoom {
             zoom = CGFloat(object.zoom)
@@ -1083,11 +1089,27 @@ final class BrowserTile: NSView, TileContent {
             return
         }
         updatePageWatch()
-        guard let url = object.props["url"]?.string, url != previous else { return }
-        // A released page reloads from props.url when it comes back.
+        let url: String?
+        if board.isRemote {
+            guard newIntent else { return }
+            url = pendingURLIntent
+        } else {
+            url = object.props["url"]?.string
+            guard url != previous else { return }
+        }
+        guard let url else { return }
+        // Released pages keep new intent until their web view returns.
         guard let webView else { return chrome.setAddress(url) }
+        pendingURLIntent = nil
         guard url != webView.url?.absoluteString else { return }
-        if case .agent(let tile) = object.updatedBy { credit.agent(tile) } else { credit.user() }
+        if board.isRemote {
+            let actor = intent?["actor"]
+            if actor?["kind"]?.string == "agent" { credit.agent(actor?["tile"]?.string) } else { credit.user() }
+        } else if case .agent(let tile) = object.updatedBy {
+            credit.agent(tile)
+        } else {
+            credit.user()
+        }
         load(url)
     }
 

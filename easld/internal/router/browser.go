@@ -306,7 +306,7 @@ func (r *Router) browserReport(p map[string]any, c Conn) (any, error) {
 		if !ok {
 			return nil, invalid("url must be a string")
 		}
-		updated, err = b.Update(id, nil, nil, nil, map[string]any{"url": url}, caller, actor)
+		updated, err = b.ReportBrowserURL(id, url, caller, actor)
 		if err != nil {
 			return nil, err
 		}

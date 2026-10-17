@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "a4df09cf44718c70"
+const SchemaHash = "4a3703479a51a987"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -442,8 +442,17 @@ type DrawingMachine struct {
 	Host string `json:"host"`
 }
 
+// BrowserPropsURLIntent: Host-owned easld navigation intent, distinct from the observed url. An explicit string URL update stamps the assigned URL, resulting object rev and actor credited with that assignment; URL removal or non-string replacement clears it. Undo or rollback restoration of an existing browser whose URL or intent changed stamps the restored observed URL, new object rev and restored snapshot's updatedBy or createdBy actor, or clears the marker when the restored URL is absent or non-string. Browser reports and unrelated edits or restorations preserve the complete marker, including its original actor. Caller-supplied markers are discarded on creation/import and ignored on update. Mac-hosted boards do not consume this marker
+type BrowserPropsURLIntent struct {
+	URL   string `json:"url"`
+	Rev   int    `json:"rev"`
+	Actor Actor  `json:"actor"`
+}
+
 type BrowserProps struct {
 	URL string `json:"url"`
+	// Host-owned easld navigation intent, distinct from the observed url. An explicit string URL update stamps the assigned URL, resulting object rev and actor credited with that assignment; URL removal or non-string replacement clears it. Undo or rollback restoration of an existing browser whose URL or intent changed stamps the restored observed URL, new object rev and restored snapshot's updatedBy or createdBy actor, or clears the marker when the restored URL is absent or non-string. Browser reports and unrelated edits or restorations preserve the complete marker, including its original actor. Caller-supplied markers are discarded on creation/import and ignored on update. Mac-hosted boards do not consume this marker
+	URLIntent *BrowserPropsURLIntent `json:"urlIntent,omitempty"`
 	// names the tile; the app never overwrites it
 	Title *string `json:"title,omitempty"`
 	// written by the app: the page's own title; shown when `title` is unset; never bumps rev

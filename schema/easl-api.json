@@ -245,6 +245,17 @@
       "required": ["url"],
       "properties": {
         "url": { "type": "string" },
+        "urlIntent": {
+          "type": "object",
+          "description": "Host-owned easld navigation intent, distinct from the observed url. An explicit string URL update stamps the assigned URL, resulting object rev and actor credited with that assignment; URL removal or non-string replacement clears it. Undo or rollback restoration of an existing browser whose URL or intent changed stamps the restored observed URL, new object rev and restored snapshot's updatedBy or createdBy actor, or clears the marker when the restored URL is absent or non-string. Browser reports and unrelated edits or restorations preserve the complete marker, including its original actor. Caller-supplied markers are discarded on creation/import and ignored on update. Mac-hosted boards do not consume this marker",
+          "required": ["url", "rev", "actor"],
+          "properties": {
+            "url": { "type": "string" },
+            "rev": { "type": "integer", "minimum": 1 },
+            "actor": { "$ref": "#/definitions/Actor" }
+          },
+          "additionalProperties": false
+        },
         "title": { "type": "string", "description": "names the tile; the app never overwrites it" },
         "pageTitle": { "type": "string", "description": "written by the app: the page's own title; shown when `title` is unset; never bumps rev" },
         "drawingMachine": { "$ref": "#/definitions/DrawingMachine", "description": "the Mac that runs this page in its own browser profile. Mac-hosted boards run on their host and reject foreign or cleared assignments until machine switching is supported; imported browsers bind to the host. Easld persists the creating Mac's identity, or the first eligible attached Mac for an existing unassigned tile. Disconnect never moves a page to another machine" },
