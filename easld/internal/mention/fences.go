@@ -45,7 +45,7 @@ func AnchoredFences(markdown string) []AnchoredFence {
 func resolveFences(fences []AnchoredFence, reading measure.LinkReading) map[string]measure.Excerpt {
 	results := map[string]measure.Excerpt{}
 	for _, f := range fences {
-		results[f.Key] = measure.ExcerptFor(reading.Fence(f.Fence), reading.Root, nil, f.Body)
+		results[f.Key] = reading.NoteExcerpt(f.Fence, f.Body)
 	}
 	return results
 }
@@ -88,8 +88,9 @@ func needsAnchor(f AnchoredFence) bool {
 	return f.Fence.Lines != nil && f.Fence.Anchor == nil && f.Fence.Symbol == nil && f.Fence.Commit == nil
 }
 
-// AnchoringRanges is NoteMarkdown.anchoringRanges(_:reading:): markdown with each unanchored
-// line-range fence anchored at its resolved first line, as the note tile writes them back.
+// AnchoringRanges is NoteMarkdown.anchoringRanges(_:reading:within:captured:): markdown with
+// each unanchored line-range fence anchored at its resolved first line, as the note tile writes
+// them back. The board areas, not the link root, decide which files may be read.
 func AnchoringRanges(markdown string, reading measure.LinkReading) string {
 	var fences []AnchoredFence
 	for _, f := range AnchoredFences(markdown) {

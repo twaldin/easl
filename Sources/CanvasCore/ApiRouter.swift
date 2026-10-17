@@ -195,8 +195,8 @@ public final class ApiRouter {
     /// reported since it loaded, and the log of the page easl last released; nil without the tile.
     public var pageReport: ((Board, ObjectID) async -> PageReport?)?
     /// A note tile's anchored fences resolved against disk now, with the text it captured, by
-    /// fence key (the tile shows them too); nil without the tile, and `object.get` resolves them
-    /// itself.
+    /// fence key (the tile shows them too); nil without the tile. `object.get` resolves them
+    /// itself inside the board's areas, and reports the tile's only for fences those permit.
     public var noteExcerpts: ((Board, ObjectID) async -> [String: NoteExcerpt]?)?
     /// A code tile's range resolved against disk now with the text the tile last found there
     /// (it may re-anchor the range first); nil without the tile, and `object.get` resolves the
@@ -1739,7 +1739,8 @@ public final class ApiRouter {
     /// adds `lastCommand`, the last command its shell finished (not a prop: it changes no `rev`);
     /// a browser tile's adds `page`, what its page reported since it loaded (`PageLog`), after
     /// the `since` cursor when given; a note's adds `fences`, how each anchored fence resolves
-    /// now; a code tile showing a range it anchors adds `rangeStatus`, the same for its range.
+    /// now (one whose file lies outside the board's areas, `BoardAreas`, refused whatever its
+    /// tile shows); a code tile showing a range it anchors adds `rangeStatus`, the same for its range.
     private func get(_ p: JSONValue) async throws -> JSONValue {
         let result = try dispatch("object.get", p)
         guard let id = p["id"]?.string, let board = registry.board(containing: id), let object = board.objects[id] else { return result }
@@ -1756,10 +1757,10 @@ public final class ApiRouter {
         }
         if object.type == .note {
             let fences = NoteMarkdown.anchoredFences(in: NoteMarkdown.parse(object.props["markdown"]?.string ?? ""))
-            let excerpts = await noteExcerpts?(board, id) ?? [:]
-            let unresolved = fences.filter { excerpts[$0.key] == nil }
+            let tile = await noteExcerpts?(board, id) ?? [:]
             let reading = await board.linkSource(of: object)
-            let resolved = excerpts.merging(await NoteSource.excerpts(for: reading.fences(unresolved), root: reading.root)) { tile, _ in tile }
+            var resolved = await NoteSource.excerpts(for: reading.fences(fences), root: reading.root, within: BoardAreas(boardRoot: board.root))
+            for (key, excerpt) in tile where resolved[key]?.refused == false { resolved[key] = excerpt }
             return result.merging(.object(["fences": NoteMarkdown.status(of: fences, excerpts: resolved)]))
         }
         if object.type == .code, let fence = CodeAnchor.fence(object.props) {
@@ -1977,7 +1978,7 @@ public final class ApiRouter {
         }
         // A note anchored to a branch anchors its ranges on the text at the ref.
         let reading = RefSource.ref(of: merged) == nil ? LinkReading(root: root) : await board.linkSource(props: merged)
-        let text = await NoteMarkdown.anchoringRanges(markdown, reading: reading)
+        let text = await NoteMarkdown.anchoringRanges(markdown, reading: reading, within: BoardAreas(boardRoot: board.root))
         guard text != markdown else { return p }
         props["markdown"] = .string(text)
         params["props"] = .object(props)
