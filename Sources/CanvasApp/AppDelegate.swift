@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ObjectMeasure.html = { props, width, root in try await HtmlTile.measure(props: props, width: width, root: root) }
         notifier.onOpen = { [weak self] board, tile in
             guard let self, var controller = self.controllers[board] else { return }
-            if !controller.isBoardOpen {
+            if !controller.isBoardOpen || controller.window.map(self.isHoldingClose) == true {
                 let reopened = self.open(root: controller.board.root, select: false)
                 guard let open = self.controllers[reopened.id] else { return }
                 controller = open
@@ -426,8 +426,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.onClose = nil
             controller.isBoardOpen = false
             controller.discard()
-            controller.window?.isExcludedFromWindowsMenu = true
-            controller.window?.close()
+            if let window = controller.window {
+                let name = window.frameAutosaveName
+                if !name.isEmpty {
+                    window.saveFrame(usingName: name)
+                    window.setFrameAutosaveName("")
+                }
+                window.isExcludedFromWindowsMenu = true
+                window.close()
+            }
         }
         return result
     }
@@ -446,7 +453,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             heldCloses.removeAll { $0.window === window }
             return false
         }
-        if !heldCloses.contains(where: { $0 === controller }) { heldCloses.append(controller) }
+        if !heldCloses.contains(where: { $0 === controller }) {
+            heldCloses.append(controller)
+            window.isExcludedFromWindowsMenu = true
+            if controller.isBoardOpen { saveOpenBoards(closing: window) }
+        }
         return true
     }
 
@@ -466,6 +477,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func cancelHeldManualClose(_ window: NSWindow) {
         heldCloses.removeAll { $0.window === window && $0.isBoardOpen }
+        if window.isExcludedFromWindowsMenu { window.isExcludedFromWindowsMenu = false }
     }
 
     func releaseHeldCloses(excluding excluded: NSWindow? = nil) {
@@ -544,7 +556,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The open boards (shown, minimized or a tab) in tab/window order: a tab group's boards
     /// together in tab order, and groups and lone windows by when their first board was opened.
     private func openBoardsInOrder() -> [CanvasWindowController] {
-        let open = openedOrder.compactMap { controllers[$0] ?? remoteControllers[$0] }.filter { $0.window.map(isShown) ?? false }
+        let open = openedOrder.compactMap { controllers[$0] ?? remoteControllers[$0] }.filter { controller in
+            controller.isBoardOpen && (controller.window.map { isShown($0) && !isHoldingClose($0) } ?? false)
+        }
         var ordered: [CanvasWindowController] = []
         for controller in open where !ordered.contains(where: { $0 === controller }) {
             let windows = controller.window?.tabbedWindows ?? controller.window.map { [$0] } ?? []
@@ -562,18 +576,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.remote.map { Self.remoteKey($0.host.sshTarget, controller.board.id) } ?? controller.board.id
     }
 
-    /// ⌘J follows needs-you items across open local and remote boards in tab order.
-    /// An off-Space or minimized target waits without acknowledging an unseen item.
+    /// ⌘J follows needs-you items across presentable local and remote boards in tab order.
+    /// Hidden and minimized boards keep their unseen items until their windows are shown.
     func goToNextNeedsYou(from current: CanvasWindowController) {
         let boards = openBoardsInOrder()
-        let entries = boards.map { NeedsYouTour.Entry(board: tourKey($0), items: $0.canvas.needsYouItems) }
+        var entries: [NeedsYouTour.Entry] = []
+        entries.reserveCapacity(boards.count)
+        var waiting: CanvasWindowController?
+        for controller in boards {
+            let items = controller.canvas.needsYouItems
+            if let window = controller.window, canPresentTab(window.tabGroup?.selectedWindow ?? window) {
+                entries.append(NeedsYouTour.Entry(board: tourKey(controller), items: items))
+            } else if waiting == nil, !items.isEmpty {
+                waiting = controller
+            }
+        }
         guard let stop = NeedsYouTour.next(from: tourKey(current), after: current.canvas.needsYouCursor, in: entries) else {
-            return current.canvas.showNotice("Nothing needs you")
+            let message = waiting.map { "Show or restore “\($0.board.root.lastPathComponent)” to continue" } ?? "Nothing needs you"
+            return current.canvas.showNotice(message)
         }
         guard let target = boards.first(where: { tourKey($0) == stop.board }) else { return }
         guard let window = target.window,
               target === current ? canPresentTab(window) : bringForward(window) else {
-            return current.canvas.showNotice("Show “\(target.board.root.lastPathComponent)” on its Space to continue")
+            return current.canvas.showNotice("Show or restore “\(target.board.root.lastPathComponent)” to continue")
         }
         if target !== current {
             // A tab never shown has not been laid out: the item is framed in the view's real size.
@@ -750,14 +775,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// so that board stays recorded, as Quit keeps every tab.
     private func saveOpenBoards(closing: NSWindow? = nil) {
         guard !terminating else { return }
-        let open = controllers.values.filter { $0.window.map(isShown) ?? false }
+        let open = controllers.values.filter { $0.window.map { isShown($0) && !isHoldingClose($0) } ?? false }
         let others = open.filter { $0.window !== closing }
         let shown = others.isEmpty ? open : others
         try? writeOpenBoards(shown)
     }
 
     private func openLocalBoards(excluding closing: NSWindow?) -> [CanvasWindowController] {
-        controllers.values.filter { $0.window !== closing && $0.isBoardOpen }
+        controllers.values.filter { controller in
+            controller.window !== closing && controller.isBoardOpen && !heldCloses.contains(where: { $0 === controller })
+        }
     }
 
     private func writeOpenBoards(_ shown: [CanvasWindowController]) throws {
