@@ -62,7 +62,7 @@
           { "error": { "code": "unavailable", "message": "{{n.object.id}} is only a host picture: view.render cannot draw it" } }
         ],
         "object.reload": [
-          { "result": { "loaded": true, "url": "https://example.com/" } }
+          { "result": { "id": "{{web.object.id}}", "loaded": true, "url": "https://example.com/" } }
         ]
       },
       "ignore": {

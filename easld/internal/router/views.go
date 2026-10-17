@@ -17,13 +17,15 @@ import (
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/clients"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/server"
+	"github.com/twaldin/easl/easld/internal/swiftjson"
 	"github.com/twaldin/easl/easld/internal/weblink"
 )
 
 // render is view.render. The client always draws inline and writes no file; easld checks
 // the bytes and, unless the caller asked for inline, writes them here (out, or a new file
 // under the temp easl-renders directory).
-func (r *Router) render(p map[string]any) (any, error) {
+func (r *Router) render(id any, p map[string]any) (any, error) {
 	inline, _ := p["inline"].(bool)
 	if inline {
 		if _, ok := p["out"]; ok {
@@ -131,6 +133,20 @@ func (r *Router) render(p map[string]any) (any, error) {
 		}
 	}
 	if inline {
+		reply["data"] = ""
+		envelope, err := swiftjson.Encode(okReply(id, reply), false, true)
+		if err != nil {
+			if nf, ok := err.(swiftjson.NonFinite); ok {
+				return nil, invalid("%s", nf.Debug())
+			}
+			return nil, err
+		}
+		// Decoded base64 admits only its alphabet and CR/LF. The wire escapes slashes
+		// and CR/LF, so count those without encoding another copy of the image.
+		size := len(envelope) + len(raw) + strings.Count(raw, "/") + strings.Count(raw, "\r") + strings.Count(raw, "\n") + 1
+		if size > server.MaxPendingOutput {
+			return nil, invalid("inline view.render response exceeds the %d-byte output limit; omit inline or use out to write the image to a file", server.MaxPendingOutput)
+		}
 		reply["data"] = raw
 		return reply, nil
 	}

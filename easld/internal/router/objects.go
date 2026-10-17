@@ -66,6 +66,14 @@ func (r *Router) writeObject(method string, p map[string]any) (any, error) {
 		return nil, err
 	}
 	if method == "object.create" {
+		if params["type"] == string(model.HTML) && params["size"] == "fit" {
+			b, err := r.boardOf(params)
+			if err != nil {
+				return nil, err
+			}
+			params = copyParams(params)
+			params["board"] = b.ID()
+		}
 		if _, keyed := board.Key(asMap(params["props"])); !keyed {
 			reused, err := r.reusableChanges(params)
 			if err != nil {
@@ -1126,7 +1134,7 @@ type fit struct {
 // fitSize is the measured size an object.create/update with `size: "fit"` gets, or a note or
 // image created without a frame height; nil otherwise. guard is the batch plan's inputs; a
 // single write guards only this fit (board identity, and the object's rev when one was read).
-func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[string]any, guard *fitGuard) (*fit, error) {
+func (r *Router) fitSize(method string, p map[string]any, state *batchState, guard *fitGuard) (*fit, error) {
 	frame := asMap(p["frame"])
 	_, hasH := frame["h"]
 	fitsNote := method == "object.create" && (p["type"] == string(model.Note) || p["type"] == string(model.Image)) && !hasH
@@ -1178,38 +1186,21 @@ func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[st
 	if err != nil {
 		return nil, err
 	}
+	if _, isRef := reference(id); state == nil && isRef {
+		return nil, invalid("%s must name an earlier create op", id)
+	}
 	var typ model.ObjectType
 	var props map[string]any
 	var baseWidth *float64
 	var b *board.Board
-	if index, isRef := reference(id); isRef {
-		created, ok := pending[index]
-		if !ok {
-			return nil, invalid("%s must name an earlier create op", id)
-		}
-		typeName, err := str(created, "type")
+	if state != nil {
+		o, err := state.object(id)
 		if err != nil {
 			return nil, err
 		}
-		t, ok := model.ParseObjectType(typeName)
-		if !ok {
-			return nil, invalid("%s must name an earlier create op", id)
-		}
-		typ = t
-		props = asMap(created["props"])
-		if props == nil {
-			props = map[string]any{}
-		}
-		if patch, ok := p["props"]; ok {
-			props, _ = model.Merge(props, patch).(map[string]any)
-		}
-		if w, ok := asMap(created["frame"])["w"].(float64); ok {
-			baseWidth = &w
-		}
-		b, err = r.boardOf(created)
-		if err != nil {
-			return nil, err
-		}
+		b, typ, props = state.live, o.Type, o.Props
+		w := o.Frame.W
+		baseWidth = &w
 	} else {
 		b, err = r.boardForObject(id)
 		if err != nil {
@@ -1220,11 +1211,11 @@ func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[st
 			return nil, err
 		}
 		typ, props = o.Type, o.Props
-		if patch, ok := p["props"]; ok {
-			props, _ = model.Merge(props, patch).(map[string]any)
-		}
 		w := o.Frame.W
 		baseWidth = &w
+	}
+	if patch, ok := p["props"]; ok {
+		props, _ = model.Merge(props, patch).(map[string]any)
 	}
 	if width == nil && typ != model.Code && typ != model.Image {
 		width = baseWidth

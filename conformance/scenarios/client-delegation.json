@@ -55,7 +55,7 @@
           { "result": { "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "address": "worker@client-delegation", "kind": "omp", "lifecycle": { "state": "unknown" }, "open": true, "focused": false }, "command": ["omp", "--plan"] } }
         ],
         "object.reload": [
-          { "result": { "loaded": true, "url": "https://example.com/" } }
+          { "result": { "id": "{{web.object.id}}", "loaded": true, "url": "https://example.com/" } }
         ],
         "text.measure": [
           { "result": { "sizes": [{ "w": 280, "h": 86, "tableShortfall": 0 }, { "w": 98, "h": 28 }, { "w": 61, "h": 26 }, { "w": 55, "h": 20 }, { "w": 83, "h": 20 }] } },

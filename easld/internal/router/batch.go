@@ -14,8 +14,98 @@ type upsertPlan struct {
 	key, holder string
 }
 
-// batch is object.batch: every op applies or none does, as one board revision. Sizes are
-// measured and upserts resolved before anything changes; `$n` names what op n created.
+// batchInput is the unpublished measurement input after the planned prefix.
+// Layout changes origins, not HTML widths; placement stays in the commit pass.
+type batchInput struct {
+	object  model.Object
+	deleted bool
+}
+
+type batchState struct {
+	live   *board.Board
+	inputs map[string]batchInput
+}
+
+func (s *batchState) object(id string) (model.Object, error) {
+	if input, found := s.inputs[id]; found {
+		if input.deleted {
+			return model.Object{}, board.NotFound("object %s", id)
+		}
+		return input.object, nil
+	}
+	if _, isRef := reference(id); isRef {
+		return model.Object{}, invalid("%s must name an earlier create or upsert op", id)
+	}
+	o, err := s.live.Object(id)
+	if err != nil {
+		return o, err
+	}
+	s.inputs[id] = batchInput{object: o}
+	return o, nil
+}
+
+func (s *batchState) advance(method string, p map[string]any, size *fit, index int) error {
+	var id string
+	var o model.Object
+	switch method {
+	case "object.create":
+		id = "$" + itoa(index)
+		typ, ok := model.ParseObjectType(stringOf(p["type"]))
+		if !ok {
+			return invalid("unknown object type")
+		}
+		w, h := board.DefaultSize(typ)
+		o = model.Object{ID: id, Type: typ, Props: asMap(p["props"]), Frame: model.Frame{W: w, H: h}}
+	case "object.update", "object.delete":
+		var err error
+		id, err = str(p, "id")
+		if err != nil {
+			return err
+		}
+		o, err = s.object(id)
+		if err != nil {
+			return err
+		}
+		if method == "object.delete" {
+			s.inputs[id] = batchInput{deleted: true}
+			return nil
+		}
+		if props, present := p["props"]; present {
+			o.Props, _ = model.Merge(o.Props, props).(map[string]any)
+		}
+	default:
+		return nil
+	}
+	if size != nil {
+		o.Frame.W, o.Frame.H = size.W, size.H
+	} else if value, present := p["frame"]; present {
+		frame := asMap(value)
+		_, hasX := frame["x"].(float64)
+		_, hasY := frame["y"].(float64)
+		w, hasW := frame["w"].(float64)
+		h, hasH := frame["h"].(float64)
+		if method == "object.create" && !hasX && !hasY && hasW && hasH {
+			o.Frame.W, o.Frame.H = w, h
+		} else {
+			var base *model.Frame
+			if method == "object.update" {
+				base = &o.Frame
+			}
+			f, err := parseFrame(value, base)
+			if err != nil {
+				return err
+			}
+			if o.Type != model.Group {
+				o.Frame = f
+			}
+		}
+	}
+	s.inputs[id] = batchInput{object: o}
+	return nil
+}
+
+// batch is object.batch: every op applies or none does, as one board revision.
+// Fits measure sequential planned state; `$n` names what op n created or upserted.
 func (r *Router) batch(p map[string]any) (any, error) {
 	ops, ok := p["ops"].([]any)
 	if !ok || len(ops) == 0 {
@@ -44,8 +134,17 @@ func (r *Router) batch(p map[string]any) (any, error) {
 	upserts := map[int]upsertPlan{}
 	updating := map[int]string{}
 	names := make([]string, len(ops))
+	var state *batchState
 	for i, op := range ops {
 		names[i], _ = asMap(op)["method"].(string)
+		params := asMap(asMap(op)["params"])
+		_, sized := params["size"]
+		_, hasH := asMap(params["frame"])["h"]
+		creates := names[i] == "object.create" || names[i] == "object.upsert"
+		defaultFit := creates && (params["type"] == string(model.Note) || params["type"] == string(model.Image)) && !hasH
+		if state == nil && (sized || defaultFit) {
+			state = &batchState{live: b, inputs: map[string]batchInput{}}
+		}
 	}
 	resolvedOps := make([]map[string]any, len(ops))
 	for index, op := range ops {
@@ -105,11 +204,16 @@ func (r *Router) batch(p map[string]any) (any, error) {
 					held.note(b, id)
 				}
 			}
-			size, err := r.fitSize(method, params, pending, held)
+			size, err := r.fitSize(method, params, state, held)
 			if err != nil {
 				return err
 			}
 			sizes = append(sizes, size)
+			if state != nil {
+				if err := state.advance(method, params, size, index); err != nil {
+					return err
+				}
+			}
 			return nil
 		}()
 		if err != nil {
@@ -126,6 +230,16 @@ func (r *Router) batch(p map[string]any) (any, error) {
 			}
 		case "object.update":
 			id, ok := params["id"].(string)
+			if state != nil {
+				if n, isRef := reference(id); isRef {
+					if created, exists := pending[n]; exists {
+						o := state.inputs[id].object
+						updated := copyParams(created)
+						updated["props"] = o.Props
+						pending[n] = updated
+					}
+				}
+			}
 			value, has := asMap(params["props"])["key"]
 			if !ok || !has {
 				break

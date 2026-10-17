@@ -265,7 +265,7 @@ func (r *Router) call(id any, method string, raw any, c Conn) (any, error) {
 	case "agent.restart":
 		return r.restart(p)
 	case "view.render":
-		return r.render(p)
+		return r.render(id, p)
 	case "view.snapshot":
 		return r.snapshot(p)
 	case "tray.drain":
