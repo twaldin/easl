@@ -15,6 +15,22 @@ struct TerminalReferencesTests {
         #expect(refs("bin/easl:12") == ["bin/easl 12-12"], "a path with a slash needs no extension")
     }
 
+    @Test func fileURLHostsAreNotPartOfTheAbsoluteReferencePath() throws {
+        for text in ["file://build-host/abs/src/lib.rs:3-7", "file:///abs/src/lib.rs:3-7"] {
+            let reference = try #require(TerminalReferences.reference(in: text, at: 0))
+            #expect(reference.path == "/abs/src/lib.rs")
+            #expect(reference.lines == LineRange(start: 3, end: 7))
+            #expect(reference.range == NSRange(location: 0, length: text.utf16.count))
+            let readings = TerminalReferences.candidates(row: 0, column: 5, columns: 80, read: { $0 == 0 ? text : nil })
+            #expect(readings.map(\.reference.path) == ["/abs/src/lib.rs"])
+            #expect(readings.map(\.reference.lines) == [LineRange(start: 3, end: 7)])
+        }
+        #expect(refs("file://build-host/abs/src/lib.rs:3:9") == ["/abs/src/lib.rs 3-3"])
+        #expect(refs("file:///abs/src/lib.rs#L3-L7") == ["/abs/src/lib.rs 3-7"])
+        #expect(refs("file://build-host/abs/src/lib.rs") == ["/abs/src/lib.rs"])
+        #expect(refs("file:///abs/src/lib.rs") == ["/abs/src/lib.rs"])
+    }
+
     @Test func leavesUrlsTimesAndVersionsAlone() {
         #expect(refs("https://example.com:443/a.js:3 localhost:3000 at 12:30 v1.2:3 Makefile:4").isEmpty)
         #expect(refs("foo.ts:0 foo.ts:12abc").isEmpty)
