@@ -23,11 +23,16 @@ Each version's section is its GitHub release's notes.
 - Inline renders reject separately padded base64 fragments rather than returning image data a standard decoder cannot read.
 - Large inline render replies no longer hold the viewer's main thread while checking the escaped JSON size against easld's 64 MiB limit.
 - Login-shell probes no longer inherit unrelated sockets and pipes, so a shell cannot keep an exited SSH client's output open.
+- Concurrent host commands use dedicated threads for blocking process and pipe I/O, leaving GCD workers available for socket handshakes and request delivery.
+- Socket connections send requests on their own nonblocking queue instead of waiting for shared GCD workers; large writes resume when their descriptor is ready.
+- Streamed requests and replies scan only newly received bytes for line endings instead of repeatedly scanning a partial frame.
+- Host-note replies are decoded and interpreted on utility workers, leaving the cooperative executor available for socket handlers.
+- Synchronous board-load anchor checks take the next free Git slot ahead of queued background reads, without raising the two-process cap or preempting running commands.
 - Quitting tracks SSH process exit independently of output-draining callbacks, so a delayed reader cannot keep an already-reaped child registered.
 - Remote metadata polling runs off the main thread; change notifications remain on it and are discarded if cancelled before delivery.
 - Symbol-only note fences check the name before the declaration regex, avoiding expensive regex scans of long lines that cannot contain that symbol.
 - Development: `browser-surfaces` adds Swift-host conformance for private stream ownership, acknowledgement credit, sequence deduplication, input validation, and dialogs without a listener.
-- Development: Core CI keeps its two-job build cap and serial test mode while socket-handshake contention is investigated separately. Expensive routing checks run off the main actor; deadlines, polling and assertions are unchanged.
+- Development: Core CI keeps its two-job build cap and serial test execution. The flip back to parallel is deferred. Blocking instance-lock fixtures run off the cooperative executor. The slow-subscriber producer yields between its unchanged mutations. Deadlines and assertions are unchanged.
 - **Remote image tiles draw on the viewing Mac.** Both easld and Mac-hosted boards use the real image tile, with host bytes held only in memory. A live tile polls host metadata every two seconds and reloads when the file changes. Paths outside the board root, escaping symlinks and files over 4 MiB show a refusal in the tile.
 - **Board tabs stay on their Space.** Opening, closing or reopening a board no longer brings a replacement tab onto the Space you're using. Selecting a board on another Space, or in a minimized window, waits until you visit or restore its window instead of switching Spaces. Opening a folder through another easl launch follows the same rule. API close still discards the board's live surfaces immediately; an off-Space native tab finishes closing when its replacement can appear safely. ⌘J skips boards it cannot show and leaves their unseen attention markers untouched.
 

@@ -143,7 +143,7 @@ final class DelegatedCalls {
         }
         let output = try await window.render(request, format)
         let result = ApiRouter.rendered(output, ApiRouter.inlined(output))
-        try await offPool { Result { try Self.checkReplySize(result) } }.get()
+        try await offPool(qos: .utility) { Result { try Self.checkReplySize(result) } }.get()
         return result
     }
 

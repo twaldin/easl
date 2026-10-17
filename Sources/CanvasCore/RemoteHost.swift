@@ -324,13 +324,13 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         text.split(whereSeparator: \.isNewline).last.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    /// Runs off the cooperative pool, draining output while optional bytes stream to stdin.
+    /// Runs blocking process I/O on dedicated threads so GCD can still service socket reads.
     /// Timeout and cancellation end and reap the process, including a blocked stdin writer.
     public static func run(_ executable: String, _ arguments: [String], input: Data? = nil, timeout: TimeInterval) async throws -> (status: Int32, output: String, errors: String) {
         try Task.checkCancellation()
         let job = RunningProcess()
         let result: (status: Int32, output: String, errors: String) = await withTaskCancellationHandler {
-            await offPool {
+            let work: @Sendable () -> (status: Int32, output: String, errors: String) = {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: executable)
                 process.arguments = arguments
@@ -358,14 +358,14 @@ public struct RemoteHost: Codable, Hashable, Sendable {
                     let writer = stdin.fileHandleForWriting
                     _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
                     drained.enter()
-                    DispatchQueue.global().async {
+                    Thread.detachNewThread {
                         try? writer.write(contentsOf: input)
                         try? writer.close()
                         drained.leave()
                     }
                 }
                 drained.enter()
-                DispatchQueue.global().async {
+                Thread.detachNewThread {
                     let data = errors.fileHandleForReading.readDataToEndOfFile()
                     stderr.withLock { $0 = data }
                     drained.leave()
@@ -375,6 +375,11 @@ public struct RemoteHost: Codable, Hashable, Sendable {
                 process.waitUntilExit()
                 deadline.cancel()
                 return (process.terminationStatus, String(decoding: stdout, as: UTF8.self), String(decoding: stderr.withLock { $0 }, as: UTF8.self))
+            }
+            return await withCheckedContinuation { done in
+                let thread = Thread { done.resume(returning: work()) }
+                thread.qualityOfService = .userInitiated
+                thread.start()
             }
         } onCancel: {
             job.cancel()
