@@ -49,7 +49,7 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
     private lazy var boardStep = makeBoardStep()
 
     /// The host being shown: its name and ssh target, and once discovered, the host.
-    private var target: (name: String, sshTarget: String)?
+    private var target: (name: String, sshTarget: String, home: String?)?
     private var host: RemoteHost?
     private var connection: EaslConnection?
     private var work: [Task<Void, Never>] = []
@@ -161,7 +161,7 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
             showBoards(name: host.name, sshTarget: host.sshTarget)
         } else if hostTable.selectedRow >= 0, hostTable.selectedRow < hosts.count {
             let row = hosts[hostTable.selectedRow]
-            showBoards(name: row.name, sshTarget: row.sshTarget)
+            showBoards(name: row.name, sshTarget: row.sshTarget, home: row.home)
         } else {
             hostStatus.stringValue = "Choose a host, or type one."
         }
@@ -188,10 +188,10 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
         ])
     }
 
-    private func showBoards(name: String, sshTarget: String) {
+    private func showBoards(name: String, sshTarget: String, home: String? = nil) {
         NSLog("easl: Open Remote: connecting to %@", sshTarget)
         stop()
-        target = (name, sshTarget)
+        target = (name, sshTarget, home)
         boards = []
         boardTable.reloadData()
         boardTitle.stringValue = "Boards on \(name)"
@@ -206,7 +206,8 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
         busy("Reaching \(target.name) over ssh…")
         work.append(Task { [weak self] in
             do {
-                let host = try await RemoteHost.discover(name: target.name, sshTarget: target.sshTarget, support: AppPaths.devRemoteHome)
+                let host = try await RemoteHost.discover(name: target.name, sshTarget: target.sshTarget,
+                                                         support: AppPaths.devRemoteHome ?? target.home, allowDefault: AppPaths.devRemoteHome == nil)
                 guard !Task.isCancelled else { return }
                 self?.connect(to: host)
             } catch {

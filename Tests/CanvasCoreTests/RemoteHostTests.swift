@@ -38,6 +38,8 @@ struct RemoteHostTests {
         let host = RemoteHost.parseDiscovery("os=Darwin\nhome=/Users/tim\ntmpdir=/var/folders/T/\n", name: "localhost", sshTarget: "localhost", support: "/tmp/easl-dev-host")
         #expect(host?.socketPath == "/tmp/easl-dev-host/easl.sock")
         #expect(host?.server == .app, "a development instance on a Mac is the app too, without a bundle to start")
+        #expect(host?.zmxDir == "/tmp/easl-dev-host/zmx", "its sessions are in its home, never the installed app's GUI TMPDIR")
+        #expect(host?.tmpdir == "/tmp/easl-dev-host/tmp")
     }
 
     @Test func startOpensTheInstalledBundleOnlyForTheInstanceWhoseSocketWasFound() {
