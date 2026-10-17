@@ -11,6 +11,7 @@
 #   scripts/dev.sh snapshot [file]  view.snapshot (in-process render, the agent-facing view) to a PNG
 #   scripts/dev.sh input <args…>    replay input (scripts/dev-input.swift) into this instance
 #   scripts/dev.sh sessions         list this instance's zmx sessions
+#   scripts/dev.sh zmx-env <cmd…>   run <cmd> with this home's zmx paths (no GUI)
 #
 # More instances of one checkout (parallel agents, user studies): EASL_DEV_HOME picks another
 # home (with its own browser profile, EASL_BROWSER_PROFILE=own), and EASL_DEV_APP launches a
@@ -21,6 +22,7 @@ set -eu
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 home="${EASL_DEV_HOME:-$repo/.easl-home}"
 case "$home" in /*) ;; *) home="$PWD/$home" ;; esac
+home="$(python3 "$repo/scripts/dev-zmx.py" "$home")"
 app="${EASL_DEV_APP:-$repo/.build/easl.app}"
 # Window-id lookup needs yabai: YABAI, else ~/Applications/Yabai.app, else yabai on PATH.
 yabai="${YABAI:-$HOME/Applications/Yabai.app/Contents/MacOS/yabai}"
@@ -39,8 +41,13 @@ wait_window() {
   while [ -z "$(window_id)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
 }
 export EASL_SOCKET="$home/easl.sock"
-# zmx keys its socket directory off TMPDIR; match the GUI app's.
-zmx_env() { TMPDIR="$(getconf DARWIN_USER_TEMP_DIR)" "$@"; }
+# zmx 0.8.1 keeps sockets and logs in ZMX_DIR.
+zmx_dir="$home/zmx"
+zmx_state="$home/state"
+zmx_tmp="$home/tmp"
+zmx_env() {
+  ZMX_DIR="$zmx_dir" XDG_STATE_HOME="$zmx_state" TMPDIR="$zmx_tmp" "$@"
+}
 
 # The instance running on this home: the holder of its instance lock (the pid it wrote there,
 # while that process has the file open), else, for an instance from before the lock, the pid
@@ -99,7 +106,8 @@ launch() {
   # and EASL_DEV_REMOTE_HOME so File › Open Remote… reaches another dev instance through a
   # private sshd (docs/testing.md).
   # EASL_DEV_PERF=0 turns the probes off, e.g. to let the instance sample its own stalls.
-  set -- EASL_NO_ACTIVATE=1 EASL_DEV_INPUT=1 EASL_DEV_PERF="${EASL_DEV_PERF:-1}" EASL_ROOT="$root"
+  set -- EASL_NO_ACTIVATE=1 EASL_DEV_INPUT=1 EASL_DEV_PERF="${EASL_DEV_PERF:-1}" EASL_ROOT="$root" \
+    ZMX_DIR="$zmx_dir" XDG_STATE_HOME="$zmx_state" TMPDIR="$zmx_tmp"
   [ -z "${EASL_DEV_HOME:-}" ] || set -- "$@" EASL_BROWSER_PROFILE=own
   [ -z "${XDG_CONFIG_HOME:-}" ] || set -- "$@" XDG_CONFIG_HOME="$XDG_CONFIG_HOME"
   [ -z "${EASL_DEV_EXTERNAL_OPEN:-}" ] || set -- "$@" EASL_DEV_EXTERNAL_OPEN="$EASL_DEV_EXTERNAL_OPEN"
@@ -182,5 +190,6 @@ case "${1:-}" in
     exec "$repo/.build/dev-input" "$pid" "$@"
     ;;
   sessions) sessions ;;
+  zmx-env) shift; [ $# -gt 0 ] || { echo "usage: scripts/dev.sh zmx-env <cmd…>" >&2; exit 2; }; zmx_env "$@" ;;
   *) sed -n '2,14p' "$0" >&2; exit 2 ;;
 esac

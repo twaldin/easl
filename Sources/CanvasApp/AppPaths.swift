@@ -86,9 +86,22 @@ enum AppPaths {
         return (["/opt/homebrew/bin/zmx", "/usr/local/bin/zmx"] + path).first { FileManager.default.isExecutableFile(atPath: $0) }
     }()
 
-    /// Where zmx writes each session's log (`<session>.log`): `$XDG_STATE_HOME/zmx/logs`, else
-    /// `~/.local/state/zmx/logs`. easl deletes its sessions' logs (`Housekeeping`).
+    /// This development home's zmx socket directory, `<EASL_HOME>/zmx`. Nil for the
+    /// installed app. Taken from `EASL_HOME`, not from a `ZMX_DIR` already in the
+    /// launch environment: startup sets that variable with `setenv`, which
+    /// `ProcessInfo` does not show.
+    static let devZmxDir: String? = {
+        guard let home = ProcessInfo.processInfo.environment["EASL_HOME"] else { return nil }
+        return ZmxIsolation.layout(home: home)?.zmxDir
+    }()
+
+    /// Where zmx writes each session's log (`<session>.log`). zmx 0.8.1 uses
+    /// `$ZMX_DIR/logs` when `ZMX_DIR` is set, else `$XDG_STATE_HOME/zmx/logs`, else
+    /// `~/.local/state/zmx/logs`. A development home's is `<EASL_HOME>/zmx/logs`.
+    /// easl deletes its sessions' logs (`Housekeeping`).
     static let zmxLogs: URL = {
+        let forced = devZmxDir ?? ProcessInfo.processInfo.environment["ZMX_DIR"].flatMap { $0.hasPrefix("/") ? $0 : nil }
+        if let forced { return URL(fileURLWithPath: forced, isDirectory: true).appendingPathComponent("logs", isDirectory: true) }
         let state = ProcessInfo.processInfo.environment["XDG_STATE_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state", isDirectory: true)
         return state.appendingPathComponent("zmx/logs", isDirectory: true)
