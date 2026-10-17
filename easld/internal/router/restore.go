@@ -182,6 +182,7 @@ func (r *Router) opened(b *board.Board, root string) {
 			}
 		}
 		for _, t := range terminals {
+			r.ensureCmux(t.o.ID)
 			if s, ok := running[session.Prefix+t.o.ID]; ok && (s.Unreachable || s.Carries(t.labels, t.spawn.Merged...)) {
 				continue
 			}

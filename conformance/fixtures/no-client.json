@@ -1,7 +1,7 @@
 {
   "scenario": "no-client",
   "description": "No Mac client attached (client.attach): every delegated method fails `unavailable` saying what it needed of the app, and what measures text (text.measure, object.measure, `size: fit`, a layout.check finding that rests on a measured size) answers from easld's glyph table, marked `approximate: true`. A layout.check whose findings rest on no measured size isn't. easld only: the app measures with AppKit and draws itself.",
-  "recordedOn": "easld with no client attached (the app measures and draws itself)",
+  "recordedOn": "easld browser-machine lane",
   "steps": [
     {
       "step": "board.open",
@@ -462,7 +462,7 @@
       "response": {
         "error": {
           "code": "unavailable",
-          "message": "no app shows board <board>: object.reload reloads the page in its browser tile"
+          "message": "<obj:2> has no drawing Mac yet"
         },
         "id": "r14",
         "ok": false

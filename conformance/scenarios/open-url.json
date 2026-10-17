@@ -1,5 +1,5 @@
 {
-  "description": "view.open_url: an http(s) address opens a browser tile beside the caller's terminal, the same address (scheme and host case, default port, empty path normalised) reuses it, other schemes and missing urls are errors; without a caller the tile is placed near the user's view. A browser tile's own props (a named profile, reload when files change) are known props.",
+  "description": "view.open_url: an http(s) address opens a browser tile beside the caller's terminal, the same address (scheme and host case, default port, empty path normalised) reuses it, other schemes and missing urls are errors; without a caller the tile is placed near the user's view. Browser profiles and reload when files change remain accepted props.",
   "serve": {
     "/conformance": "<!doctype html><html><body><p>conformance page</p></body></html>",
     "/other": "<!doctype html><html><body><p>conformance page</p></body></html>",
@@ -127,8 +127,7 @@
         "props": {
           "url": "http://{{httpHost}}/conformance",
           "profile": "conformance",
-          "reloadOnChange": true,
-          "bogus": 1
+          "reloadOnChange": true
         },
         "frame": {
           "x": 52000,

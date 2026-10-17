@@ -37,6 +37,25 @@ final class RemoteSource {
     func attachCommand(for terminal: CanvasObject) -> [String] {
         host.terminalAttachCommand(for: terminal, board: mirror.sessionBoardID, merged: mirror.mergedBoards)
     }
+
+    func drawsPage(_ browser: CanvasObject) -> Bool {
+        guard host.server == .easld, let id = ClientIdentity.thisMac.id else { return false }
+        return DrawingMachine(browser.props)?.id == id
+    }
+}
+
+extension ClientIdentity {
+    static let thisMac: ClientIdentity = {
+        let app = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String, host = TerminalHost.localHostname()
+        do {
+            return ClientIdentity(app: app, host: host, id: try MachineIdentity.load(from: AppPaths.clientID))
+        } catch {
+            NSLog("easl: no machine identity (%@): this Mac runs no remote board's browser page", String(describing: error))
+            return ClientIdentity(app: app, host: host, id: nil)
+        }
+    }()
+
+    var drawingMachine: DrawingMachine? { id.map { DrawingMachine(id: $0, host: host) } }
 }
 
 extension ViewerWindow {
@@ -58,13 +77,19 @@ extension ViewerWindow {
             reload: { [weak controller] id, caller, timeoutMs in
                 guard let content = controller?.canvas.tiles[id]?.content else { throw ApiRouter.Failure("unavailable", "browser tile \(id) isn't shown by this viewer") }
                 guard let browser = content as? BrowserTile else {
-                    throw ApiRouter.Failure("unavailable", "browser tile \(id) shows the host's page, which this viewer doesn't load")
+                    throw ApiRouter.Failure("unavailable", "browser tile \(id) draws on another Mac, not this viewer")
                 }
                 do {
                     return try await browser.reloadPage(driver: caller, timeoutMs: timeoutMs)
                 } catch let error as CmuxError {
                     throw ApiRouter.Failure(error.code, error.message)
                 }
+            },
+            browse: { [weak controller] id, command, caller in
+                guard let browser = controller?.canvas.tiles[id]?.content as? BrowserTile else {
+                    throw ApiRouter.Failure("unavailable", "browser tile \(id) draws on another Mac, not this viewer")
+                }
+                return try await browser.perform(command, driver: caller)
             },
             submit: { id, text in await terminal(id)?.submit(text) ?? false },
             surfaceTail: { id, lines in terminal(id)?.surfaceTail(lines: lines) },

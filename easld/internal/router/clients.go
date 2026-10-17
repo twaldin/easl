@@ -50,16 +50,25 @@ func (r *Router) attach(p map[string]any, c Conn) (any, error) {
 			a.Boards = append(a.Boards, b.ID())
 		}
 	}
+	if v, present := p["identity"]; present && v != nil {
+		id, ok := v.(string)
+		if !ok || !idPattern.MatchString(id) {
+			return nil, invalid("identity must be an id")
+		}
+		a.Identity = id
+	}
 	if focused, ok := optStr(p, "focused"); ok {
 		a.Focused = focused
 		if b, ok := r.reg.Board(focused); ok {
 			a.Focused = b.ID()
 		}
 	}
-	client, err := r.clients.Attach(c, a)
+	client, boards, err := r.clients.Attach(c, a)
 	if err != nil {
 		return nil, err
 	}
+	r.announceClients(boards)
+	r.fillMissingOwners(a.Boards)
 	return map[string]any{"client": client.ID, "version": float64(api.SchemaVersion), "schema": api.SchemaHash}, nil
 }
 
@@ -154,6 +163,9 @@ func (r *Router) clientList() any {
 	out := make([]any, len(listed))
 	for i, c := range listed {
 		entry := map[string]any{"id": c.ID, "boards": c.Boards, "serves": c.Serves}
+		if c.Identity != "" {
+			entry["identity"] = c.Identity
+		}
 		if c.App != "" {
 			entry["app"] = c.App
 		}

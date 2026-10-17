@@ -1,7 +1,7 @@
 {
   "scenario": "viewer-serve",
   "description": "A scripted Mac client serves object.measure, view.render and browser object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a host-picture refusal is the caller's. client.list names attached clients. easld only.",
-  "recordedOn": "easld remote-host-language 367d87b plus current main integration",
+  "recordedOn": "easld browser-machine lane",
   "steps": [
     {
       "step": "board.open",
@@ -301,10 +301,12 @@
         ],
         "focused": "<board>",
         "host": "studio",
+        "identity": "mch_studio",
         "serves": [
           "object.measure",
           "view.render",
-          "object.reload"
+          "object.reload",
+          "browser.call"
         ],
         "version": 1
       },
@@ -316,6 +318,60 @@
           "version": 1
         }
       },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "studio",
+                "id": "<cli:1>",
+                "identity": "mch_studio",
+                "serves": [
+                  "browser.call",
+                  "object.measure",
+                  "object.reload",
+                  "view.render"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "drawingMachine": {
+                "host": "studio",
+                "id": "mch_studio"
+              },
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ],
       "ignored": {
         "request.schema": "the schema's hash changes with every schema edit",
         "response.result.schema": "the schema's hash changes with every schema edit"
@@ -342,6 +398,41 @@
           "version": 1
         }
       },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "studio",
+                "id": "<cli:1>",
+                "identity": "mch_studio",
+                "serves": [
+                  "browser.call",
+                  "object.measure",
+                  "object.reload",
+                  "view.render"
+                ]
+              },
+              {
+                "boards": [
+                  "<board>"
+                ],
+                "id": "<cli:2>",
+                "serves": [
+                  "object.measure"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        }
+      ],
       "ignored": {
         "request.schema": "the schema's hash changes with every schema edit",
         "response.result.schema": "the schema's hash changes with every schema edit"
@@ -364,7 +455,9 @@
               "focused": "<board>",
               "host": "studio",
               "id": "<cli:1>",
+              "identity": "mch_studio",
               "serves": [
+                "browser.call",
                 "object.measure",
                 "object.reload",
                 "view.render"

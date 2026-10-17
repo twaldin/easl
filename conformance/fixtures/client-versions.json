@@ -1,7 +1,7 @@
 {
   "scenario": "client-versions",
   "description": "Scripted Mac clients on other easl versions (client.attach): one built from an older schema version is refused `unavailable` and serves nothing; one with the server's version and another schema hash, and one built from a newer version, are accepted and serve the methods both sides know. easld ignores the attach params and `serves` names it doesn't know and never sends a client a method it doesn't list. This records easld's protocol with scripted clients.",
-  "recordedOn": "easld a780b45 + final review fixes; binary SHA256 251b44868afbc655ec6449ce0aec8fbde427171f9db0dc8d119a550fbabd29a3",
+  "recordedOn": "easld browser-machine lane",
   "steps": [
     {
       "step": "board.open",
@@ -106,6 +106,28 @@
           "version": 1
         }
       },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.1",
+                "boards": [
+                  "<board>"
+                ],
+                "host": "laptop",
+                "id": "<cli:1>",
+                "serves": [
+                  "view.get",
+                  "view.render"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        }
+      ],
       "ignored": {
         "response.result.schema": "the server's schema hash changes with every schema edit"
       }
@@ -192,6 +214,40 @@
           "version": 1
         }
       },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.1",
+                "boards": [
+                  "<board>"
+                ],
+                "host": "laptop",
+                "id": "<cli:1>",
+                "serves": [
+                  "view.get",
+                  "view.render"
+                ]
+              },
+              {
+                "app": "0.3.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "studio",
+                "id": "<cli:2>",
+                "serves": [
+                  "view.get"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        }
+      ],
       "ignored": {
         "response.result.schema": "the server's schema hash changes with every schema edit"
       }

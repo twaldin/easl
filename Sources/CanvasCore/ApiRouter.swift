@@ -23,6 +23,11 @@ public final class BoardRegistry {
     /// Where agent integrations spool the reports they couldn't deliver (`AgentReportSpool`);
     /// nil replays nothing.
     public let agentReports: URL?
+    /// This Mac, the drawing machine of every browser tile on the boards it hosts
+    /// (`Board.hostMachine`); nil when the app home has no machine identity.
+    public var drawingMachine: DrawingMachine? {
+        didSet { for board in boards.values { board.hostMachine = drawingMachine } }
+    }
 
     public init(store: BoardStore = BoardStore(), agentReports: URL? = nil) {
         self.store = store
@@ -58,6 +63,7 @@ public final class BoardRegistry {
             guard let self, let board else { return }
             self.messagesBounced?(board, bounce)
         }
+        board.hostMachine = drawingMachine
         boards[id] = board
         board.activity.record(.restart, actor: .system, rev: board.revision,
                               summary: "easl started (pid \(ProcessInfo.processInfo.processIdentifier)); board opened with \(board.objects.count) objects")
@@ -1511,6 +1517,7 @@ public final class ApiRouter {
             if type == .note || type == .html, let root = props["root"]?.string, !root.isEmpty { try board.checkLinkRoot(root) }
             try board.checkKey(props, for: nil)
             if type == .diagram, let problem = DiagramSpec.problem(props) { throw Failure("invalid_params", problem) }
+            if type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             if type == .question { props = try board.questionToCreate(props, caller: caller(p)) }
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p))
             return Self.withWarnings(["object": JSONValue(board.reported(object))], type.unknownPropWarnings(props))
@@ -1525,6 +1532,7 @@ public final class ApiRouter {
             if let patch = props, try board.object(id).type == .diagram, let problem = DiagramSpec.problem(try board.object(id).props.merging(patch)) {
                 throw Failure("invalid_params", problem)
             }
+            if try board.object(id).type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             (props, frame) = try board.questionUpdate(id, props: props, frame: frame, caller: caller(p))
             let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: props, caller: caller(p))
             return Self.withWarnings(["object": JSONValue(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
@@ -1651,6 +1659,9 @@ public final class ApiRouter {
 
         case "client.list":
             throw Failure("unsupported", "client.list lists clients attached to easld")
+
+        case "browser.call", "browser.report":
+            throw Failure("unsupported", "\(method) is easld's: the app's own agents use its cmux socket")
 
         case "session.spawn", "session.list", "session.kill", "relay.open":
             // A hosted terminal's session runs under the host's easld, which relays its way back

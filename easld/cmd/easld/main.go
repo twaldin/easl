@@ -146,6 +146,7 @@ func run(args []string, stderr io.Writer) int {
 	// Close stops accepting, lets the requests already read finish and unlinks the socket (only
 	// if it is still ours); the boards are saved after that, with nothing left changing them.
 	srv.Close()
+	r.CloseOwnedSockets()
 	reg.Flush()
 	return 0
 }

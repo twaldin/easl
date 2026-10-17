@@ -51,6 +51,19 @@ struct LinkTests {
         #expect(!link("https://github.com/", profile: "personal").existing)
     }
 
+    @Test func otherDrawingMachinesAreOtherPages() {
+        let address = URL(string: "https://example.com/sign-in")!
+        let work = DrawingMachine(id: "mch_WORK", host: "work")
+        let home = DrawingMachine(id: "mch_HOME", host: "home")
+        let foreign = board.create(type: .browser, props: .object(["url": .string(address.absoluteString), "drawingMachine": work.json]))
+        let opened = board.openLink(address, near: nil, caller: nil, props: ["drawingMachine": home.json])
+        #expect(!opened.existing && opened.object.id != foreign.id)
+        #expect(DrawingMachine(opened.object.props)?.id == home.id)
+        let renamed = DrawingMachine(id: home.id, host: "home-renamed")
+        let reused = board.openLink(address, near: nil, caller: nil, props: ["drawingMachine": renamed.json])
+        #expect(reused.existing && reused.object.id == opened.object.id)
+    }
+
     @Test func aNewTileOpensBesideItsSourceCreditedToTheCaller() {
         let terminal = board.create(type: .terminal, props: .object([:]), frame: Frame(x: 0, y: 0, w: 600, h: 400))
         let opened = link("https://example.com/new", near: terminal.id)

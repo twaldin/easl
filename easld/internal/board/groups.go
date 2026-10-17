@@ -70,7 +70,7 @@ func (b *Board) refitGroups(id string, actor Actor, caller string, visited map[s
 		for k := range visited {
 			next[k] = true
 		}
-		_, _ = b.write(g.ID, nil, &frame, nil, nil, caller, actor, GroupRefitCause, next)
+		_, _ = b.write(g.ID, nil, &frame, nil, nil, caller, actor, GroupRefitCause, next, false)
 	}
 }
 
