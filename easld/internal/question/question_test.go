@@ -1,7 +1,9 @@
 package question
 
 import (
+	"math"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,6 +49,12 @@ func obj(kv ...any) map[string]any {
 	}
 	return m
 }
+
+// closedRefusal marks a closed question's refusal without pinning its sentence.
+const (
+	closedRefusal = "closed"
+	anyRefusal    = "refused"
+)
 
 // stored is a question as the board holds it (before an update).
 func stored(overrides map[string]any) *model.Object {
@@ -176,15 +184,20 @@ func TestAnUpdateIsJudgedMergedWithWhatIsStored(t *testing.T) {
 
 		{"an answered question takes archived, key and zoom", answered, obj("archived", true, "key", "ASK-1", "zoom", 2.0), ""},
 		{"an answered question can be brought back", with(map[string]any{"status": "answered", "answer": obj("option", "a"), "archived": true}), obj("archived", nil), ""},
-		{"an answered question can't change its question", answered, obj("question", "other"), "question obj_q is answered: only archived can change"},
-		{"an answered question can't change its answer", answered, obj("answer", obj("option", "b")), "question obj_q is answered: only archived can change"},
-		{"an answered question can't reopen", answered, obj("status", "open"), "question obj_q is answered: only archived can change"},
-		{"an answered question can't expire", answered, obj("status", "expired"), "question obj_q is answered: only archived can change"},
+		{"an answered question can't change its question", answered, obj("question", "other"), closedRefusal},
+		{"an answered question can't change its answer", answered, obj("answer", obj("option", "b")), closedRefusal},
+		{"an answered question can't reopen", answered, obj("status", "open"), closedRefusal},
+		{"an answered question can't expire", answered, obj("status", "expired"), closedRefusal},
 		{"an answered question takes what it holds", answered, obj("question", "Ship it?", "archived", true), ""},
 		{"an answered question takes a null for what it lacks", answered, obj("expiresAt", nil), ""},
-		{"an answered question can't lose what it has", answered, obj("answer", nil), "question obj_q is answered: only archived can change"},
-		{"a cancelled question", map[string]any{"status": "cancelled"}, obj("recommended", "a"), "question obj_q is cancelled: only archived can change"},
-		{"an expired question", map[string]any{"status": "expired"}, obj("expiresAt", "2026-10-05T17:00:00Z"), "question obj_q is expired: only archived can change"},
+		{"an answered question can't lose what it has", answered, obj("answer", nil), closedRefusal},
+		{"a cancelled question", map[string]any{"status": "cancelled"}, obj("recommended", "a"), closedRefusal},
+		{"an expired question", map[string]any{"status": "expired"}, obj("expiresAt", "2026-10-05T17:00:00Z"), closedRefusal},
+		{"a closed question takes keep and a delay", answered, obj("keep", true, "archiveAfter", 30.0), ""},
+		{"a closed question clears retention", with(map[string]any{"status": "answered", "answer": obj("option", "a"), "keep": true, "archiveAfter": 30.0}), obj("keep", nil, "archiveAfter", nil), ""},
+		{"keep must be a bool", nil, obj("keep", "yes"), anyRefusal},
+		{"archiveAfter must be in range", nil, obj("archiveAfter", 86400.1), anyRefusal},
+		{"archiveAfter must be a number", answered, obj("archiveAfter", "10"), anyRefusal},
 		{"a closed question can be archived", map[string]any{"status": "expired"}, obj("archived", true), ""},
 		{"a closed question, archived with a bad flag", map[string]any{"status": "expired"}, obj("archived", "yes"), "archived must be true or false"},
 	}
@@ -192,6 +205,12 @@ func TestAnUpdateIsJudgedMergedWithWhatIsStored(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			before := stored(c.before)
 			got, bad := Problem(c.patch, before)
+			if c.want == closedRefusal || c.want == anyRefusal {
+				if !bad || got == "" || (c.want == closedRefusal && !strings.Contains(got, "obj_q")) {
+					t.Errorf("got %q (bad %v), want a refusal", got, bad)
+				}
+				return
+			}
 			if bad != (c.want != "") || got != c.want {
 				t.Errorf("got %q (bad %v), want %q", got, bad, c.want)
 			}
@@ -353,5 +372,46 @@ func TestReadKeepsWhatIsReadableAndStatusDefaultsToOpen(t *testing.T) {
 	}
 	if got := spec.Option(spec.Answer.Option); got == nil || got.Label != "A" {
 		t.Errorf("answered option %v", got)
+	}
+}
+
+func TestArchiveAtFollowsTheLastWriteUnlessKeptOrOpen(t *testing.T) {
+	updated := time.Date(2026, 10, 5, 17, 0, 0, 0, time.UTC)
+	closed := with(map[string]any{"status": "answered", "answer": obj("option", "a")})
+	at := func(props map[string]any) (time.Time, bool) {
+		return Read(props).ArchiveAt(updated)
+	}
+	if got, ok := at(closed); !ok || !got.Equal(updated.Add(10*time.Second)) {
+		t.Errorf("default delay: %v", got)
+	}
+	if got, ok := at(with(map[string]any{"status": "cancelled", "archiveAfter": 0.0})); !ok || !got.Equal(updated) {
+		t.Errorf("zero delay: %v", got)
+	}
+	if got, ok := at(with(map[string]any{"status": "expired", "archiveAfter": 30.5})); !ok || !got.Equal(updated.Add(30500*time.Millisecond)) {
+		t.Errorf("fractional delay: %v", got)
+	}
+	if got, ok := at(with(map[string]any{"status": "answered", "answer": obj("option", "a"), "archiveAfter": 86400.0})); !ok || !got.Equal(updated.Add(86400*time.Second)) {
+		t.Errorf("maximum delay: %v", got)
+	}
+	for name, props := range map[string]map[string]any{
+		"open":     with(map[string]any{"archiveAfter": 0.0}),
+		"archived": with(map[string]any{"status": "cancelled", "archived": true, "archiveAfter": 0.0}),
+		"kept":     with(map[string]any{"status": "expired", "keep": true, "archiveAfter": 0.0}),
+	} {
+		if _, ok := at(props); ok {
+			t.Errorf("%s has a deadline", name)
+		}
+	}
+	if _, ok := at(with(map[string]any{"status": "answered", "answer": obj("option", "a"), "keep": false})); !ok {
+		t.Error("keep false is not exempt")
+	}
+	if got := Read(with(map[string]any{"archiveAfter": "soon"})).ArchiveAfter; got != DefaultArchiveAfter {
+		t.Errorf("unreadable delay %v", got)
+	}
+	if got := Read(with(map[string]any{"archiveAfter": math.NaN()})).ArchiveAfter; got != DefaultArchiveAfter {
+		t.Errorf("NaN delay %v", got)
+	}
+	if got := Read(with(map[string]any{"archiveAfter": 90000.0})).ArchiveAfter; got != DefaultArchiveAfter {
+		t.Errorf("out of range delay %v", got)
 	}
 }

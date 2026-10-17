@@ -124,7 +124,8 @@ func (r *Registry) Open(root string) (*Board, error) {
 		r.Frontmost = id
 	}
 	r.replayAgentReports(b)
-	// Questions that expired while the board was closed expire now.
+	// Questions that expired while the board was closed expire now. Closed ones already past
+	// their archive delay were archived while loading, with no revision change.
 	b.ScheduleQuestionExpiry()
 	if r.Opened != nil {
 		r.Opened(b, root)
@@ -145,7 +146,11 @@ func (r *Registry) load(root, id, commonDir string) (*Board, error) {
 	var b *Board
 	if snap != nil {
 		snap.Root = root
-		if scrubSnapshotAnchors(snap) {
+		changed := scrubSnapshotAnchors(snap)
+		if scrubDueQuestions(snap, time.Now()) {
+			changed = true
+		}
+		if changed {
 			if err := r.Store.Write(snap); err != nil {
 				return nil, fmt.Errorf("save normalized board %s: %w", id, err)
 			}

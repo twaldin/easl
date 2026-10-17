@@ -3,7 +3,7 @@ import Testing
 import CanvasCore
 
 /// Question objects through the socket API (validation, transitions, find) and the board seams
-/// the app uses (needs-you, expiry, the answer's hand-off to an asking terminal).
+/// the app uses (needs-you, expiry, archiving and loading, the answer's hand-off to an asking terminal).
 @MainActor
 final class QuestionTests {
     let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("cv-\(UUID().uuidString.prefix(8))")
@@ -63,6 +63,17 @@ final class QuestionTests {
 
     func message(_ reply: JSONValue) -> String? {
         reply["error"]?["code"] == .string("invalid_params") ? reply["error"]?["message"]?.string : "not invalid_params: \(reply)"
+    }
+
+    func isRefusal(_ reply: JSONValue) -> Bool {
+        reply["error"]?["code"] == .string("invalid_params")
+    }
+
+    /// A question made through the board seams, so a synchronous test never yields to its timer.
+    func ask(on board: Board, _ extra: [String: JSONValue] = [:]) throws -> ObjectID {
+        var props: [String: JSONValue] = ["question": "Ship?", "options": Self.options, "asker": .object(["name": "cos"])]
+        for (key, value) in extra { props[key] = value }
+        return board.create(type: .question, props: try board.questionToCreate(.object(props), caller: nil)).id
     }
 
     // MARK: Create
@@ -131,8 +142,10 @@ final class QuestionTests {
         #expect(answered.frame.h == QuestionSpec.closedBase, "the tile collapses to the answer")
         #expect(answered.frame.x == open.frame.x && answered.frame.y == open.frame.y && answered.frame.w == open.frame.w)
 
-        #expect(message(try await update(open.id, .object(["status": "open"]))) == "question \(open.id) is answered: only archived can change")
-        #expect(message(try await update(open.id, .object(["question": "Something else?"]))) == "question \(open.id) is answered: only archived can change")
+        #expect(isRefusal(try await update(open.id, .object(["status": "open"]))))
+        #expect(isRefusal(try await update(open.id, .object(["question": "Something else?"]))))
+        let final = QuestionSpec(try board.object(open.id).props)
+        #expect(final.status == .answered && final.question == "Ship the tile?", "an answered question's content is final")
         #expect(message(try await update(open.id, .object(["archived": "yes"]))) == "archived must be true or false")
         #expect(try await update(open.id, .object(["status": "answered", "archived": .bool(true)]))["ok"] == .bool(true), "a value it already has is no change")
         #expect(QuestionSpec(try board.object(open.id).props).archived)
@@ -142,8 +155,23 @@ final class QuestionTests {
         let open = try await question()
         #expect(message(try await update(open.id, .object(["status": "cancelled", "answer": .object(["note": "x"])]))) == "answer goes with status answered")
         #expect(try await update(open.id, .object(["status": "cancelled"]))["ok"] == .bool(true))
-        #expect(message(try await update(open.id, .object(["status": "expired"]))) == "question \(open.id) is cancelled: only archived can change")
+        #expect(isRefusal(try await update(open.id, .object(["status": "expired"]))))
+        #expect(QuestionSpec(try board.object(open.id).props).status == .cancelled, "a cancelled question stays cancelled")
         #expect(try await update(open.id, .object(["archived": .bool(true)]))["ok"] == .bool(true), "a cancelled question can be archived")
+    }
+
+    @Test func keepAndArchiveAfterAreKnownAndAClosedQuestionStillTakesThem() async throws {
+        let created = try await create(.object(["question": "Keep?", "options": Self.options, "asker": .object(["name": "cos"]), "keep": .bool(true), "archiveAfter": 86400]))
+        #expect(created["ok"] == .bool(true), "\(created)")
+        #expect(created["result"]?["warnings"] == nil, "both are question props")
+        let id = try #require(created["result"]?["object"]?["id"]?.string)
+        for invalid: [String: JSONValue] in [["keep": "yes"], ["archiveAfter": -1], ["archiveAfter": .number(86400.5)], ["archiveAfter": "10"]] {
+            #expect(isRefusal(try await update(id, .object(invalid))), "\(invalid)")
+        }
+        #expect(try await update(id, .object(["status": "cancelled"]))["ok"] == .bool(true))
+        #expect(try await update(id, .object(["keep": .null, "archiveAfter": 0]))["ok"] == .bool(true), "a closed question takes both")
+        let closed = QuestionSpec(try board.object(id).props)
+        #expect(!closed.keep && closed.archiveAfter == 0)
     }
 
     // MARK: Find
@@ -221,6 +249,119 @@ final class QuestionTests {
             try await Task.sleep(for: .milliseconds(100))
         }
         #expect(QuestionSpec(try board.object(due.id).props).status == .expired, "the board's timer expired it")
+    }
+
+    /// Synchronous on the main actor throughout, so the board's own timer never runs in between.
+    @Test func aClosedQuestionArchivesOnceItsDelayHasPassedUnlessKept() throws {
+        let delayed = try ask(on: board, ["archiveAfter": 30])
+        let kept = try ask(on: board, ["archiveAfter": 30, "keep": .bool(true)])
+        let open = try ask(on: board, ["archiveAfter": 0])
+        try board.answerQuestion(kept, option: "later", note: nil)
+        let answered = try board.answerQuestion(delayed, option: "now", note: "done")
+        let steps = board.history.undoSteps.count
+        var updates: [ObjectID] = []
+        board.onEvent = { event in if case .objectUpdated(let object) = event { updates.append(object.id) } }
+
+        #expect(board.archiveQuestions(now: answered.updatedAt.addingTimeInterval(29)) == [])
+        #expect(board.archiveQuestions(now: answered.updatedAt.addingTimeInterval(30)) == [delayed])
+        let archived = try board.object(delayed)
+        #expect(archived.props == answered.props.merging(.object(["archived": .bool(true)])), "status and answer kept")
+        #expect(archived.frame == answered.frame)
+        #expect(updates == [delayed], "announced like any change")
+        #expect(board.history.undoSteps.count == steps, "an archive is no undo step")
+        #expect(board.archiveQuestions(now: .distantFuture) == [], "neither a kept nor an open question archives")
+        #expect(!QuestionSpec(try board.object(open).props).archived)
+
+        let unkept = try board.update(kept, props: .object(["keep": .null]))
+        #expect(board.archiveQuestions(now: unkept.updatedAt.addingTimeInterval(29)) == [], "its delay runs from that write")
+        #expect(board.archiveQuestions(now: unkept.updatedAt.addingTimeInterval(30)) == [kept])
+        #expect(board.undo())
+        #expect(QuestionSpec(try board.object(kept).props).keep, "⌘Z takes back the user's last change")
+        #expect(QuestionSpec(try board.object(delayed).props).archived, "never an archive the app made")
+    }
+
+    /// The question once the board's own timer archived it, or as it is after 15 seconds.
+    func archivedByTheTimer(_ id: ObjectID) async throws -> QuestionSpec {
+        let deadline = Date().addingTimeInterval(15)
+        while !QuestionSpec(try board.object(id).props).archived, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        return QuestionSpec(try board.object(id).props)
+    }
+
+    @Test func theTimerExpiresAQuestionAndThenArchivesIt() async throws {
+        let due = try await question(["expiresAt": "2021-01-01T00:00:00Z", "archiveAfter": 0])
+        let done = try await archivedByTheTimer(due.id)
+        #expect(done.archived && done.status == .expired)
+    }
+
+    /// A kept question has no deadline, so the timer runs for it only if dropping `keep` sets it again.
+    @Test func droppingKeepFromAClosedQuestionLetsTheTimerArchiveIt() async throws {
+        let kept = try await question(["keep": .bool(true), "archiveAfter": 0])
+        #expect(try await update(kept.id, .object(["status": "answered", "answer": .object(["option": "now"])]))["ok"] == .bool(true))
+        #expect(try await update(kept.id, .object(["keep": .null]))["ok"] == .bool(true))
+        let done = try await archivedByTheTimer(kept.id)
+        #expect(done.archived && done.status == .answered && done.answer?.option == "now")
+    }
+
+    @Test func aFailedBatchThatDroppedKeepLeavesTheQuestionUnarchived() async throws {
+        let kept = try await question(["keep": .bool(true), "archiveAfter": 0])
+        #expect(try await update(kept.id, .object(["status": "answered", "answer": .object(["option": "now"])]))["ok"] == .bool(true))
+        let answered = try board.object(kept.id)
+        let reply = try await call("object.batch", .object(["board": .string(board.id), "ops": .array([
+            .object(["method": "object.update", "params": .object(["id": .string(kept.id), "props": .object(["keep": .null])])]),
+            .object(["method": "object.update", "params": .object(["id": .string(kept.id), "rev": .number(Double(answered.rev)), "props": .object(["archiveAfter": 1])])]),
+        ])]))
+        #expect(reply["error"]?["code"] == "conflict", "\(reply)")
+        try await Task.sleep(for: .milliseconds(300))
+        let spec = QuestionSpec(try board.object(kept.id).props)
+        #expect(spec.keep && !spec.archived, "the reverted change left no deadline behind")
+    }
+
+    @Test func loadingArchivesOnlyStoredQuestionsPastTheirDelayAndChangesNothingElse() throws {
+        let root = dir.appendingPathComponent("stored")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = BoardStore(directory: dir.appendingPathComponent("stored-boards"), debounce: 60)
+        let stored = Board(id: BoardStore.boardID(for: root), root: root)
+        let due = try ask(on: stored), kept = try ask(on: stored, ["keep": .bool(true)])
+        let recent = try ask(on: stored, ["archiveAfter": 60]), open = try ask(on: stored)
+        try stored.answerQuestion(due, option: "now", note: nil)
+        try stored.cancelQuestion(kept)
+        try stored.answerQuestion(recent, option: "later", note: nil)
+        var snapshot = stored.snapshot
+        for index in snapshot.objects.indices {
+            switch snapshot.objects[index].id {
+            case due, kept, open: snapshot.objects[index].updatedAt = Date(timeIntervalSince1970: 1_700_000_000)
+            case recent: snapshot.objects[index].updatedAt = Date().addingTimeInterval(-50)
+            default: break
+            }
+        }
+        let encoder = JSONEncoder(), decoder = JSONDecoder()
+        encoder.dateEncodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .iso8601
+        try encoder.encode(snapshot).write(to: store.url(for: stored.id))
+        var expected = try decoder.decode(BoardSnapshot.self, from: Data(contentsOf: store.url(for: stored.id)))
+        for index in expected.objects.indices where expected.objects[index].id == due {
+            expected.objects[index].props = expected.objects[index].props.merging(.object(["archived": .bool(true)]))
+        }
+
+        let loaded = store.load(root: root)
+        #expect(QuestionSpec(try loaded.object(due).props).archived)
+        for id in [kept, recent, open] { #expect(!QuestionSpec(try loaded.object(id).props).archived, "\(id)") }
+        #expect(loaded.revision == expected.revision)
+        for object in expected.objects {
+            let live = try loaded.object(object.id)
+            #expect(live.rev == object.rev && live.updatedAt == object.updatedAt, "\(object.id)")
+        }
+        #expect(!loaded.history.canUndo)
+        let saved = try decoder.decode(BoardSnapshot.self, from: Data(contentsOf: store.url(for: stored.id)))
+        #expect(saved.objects == expected.objects && saved.revision == expected.revision, "only the archive is written")
+
+        let sentinel = Date(timeIntervalSince1970: 1_234_567_890)
+        try FileManager.default.setAttributes([.modificationDate: sentinel], ofItemAtPath: store.url(for: stored.id).path)
+        let again = store.load(root: root)
+        #expect(try store.url(for: stored.id).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate == sentinel, "a second load writes nothing")
+        #expect(again.archiveQuestions(now: Date().addingTimeInterval(15)) == [recent], "what was left of its delay, not a fresh one")
     }
 
     @Test func theAnswerReachesTheAskingTerminalOnItsNextPrompt() async throws {
@@ -324,5 +465,22 @@ final class QuestionTests {
         try repoBoard.answerQuestion(asked.id, option: "now", note: nil)
         let drained = await repoBoard.drain(peek: true, caller: agent)
         #expect(drained.context.contains("    context: \(inWorktree):2\n"), "the mention names the worktree's file: \(drained.context)")
+    }
+}
+
+extension BoardMirrorTests {
+    @Test func aViewerLeavesArchivingTheHostsQuestionsToTheHost() async throws {
+        let props = try host.questionToCreate(.object(["question": "Ship?", "options": .array([.object(["id": "y", "label": "Yes"])]),
+                                                       "asker": .object(["name": "cos"]), "archiveAfter": 3600]), caller: nil)
+        let asked = host.create(type: .question, props: props).id
+        let answered = try host.answerQuestion(asked, option: "y", note: nil)
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        try await eventually { view.objects[asked]?.props["status"] == "answered" }
+        let due = answered.updatedAt.addingTimeInterval(3600)
+        #expect(view.archiveQuestions(now: due) == [])
+        #expect(view.objects[asked]?.props["archived"] == nil, "a viewer changes nothing on its own")
+        #expect(host.archiveQuestions(now: due) == [asked])
+        try await eventually { view.objects[asked]?.props["archived"] == .bool(true) }
     }
 }

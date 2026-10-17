@@ -220,7 +220,7 @@ class DiagramProps(TypedDict):
     key: NotRequired["ObjectKey"]
 
 class QuestionProps(TypedDict):
-    """A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `recommended` and `answer.option` name an option, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step)"""
+    """A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `recommended` and `answer.option` name an option, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`."""
     question: Required[str]
     options: Required[list[dict[str, Any]]]
     recommended: NotRequired[str]
@@ -230,6 +230,8 @@ class QuestionProps(TypedDict):
     expiresAt: NotRequired[str]
     answer: NotRequired[dict[str, Any]]
     archived: NotRequired[bool]
+    keep: NotRequired[bool]
+    archiveAfter: NotRequired[float]
     zoom: NotRequired["Zoom"]
     key: NotRequired["ObjectKey"]
 

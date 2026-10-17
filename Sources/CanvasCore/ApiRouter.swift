@@ -63,7 +63,8 @@ public final class BoardRegistry {
                               summary: "easl started (pid \(ProcessInfo.processInfo.processIdentifier)); board opened with \(board.objects.count) objects")
         frontmost = frontmost ?? id
         replayAgentReports(on: board)
-        // Questions that expired while the board was closed expire now.
+        // Questions that expired while the board was closed expire now; closed ones archive once
+        // what is left of their delay runs out (`BoardStore.load` archived those already past it).
         board.scheduleQuestionExpiry()
         broadcast("board.opened", data: .object([:]), board: board.id)
         return board

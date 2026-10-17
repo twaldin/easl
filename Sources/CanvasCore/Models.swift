@@ -93,7 +93,7 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
         case .changes: ["root", "base", "head", "ref", "refSha", "paths", "title", "reviewed", "viewed", "zoom"]
         case .image: ["path", "caption", "title"]
         case .diagram: ["kind", "path", "symbol", "line", "direction", "depth", "expanded", "title", "graph", "zoom"]
-        case .question: ["question", "options", "recommended", "context", "asker", "status", "expiresAt", "answer", "archived", "zoom"]
+        case .question: ["question", "options", "recommended", "context", "asker", "status", "expiresAt", "answer", "archived", "keep", "archiveAfter", "zoom"]
         case .shape: ["kind", "text", "points", "color", "fill", "textSize"]
         case .arrow: ["from", "to", "relation", "label", "color", "route"]
         case .group: ["members", "title", "color", "padding", "flow"]

@@ -1,0 +1,26 @@
+{
+  "description": "The host archives closed questions after a delay, sends the same updates to two subscribers, retains status and answer for reads and list, and leaves keep:true questions visible. Retention can change after closure.",
+  "steps": [
+    { "call": "events.subscribe", "conn": "second", "params": { "board": "{{board}}" } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "question", "props": { "question": "Invalid keep", "options": [], "asker": { "name": "cleanup" }, "keep": "yes" } }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "question", "props": { "question": "Negative delay", "options": [], "asker": { "name": "cleanup" }, "archiveAfter": -1 } }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "question", "props": { "question": "Oversized delay", "options": [], "asker": { "name": "cleanup" }, "archiveAfter": 86401 } }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "question", "props": { "question": "String delay", "options": [], "asker": { "name": "cleanup" }, "archiveAfter": "10" } }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "question", "props": { "question": "Archive the answer?", "options": [{ "id": "yes", "label": "Yes" }], "asker": { "name": "cleanup" }, "archiveAfter": 1, "archived": false }, "frame": { "x": 0, "y": 0, "w": 460, "h": 244 } }, "save": "answer" },
+    { "call": "object.update", "params": { "id": "{{answer.object.id}}", "props": { "status": "answered", "answer": { "option": "yes", "note": "still readable" } } }, "expect": { "response.ok": true, "response.result.object.props.status": "answered", "response.result.object.props.answer.note": "still readable" } },
+    { "call": "object.get", "params": { "id": "{{answer.object.id}}" }, "expect": { "response.ok": true, "response.result.object.props.status": "answered", "response.result.object.props.archived": false } },
+    { "sleepMs": 1400 },
+    { "call": "object.get", "params": { "id": "{{answer.object.id}}" }, "expect": { "response.ok": true, "response.result.object.props.archived": true, "response.result.object.props.status": "answered", "response.result.object.props.answer.note": "still readable" } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "question", "props": { "question": "Cancel this?", "options": [], "asker": { "name": "cleanup" }, "archiveAfter": 1 }, "frame": { "x": 500, "y": 0, "w": 460, "h": 194 } }, "save": "cancel" },
+    { "call": "object.update", "params": { "id": "{{cancel.object.id}}", "props": { "status": "cancelled" } }, "settleMs": 1500 },
+    { "call": "object.get", "params": { "id": "{{cancel.object.id}}" }, "expect": { "response.ok": true, "response.result.object.props.archived": true, "response.result.object.props.status": "cancelled" } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "question", "props": { "question": "Expired request", "options": [], "asker": { "name": "cleanup" }, "archiveAfter": 1, "expiresAt": "2021-01-01T00:00:00Z" }, "frame": { "x": 0, "y": 300, "w": 460, "h": 194 } }, "save": "expire", "settleMs": 1600 },
+    { "call": "object.get", "params": { "id": "{{expire.object.id}}" }, "expect": { "response.ok": true, "response.result.object.props.archived": true, "response.result.object.props.status": "expired" } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "question", "props": { "question": "Keep this decision", "options": [], "asker": { "name": "cleanup" }, "archiveAfter": 0, "keep": true, "archived": false }, "frame": { "x": 500, "y": 300, "w": 460, "h": 194 } }, "save": "keep" },
+    { "call": "object.update", "params": { "id": "{{keep.object.id}}", "props": { "status": "answered", "answer": { "note": "keep me" } } }, "settleMs": 400 },
+    { "call": "object.get", "params": { "id": "{{keep.object.id}}" }, "expect": { "response.ok": true, "response.result.object.props.keep": true, "response.result.object.props.status": "answered", "response.result.object.props.archived": false } },
+    { "call": "object.find", "params": { "board": "{{board}}", "type": "question" } },
+    { "call": "object.update", "params": { "id": "{{keep.object.id}}", "props": { "keep": false } }, "settleMs": 400 },
+    { "call": "object.get", "params": { "id": "{{keep.object.id}}" }, "expect": { "response.ok": true, "response.result.object.props.archived": true, "response.result.object.props.status": "answered", "response.result.object.props.answer.note": "keep me" } }
+  ]
+}

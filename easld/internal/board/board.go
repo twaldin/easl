@@ -157,11 +157,11 @@ type Board struct {
 	settled *route.Result
 
 	// Lock is what serialises this board's work with everyone else's (the registry's Mu); the
-	// question expiry timer takes it to expire questions as a request would. A board without
-	// one (outside a registry) sets no timer: ExpireQuestions is the caller's.
+	// question timer takes it to expire or archive questions as a request would. A board without
+	// one (outside a registry) sets no timer: ExpireQuestions and ArchiveQuestions are the caller's.
 	Lock sync.Locker
-	// questionExpiry is the pending check for the earliest open question's expiresAt
-	// (Board.questionExpiry); expirySeq tells a timer that was replaced.
+	// questionExpiry is the pending check for the earliest open expiresAt or closed archive
+	// deadline (Board.questionExpiry); expirySeq tells a timer that was replaced.
 	questionExpiry *time.Timer
 	expirySeq      int
 }
@@ -746,6 +746,9 @@ func (b *Board) Delete(id, caller string) error {
 		if terminal, ok := b.objects[of]; ok && terminal.Props["follow"] != false {
 			_, _ = b.write(terminal.ID, nil, nil, nil, map[string]any{"follow": false}, caller, actor, "its follow tile was closed", nil)
 		}
+	}
+	if removed.Type == model.Question {
+		b.ScheduleQuestionExpiry()
 	}
 	return nil
 }

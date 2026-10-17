@@ -22,7 +22,7 @@ import (
 var passing = []string{
 	"agent-control", "agent-control-owned", "agents", "arrows", "batch", "board-close", "board-close-owned", "board-get-history", "board-lifecycle", "boards", "client-delegation", "client-failures", "client-mode", "client-versions",
 	"code-tiles", "events", "follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "messages",
-	"metrics", "no-client", "objects-crud", "open-url", "owned-terminals", "placement", "protocol", "questions", "tray", "viewer-serve",
+	"metrics", "no-client", "objects-crud", "open-url", "owned-terminals", "placement", "protocol", "question-cleanup", "questions", "tray", "viewer-serve",
 }
 
 // Not passing, and why:

@@ -177,7 +177,7 @@ public final class Board {
     /// Per terminal, the code tile its last ⌘-click opened or re-aimed and that tile's `rev`
     /// then (`openCode`); in memory only.
     var codePreviews: [ObjectID: (tile: ObjectID, rev: Int)] = [:]
-    /// The pending check for the earliest open question's `expiresAt` (Question.swift).
+    /// The pending check for the earliest open question's `expiresAt` or closed one's `archiveAt` (Question.swift).
     var questionExpiry: DispatchWorkItem?
     public private(set) var isClosed = false
 

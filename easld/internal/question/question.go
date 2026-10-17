@@ -1,9 +1,10 @@
 // Package question ports QuestionSpec (Sources/CanvasCore/Question.swift): the `question` object
 // type, a question an agent asks the user on the board (schema QuestionProps). Lifecycle: open →
 // answered | cancelled | expired, each final; archiving is not a status (`archived: true` hides a
-// closed question's tile). Validation (Problem) is the one rule both servers apply, messages
-// included; the Board's writes of questions (QuestionToCreate, QuestionUpdate, expiry, the
-// hand-off of an answer) are in package board. Props stay the generic JSON forms.
+// closed question's tile). A closed question archives itself `archiveAfter` seconds after its last
+// write unless `keep`. Validation (Problem) is the one rule both servers apply, messages
+// included; the Board's writes of questions (QuestionToCreate, QuestionUpdate, expiry, archive,
+// the hand-off of an answer) are in package board. Props stay the generic JSON forms.
 package question
 
 import (
@@ -115,6 +116,10 @@ type Spec struct {
 	ExpiresAt   *time.Time
 	Answer      *Answer
 	Archived    bool
+	Keep        bool
+	// ArchiveAfter is the delay before a closed question is archived. Unreadable or out of range
+	// stored values use DefaultArchiveAfter, as an absent one does.
+	ArchiveAfter float64
 }
 
 func optString(m map[string]any, key string) *string {
@@ -159,6 +164,8 @@ func Read(props map[string]any) Spec {
 		}
 	}
 	spec.Archived = props["archived"] == true
+	spec.Keep = props["keep"] == true
+	spec.ArchiveAfter = effectiveArchiveAfter(props["archiveAfter"])
 	return spec
 }
 
@@ -192,10 +199,55 @@ func (s Spec) Option(id *string) *Option {
 	return nil
 }
 
+// DefaultArchiveAfter is the delay when `archiveAfter` is absent, null, or not a finite number
+// of seconds from 0 to MaxArchiveAfter.
+const (
+	DefaultArchiveAfter = 10.0
+	MaxArchiveAfter     = 86400.0
+)
+
+// ArchiveAt is QuestionSpec.archiveAt: when the app archives this question, `archiveAfter` past
+// updatedAt, its last write. False while it is open, once archived, and when kept.
+func (s Spec) ArchiveAt(updatedAt time.Time) (time.Time, bool) {
+	if s.Status == Open || s.Archived || s.Keep {
+		return time.Time{}, false
+	}
+	return updatedAt.Add(time.Duration(s.ArchiveAfter * float64(time.Second))), true
+}
+
+func effectiveArchiveAfter(v any) float64 {
+	if n, ok := archiveDelay(v); ok {
+		return n
+	}
+	return DefaultArchiveAfter
+}
+
+// archiveDelay is QuestionSpec.archiveDelay: a finite number of seconds within 0...86400.
+func archiveDelay(v any) (float64, bool) {
+	n, ok := asFloat(v)
+	if !ok || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > MaxArchiveAfter {
+		return 0, false
+	}
+	return n, true
+}
+
+func asFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	default:
+		return 0, false
+	}
+}
+
 // --- validation ---
 
 // What a closed question still takes.
-var closedKeys = map[string]bool{"archived": true, "key": true, "zoom": true}
+var closedKeys = map[string]bool{"archived": true, "keep": true, "archiveAfter": true, "key": true, "zoom": true}
 
 const (
 	optionsShape = "an array of {id, label, why?}"
@@ -250,7 +302,7 @@ func Problem(patch any, before *model.Object) (message string, bad bool) {
 					same = present && model.Equal(stored, value)
 				}
 				if !same {
-					return fmt.Sprintf("question %s is %s: only archived can change", before.ID, old), true
+					return fmt.Sprintf("question %s is %s: only archived, keep, and archiveAfter can change", before.ID, old), true
 				}
 			}
 		}
@@ -396,6 +448,16 @@ func Problem(patch any, before *model.Object) (message string, bad bool) {
 		}
 		if flag && status == Open {
 			return "an open question can't be archived: answer or cancel it first", true
+		}
+	}
+	if keep, ok := given("keep"); ok {
+		if _, isBool := keep.(bool); !isBool {
+			return "keep must be true or false", true
+		}
+	}
+	if delay, ok := given("archiveAfter"); ok {
+		if _, good := archiveDelay(delay); !good {
+			return "archiveAfter must be a number of seconds from 0 to 86400", true
 		}
 	}
 	return "", false
