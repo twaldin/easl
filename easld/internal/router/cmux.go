@@ -3,6 +3,7 @@ package router
 import (
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/twaldin/easl/easld/internal/board"
@@ -204,13 +205,9 @@ func (r *Router) cmuxList(tile string, params map[string]any) (map[string]any, e
 			surfaces = append(surfaces, o)
 		}
 	}
-	for i := 1; i < len(surfaces); i++ {
-		j := i
-		for j > 0 && (surfaces[j].Z < surfaces[j-1].Z || (surfaces[j].Z == surfaces[j-1].Z && surfaces[j].ID < surfaces[j-1].ID)) {
-			surfaces[j], surfaces[j-1] = surfaces[j-1], surfaces[j]
-			j--
-		}
-	}
+	sort.Slice(surfaces, func(i, j int) bool {
+		return surfaces[i].Z < surfaces[j].Z || (surfaces[i].Z == surfaces[j].Z && surfaces[i].ID < surfaces[j].ID)
+	})
 	rows := make([]any, len(surfaces))
 	for i, o := range surfaces {
 		row := map[string]any{"id": o.ID, "type": string(o.Type)}
