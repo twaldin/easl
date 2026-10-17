@@ -175,4 +175,62 @@ final class BoardAnchorLoadTests {
         #expect(try loaded.object(inside.id).props == inside.props)
         #expect(try loaded.object(empty.id).props["anchor"] == nil)
     }
+
+    @Test(.timeLimit(.minutes(1))) func aSynchronousLoadsGitGoesAheadOfQueuedGit() async throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = directory
+        let gate = directory.appendingPathComponent("gate").path
+        let started = directory.appendingPathComponent("started")
+        let served = directory.appendingPathComponent("served")
+        try #require(mkfifo(gate, 0o600) == 0)
+        let reader = open(gate, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        try #require(reader >= 0)
+        defer { close(reader) }
+        var writer = open(gate, O_WRONLY | O_NONBLOCK | O_CLOEXEC)
+        try #require(writer >= 0)
+        var tasks: [Task<Void, Error>] = []
+        defer {
+            if writer >= 0 { close(writer) }
+            for task in tasks { task.cancel() }
+        }
+        let runner = GitRunner(limit: 1)
+        func request(_ name: String, load: Bool) async -> Task<Void, Error> {
+            var task: Task<Void, Error>!
+            await withCheckedContinuation { (entered: CheckedContinuation<Void, Never>) in
+                task = GitRunner.$synchronousLoad.withValue(load) {
+                    Task {
+                        try await recordLoadRequest(name, directory: directory, served: served, runner: runner, entered: entered)
+                    }
+                }
+            }
+            return task
+        }
+        let holder = Task { _ = try await runner.run(["-c", #"alias.hold=!f() { exec 3< "$1"; printf ready > "$2"; cat <&3; }; f"#, "hold", gate, started.path], in: directory) }
+        tasks.append(holder)
+        let deadline = Date().addingTimeInterval(10)
+        while !FileManager.default.fileExists(atPath: started.path), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(FileManager.default.fileExists(atPath: started.path))
+        let queued = await request("queued", load: false)
+        tasks.append(queued)
+        let first = await request("first load", load: true)
+        tasks.append(first)
+        let cancelled = await request("cancelled load", load: true)
+        tasks.append(cancelled)
+        let second = await request("second load", load: true)
+        tasks.append(second)
+        cancelled.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        close(writer)
+        writer = -1
+        try await holder.value
+        for task in [queued, first, second] { try await task.value }
+        #expect(try String(contentsOf: served, encoding: .utf8).split(separator: "\n").map(String.init) == ["first load", "second load", "queued"])
+    }
+}
+
+private func recordLoadRequest(_ name: String, directory: URL, served: URL, runner: isolated GitRunner, entered: CheckedContinuation<Void, Never>) async throws {
+    entered.resume()
+    _ = try await runner.run(["-c", #"alias.record=!f() { printf '%s\n' "$1" >> "$2"; }; f"#, "record", name, served.path], in: directory)
 }

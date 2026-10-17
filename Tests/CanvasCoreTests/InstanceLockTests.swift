@@ -20,23 +20,35 @@ final class InstanceLockTests {
         second.release()
     }
 
-    @Test func aCrashedHoldersLockAndStalePidDontBlockTheNextLaunch() throws {
-        // Another process takes the lock and records its pid, as a holder does, then dies without releasing it.
-        let holder = Process()
-        holder.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        holder.arguments = ["-c", "import fcntl, os, sys, time\nfd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)\nfcntl.flock(fd, fcntl.LOCK_EX)\nos.write(fd, b'%d\\n' % os.getpid())\nprint('held', flush=True)\ntime.sleep(60)", lock]
-        let output = Pipe()
-        holder.standardOutput = output
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try holder.run()
-        #expect(output.fileHandleForReading.availableData == Data("held\n".utf8))
-        #expect(InstanceLock.acquire(at: lock) == nil)
-        #expect(InstanceLock.holder(at: lock) == holder.processIdentifier)
-        kill(holder.processIdentifier, SIGKILL)
-        holder.waitUntilExit()
-        let next = try #require(InstanceLock.acquire(at: lock))
-        #expect(InstanceLock.holder(at: lock) == getpid())
-        next.release()
+    @Test func aCrashedHoldersLockAndStalePidDontBlockTheNextLaunch() async throws {
+        let dir = dir, lock = lock
+        let observed = try await offPool {
+            Result {
+                // Another process takes the lock and records its pid, as a holder does, then dies without releasing it.
+                let holder = Process()
+                holder.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+                holder.arguments = ["-c", "import fcntl, os, sys, time\nfd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)\nfcntl.flock(fd, fcntl.LOCK_EX)\nos.write(fd, b'%d\\n' % os.getpid())\nprint('held', flush=True)\ntime.sleep(60)", lock]
+                let output = Pipe()
+                holder.standardOutput = output
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try holder.run()
+                let ready = output.fileHandleForReading.availableData
+                let blocked = InstanceLock.acquire(at: lock) == nil
+                let holderPID = InstanceLock.holder(at: lock)
+                kill(holder.processIdentifier, SIGKILL)
+                holder.waitUntilExit()
+                let next = InstanceLock.acquire(at: lock)
+                let nextHolder = InstanceLock.holder(at: lock)
+                next?.release()
+                return (ready: ready, blocked: blocked, holderPID: holderPID, pid: holder.processIdentifier,
+                        acquired: next != nil, nextHolder: nextHolder)
+            }
+        }.get()
+        #expect(observed.ready == Data("held\n".utf8))
+        #expect(observed.blocked)
+        #expect(observed.holderPID == observed.pid)
+        try #require(observed.acquired)
+        #expect(observed.nextHolder == getpid())
     }
 
     @Test func programsTheHolderStartsDontInheritTheLock() async throws {
@@ -62,11 +74,12 @@ final class InstanceLockTests {
         #expect(lsof.terminationStatus != 0, "the child has the lock file open")
     }
 
-    @Test func forwardAsksTheRunningInstanceToOpenAndShowTheRoot() throws {
+    @Test func forwardAsksTheRunningInstanceToOpenAndShowTheRoot() async throws {
         let server = SocketServer(path: socket) { request, _ in .object(["request": request]) }
         try server.start()
         defer { server.stop() }
-        let reply = try InstanceLock.forward(root: "/tmp/repo", to: socket)
+        let socket = socket
+        let reply = try await offPool { Result { try InstanceLock.forward(root: "/tmp/repo", to: socket) } }.get()
         let request = reply["request"]
         #expect(request?["method"] == .string("board.open"))
         #expect(request?["params"] == .object(["root": .string("/tmp/repo"), "select": .bool(true)]))

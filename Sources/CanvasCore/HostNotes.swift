@@ -75,37 +75,41 @@ extension HostFiles {
                                         "fences": .array(fences), "images": .array(request.images.map(JSONValue.string)),
                                         "temps": .array(temps.map(JSONValue.string)), "bytes": .bool(bytes)])
         let output = try await execute(Self.noteProgram, request: JSONEncoder().encode(payload), what: "host note reader")
-        guard let reply = try? JSONDecoder().decode(NoteReply.self, from: Data(output.utf8)),
-              reply.fences.count == request.fences.count, reply.images.count == request.images.count else {
-            throw HostFileError.unavailable("invalid host note reply")
-        }
-        var excerpts: [String: NoteExcerpt] = [:]
-        var images: [String: Data] = [:]
-        for (item, candidates) in zip(request.fences, reply.fences) {
-            guard bytes else { continue }
-            let capture = captured[item.key]
-            var found: NoteExcerpt?
-            for candidate in candidates where candidate.ok {
-                guard let data = candidate.data.flatMap({ Data(base64Encoded: $0) }), let text = String(data: data, encoding: .utf8) else { continue }
-                if item.fence.path == nil, let symbol = item.fence.symbol,
-                   NoteAnchor.symbolRange(symbol, in: NoteSource.lines(of: text)) == nil { continue }
-                found = NoteSource.interpret(text, for: item.fence, path: item.fence.path ?? candidate.path ?? "", captured: capture, body: item.body)
-                break
+        return try await offPool(qos: .utility) {
+            Result {
+                guard let reply = try? JSONDecoder().decode(NoteReply.self, from: Data(output.utf8)),
+                      reply.fences.count == request.fences.count, reply.images.count == request.images.count else {
+                    throw HostFileError.unavailable("invalid host note reply")
+                }
+                var excerpts: [String: NoteExcerpt] = [:]
+                var images: [String: Data] = [:]
+                for (item, candidates) in zip(request.fences, reply.fences) {
+                    guard bytes else { continue }
+                    let capture = captured[item.key]
+                    var found: NoteExcerpt?
+                    for candidate in candidates where candidate.ok {
+                        guard let data = candidate.data.flatMap({ Data(base64Encoded: $0) }), let text = String(data: data, encoding: .utf8) else { continue }
+                        if item.fence.path == nil, let symbol = item.fence.symbol,
+                           NoteAnchor.symbolRange(symbol, in: NoteSource.lines(of: text)) == nil { continue }
+                        found = NoteSource.interpret(text, for: item.fence, path: item.fence.path ?? candidate.path ?? "", captured: capture, body: item.body)
+                        break
+                    }
+                    if let found { excerpts[item.key] = found }
+                    else {
+                        let failure = candidates.first(where: { !$0.ok })
+                        let reason = failure.map { HostGit.refusal($0.error) } ?? (item.fence.path == nil ? "symbol \(item.fence.symbol ?? "") not found in the workspace" : "cannot read \(item.fence.path ?? "")")
+                        excerpts[item.key] = NoteExcerpt(path: item.fence.path ?? "", range: nil, lines: capture ?? [], status: .stale(reason), missing: failure?.code == "not_found")
+                    }
+                }
+                if bytes {
+                    for (source, image) in zip(request.images, reply.images) where image.ok {
+                        if let data = image.data.flatMap({ Data(base64Encoded: $0) }) { images[source] = data }
+                    }
+                }
+                return HostNoteRead(excerpts: excerpts, images: images,
+                                    observation: HostNoteObservation(fences: reply.fences.map { $0.map(\.observation) }, images: reply.images.map(\.observation)))
             }
-            if let found { excerpts[item.key] = found }
-            else {
-                let failure = candidates.first(where: { !$0.ok })
-                let reason = failure.map { HostGit.refusal($0.error) } ?? (item.fence.path == nil ? "symbol \(item.fence.symbol ?? "") not found in the workspace" : "cannot read \(item.fence.path ?? "")")
-                excerpts[item.key] = NoteExcerpt(path: item.fence.path ?? "", range: nil, lines: capture ?? [], status: .stale(reason), missing: failure?.code == "not_found")
-            }
-        }
-        if bytes {
-            for (source, image) in zip(request.images, reply.images) where image.ok {
-                if let data = image.data.flatMap({ Data(base64Encoded: $0) }) { images[source] = data }
-            }
-        }
-        return HostNoteRead(excerpts: excerpts, images: images,
-                            observation: HostNoteObservation(fences: reply.fences.map { $0.map(\.observation) }, images: reply.images.map(\.observation)))
+        }.get()
     }
 
     private struct NoteReply: Decodable {
