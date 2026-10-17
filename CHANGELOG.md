@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Host-generated code-tile anchors stay inside the board's file policy on easld and Mac hosts, including create, update, and background relocation. Outside paths and escaping symlinks add no source text to `props.anchor`. Inside-board files and permitted worktrees still anchor and relocate. Authored anchors and intentional local display access are unchanged. Requires the host update.
 - Host-generated note anchors stay inside the board's file policy on easld and Mac hosts. Outside paths and escaping symlinks add no source text to markdown and report `path refused`. Registered worktrees, pinned revisions, and permitted source-root overrides still work. Authored markdown and intentional local display access are unchanged. Requires the host update.
 - CLI method help (`--help`, `-h`, and `easl help <method>`) stays local, includes parameters and results, and suggests close matches for unknown methods; browser help describes the cmux subset without connecting.
 - **Open file references from remote terminals.** ⌘-click a path, a bare filename, or an absolute host path to open its host code tile at the line. One host call resolves the terminal's directory and file index, including wrapped references and pytest definitions. Repeated clicks re-aim the terminal's preview until the user keeps it. Missing files show a notice; outside paths and escaping symlinks are refused on the host. Option or Shift opens a separate tile. Both easld and Mac hosts work without a host upgrade.
