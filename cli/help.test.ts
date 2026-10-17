@@ -31,6 +31,7 @@ const forms = [
   ["help", "browser", "navigate"],
   ["view.render", "--json", "@missing-help-params.json", "--help"],
   ["render", "--help"],
+  ["view.render", "--target", "obj_x", "--full", "-h"],
 ];
 
 test("help exits successfully without a running server and describes the requested command", async () => {
@@ -89,6 +90,8 @@ test("help never connects even when a socket is listening", async () => {
       [["help", "metrics"], "usage: easl"],
       [["help", "CodeProps"], "fields:"],
       [["help", "--help"], "usage: easl"],
+      [["browser", "snapshot", "--interactive", "-h"], "browser.snapshot"],
+      [["browser", "open", "--focus", "-h"], "browser.open_split"],
     ] as const) {
       const result = await run(args, socket);
       expect(result.code, args.join(" ")).toBe(0);

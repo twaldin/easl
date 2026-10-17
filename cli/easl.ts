@@ -321,10 +321,11 @@ function describe(name: string): void {
   console.log(lines.join("\n"));
 }
 
-function wantsHelp(args: string[]): boolean {
+function wantsHelp(args: string[], params?: Schema): boolean {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--help" || arg === "-h") return true;
+    if (args[i + 1] === "-h" && (schemaAt(params, arg.slice(2).split("."))?.type === "boolean" || arg === "--full")) return true;
     if (arg.startsWith("--") && args[i + 1] !== undefined && !args[i + 1].startsWith("--")) i++;
   }
   return false;
@@ -346,11 +347,15 @@ if (argv[0] === "methods") {
   process.exit(0);
 }
 
-/** Params of the cmux subset (docs/contracts.md) that are strings: `--text 1` and `--key 1` stay text. */
-const BROWSER_STRINGS: Schema = {
-  properties: Object.fromEntries(
-    ["surface_id", "workspace_id", "url", "selector", "text", "script", "key", "load_state", "url_contains", "out"].map((key) => [key, { type: "string" }]),
-  ),
+/** Parameter types for the cmux subset: string values stay text; boolean flags leave -h available for help. */
+const BROWSER_PARAMS: Schema = {
+  properties: {
+    ...Object.fromEntries(
+      ["surface_id", "workspace_id", "url", "selector", "text", "script", "key", "load_state", "url_contains", "out"].map((key) => [key, { type: "string" }]),
+    ),
+    interactive: { type: "boolean" },
+    focus: { type: "boolean" },
+  },
 };
 const BROWSER_METHODS: Record<string, string> = { open: "browser.open_split", list: "surface.list", close: "surface.close" };
 
@@ -397,7 +402,7 @@ for (const verb of ["click", "dblclick", "hover", "focus", "check", "uncheck", "
   ];
 }
 
-if (argv[0] === "browser" && (helpCommand || wantsHelp(argv.slice(1)))) {
+if (argv[0] === "browser" && (helpCommand || wantsHelp(argv.slice(1), BROWSER_PARAMS))) {
   const verb = argv[1];
   if (!verb || verb === "--help" || verb === "-h") {
     console.log("usage: easl browser <verb> [<tile>] [--key value]\n\ncmux browser subset (docs/contracts.md):");
@@ -416,7 +421,7 @@ if (argv[0] === "browser" && (helpCommand || wantsHelp(argv.slice(1)))) {
   console.log([
     `usage: easl browser ${verb} ${verb === "open" ? "[url]" : verb === "list" ? "[<calling tile>]" : "[<tile>]"} [--key value]`,
     method, `  ${description}`, "", "params:",
-    `  surface_id: string (${boardScoped ? "optional" : "required"}) - ${boardScoped ? "calling terminal; defaults to CMUX_SURFACE_ID unless workspace_id is given" : "browser tile id, also accepted as <tile>"}`,
+    `  surface_id: string (${boardScoped ? "optional" : "required"}) - ${boardScoped ? "calling terminal; open/list default to CMUX_SURFACE_ID unless workspace_id is given" : "browser tile id, also accepted as <tile>"}`,
     ...(boardScoped ? ["  workspace_id: string (optional) - board to use instead of the calling terminal's board"] : []),
     ...params.map((line) => `  ${line}`), "",
     `result: ${result}${method.startsWith("browser.") && method !== "browser.open_split" ? " (also includes surface_id: string)" : ""}`,
@@ -426,12 +431,14 @@ if (argv[0] === "browser" && (helpCommand || wantsHelp(argv.slice(1)))) {
 
 if (helpCommand && argv[0] === "ask") askHelp(true);
 if (helpCommand && (argv[0] === "metrics" || (argv[0] === "agent" && argv[1] === "spawn"))) usage(true);
+const aliases: Record<string, string> = { get: "object.get", tell: "agent.prompt", render: "view.render" };
+const topic = argv[0].includes(".") || !argv[1] || argv[1].startsWith("-") ? argv[0] : `${argv[0]}.${argv[1]}`;
+const helpName = Object.hasOwn(aliases, argv[0]) ? aliases[argv[0]] : topic;
+const helpParams = Object.hasOwn(methods, helpName) ? methods[helpName].params : undefined;
 const helpStart = argv[0] === "tell" ? 3 : argv[0] === "get" || argv[0] === "render" ? 2 : argv[0].includes(".") ? 1 : 2;
 if (helpCommand || (argv[0] !== "browser" && argv[0] !== "ask" && argv[0] !== "metrics" && !(argv[0] === "agent" && argv[1] === "spawn")
-    && (wantsHelp(argv.slice(helpStart)) || argv[1] === "--help" || argv[1] === "-h"))) {
-  const aliases: Record<string, string> = { get: "object.get", tell: "agent.prompt", render: "view.render" };
-  const name = argv[0].includes(".") || !argv[1] || argv[1].startsWith("-") ? argv[0] : `${argv[0]}.${argv[1]}`;
-  describe(Object.hasOwn(aliases, argv[0]) ? aliases[argv[0]] : name);
+    && (wantsHelp(argv.slice(helpStart), helpParams) || argv[1] === "--help" || argv[1] === "-h"))) {
+  describe(helpName);
   process.exit(0);
 }
 
@@ -445,7 +452,7 @@ async function browser(args: string[]): Promise<void> {
   const [verb, ...more] = args;
   if (!verb || verb.startsWith("--")) usage();
   const positional = more[0] !== undefined && !more[0].startsWith("--") ? more.shift() : undefined;
-  const params = parseArgs(more, BROWSER_STRINGS);
+  const params = parseArgs(more, BROWSER_PARAMS);
   const out = params.out;
   delete params.out;
   if (out !== undefined && (verb !== "screenshot" || typeof out !== "string")) {
