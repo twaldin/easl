@@ -399,7 +399,8 @@ final class BrowserSurface {
                 stream.markDelivered(lastNative.seq)
             }
             if case .command(let command) = events[last].action, command.readsSelection {
-                guard !stream.closed, !stream.mousePending, !stream.keyPending, let webView = self.tile?.webView else { return nil }
+                guard !stream.closed, let webView = self.tile?.webView else { return nil }
+                // Selection has its own bounded page read; unavailable input telemetry must not disable copy.
                 text = await Self.selection(in: webView)
                 stream.markDelivered(events[last].seq)
             }

@@ -74,6 +74,7 @@ Shipped on the Swift app (docs/design.md "Client mode (remote boards)", docs/con
 - Browser relay through easld (unit4b), forwarding the unchanged `surface.*` envelope to the Mac browser owner rather than executing a browser on the viewer. The shipped browser path is Mac host to Mac viewer.
 - Machine switching (unit5), including ownership transfer. Disconnect and reconnect do not migrate browser execution or replay input.
 - Remote browser uploads, rich clipboard, precise IME caret placement, iframe select handling, and OS-native fullscreen, drag and menu surfaces. Current copy and paste are explicit plain text; cut is refused. Downloads remain host-only. Media permissions, client certificates, and external-app links are refused.
+- Private clipboard markers for native browser address and dialog field editors, and an input-completion barrier on WebKit versions without pending-key processing SPI. Page-body Copy already uses private markers; the conservative frame watermark remains unconfirmed when the SPI is absent.
 
 ## The composer
 
