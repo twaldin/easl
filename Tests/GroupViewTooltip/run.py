@@ -16,8 +16,11 @@ def main():
     root = pathlib.Path(__file__).resolve().parents[2]
     build = args.bin_path.resolve()
     link_file = build / "CanvasCoreTests.product" / "Objects.LinkFileList"
-    if not link_file.is_file():
-        parser.error(f"Missing {link_file}. Run swift build --product CanvasCoreTests first.")
+    if not link_file.is_file() or not (build / "description.json").is_file():
+        native = ["swift", "build", "--build-system", "native", "--scratch-path", str(root / ".build/tooltip-native")]
+        subprocess.run([*native, "-j", "2", "--product", "CanvasCoreTests"], cwd=root, check=True)
+        build = pathlib.Path(subprocess.check_output([*native, "--show-bin-path"], cwd=root, text=True).strip())
+        link_file = build / "CanvasCoreTests.product/Objects.LinkFileList"
     objects = [pathlib.Path(p) for p in shlex.split(link_file.read_text())]
     objects = [p for p in objects if "CanvasCoreTests.build" not in p.parts]
     if not objects or not any("CanvasCore.build" in p.parts for p in objects):
