@@ -28,6 +28,9 @@ const forms = [
   ["--help"],
   ["-h"],
   ["help", "view.render"],
+  ["help", "browser", "navigate"],
+  ["view.render", "--json", "@missing-help-params.json", "--help"],
+  ["render", "--help"],
 ];
 
 test("help exits successfully without a running server and describes the requested command", async () => {
