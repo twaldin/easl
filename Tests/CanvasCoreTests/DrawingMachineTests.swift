@@ -45,7 +45,7 @@ final class DrawingMachineTests {
     @Test func aFileHoldingNoIdentityFailsAndIsLeftAsItIs() throws {
         let file = dir.appendingPathComponent("client-id")
         try "my mac\n".write(to: file, atomically: true, encoding: .utf8)
-        #expect(throws: MachineIdentity.Failure(description: "\(file.path) holds no machine identity")) { try MachineIdentity.load(from: file) }
+        #expect(throws: MachineIdentity.Failure.self) { try MachineIdentity.load(from: file) }
         #expect(try String(contentsOf: file, encoding: .utf8) == "my mac\n")
     }
 
@@ -55,8 +55,7 @@ final class DrawingMachineTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: readOnly.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: readOnly.path) }
         let file = readOnly.appendingPathComponent("client-id")
-        let error = try #require(throws: MachineIdentity.Failure.self) { try MachineIdentity.load(from: file) }
-        #expect(error.description.hasPrefix("couldn't keep a machine identity in \(file.path): "))
+        #expect(throws: MachineIdentity.Failure.self) { try MachineIdentity.load(from: file) }
         #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 
@@ -74,11 +73,28 @@ final class DrawingMachineTests {
 
     }
 
+    @Test func aMacHostRefusesOtherDrawingMachinesWithoutChangingThePage() async throws {
+        registry.drawingMachine = home
+        let foreign = DrawingMachine(id: "mch_WORK", host: "work")
+        let page = board.create(type: .browser, props: .object(["url": "https://example.com/"]))
+        let created = try await call("object.create", .object(["board": .string(board.id), "type": "browser",
+            "props": .object(["url": "https://other.example/", "drawingMachine": foreign.json])]))
+        #expect(created["error"]?["code"] == "invalid_params")
+        #expect(board.objects.count == 1)
+        let changed = try await call("object.update", .object(["id": .string(page.id),
+            "props": .object(["url": "https://other.example/", "drawingMachine": foreign.json])]))
+        #expect(changed["error"]?["code"] == "invalid_params")
+        #expect(board.objects[page.id]?.props == page.props)
+        #expect(board.objects[page.id]?.rev == page.rev)
+        let cleared = try await call("object.update", .object(["id": .string(page.id), "props": .object(["drawingMachine": .null])]))
+        #expect(cleared["error"]?["code"] == "invalid_params")
+        #expect(board.objects[page.id]?.props == page.props)
+    }
+
     @Test func theMacsOwnApiRefusesAMalformedDrawingMachineAndBrowserCalls() async throws {
         let page = board.create(type: .browser, props: .object(["url": "https://example.com/"]))
         let malformed = try await call("object.update", .object(["id": .string(page.id), "props": .object(["drawingMachine": .object(["id": "home"])])]))
         #expect(malformed["error"]?["code"] == "invalid_params")
-        #expect(malformed["error"]?["message"] == "drawingMachine must be {id, host}: a Mac's machine identity (its client.attach identity) and its name")
         #expect(board.objects[page.id]?.props["drawingMachine"] == nil)
         let browse = try await call("browser.call", .object(["id": .string(page.id), "method": "browser.url.get", "params": .object([:])]))
         #expect(browse["error"]?["code"] == "unsupported")

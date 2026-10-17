@@ -40,6 +40,17 @@ public struct DrawingMachine: Codable, Equatable, Sendable {
     }
 }
 
+extension Board {
+    func browserPropsProblem(_ props: JSONValue?) -> String? {
+        if let problem = DrawingMachine.problem(props) { return problem }
+        guard !isRemote, let props, props["drawingMachine"] != nil else { return nil }
+        guard let hostMachine, DrawingMachine(props)?.id == hostMachine.id else {
+            return "browser tiles on this board must draw on \(hostMachine?.host ?? "its Mac host")"
+        }
+        return nil
+    }
+}
+
 /// This app home's persistent machine identity: its `client.attach` `identity`, which a browser
 /// tile's `drawingMachine` names. Made once (`IDs.make("mch")`) and kept in a file of the app's
 /// home (`<support>/client-id`), so it outlives relaunches and reconnects and follows neither the

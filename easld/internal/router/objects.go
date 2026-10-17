@@ -238,7 +238,7 @@ func (r *Router) update(p map[string]any) (any, error) {
 		frame = &f
 	}
 	props := asMap(p["props"])
-	if props != nil {
+	if props != nil && current.Type == model.Browser {
 		if err := validateDrawing(props["drawingMachine"]); err != nil {
 			return nil, err
 		}

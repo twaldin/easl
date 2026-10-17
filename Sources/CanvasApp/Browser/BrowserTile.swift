@@ -31,7 +31,7 @@ final class BrowserTile: NSView, TileContent {
     /// How long a released web view outlives its release (see `release`).
     static let closeDelay: TimeInterval = 2
 
-    let objectID: ObjectID
+    var objectID: ObjectID { object.id }
     let board: Board
     private(set) var object: CanvasObject
     private(set) var webView: WKWebView?
@@ -128,7 +128,6 @@ final class BrowserTile: NSView, TileContent {
     private var reloadPending = false
 
     init(object: CanvasObject, board: Board) {
-        objectID = object.id
         self.board = board
         self.object = object
         zoom = CGFloat(object.zoom)
@@ -1280,7 +1279,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        if !uncommittedNavigations.contains(where: { $0 === navigation }) { uncommittedNavigations.append(navigation) }
+        if let navigation, !uncommittedNavigations.contains(where: { $0 === navigation }) { uncommittedNavigations.append(navigation) }
         documentStatus.started()
         signalChange()
     }

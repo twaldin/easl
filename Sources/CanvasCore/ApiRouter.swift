@@ -1502,7 +1502,7 @@ public final class ApiRouter {
             if type == .note || type == .html, let root = props["root"]?.string, !root.isEmpty { try board.checkLinkRoot(root) }
             try board.checkKey(props, for: nil)
             if type == .diagram, let problem = DiagramSpec.problem(props) { throw Failure("invalid_params", problem) }
-            if type == .browser, let problem = DrawingMachine.problem(props) { throw Failure("invalid_params", problem) }
+            if type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             if type == .question { props = try board.questionToCreate(props, caller: caller(p)) }
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p))
             return Self.withWarnings(["object": JSONValue(board.reported(object))], type.unknownPropWarnings(props))
@@ -1517,7 +1517,7 @@ public final class ApiRouter {
             if let patch = props, try board.object(id).type == .diagram, let problem = DiagramSpec.problem(try board.object(id).props.merging(patch)) {
                 throw Failure("invalid_params", problem)
             }
-            if try board.object(id).type == .browser, let problem = DrawingMachine.problem(props) { throw Failure("invalid_params", problem) }
+            if try board.object(id).type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             (props, frame) = try board.questionUpdate(id, props: props, frame: frame, caller: caller(p))
             let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: props, caller: caller(p))
             return Self.withWarnings(["object": JSONValue(board.reported(object))], object.type.unknownPropWarnings(p["props"]))

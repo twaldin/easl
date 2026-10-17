@@ -247,7 +247,7 @@
         "url": { "type": "string" },
         "title": { "type": "string", "description": "names the tile; the app never overwrites it" },
         "pageTitle": { "type": "string", "description": "written by the app: the page's own title; shown when `title` is unset; never bumps rev" },
-        "drawingMachine": { "$ref": "#/definitions/DrawingMachine", "description": "the Mac that runs this page in its own browser profile. A Mac-hosted board defaults to its host. Easld persists the creating Mac's identity, or the first eligible attached Mac for an existing unassigned tile. Disconnect never moves a page to another machine" },
+        "drawingMachine": { "$ref": "#/definitions/DrawingMachine", "description": "the Mac that runs this page in its own browser profile. Mac-hosted boards run on their host and reject foreign or cleared assignments until machine switching is supported; imported browsers bind to the host. Easld persists the creating Mac's identity, or the first eligible attached Mac for an existing unassigned tile. Disconnect never moves a page to another machine" },
         "zoom": { "$ref": "#/definitions/Zoom" },
         "profile": { "type": "string", "description": "a named browser profile: its own cookies, logins and storage, shared by every tile that names it; absent: the default profile. Tiles a page opens (links, popups) take it" },
         "reloadOnChange": { "type": "boolean", "default": false, "description": "a page served from this Mac (localhost, 127.x, [::1], a .localhost name, a file) reloads when a file under the board root (a file page: its folder) changes; hidden files and folders and node_modules don't count" },
@@ -2102,6 +2102,7 @@
     },
     "browser.report": {
       "description": "A drawing Mac reports committed page URL and title metadata to easld. Only an attached client serving this board whose persistent identity matches the tile's drawingMachine may report. URL commits preserve agent, user or system credit; pageTitle is bookkeeping with no rev bump. No page body, image, cookie, log or profile field is accepted. The Mac app's host API answers unsupported.",
+      "unfilled": ["caller"],
       "params": {
         "type": "object",
         "required": ["id"],
@@ -2109,7 +2110,7 @@
           "id": { "$ref": "#/definitions/Id" },
           "url": { "type": "string" },
           "pageTitle": { "type": ["string", "null"], "description": "the page's title; null removes it" },
-          "caller": { "$ref": "#/definitions/Id" },
+          "caller": { "$ref": "#/definitions/Id", "description": "explicit terminal credit from the drawing Mac, never filled from the reporting process's environment; mutually exclusive with actor" },
           "actor": { "type": "string", "enum": ["user", "system"], "description": "URL credit when no caller is given; mutually exclusive with caller" }
         },
         "additionalProperties": false

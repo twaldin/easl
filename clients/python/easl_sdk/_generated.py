@@ -794,7 +794,7 @@ class BrowserApi:
     def report(self, *, id: "Id", url: str | None = None, page_title: Any | None = None, caller: "Id" | None = None, actor: Literal["user", "system"] | None = None) -> dict[str, Any]:
         """A drawing Mac reports committed page URL and title metadata to easld. Only an attached client serving this board whose persistent identity matches the tile's drawingMachine may report. URL commits preserve agent, user or system credit; pageTitle is bookkeeping with no rev bump. No page body, image, cookie, log or profile field is accepted. The Mac app's host API answers unsupported."""
         params = {"id": id, "url": url, "pageTitle": page_title, "caller": caller, "actor": actor}
-        return self._call("browser.report", params, ["caller"])
+        return self._call("browser.report", params, [])
 
 @_snake_case_hints
 class TextApi:

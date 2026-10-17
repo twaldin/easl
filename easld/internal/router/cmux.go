@@ -260,7 +260,7 @@ func (r *Router) cmuxClose(tile string, params map[string]any) (map[string]any, 
 		} else {
 			delete(r.adopted, browser.ID)
 		}
-	} else if err := b.Delete(browser.ID, r.cmuxDriver(tile, browser, b)); err != nil {
+	} else if err := b.Delete(browser.ID, r.browserDriver(tile, browser, b)); err != nil {
 		return nil, err
 	}
 	return map[string]any{"surface_id": browser.ID, "workspace_id": b.ID()}, nil
@@ -288,7 +288,7 @@ func (r *Router) cmuxPage(tile, method string, params map[string]any) (map[strin
 		forwardParams[k] = v
 	}
 	forward := map[string]any{"id": browser.ID, "method": method, "params": forwardParams}
-	if driver := r.cmuxDriver(tile, browser, b); driver != "" {
+	if driver := r.browserDriver(tile, browser, b); driver != "" {
 		forward["caller"] = driver
 	}
 	result, err := r.await(c, "browser.call", forward, browserDeadline(method, forwardParams))
@@ -317,7 +317,7 @@ func (r *Router) browserSurface(id string) (*board.Board, model.Object, error) {
 	return b, o, nil
 }
 
-func (r *Router) cmuxDriver(tile string, browser model.Object, b *board.Board) string {
+func (r *Router) browserDriver(tile string, browser model.Object, b *board.Board) string {
 	if o, ok := b.Objects()[tile]; ok && o.Type == model.Terminal {
 		return tile
 	}

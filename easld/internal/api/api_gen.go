@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "d6eccec31a5df6db"
+const SchemaHash = "a4df09cf44718c70"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -448,7 +448,7 @@ type BrowserProps struct {
 	Title *string `json:"title,omitempty"`
 	// written by the app: the page's own title; shown when `title` is unset; never bumps rev
 	PageTitle *string `json:"pageTitle,omitempty"`
-	// the Mac that runs this page in its own browser profile. A Mac-hosted board defaults to its host. Easld persists the creating Mac's identity, or the first eligible attached Mac for an existing unassigned tile. Disconnect never moves a page to another machine
+	// the Mac that runs this page in its own browser profile. Mac-hosted boards run on their host and reject foreign or cleared assignments until machine switching is supported; imported browsers bind to the host. Easld persists the creating Mac's identity, or the first eligible attached Mac for an existing unassigned tile. Disconnect never moves a page to another machine
 	DrawingMachine *DrawingMachine `json:"drawingMachine,omitempty"`
 	Zoom           *Zoom           `json:"zoom,omitempty"`
 	// a named browser profile: its own cookies, logins and storage, shared by every tile that names it; absent: the default profile. Tiles a page opens (links, popups) take it

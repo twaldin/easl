@@ -236,8 +236,9 @@ func (r *Router) browserCall(p map[string]any) (any, error) {
 		return nil, r.drawingUnavailable(machine, host, b.ID(), "browser.call")
 	}
 	forward := map[string]any{"id": id, "method": method, "params": params}
-	if caller, ok := optStr(p, "caller"); ok {
-		forward["caller"] = caller
+	caller, _ := optStr(p, "caller")
+	if driver := r.browserDriver(caller, o, b); driver != "" {
+		forward["caller"] = driver
 	}
 	return r.await(c, "browser.call", forward, browserDeadline(method, params))
 }
@@ -330,6 +331,11 @@ func (r *Router) reloadBrowser(b *board.Board, o model.Object, p map[string]any,
 	c := r.clients.ChooseExact(machine, b.ID(), "object.reload")
 	if c == nil {
 		return nil, r.drawingUnavailable(machine, host, b.ID(), "object.reload")
+	}
+	caller, _ := optStr(p, "caller")
+	delete(p, "caller")
+	if driver := r.browserDriver(caller, o, b); driver != "" {
+		p["caller"] = driver
 	}
 	return r.await(c, "object.reload", p, millis(timeout)+clients.ReloadGrace)
 }

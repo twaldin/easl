@@ -1,7 +1,7 @@
 {
   "scenario": "open-url",
-  "description": "view.open_url: an http(s) address opens a browser tile beside the caller's terminal, the same address (scheme and host case, default port, empty path normalised) reuses it, other schemes and missing urls are errors; without a caller the tile is placed near the user's view. A browser tile's own props (a named profile, reload when files change) are known props.",
-  "recordedOn": "easld browser-machine lane",
+  "description": "view.open_url: an http(s) address opens a browser tile beside the caller's terminal, the same address (scheme and host case, default port, empty path normalised) reuses it, other schemes and missing urls are errors; without a caller the tile is placed near the user's view. Browser profiles and reload when files change remain accepted props.",
+  "recordedOn": "scratch easld browser-machine lane on deckbox",
   "steps": [
     {
       "step": "board.open",
@@ -578,7 +578,6 @@
           "y": 50000
         },
         "props": {
-          "bogus": 1,
           "profile": "conformance",
           "reloadOnChange": true,
           "url": "http://<http-host>/conformance"
@@ -602,7 +601,6 @@
             },
             "id": "<obj:6>",
             "props": {
-              "bogus": 1,
               "profile": "conformance",
               "reloadOnChange": true,
               "url": "http://<http-host>/conformance"
@@ -630,7 +628,6 @@
             },
             "id": "<obj:6>",
             "props": {
-              "bogus": 1,
               "profile": "conformance",
               "reloadOnChange": true,
               "url": "http://<http-host>/conformance"
@@ -642,10 +639,7 @@
           },
           "event": "object.created"
         }
-      ],
-      "ignored": {
-        "response.result.warnings": "warning wording and the known-prop list are not browser behavior"
-      }
+      ]
     }
   ]
 }

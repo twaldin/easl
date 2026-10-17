@@ -271,13 +271,11 @@ public final class Board {
     /// How deep the user's write calls are nested on a remote board: only the outermost one goes
     /// to the host (its cascades, a group re-fit or an arrow detaching, are the host's to make).
     private var hostWriteDepth = 0
-    /// The Mac whose app hosts this board, which runs every one of its browser tiles' pages: a
-    /// browser tile without a drawing machine takes this one (`BrowserProps.drawingMachine`),
-    /// made with it or once this is set. Nil on a remote board: its own host assigns them.
+    /// Browser pages on Mac-hosted boards execute on that host, including imported objects.
     public var hostMachine: DrawingMachine? {
         didSet {
-            guard let hostMachine else { return }
-            for object in objects.values.sorted(by: { $0.id < $1.id }) where object.type == .browser && DrawingMachine(object.props) == nil {
+            guard !isRemote, let hostMachine else { return }
+            for object in objects.values.sorted(by: { $0.id < $1.id }) where object.type == .browser && DrawingMachine(object.props)?.id != hostMachine.id {
                 commitBookkeeping(object, props: .object(["drawingMachine": hostMachine.json]))
             }
         }
@@ -385,7 +383,7 @@ public final class Board {
         }
         let z = (objects.values.map(\.z).max() ?? 0) + 1
         var stamped = type == .terminal && !isRemote ? stampingWorktree(props) : props
-        if type == .browser, let hostMachine, DrawingMachine(props) == nil { stamped = props.merging(.object(["drawingMachine": hostMachine.json])) }
+        if type == .browser, !isRemote, let hostMachine { stamped = props.merging(.object(["drawingMachine": hostMachine.json])) }
         var object = CanvasObject(id: IDs.make("obj"), type: type, frame: frame ?? Frame(x: 0, y: 0, w: size.w, h: size.h), z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(),
                                   props: stamped)
         if let fitted = fittedFrame(ofGroup: object) {

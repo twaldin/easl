@@ -238,7 +238,7 @@ export type BrowserProps = {
   title?: string;
   /** written by the app: the page's own title; shown when `title` is unset; never bumps rev */
   pageTitle?: string;
-  /** the Mac that runs this page in its own browser profile. A Mac-hosted board defaults to its host. Easld persists the creating Mac's identity, or the first eligible attached Mac for an existing unassigned tile. Disconnect never moves a page to another machine */
+  /** the Mac that runs this page in its own browser profile. Mac-hosted boards run on their host and reject foreign or cleared assignments until machine switching is supported; imported browsers bind to the host. Easld persists the creating Mac's identity, or the first eligible attached Mac for an existing unassigned tile. Disconnect never moves a page to another machine */
   drawingMachine?: DrawingMachine;
   zoom?: Zoom;
   /** a named browser profile: its own cookies, logins and storage, shared by every tile that names it; absent: the default profile. Tiles a page opens (links, popups) take it */
@@ -1997,6 +1997,7 @@ export type BrowserReportParams = {
   url?: string;
   /** the page's title; null removes it */
   pageTitle?: unknown;
+  /** explicit terminal credit from the drawing Mac, never filled from the reporting process's environment; mutually exclusive with actor */
   caller?: Id;
   /** URL credit when no caller is given; mutually exclusive with caller */
   actor?: "user" | "system";
@@ -2274,7 +2275,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
     },
     browser: {
       call: (params: BrowserCallParams) => call("browser.call", params ?? {}, ["caller"]) as Promise<BrowserCallResult>,
-      report: (params: BrowserReportParams) => call("browser.report", params ?? {}, ["caller"]) as Promise<BrowserReportResult>,
+      report: (params: BrowserReportParams) => call("browser.report", params ?? {}, []) as Promise<BrowserReportResult>,
     },
     text: {
       measure: (params: TextMeasureParams) => call("text.measure", params ?? {}, ["board"]) as Promise<TextMeasureResult>,
