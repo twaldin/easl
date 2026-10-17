@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "ae00d232a9d70ac0"
+const SchemaHash = "05b93bfd3d850025"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -63,6 +63,10 @@ var Methods = map[string]ParamSpec{
 	"board.open_remote": {
 		Accepted: []string{"host", "board", "select"},
 		Required: []string{"host", "board"},
+	},
+	"board.close": {
+		Accepted: []string{"board", "endSessions"},
+		Required: nil,
 	},
 	"board.export": {
 		Accepted: []string{"board", "path"},

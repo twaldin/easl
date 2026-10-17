@@ -535,8 +535,11 @@ func TestQuestionsPastDueWhenABoardOpensExpireThen(t *testing.T) {
 	}
 	q := ask(t, first, expiring(time.Now().Add(300*time.Millisecond)), nil, "")
 	id := first.ID()
-	reg.Close(id)
+	closeErr := reg.Close(id, nil)
 	reg.Mu.Unlock()
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
 
 	// The closed board's timer is stopped: it stays open though its time passes.
 	time.Sleep(450 * time.Millisecond)

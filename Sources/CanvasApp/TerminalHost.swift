@@ -104,6 +104,10 @@ final class TerminalHost {
         tile.hostChanged()
     }
 
+    func remove(_ tile: TerminalTile) {
+        tiles.remove(tile)
+    }
+
     /// The tile's Reconnect: try now, and from 1 s again after that.
     func reconnect() {
         delay = 1
@@ -318,15 +322,7 @@ final class TerminalHost {
             throw ApiRouter.Failure("unavailable", "\(target) is offline: terminal \(id)'s session there can't be restarted until it is back")
         }
         try killing()
-        _ = try await call("session.kill", .object(["tile": .string(id), "home": .string(TerminalTile.homeLabel)]))
-        var waited = 0
-        while await hasSession(id) != false {
-            waited += 1
-            guard waited <= 30 else {
-                throw ApiRouter.Failure("unavailable", "\(target) still lists terminal \(id)'s session 3 s after ending it")
-            }
-            try? await Task.sleep(for: .milliseconds(100))
-        }
+        try await endSession(id)
         try ended()
         // The session is gone, so merge history cannot matter; older easld accepts this relaunch.
         guard let params = tile.hostedSpawnParams(home: home, run: run, argv: argv, merged: []) else {
@@ -346,6 +342,18 @@ final class TerminalHost {
             throw ApiRouter.Failure("unavailable", "\(target) started terminal \(id)'s session again before the relaunch could")
         }
         NSLog("easl: %@ restarted %@ on %@", id, result["session"]?.string ?? "", target)
+    }
+
+    func endSession(_ tile: ObjectID) async throws {
+        guard state == .online else {
+            throw ApiRouter.Failure("unavailable", "\(target) is offline: terminal \(tile)'s session cannot be ended")
+        }
+        _ = try await call("session.kill", .object(["tile": .string(tile), "home": .string(TerminalTile.homeLabel)]))
+        for attempt in 0...30 {
+            if await hasSession(tile) == false { return }
+            if attempt < 30 { try? await Task.sleep(for: .milliseconds(100)) }
+        }
+        throw ApiRouter.Failure("unavailable", "\(target) still lists terminal \(tile)'s session, or cannot confirm it is gone, 3 s after ending it")
     }
 
     /// Ends `tile`'s session (owner-guarded by this instance's home label); logged when the host

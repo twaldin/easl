@@ -171,6 +171,9 @@ func (b *Board) ScheduleQuestionExpiry() { b.scheduleQuestionExpiry(time.Now()) 
 
 func (b *Board) scheduleQuestionExpiry(now time.Time) {
 	b.StopQuestionExpiry()
+	if b.closed {
+		return
+	}
 	var next time.Time
 	found := false
 	for _, o := range b.objects {

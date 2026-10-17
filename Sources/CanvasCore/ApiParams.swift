@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 1
-    static let schemaHash = "ae00d232a9d70ac0"
+    static let schemaHash = "05b93bfd3d850025"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "system.ping": ([], []),
@@ -15,6 +15,7 @@ enum ApiParams {
         "board.list": ([], []),
         "board.open": (["root", "select"], ["root"]),
         "board.open_remote": (["host", "board", "select"], ["host", "board"]),
+        "board.close": (["board", "endSessions"], []),
         "board.export": (["board", "path"], []),
         "object.get": (["id", "as", "since"], ["id"]),
         "object.find": (["board", "key", "keyPrefix", "type", "status", "as"], []),

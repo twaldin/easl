@@ -935,6 +935,29 @@ export type BoardOpenRemoteResult = {
   alreadyOpen: boolean;
 };
 
+export type BoardCloseParams = {
+  /** defaults as board.export: the client's board environment, otherwise the server's default board including its frontmost fallback */
+  board?: Id;
+  /** end local terminal sessions and remove their terminal objects, as the sheet's End Sessions does; easld requires --own-terminals or answers unsupported, and keeps hosted terminals it does not own. Forbidden on a remote tab, even false */
+  endSessions?: boolean;
+};
+export type BoardCloseResult = {
+  board: Id;
+  root: string;
+  /** terminals retained with their sessions, sorted by id */
+  kept: {
+    id: Id;
+    /** nonempty props.name, otherwise nonempty props.title, otherwise Terminal */
+    name: string;
+  }[];
+  /** terminals whose sessions ended and whose objects were removed, sorted by id */
+  ended: {
+    id: Id;
+    /** nonempty props.name, otherwise nonempty props.title, otherwise Terminal */
+    name: string;
+  }[];
+};
+
 export type BoardExportParams = {
   board?: Id;
   /** absolute, or relative to the board root; default .easl/board.json */
@@ -1806,6 +1829,8 @@ export interface CanvasApi {
     open(params: BoardOpenParams): Promise<BoardOpenResult>;
     /** The Mac app only (easld answers `unsupported`): open a board another Mac's easl hosts, as File › Open Remote… does, as a tab of the frontmost board window (its own window when there is none), viewed live over ssh (docs/contracts.md "Remote boards"). `host` is found as the picker finds it: the host opened before (`remote-hosts.json`) or the tailnet Mac whose ssh target or name it is, else it is an ssh host as typed into the picker; then the picker's host discovery over ssh, which remembers the host in `remote-hosts.json`, and the board is read from the host. That host list is the only file this writes: the board is viewed, never copied (no board file, viewport, composer or `open-boards.json` entry). The user's current tab stays in front and nothing takes focus unless `select` is true. A board already open from that host is answered (`alreadyOpen`) without asking the host again, selected when `select` is true, never opened twice. Fails `unavailable` when the host can't be reached or its easl doesn't answer, `not_found` when the host has no such board open (its `board.list` says which are `open`), `ambiguous` when two hosts have that name, `invalid_params` for a host that isn't one host (spaces, a leading `-`, `user@` or `@host`) or a board that isn't a board id. */
     open_remote(params: BoardOpenRemoteParams): Promise<BoardOpenRemoteResult>;
+    /** Close an open board without quitting the server. Save its latest state and remove it from the open set and open-boards.json, but keep its stored board file and board.list entry with open:false. By default terminals and their sessions stay running; board.open of the same root restores them. The Mac app refuses its last open board with conflict, including while hidden or minimized. A remote tab closes only this viewer and never changes the host; any explicit endSessions, including false, is invalid_params there. Unknown or already closed boards are not_found. An affected agent.restart is conflict. Persistence or session-ending failure is unavailable and leaves the board open, with any partial session effects reported. No new event is emitted and subscriptions stay connected. */
+    close(params?: BoardCloseParams): Promise<BoardCloseResult>;
     /** Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller. */
     export(params?: BoardExportParams): Promise<BoardExportResult>;
   };
@@ -1933,6 +1958,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       list: (params?: BoardListParams) => call("board.list", params ?? {}, []) as Promise<BoardListResult>,
       open: (params: BoardOpenParams) => call("board.open", params ?? {}, []) as Promise<BoardOpenResult>,
       open_remote: (params: BoardOpenRemoteParams) => call("board.open_remote", params ?? {}, []) as Promise<BoardOpenRemoteResult>,
+      close: (params?: BoardCloseParams) => call("board.close", params ?? {}, ["board"]) as Promise<BoardCloseResult>,
       export: (params?: BoardExportParams) => call("board.export", params ?? {}, ["board"]) as Promise<BoardExportResult>,
     },
     object: {
@@ -2001,7 +2027,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"] as const;
+export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];
