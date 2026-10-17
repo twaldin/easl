@@ -65,6 +65,14 @@ func stateOf(terminal model.Object) string {
 // `name@board`) on the open boards; a bare name on caller's board first, when caller is a
 // terminal on one ("" for none). Fails not_found and ambiguous.
 func (r *Router) agentTile(target, caller string) (*board.Board, model.Object, error) {
+	b, terminal, err := r.resolveAgentTile(target, caller)
+	if err == nil && b != nil {
+		_, err = r.availableBoard(b)
+	}
+	return b, terminal, err
+}
+
+func (r *Router) resolveAgentTile(target, caller string) (*board.Board, model.Object, error) {
 	boards := r.reg.SortedBoards()
 	for _, b := range boards {
 		if o, ok := b.Objects()[target]; ok && o.Type == model.Terminal {
@@ -537,7 +545,7 @@ func (r *Router) recheck(w *waiter) {
 	if w.done {
 		return
 	}
-	b, _, err := r.agentTile(w.tile, "")
+	b, _, err := r.resolveAgentTile(w.tile, "")
 	if err != nil {
 		return
 	}
@@ -746,7 +754,7 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 	// Queued before the text goes in: the target's integration drains them with this prompt.
 	name, named := "", false
 	if caller != "" {
-		if _, tile, err := r.agentTile(caller, ""); err == nil {
+		if _, tile, err := r.resolveAgentTile(caller, ""); err == nil {
 			name, named = board.PromptLabel(tile), true
 		}
 	}

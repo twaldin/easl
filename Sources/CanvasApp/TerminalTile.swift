@@ -34,6 +34,21 @@ final class TerminalTile: NSView, TileContent {
     /// A remote board's terminal (docs/design.md "Client mode"): the host's session, attached
     /// over ssh; its programs, notifications and exit are the host's to watch, not this Mac's.
     let isRemote: Bool
+    private(set) var discarded = false
+    var endingSession = false
+
+    func discard() {
+        guard !discarded else { return }
+        discarded = true
+        terminal.cancelImageInput()
+        handler.tile = nil
+        terminal.delegate = nil
+        terminal.controller = nil
+        surface = nil
+        host?.remove(self)
+        TerminalProgramWatch.shared.remove(self)
+        removeFromSuperview()
+    }
 
     /// The machine this terminal's session runs on (`props.host`); nil for this Mac, and for a
     /// remote board's terminal (its host's easl runs that session). Fixed for the tile's life:
@@ -258,7 +273,7 @@ final class TerminalTile: NSView, TileContent {
     /// recorded agent session resumes), or running `argv` (agent.restart's relaunch): `home` is
     /// the host's, `run` this instance's relayed sockets' directory there.
     func hostedSpawnParams(home: String, run: String, argv: [String]? = nil, merged: [BoardID]? = nil) -> JSONValue? {
-        guard let object = board.objects[objectID] else { return nil }
+        guard !discarded, !endingSession, !board.isClosed, let object = board.objects[objectID] else { return nil }
         return HostedTerminal.spawnParams(tile: objectID, board: board.id, merged: merged ?? board.repo?.merged ?? [], argv: argv ?? AgentResume.initialArgv(object), cwd: object.props["cwd"]?.string,
                                           home: home, run: run, homeLabel: Self.homeLabel, cmuxPassword: AppPaths.cmuxPassword,
                                           ghosttyIntegration: TerminalConfig.shared.shellIntegration != nil)
@@ -267,7 +282,7 @@ final class TerminalTile: NSView, TileContent {
     /// Reports this hosted terminal's integration spooled on its host while it couldn't reach the
     /// app (`TerminalHost`), applied as the board applies its local spool (`Board.replay`).
     func replay(_ entries: [AgentReportSpool.Entry]) {
-        guard !entries.isEmpty else { return }
+        guard !discarded, !board.isClosed, !entries.isEmpty else { return }
         board.replay(entries)
     }
 
@@ -307,6 +322,19 @@ final class TerminalTile: NSView, TileContent {
         }
     }
 
+    static func endSession(_ object: CanvasObject) async throws {
+        if let host = HostedTerminal.host(of: object) {
+            return try await TerminalHost.named(host).endSession(object.id)
+        }
+        guard let arguments = killArguments(tile: object.id, refusal: "exit \(notOurs)") else {
+            throw ApiRouter.Failure("unavailable", "terminal \(object.id) runs without zmx, so its session cannot be confirmed ended")
+        }
+        let tile = object.id
+        if let failure = await offPool({ endSession(tile: tile, arguments: arguments) }) {
+            throw ApiRouter.Failure("unavailable", failure)
+        }
+    }
+
     /// `/bin/sh` arguments that kill `tile`'s session unless another instance owns it
     /// (`ownerGuard`, which runs `refusal` instead), then delete zmx's log of it; nil without zmx.
     private static func killArguments(tile: ObjectID, refusal: String) -> [String]? {
@@ -331,18 +359,18 @@ final class TerminalTile: NSView, TileContent {
         do {
             try process.run()
         } catch {
-            return "terminal \(tile)'s session couldn't be ended (\(error.localizedDescription)), so nothing was relaunched"
+            return "terminal \(tile)'s session couldn't be ended (\(error.localizedDescription))"
         }
         process.waitUntilExit()
         if process.terminationStatus == notOurs {
-            return "terminal \(tile)'s session belongs to another easl instance, which alone can end it, so nothing was relaunched"
+            return "terminal \(tile)'s session belongs to another easl instance, which alone can end it"
         }
         let session = sessionName(tile)
         for attempt in 0...30 {
             if Zmx.list().map({ Housekeeping.sessionNames(zmxList: $0).contains(session) }) == false { return nil }
             if attempt < 30 { usleep(100_000) }
         }
-        return "zmx still lists terminal \(tile)'s session (or can't list its sessions) 3 s after ending it, so it may still run and nothing was relaunched"
+        return "zmx still lists terminal \(tile)'s session (or can't list its sessions) 3 s after ending it, so it may still run"
     }
 
     // MARK: Restart
@@ -379,7 +407,7 @@ final class TerminalTile: NSView, TileContent {
         let tile = objectID
         if let failure = await offPool({ Self.endSession(tile: tile, arguments: arguments) }) {
             restartedAt = nil
-            throw ApiRouter.Failure("unavailable", failure)
+            throw ApiRouter.Failure("unavailable", "\(failure), so nothing was relaunched")
         }
         try ended()
         // The old session's shell and program are gone with it.
@@ -434,6 +462,7 @@ final class TerminalTile: NSView, TileContent {
     /// marker can reach its line editor in pieces.
     func submit(_ text: String) async -> Bool {
         await terminal.submitOrdered({ [self] in
+            guard !discarded, !endingSession, !board.isClosed else { return false }
             refreshProgram()
             if shell != nil, program == nil, let typing = ShellTyping.action(text) {
                 return terminal.performBindingAction(typing)
@@ -956,13 +985,13 @@ final class TerminalTile: NSView, TileContent {
     /// attach waits for the connection.
     fileprivate func surfaceClosed(processAlive: Bool) {
         // A remote session's end is the host's: its tile closes there, and the delete arrives.
-        guard !processAlive, !isRemote else { return }
+        guard !discarded, !endingSession, !board.isClosed, !processAlive, !isRemote else { return }
         // agent.restart killed the session it was attached to and is starting another.
         if let restartedAt, Date().timeIntervalSince(restartedAt) < 10 { return }
         let session = sessionName, tile = objectID, host = host
         Task { [weak self] in
             let running = if let host { await host.hasSession(tile) ?? true } else { await offPool { Self.sessionExists(session) } }
-            guard let self, self.board.objects[self.objectID] != nil else { return }
+            guard let self, !self.discarded, !self.endingSession, !self.board.isClosed, self.board.objects[self.objectID] != nil else { return }
             if running {
                 NSLog("easl: terminal %@ detached from a running session; reattaching", self.objectID)
                 self.reattach()
@@ -975,6 +1004,7 @@ final class TerminalTile: NSView, TileContent {
 
     /// Starts the surface's command again (a new `zmx attach`, or a hosted terminal's attach loop).
     private func reattach() {
+        guard !discarded, !endingSession, !board.isClosed else { return }
         let controller = terminal.controller
         terminal.controller = nil
         terminal.controller = controller

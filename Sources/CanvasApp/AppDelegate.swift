@@ -69,8 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (`AgentReportSpool`), which nothing would replay.
         registry.onTerminalsEnded = { board, ended in
             for terminal in ended { TerminalTile.killSession(terminal, board: board.id) }
-            let spooled = ended.map { AppPaths.agentReports.appendingPathComponent($0.id, isDirectory: true) }
-            Task.detached { for folder in spooled { try? FileManager.default.removeItem(at: folder) } }
+            Self.removeSpooledReports(ended)
         }
         // object.measure, size: "fit", and layout.check lay HTML pages out in WebKit.
         ObjectMeasure.html = { props, width, root in try await HtmlTile.measure(props: props, width: width, root: root) }
@@ -159,6 +158,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         router.showOpenedLink = { [weak self] board, opened, source in self?.controllers[board.id]?.canvas.showOpenedLink(opened, openedFrom: source) }
         router.openBoard = { [weak self, registry] root, select in
             self?.open(root: root, select: select) ?? registry.open(root: root)
+        }
+        router.closeBoard = { [weak self] board, endSessions in
+            guard let self else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
+            return try await self.closeBoard(board, endSessions: endSessions)
         }
         router.openRemoteBoard = { [weak self] host, board, select in
             guard let self else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
@@ -285,6 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func open(root: URL, select: Bool = true) -> Board {
         let board = registry.open(root: root)
         let controller = controllers[board.id] ?? CanvasWindowController(board: board, registry: registry)
+        controller.isBoardOpen = true
         controllers[board.id] = controller
         if !openedOrder.contains(board.id) { openedOrder.append(board.id) }
         controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
@@ -311,6 +315,110 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard select else { return board }
         bringForward(window)
         return board
+    }
+
+    private enum CloseTarget {
+        case local(Board, CanvasWindowController?)
+        case remote(String, CanvasWindowController)
+
+        var controller: CanvasWindowController? {
+            switch self {
+            case .local(_, let controller): controller
+            case .remote(_, let controller): controller
+            }
+        }
+    }
+
+    private func closeTarget(_ id: BoardID) throws -> CloseTarget {
+        if let board = registry.board(id: id) { return .local(board, controllers[board.id]) }
+        let matches = remoteControllers.filter { $0.value.board.id == id }
+        guard matches.count <= 1 else {
+            let hosts = matches.values.compactMap { $0.remote?.host.sshTarget }.sorted().joined(separator: ", ")
+            throw ApiRouter.Failure("ambiguous", "board \(id) is viewed from more than one remote host: \(hosts)")
+        }
+        guard let (key, controller) = matches.first else { throw ApiRouter.Failure("not_found", "board \(id)") }
+        return .remote(key, controller)
+    }
+
+    private func closeBoard(_ id: BoardID, endSessions: Bool?) async throws -> BoardCloseResult {
+        guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
+        let target = try closeTarget(id)
+        if case .remote = target, endSessions != nil {
+            throw ApiRouter.Failure("invalid_params", "board \(id) is a remote tab: its host owns its sessions, so omit endSessions")
+        }
+        func refuseLastBoard() throws {
+            if target.controller?.isLastOpenBoard == true {
+                throw ApiRouter.Failure("conflict", "board \(id) is easl's last open board: closing it would quit easl; open another board first")
+            }
+        }
+        try refuseLastBoard()
+        target.controller?.apiCloseInProgress = true
+        defer { target.controller?.apiCloseInProgress = false }
+        let result: BoardCloseResult
+        switch target {
+        case .local(let board, let controller):
+            var ended: [CanvasObject] = []
+            do {
+                if endSessions == true {
+                    let terminals = board.objects.values.filter { $0.type == .terminal }.sorted { $0.id < $1.id }
+                    for terminal in terminals {
+                        guard board.objects[terminal.id] != nil else { continue }
+                        let shown = controller?.canvas.tiles[terminal.id]?.content as? TerminalTile
+                        shown?.endingSession = true
+                        defer { shown?.endingSession = false }
+                        do {
+                            try await TerminalTile.endSession(terminal)
+                        } catch {
+                            let message = (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
+                            throw ApiRouter.Failure("unavailable", message)
+                        }
+                        ended.append(terminal)
+                        if board.objects[terminal.id] != nil {
+                            let callback = registry.onTerminalsEnded
+                            registry.onTerminalsEnded = nil
+                            defer { registry.onTerminalsEnded = callback }
+                            try board.atomically { try board.delete(terminal.id) }
+                        }
+                        shown?.discard()
+                        Self.removeSpooledReports([terminal])
+                    }
+                }
+                try refuseLastBoard()
+                guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
+                controller?.canvas.saveViewport()
+                controller?.saveComposer()
+                result = BoardCloseResult(board: board, ended: ended)
+                try registry.close(board.id) {
+                    do {
+                        try writeOpenBoards(openLocalBoards(excluding: controller?.window))
+                    } catch {
+                        throw ApiRouter.Failure("unavailable", "cannot save open-boards.json before closing \(board.id): \(error.localizedDescription)")
+                    }
+                }
+                controllers.removeValue(forKey: board.id)
+                openedOrder.removeAll { $0 == board.id }
+            } catch {
+                let failure = (error as? ApiRouter.Failure) ?? ApiRouter.Failure("unavailable", error.localizedDescription)
+                guard !ended.isEmpty else { throw failure }
+                let ids = ended.map(\.id).joined(separator: ", ")
+                throw ApiRouter.Failure(failure.code, "\(failure.message); ended terminal sessions [\(ids)]")
+            }
+        case .remote(let key, let controller):
+            result = BoardCloseResult(board: controller.board)
+            remoteControllers.removeValue(forKey: key)
+            openedOrder.removeAll { $0 == key }
+        }
+        if let controller = target.controller {
+            controller.onClose = nil
+            controller.window?.close()
+            controller.discard()
+        }
+        return result
+    }
+
+    private static func removeSpooledReports(_ terminals: [CanvasObject]) {
+        let folders = terminals.map { AppPaths.agentReports.appendingPathComponent($0.id, isDirectory: true) }
+        Task.detached { for folder in folders { try? FileManager.default.removeItem(at: folder) } }
     }
 
     /// Brings `window`'s tab, or the window, forward. Selecting a tab of a minimized group also
@@ -510,7 +618,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !openedOrder.contains(key) { openedOrder.append(key) }
         loaded.onEvent = { [weak controller] event in controller?.apply(event) }
         controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
-        controller.onClose = { [weak self] in self?.remoteControllers.removeValue(forKey: key) }
+        controller.onClose = { [weak self] in
+            self?.remoteControllers.removeValue(forKey: key)
+            self?.openedOrder.removeAll { $0 == key }
+        }
         show(controller, select: select)
         controller.serveHost()
         return controller
@@ -562,12 +673,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let open = controllers.values.filter { $0.window.map(isShown) ?? false }
         let others = open.filter { $0.window !== closing }
         let shown = others.isEmpty ? open : others
+        try? writeOpenBoards(shown)
+    }
+
+    private func openLocalBoards(excluding closing: NSWindow?) -> [CanvasWindowController] {
+        controllers.values.filter { $0.window !== closing && $0.isBoardOpen }
+    }
+
+    private func writeOpenBoards(_ shown: [CanvasWindowController]) throws {
         let order = shown.first?.window?.tabbedWindows ?? []
         let roots = shown.sorted { lhs, rhs in
             (order.firstIndex { $0 === lhs.window } ?? .max) < (order.firstIndex { $0 === rhs.window } ?? .max)
         }.map(\.board.root.path)
-        guard let data = try? JSONEncoder().encode(roots) else { return }
-        try? data.write(to: AppPaths.openBoards, options: .atomic)
+        let data = try JSONEncoder().encode(roots)
+        try data.write(to: AppPaths.openBoards, options: .atomic)
     }
 
     private static func savedOpenBoards() -> [URL] {

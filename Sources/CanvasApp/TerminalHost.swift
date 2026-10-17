@@ -104,6 +104,10 @@ final class TerminalHost {
         tile.hostChanged()
     }
 
+    func remove(_ tile: TerminalTile) {
+        tiles.remove(tile)
+    }
+
     /// The tile's Reconnect: try now, and from 1 s again after that.
     func reconnect() {
         delay = 1
@@ -341,15 +345,15 @@ final class TerminalHost {
     }
 
     func endSession(_ tile: ObjectID) async throws {
-        _ = try await call("session.kill", .object(["tile": .string(tile), "home": .string(TerminalTile.homeLabel)]))
-        var waited = 0
-        while await hasSession(tile) != false {
-            waited += 1
-            guard waited <= 30 else {
-                throw ApiRouter.Failure("unavailable", "\(target) still lists terminal \(tile)'s session 3 s after ending it")
-            }
-            try? await Task.sleep(for: .milliseconds(100))
+        guard state == .online else {
+            throw ApiRouter.Failure("unavailable", "\(target) is offline: terminal \(tile)'s session cannot be ended")
         }
+        _ = try await call("session.kill", .object(["tile": .string(tile), "home": .string(TerminalTile.homeLabel)]))
+        for attempt in 0...30 {
+            if await hasSession(tile) == false { return }
+            if attempt < 30 { try? await Task.sleep(for: .milliseconds(100)) }
+        }
+        throw ApiRouter.Failure("unavailable", "\(target) still lists terminal \(tile)'s session, or cannot confirm it is gone, 3 s after ending it")
     }
 
     /// Replays the reports `tiles`' integrations spooled on the host while they couldn't reach

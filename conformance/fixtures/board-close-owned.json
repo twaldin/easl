@@ -1,0 +1,444 @@
+{
+  "scenario": "board-close-owned",
+  "description": "easld --own-terminals with zmxtest: keep-close preserves an owned session, reopen keeps its terminal id, end-close removes the owned terminal and session but retains a hosted terminal. Reopen before teardown.",
+  "recordedOn": "board.close candidate, scratch easld --own-terminals with zmxtest-compatible zmx",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>",
+          "name": "owned"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "owned"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "owned"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50700,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "host": "deckbox",
+          "name": "hosted"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "host": "deckbox",
+              "name": "hosted"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "host": "deckbox",
+              "name": "hosted"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "ended": [],
+          "kept": [
+            {
+              "id": "<obj:1>",
+              "name": "owned"
+            },
+            {
+              "id": "<obj:2>",
+              "name": "hosted"
+            }
+          ],
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "session.list",
+      "method": "session.list",
+      "request": {},
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "sessions": [
+            {
+              "clients": 0,
+              "labels": {
+                "canvas.board": "<board>",
+                "canvas.home": "<easld home>",
+                "canvas.tile": "<obj:1>"
+              },
+              "pid": 4242424,
+              "session": "canvas-<obj:1>",
+              "tile": "<obj:1>"
+            }
+          ]
+        }
+      },
+      "masked": {
+        "response.result.sessions.*.labels.*": "canvas.home differs between isolated runs"
+      }
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 2,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "owned"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>",
+        "endSessions": true
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "ended": [
+            {
+              "id": "<obj:1>",
+              "name": "owned"
+            }
+          ],
+          "kept": [
+            {
+              "id": "<obj:2>",
+              "name": "hosted"
+            }
+          ],
+          "root": "<root>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:1>"
+          },
+          "event": "object.deleted"
+        }
+      ]
+    },
+    {
+      "step": "session.list",
+      "method": "session.list",
+      "request": {},
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "sessions": []
+        }
+      }
+    },
+    {
+      "step": "board.list",
+      "method": "board.list",
+      "request": {},
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "boards": [
+            {
+              "archived": false,
+              "board": "<board>",
+              "objects": 1,
+              "open": false,
+              "root": "<root>"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.result.boards.*.updatedAt": "board save time"
+      }
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 1,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "object <obj:1>"
+        },
+        "id": "r12",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50700,
+              "y": 50000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "host": "deckbox",
+              "name": "hosted"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      }
+    }
+  ]
+}

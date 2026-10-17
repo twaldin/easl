@@ -1,0 +1,17 @@
+{
+  "description": "easld --own-terminals with zmxtest: keep-close preserves an owned session, reopen keeps its terminal id, end-close removes the owned terminal and session but retains a hosted terminal. Reopen before teardown.",
+  "steps": [
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "owned" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } }, "save": "owned" },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "terminal", "props": { "host": "deckbox", "command": ["/bin/cat"], "name": "hosted" }, "frame": { "x": 50700, "y": 50000, "w": 600, "h": 400 } }, "save": "hosted" },
+    { "call": "board.close", "params": { "board": "{{board}}" } },
+    { "call": "session.list", "mask": { "response.result.sessions.*.labels.*": { "match": "^_[A-Za-z0-9._-]*$", "as": "<easld home>", "why": "canvas.home differs between isolated runs" } } },
+    { "call": "board.open", "params": { "root": "{{root}}" } },
+    { "call": "object.get", "params": { "id": "{{owned.object.id}}" } },
+    { "call": "board.close", "params": { "board": "{{board}}", "endSessions": true } },
+    { "call": "session.list" },
+    { "call": "board.list", "keep": { "result.boards": { "board": "{{board}}" } }, "ignore": { "response.result.boards.*.updatedAt": "board save time" } },
+    { "call": "board.open", "params": { "root": "{{root}}" } },
+    { "call": "object.get", "params": { "id": "{{owned.object.id}}" } },
+    { "call": "object.get", "params": { "id": "{{hosted.object.id}}" } }
+  ]
+}

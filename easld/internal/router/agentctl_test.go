@@ -35,7 +35,9 @@ func (f *fixture) openBoard(name string) (string, string) {
 func (f *fixture) closeBoard(id string) {
 	f.router.reg.Mu.Lock()
 	defer f.router.reg.Mu.Unlock()
-	f.router.reg.Close(id)
+	if err := f.router.reg.Close(id, nil); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 func (f *fixture) agentProps(id string) any {

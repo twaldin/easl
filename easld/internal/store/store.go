@@ -116,7 +116,7 @@ func (s *Store) Read(id string) (*Snapshot, error) {
 }
 
 // ScheduleSave writes the board `debounce` after its last change. snapshot is called with the
-// store's lock held.
+// store's lock held; nil abandons a save whose board has since closed.
 func (s *Store) ScheduleSave(id string, snapshot func() *Snapshot) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -152,6 +152,10 @@ func (s *Store) landed() {
 func (s *Store) saveNow(snapshot func() *Snapshot) {
 	s.lock.Lock()
 	snap := snapshot()
+	if snap == nil {
+		s.lock.Unlock()
+		return
+	}
 	n := s.taken.Add(1)
 	s.lock.Unlock()
 	_ = s.save(snap, n)

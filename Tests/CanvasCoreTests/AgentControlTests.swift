@@ -127,7 +127,7 @@ final class AgentControlTests {
         try other.reportSession(tile: reviewer, kind: "omp", sessionId: "s1", sessionPath: nil, model: "openai/gpt-5.2", thinking: "medium")
         try other.reportLifecycle(tile: shell, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", draft: true)
         let otherID = other.id
-        registry.close(otherID)
+        try registry.close(otherID)
         let here = terminal()
 
         // zmx knows the reviewer's session (running its agent) and not the shell's.
@@ -569,7 +569,7 @@ final class AgentControlTests {
         try await report(tile, "idle", seq: 2, ["draft": .bool(false)])
         _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s1"])
         #expect(try await call("agent.restart", ["target": "worker", "mode": "resume"])["ok"] == .bool(true))
-        registry.close(board.id)
+        try registry.close(board.id)
         let reopened = registry.open(root: dir.appendingPathComponent("root"))
         router.firstReportGrace = 0.05
         let reply = try await call("agent.wait", ["target": "worker", "timeoutMs": 1000])

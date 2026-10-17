@@ -131,6 +131,7 @@ public final class BoardStore {
     }
 
     public func scheduleSave(_ board: Board) {
+        guard !board.isClosed else { return }
         Metrics.shared.record("save.scheduled")
         if let pending = pendingSaves[board.id] {
             pending.cancel()
@@ -145,9 +146,15 @@ public final class BoardStore {
     }
 
     public func save(_ board: Board) {
+        try? saveChecked(board)
+    }
+
+    /// Saves the latest state before a close can discard its in-memory board.
+    public func saveChecked(_ board: Board) throws {
+        guard !board.isClosed else { throw BoardError.notFound("board \(board.id) is closed") }
         pendingSaves.removeValue(forKey: board.id)?.cancel()
-        guard let data = Metrics.shared.span("save", "save.encode", detail: board.id, { try? Self.encoder.encode(board.snapshot) }) else { return }
-        Metrics.shared.span("save", "save.write", detail: board.id, bytes: data.count) { _ = try? data.write(to: url(for: board.id), options: .atomic) }
+        let data = try Metrics.shared.span("save", "save.encode", detail: board.id) { try Self.encoder.encode(board.snapshot) }
+        try Metrics.shared.span("save", "save.write", detail: board.id, bytes: data.count) { try data.write(to: url(for: board.id), options: .atomic) }
     }
 
     public func flush(_ boards: [Board]) {
