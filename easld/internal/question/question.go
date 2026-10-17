@@ -248,9 +248,8 @@ var (
 	idPattern   = regexp.MustCompile(`^[a-z]+_[0-9A-Za-z]+$`)
 )
 
-// Creating is QuestionSpec.creating: `object.create` props of a question as stored: `status`
-// open and, when the call has a caller ("" for none) and names no asker, the calling terminal as
-// `asker`.
+// Creating fills status and asker defaults without mutating the caller's props.
+// Board.QuestionToCreate applies the host's creation delay before validation.
 func Creating(props map[string]any, caller string) map[string]any {
 	fields, _ := model.Clone(props).(map[string]any)
 	if fields == nil {
