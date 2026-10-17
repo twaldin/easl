@@ -116,6 +116,21 @@ public struct LinkReading: Sendable {
         self.failure = failure
     }
 
+    /// Resolves persisted link props without a live board or any bookkeeping writes.
+    public static func resolve(props: JSONValue, boardRoot: URL) async -> LinkReading {
+        guard let ref = RefSource.ref(of: props) else {
+            let value = props["root"]?.string.flatMap { $0.isEmpty ? nil : $0 }
+            let root = value.map { $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : boardRoot.appendingPathComponent($0) } ?? boardRoot
+            return LinkReading(root: root.standardizedFileURL)
+        }
+        do {
+            let source = try await RefSource.resolve(ref: ref, lastKnownSha: props["refSha"]?.string, boardRoot: boardRoot)
+            return LinkReading(root: source.root, ref: source)
+        } catch {
+            return LinkReading(root: boardRoot, failure: (ref, RefSource.describe(error, ref: ref)))
+        }
+    }
+
     /// The commit files without their own are read at; nil for the working tree.
     public var commit: String? { ref?.commit ?? failure?.ref }
 
@@ -140,13 +155,7 @@ extension Board {
     /// Where `props` (a note's or HTML tile's) read the files they name. Without a `ref`, the
     /// link root; with one, resolved now (`RefSource`). Records nothing: `linkSource(of:)` does.
     public func linkSource(props: JSONValue) async -> LinkReading {
-        guard let ref = RefSource.ref(of: props) else { return LinkReading(root: linkRoot(props: props)) }
-        do {
-            let source = try await RefSource.resolve(ref: ref, lastKnownSha: props["refSha"]?.string, boardRoot: root)
-            return LinkReading(root: source.root, ref: source)
-        } catch {
-            return LinkReading(root: root, failure: (ref, RefSource.describe(error, ref: ref)))
-        }
+        await LinkReading.resolve(props: props, boardRoot: root)
     }
 
     /// `linkSource(props:)` for an object on the board, recording its `props.refSha`.

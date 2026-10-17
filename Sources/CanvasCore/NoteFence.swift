@@ -89,32 +89,33 @@ public struct NoteFence: Equatable, Sendable {
 
     /// Whitespace-separated tokens; `key="a b"` and `key='a b'` keep their spaces, `\"` escapes.
     static func tokens(_ info: String) -> [String] {
-        var tokens: [String] = []
-        var current = ""
+        tokenRanges(info).map { String(info[$0]) }
+    }
+
+    static func tokenRanges(_ info: String) -> [Range<String.Index>] {
+        var ranges: [Range<String.Index>] = []
+        var start: String.Index?
         var quote: Character?
         var escaped = false
-        for character in info {
+        for index in info.indices {
+            let character = info[index]
+            if start == nil, !character.isWhitespace { start = index }
             if escaped {
-                current.append(character)
+                // The escaped character cannot end a quote.
                 escaped = false
             } else if character == "\\", quote != nil {
-                current.append(character)
                 escaped = true
             } else if let open = quote {
-                current.append(character)
                 if character == open { quote = nil }
             } else if character == "\"" || character == "'" {
-                current.append(character)
                 quote = character
             } else if character.isWhitespace {
-                if !current.isEmpty { tokens.append(current) }
-                current = ""
-            } else {
-                current.append(character)
+                if let first = start { ranges.append(first..<index) }
+                start = nil
             }
         }
-        if !current.isEmpty { tokens.append(current) }
-        return tokens
+        if let start { ranges.append(start..<info.endIndex) }
+        return ranges
     }
 
     /// Inside quotes, `\` escapes only the quote and itself; any other backslash is literal,

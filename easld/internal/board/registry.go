@@ -145,6 +145,11 @@ func (r *Registry) load(root, id, commonDir string) (*Board, error) {
 	var b *Board
 	if snap != nil {
 		snap.Root = root
+		if scrubSnapshotAnchors(snap) {
+			if err := r.Store.Write(snap); err != nil {
+				return nil, fmt.Errorf("save normalized board %s: %w", id, err)
+			}
+		}
 		b = FromSnapshot(snap)
 	} else {
 		b = New(id, root)

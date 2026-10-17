@@ -18,15 +18,7 @@ const pathRefused = "path refused"
 // Code tile display keeps ExcerptFor: its local reads are intentionally broader.
 func (r LinkReading) NoteExcerpt(fence Fence, body []string) Excerpt {
 	fence = r.Fence(fence)
-	areas := boardAreas(r.Board)
-	if areaOf(areas, r.Root) == nil {
-		return refusedExcerpt(fencePath(fence))
-	}
-	// An option-like commit fails before the path check, as BoardAreas.read does, and reads nothing.
-	if fence.Commit != nil && *fence.Commit != "" && !IsRevision(*fence.Commit) {
-		return excerptFailure(fencePath(fence), fence.Commit, nil, &SourceError{Kind: "invalidRevision", Commit: *fence.Commit})
-	}
-	path, err := r.notePath(fence, areas)
+	path, text, err := r.noteSource(fence)
 	if err != nil {
 		if errors.Is(err, errSymbolMissing) {
 			symbol := ""
@@ -35,13 +27,68 @@ func (r LinkReading) NoteExcerpt(fence Fence, body []string) Excerpt {
 			}
 			return Excerpt{Lines: []string{}, Status: stale("symbol " + symbol + " not found in the workspace")}
 		}
-		return excerptFailure(fencePath(fence), fence.Commit, nil, err)
-	}
-	text, err := readNoteFile(path, fence.Commit, r.Root, areas)
-	if err != nil {
 		return excerptFailure(path, fence.Commit, nil, err)
 	}
 	return interpretExcerpt(fence, path, text, nil, body)
+}
+
+// RefusesFence distinguishes policy refusal from missing files and other read failures.
+func (r LinkReading) RefusesFence(fence Fence) bool {
+	fence = r.Fence(fence)
+	areas := boardAreas(r.Board)
+	if areaOf(areas, r.Root) == nil {
+		return true
+	}
+	path, err := r.notePath(fence, areas)
+	if err == nil {
+		if refusedInput(path) {
+			return true
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(r.Root, path)
+		}
+		if writtenAreaOf(areas, path) == nil {
+			return true
+		}
+	}
+	if err == nil {
+		var file noteFileSource
+		file, err = authorizeNoteFile(path, fence.Commit, r.Root, areas)
+		if err == nil && file.blob == "" {
+			fd, openErr := openNoFollow(file.path)
+			if openErr != nil {
+				err = classifyOpenErr(openErr)
+			} else {
+				syscall.Close(fd)
+			}
+		}
+	}
+	var source *SourceError
+	return errors.As(err, &source) && source.Kind == "refused"
+}
+
+func (r LinkReading) noteSource(fence Fence) (string, string, error) {
+	path, areas, err := r.noteRequest(fence)
+	if err != nil {
+		return path, "", err
+	}
+	text, err := readNoteFile(path, fence.Commit, r.Root, areas)
+	return path, text, err
+}
+
+func (r LinkReading) noteRequest(fence Fence) (string, []boardArea, error) {
+	areas := boardAreas(r.Board)
+	if areaOf(areas, r.Root) == nil {
+		return fencePath(fence), nil, &SourceError{Kind: "refused"}
+	}
+	if fence.Commit != nil && *fence.Commit != "" && !IsRevision(*fence.Commit) {
+		return fencePath(fence), nil, &SourceError{Kind: "invalidRevision", Commit: *fence.Commit}
+	}
+	path, err := r.notePath(fence, areas)
+	if err != nil {
+		return fencePath(fence), nil, err
+	}
+	return path, areas, nil
 }
 
 func fencePath(fence Fence) string {
@@ -49,10 +96,6 @@ func fencePath(fence Fence) string {
 		return *fence.Path
 	}
 	return ""
-}
-
-func refusedExcerpt(path string) Excerpt {
-	return Excerpt{Path: path, Lines: []string{}, Status: stale(pathRefused)}
 }
 
 var errSymbolMissing = errors.New("symbol missing")
@@ -102,8 +145,38 @@ func noteLocate(symbol, root string, areas []boardArea) (path string, refused, f
 }
 
 func readNoteFile(path string, commit *string, root string, areas []boardArea) (string, error) {
+	source, err := authorizeNoteFile(path, commit, root, areas)
+	if err != nil {
+		return "", err
+	}
+	var data []byte
+	if source.blob == "" {
+		// Opening the resolved path with no-follow also refuses a directory swapped
+		// for a symlink after authorization.
+		data, err = readRegular(source.path)
+	} else {
+		data, err = RunGit([]string{"show", "--end-of-options", source.blob}, source.path, nil, sourceMaxOutput, sourceTimeout)
+		if err != nil {
+			return "", &SourceError{Kind: "notAtCommit", Commit: *commit}
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	if !utf8.Valid(data) {
+		return "", &SourceError{Kind: "unreadable"}
+	}
+	return string(data), nil
+}
+
+type noteFileSource struct {
+	path string // resolved live file, or the git directory for blob
+	blob string // empty for a live file
+}
+
+func authorizeNoteFile(path string, commit *string, root string, areas []boardArea) (noteFileSource, error) {
 	if refusedInput(path) {
-		return "", &SourceError{Kind: "refused"}
+		return noteFileSource{}, &SourceError{Kind: "refused"}
 	}
 	requested := path
 	if !filepath.IsAbs(path) {
@@ -112,47 +185,33 @@ func readNoteFile(path string, commit *string, root string, areas []boardArea) (
 	requested = StandardPath(requested)
 	if commit != nil && *commit != "" {
 		if !IsRevision(*commit) {
-			return "", &SourceError{Kind: "invalidRevision", Commit: *commit}
+			return noteFileSource{}, &SourceError{Kind: "invalidRevision", Commit: *commit}
 		}
 		area := writtenAreaOf(areas, requested)
 		if area == nil {
-			return "", &SourceError{Kind: "refused"}
+			return noteFileSource{}, &SourceError{Kind: "refused"}
 		}
-		return readPinned(requested, *commit, area)
+		return authorizePinned(requested, *commit, area)
 	}
 	area := areaOf(areas, requested)
 	if area == nil {
-		return "", &SourceError{Kind: "refused"}
+		return noteFileSource{}, &SourceError{Kind: "refused"}
 	}
-	return readLive(requested, area)
+	resolved := RealPath(requested)
+	if !pathInside(area.Real, resolved) {
+		return noteFileSource{}, &SourceError{Kind: "refused"}
+	}
+	return noteFileSource{path: resolved}, nil
 }
 
 func refusedInput(path string) bool {
 	return path == "" || strings.ContainsRune(path, 0) || strings.ContainsAny(path, "\n\r") || strings.HasPrefix(path, "~")
 }
 
-// readLive opens the resolved path. The lexical path may be an inside symlink, which is
-// allowed; opening that resolved path with no-follow refuses a directory swapped for a
-// symlink between the check and the read.
-func readLive(requested string, area *boardArea) (string, error) {
-	resolved := RealPath(requested)
-	if !pathInside(area.Real, resolved) {
-		return "", &SourceError{Kind: "refused"}
-	}
-	data, err := readRegular(resolved)
-	if err != nil {
-		return "", err
-	}
-	if !utf8.Valid(data) {
-		return "", &SourceError{Kind: "unreadable"}
-	}
-	return string(data), nil
-}
-
-func readPinned(requested, commit string, area *boardArea) (string, error) {
+func authorizePinned(requested, commit string, area *boardArea) (noteFileSource, error) {
 	sha, err := resolveCommit(commit, area.Real)
 	if err != nil {
-		return "", err
+		return noteFileSource{}, err
 	}
 	prefix := area.Real
 	if pathInside(area.Lex, requested) {
@@ -160,31 +219,24 @@ func readPinned(requested, commit string, area *boardArea) (string, error) {
 	}
 	rel, err := filepath.Rel(prefix, requested)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") || filepath.IsAbs(rel) || strings.ContainsAny(rel, "\n\r") {
-		return "", &SourceError{Kind: "refused"}
+		return noteFileSource{}, &SourceError{Kind: "refused"}
 	}
 	if rel == "." {
-		return "", &SourceError{Kind: "notAtCommit", Commit: commit}
+		return noteFileSource{}, &SourceError{Kind: "notAtCommit", Commit: commit}
 	}
 	rel = filepath.ToSlash(rel)
 	entry, err := RunGit([]string{"--literal-pathspecs", "ls-tree", "-z", sha, "--", rel}, area.Real, nil, 1<<20, sourceTimeout)
 	if err != nil || len(entry) == 0 {
-		return "", &SourceError{Kind: "notAtCommit", Commit: commit}
+		return noteFileSource{}, &SourceError{Kind: "notAtCommit", Commit: commit}
 	}
 	record := strings.TrimRight(string(entry), "\x00")
 	if strings.HasPrefix(record, "120000 ") {
-		return "", &SourceError{Kind: "refused"}
+		return noteFileSource{}, &SourceError{Kind: "refused"}
 	}
 	if !strings.HasPrefix(record, "100644 ") && !strings.HasPrefix(record, "100755 ") {
-		return "", &SourceError{Kind: "notAtCommit", Commit: commit}
+		return noteFileSource{}, &SourceError{Kind: "notAtCommit", Commit: commit}
 	}
-	data, err := RunGit([]string{"show", "--end-of-options", sha + ":./" + rel}, area.Real, nil, sourceMaxOutput, sourceTimeout)
-	if err != nil {
-		return "", &SourceError{Kind: "notAtCommit", Commit: commit}
-	}
-	if !utf8.Valid(data) {
-		return "", &SourceError{Kind: "unreadable"}
-	}
-	return string(data), nil
+	return noteFileSource{path: area.Real, blob: sha + ":./" + rel}, nil
 }
 
 func resolveCommit(commit, dir string) (string, error) {
