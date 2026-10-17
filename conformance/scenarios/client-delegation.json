@@ -1,5 +1,5 @@
 {
-  "description": "A scripted Mac client (client.attach) serves every delegated method: easld checks each call as before, forwards it as the same method (board and terminal resolved to ids), and relays the client's result or error; agent.prompt's mentions stay easld's (queued, withdrawn when the client fails); text is measured by the client, so nothing is approximate. easld only: the app doesn't speak the client protocol yet.",
+  "description": "A scripted Mac client (client.attach) serves every delegated method: easld checks each call as before, forwards it as the same method (board and terminal resolved to ids), and relays the client's result or error; view.render is asked inline with no out, and a non-inline caller gets the image written on easld; agent.prompt's mentions stay easld's (queued, withdrawn when the client fails); text is measured by the client, so nothing is approximate. easld only: the app doesn't speak the client protocol yet.",
   "steps": [
     {
       "call": "object.create",
@@ -28,7 +28,7 @@
         "schema": "{{schemaHash}}",
         "app": "0.2.0",
         "host": "studio",
-        "serves": ["view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "text.measure"],
+        "serves": ["view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "object.measure", "text.measure"],
         "boards": ["{{board}}"],
         "focused": "{{board}}"
       },
@@ -37,7 +37,7 @@
           { "result": { "board": "{{board}}", "viewport": { "rect": { "x": 0, "y": 0, "w": 1200, "h": 800 }, "zoom": 1 }, "selection": ["{{n.object.id}}"], "visible": true, "appearance": "dark" } }
         ],
         "view.render": [
-          { "result": { "path": "/tmp/easl-render.png", "width": 560, "height": 400, "scale": 2, "objects": [] } },
+          { "result": { "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "format": "png", "width": 1, "height": 1, "scale": 2, "objects": [] } },
           { "error": { "code": "unavailable", "message": "the board's window is closed" } }
         ],
         "view.snapshot": [
@@ -71,7 +71,7 @@
       }
     },
     { "call": "view.get", "params": { "board": "{{board}}" } },
-    { "call": "view.render", "params": { "board": "{{board}}", "target": "{{n.object.id}}", "scale": 2 } },
+    { "call": "view.render", "params": { "board": "{{board}}", "target": "{{n.object.id}}", "scale": 2, "inline": true }, "note": "the client is asked inline with no out; easld returns the image and writes no file" },
     { "call": "view.render", "params": { "board": "{{board}}", "target": "{{n.object.id}}", "scale": 9 }, "note": "easld's own checks come first: nothing is forwarded" },
     { "call": "view.render", "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 }, "timeoutMs": 500 }, "note": "the client's error is the caller's" },
     { "call": "view.snapshot", "params": { "board": "{{board}}" } },

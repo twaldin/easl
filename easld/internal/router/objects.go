@@ -72,7 +72,7 @@ func (r *Router) writeObject(method string, p map[string]any) (any, error) {
 				return nil, err
 			}
 			if reused != nil {
-				size, err := r.fitSize("object.update", reused, nil)
+				size, err := r.fitSize("object.update", reused, nil, nil)
 				if err != nil {
 					return nil, err
 				}
@@ -93,7 +93,7 @@ func (r *Router) writeObject(method string, p map[string]any) (any, error) {
 			}
 		}
 	}
-	size, err := r.fitSize(method, params, nil)
+	size, err := r.fitSize(method, params, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1124,8 +1124,9 @@ type fit struct {
 }
 
 // fitSize is the measured size an object.create/update with `size: "fit"` gets, or a note or
-// image created without a frame height; nil otherwise.
-func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[string]any) (*fit, error) {
+// image created without a frame height; nil otherwise. guard is the batch plan's inputs; a
+// single write guards only this fit (board identity, and the object's rev when one was read).
+func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[string]any, guard *fitGuard) (*fit, error) {
 	frame := asMap(p["frame"])
 	_, hasH := frame["h"]
 	fitsNote := method == "object.create" && (p["type"] == string(model.Note) || p["type"] == string(model.Image)) && !hasH
@@ -1143,6 +1144,7 @@ func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[st
 	if w, ok := frame["w"].(float64); ok {
 		width = &w
 	}
+	caller := stringOf(p["caller"])
 	if method == "object.create" {
 		typeName, err := str(p, "type")
 		if err != nil {
@@ -1160,7 +1162,13 @@ func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[st
 		if err != nil {
 			return nil, err
 		}
-		w, h, approximate, err := measure.Size(typ, props, width, pathRoot(b, typ, props), r.clients)
+		g := guard
+		if typ == model.HTML && g == nil {
+			g = newFitGuard(b)
+		} else if g != nil {
+			g.keep(b)
+		}
+		w, h, approximate, err := r.measuredSize(typ, props, width, b, caller, g)
 		if err != nil {
 			return nil, err
 		}
@@ -1173,7 +1181,7 @@ func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[st
 	var typ model.ObjectType
 	var props map[string]any
 	var baseWidth *float64
-	var root string
+	var b *board.Board
 	if index, isRef := reference(id); isRef {
 		created, ok := pending[index]
 		if !ok {
@@ -1198,13 +1206,12 @@ func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[st
 		if w, ok := asMap(created["frame"])["w"].(float64); ok {
 			baseWidth = &w
 		}
-		b, err := r.boardOf(created)
+		b, err = r.boardOf(created)
 		if err != nil {
 			return nil, err
 		}
-		root = pathRoot(b, typ, props)
 	} else {
-		b, err := r.boardForObject(id)
+		b, err = r.boardForObject(id)
 		if err != nil {
 			return nil, err
 		}
@@ -1218,12 +1225,16 @@ func (r *Router) fitSize(method string, p map[string]any, pending map[int]map[st
 		}
 		w := o.Frame.W
 		baseWidth = &w
-		root = pathRoot(b, typ, props)
 	}
 	if width == nil && typ != model.Code && typ != model.Image {
 		width = baseWidth
 	}
-	w, h, approximate, err := measure.Size(typ, props, width, root, r.clients)
+	g := guard
+	if typ == model.HTML && g == nil {
+		g = newFitGuard(b)
+	}
+	g.note(b, id)
+	w, h, approximate, err := r.measuredSize(typ, props, width, b, caller, g)
 	if err != nil {
 		return nil, err
 	}

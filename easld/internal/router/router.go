@@ -89,6 +89,9 @@ type Router struct {
 	// Log takes easld's notes on the sessions it starts for owned terminals (startNote: an agent
 	// resumed, or the command run and why), a line each; nil: none.
 	Log io.Writer
+	// renderScratch numbers files view.render writes here, so two in the same millisecond
+	// don't overwrite each other. Nothing deletes them: pruning is the app's housekeeping.
+	renderScratch int
 	// lifecycle runs owned terminals' sessions off the lock.
 	lifecycle lifecycle
 }
@@ -227,6 +230,8 @@ func (r *Router) call(id any, method string, raw any, c Conn) (any, error) {
 	switch method {
 	case "client.attach":
 		return r.attach(p, c)
+	case "client.list":
+		return r.clientList(), nil
 	case "text.measure":
 		return r.textMeasure(p)
 	case "events.subscribe":

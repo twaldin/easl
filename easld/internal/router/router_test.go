@@ -198,17 +198,22 @@ func (f *fixture) found(key string) string {
 
 func TestHTMLMeasurementNeedsAnApp(t *testing.T) {
 	f := newFixture(t)
-	for _, method := range []string{"object.measure", "object.create", "object.upsert"} {
-		params := map[string]any{"type": "html", "props": map[string]any{"html": "<p>Hello</p>"}}
-		if method != "object.measure" {
-			params["size"] = "fit"
-		}
-		if method == "object.upsert" {
-			params["key"] = "html"
-		}
-		code, message := errorOf(f.call(method, params))
+	id := idOf(f.result("object.create", map[string]any{
+		"type": "html", "props": map[string]any{"html": "<p>Hello</p>"},
+		"frame": map[string]any{"x": 0.0, "y": 0.0, "w": 400.0, "h": 300.0},
+	}))
+	for _, call := range []struct {
+		method string
+		params map[string]any
+	}{
+		{"object.measure", map[string]any{"type": "html", "props": map[string]any{"html": "<p>Hello</p>"}}},
+		{"object.create", map[string]any{"type": "html", "props": map[string]any{"html": "<p>Hello</p>"}, "size": "fit"}},
+		{"object.upsert", map[string]any{"type": "html", "key": "html", "props": map[string]any{"html": "<p>Hello</p>"}, "size": "fit"}},
+		{"object.update", map[string]any{"id": id, "size": "fit"}},
+	} {
+		code, message := errorOf(f.call(call.method, call.params))
 		if code != "unavailable" || message != "an html page is measured by the app" {
-			t.Errorf("%s: %s: %s", method, code, message)
+			t.Errorf("%s: %s: %s", call.method, code, message)
 		}
 	}
 }

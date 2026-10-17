@@ -33,7 +33,7 @@
       },
       "replies": {
         "view.get": [{ "result": { "board": "{{board}}", "viewport": { "rect": { "x": 0, "y": 0, "w": 1440, "h": 900 }, "zoom": 1 }, "selection": [], "visible": true, "appearance": "dark" } }],
-        "view.render": [{ "result": { "path": "/tmp/easl-render-peer.png", "width": 200, "height": 200, "scale": 2, "objects": [] } }]
+        "view.render": [{ "result": { "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "format": "png", "width": 1, "height": 1, "scale": 2, "objects": [] } }]
       },
       "ignore": { "response.result.schema": "the server's schema hash changes with every schema edit" },
       "note": "the server's version and another schema hash: accepted; `windows` and view.zoom are unknown here and ignored"
@@ -62,8 +62,8 @@
     { "call": "view.get", "params": { "board": "{{board}}" }, "note": "the newer client focuses the board, so it serves view.get" },
     {
       "call": "view.render",
-      "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 } },
-      "note": "the newer client doesn't list view.render: the client that does serves it"
+      "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 }, "inline": true },
+      "note": "the newer client doesn't list view.render: the client that does serves it, inline"
     }
   ]
 }

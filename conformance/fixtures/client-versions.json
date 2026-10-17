@@ -1,7 +1,7 @@
 {
   "scenario": "client-versions",
   "description": "Scripted Mac clients on other easl versions (client.attach): one built from an older schema version is refused `unavailable` and serves nothing; one with the server's version and another schema hash, and one built from a newer version, are accepted and serve the methods both sides know. easld ignores the attach params and `serves` names it doesn't know and never sends a client a method it doesn't list. easld only: the app doesn't speak the client protocol yet.",
-  "recordedOn": "easld (the app doesn't speak the client protocol yet; scripted clients serve it)",
+  "recordedOn": "easld unit 3 viewer render and HTML measurement",
   "steps": [
     {
       "step": "board.open",
@@ -236,6 +236,7 @@
       "method": "view.render",
       "request": {
         "board": "<board>",
+        "inline": true,
         "target": {
           "h": 100,
           "w": 100,
@@ -247,11 +248,12 @@
         "id": "r6",
         "ok": true,
         "result": {
-          "height": 200,
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+          "format": "png",
+          "height": 1,
           "objects": [],
-          "path": "/tmp/easl-render-peer.png",
           "scale": 2,
-          "width": 200
+          "width": 1
         }
       },
       "forwarded": [
@@ -260,6 +262,8 @@
           "method": "view.render",
           "params": {
             "board": "<board>",
+            "format": "png",
+            "inline": true,
             "target": {
               "h": 100,
               "w": 100,

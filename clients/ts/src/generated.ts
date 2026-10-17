@@ -1350,7 +1350,7 @@ export type ObjectMeasureParams = {
 export type ObjectMeasureResult = {
   w: number;
   h: number;
-  /** text in it (a note, a text shape or a shape's label, a code tile's caption) was measured from easld's glyph table, because no attached Mac client serves text.measure (or it didn't answer in time): a few points off what the app draws, and a line near the edge may wrap differently. Absent when exact */
+  /** the size uses easld's glyph-table text approximation or a client's fallback HTML layout, rather than exact Mac layout. Absent when exact. easld itself has no fallback HTML layout engine */
   approximate?: true;
 };
 
@@ -1938,9 +1938,9 @@ export type ClientAttachParams = {
   app?: string;
   /** the machine it runs on, for messages */
   host?: string;
-  /** the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, text.measure (others are ignored) */
+  /** the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure (others are ignored) */
   serves: string[];
-  /** the boards it shows (open in one of its windows or tabs), each open on the server; default none */
+  /** the boards this client serves, in a window, tab, or background attachment, each open on the server; default none */
   boards?: Id[];
   /** the board its user is looking at now (the key window's selected tab), one of `boards`; the client focused last on a board serves that board first */
   focused?: Id;
@@ -1952,6 +1952,21 @@ export type ClientAttachResult = {
   version: number;
   /** the server's schema hash */
   schema: string;
+};
+
+export type ClientListParams = Record<string, unknown>;
+export type ClientListResult = {
+  clients: {
+    id: Id;
+    /** the client's easl version, absent when not reported */
+    app?: string;
+    /** the client's machine, absent when not reported */
+    host?: string;
+    boards: Id[];
+    serves: string[];
+    /** the board this client last focused, absent when it never focused */
+    focused?: Id;
+  }[];
 };
 
 export type TextMeasureParams = {
@@ -2117,6 +2132,8 @@ export interface CanvasApi {
   client: {
     /** Make this connection a client that serves what only the Mac app can answer: the window (view.get, view.snapshot), drawing (view.render), live terminal surfaces (agent.prompt, agent.read's screen modes, agent.restart; interim: easld takes them over with zmx sessions, behind the same methods and errors), WebKit and language servers (object.reload), and AppKit text measurement (text.measure). A client built from an older schema `version` than the server's is refused `unavailable` ("easl 0.1.0 on studio is older than this board's server …; update it"); a newer one is accepted and speaks the server's `version` (the reply's), and with the same `version` the two work together whatever their `schema` hashes. Either way each uses what both know: params and `serves` names the server doesn't know are ignored. From then on the server sends this connection requests for the methods in `serves` (transport `clients`): a call that needs a client goes, after the server's own checks, to one that serves its method and shows its board (text.measure: any that serves it), the one whose user focused that board last, else the one focused most recently, else the one attached last. The call is forwarded as the same method with the caller's params (`board` and agent `target` resolved to ids; agent.prompt without `mentions`, which the server queues), and the client's result or error is the caller's. The server waits for object.reload's and view.render's `timeoutMs` plus 5 s and 30 s, else 5 s (view.get), 30 s (view.snapshot), 10 s (agent.prompt, agent.read, agent.restart), 2 s (text.measure); past that, or when the client disconnects first, the call fails `unavailable` (text.measure falls back to the glyph table). With no client for its board a delegated call fails `unavailable` saying what it needs. Attach again whenever `serves`, `boards` or `focused` change: each call replaces the last; closing the connection detaches. Answer text.measure without waiting on the server, which may hold a board while it measures. For the Mac app; agents never need it. */
     attach(params: ClientAttachParams): Promise<ClientAttachResult>;
+    /** The clients attached to easld, including background viewers. Each entry names its app, host, served boards and methods. Entries, boards and methods are sorted by id or name. The Mac app answers unsupported. */
+    list(params?: ClientListParams): Promise<ClientListResult>;
   };
   text: {
     /** Sizes of text as the board lays it out, in board points: an attached Mac client that serves text.measure (client.attach) measures it with AppKit, exactly as it draws; with none, or when it doesn't answer within 2 s, the server approximates from its glyph table (advance widths of the app's fonts, extracted on a Mac; no kerning) and says `approximate: true`. object.measure, `size: fit`, layout.check and arrow routing measure through it. note: `text` is markdown laid out as a note `width` wide (default 280) with its live fences and images read under `root`: the size is the note's whole frame (title bar included) and `tableShortfall` how much wider it would have to be to show every table cell whole; text: a text shape's text at `textSize` (default 1: 20 pt Shantell Sans) wrapped at `width` (default unwrapped): its bounds rounded up, plus 2; label: a rect's or ellipse's label (18 pt, centered) wrapped at `width`, likewise; arrowLabel: an arrow's caption (15 pt, centered, wrapped at 240): its chip, 8 wider than the text; caption: a code tile's caption strip (`inline code` in the code font): the narrowest frame that shows it whole, and the strip's height. */
@@ -2211,6 +2228,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
     },
     client: {
       attach: (params: ClientAttachParams) => call("client.attach", params ?? {}, []) as Promise<ClientAttachResult>,
+      list: (params?: ClientListParams) => call("client.list", params ?? {}, []) as Promise<ClientListResult>,
     },
     text: {
       measure: (params: TextMeasureParams) => call("text.measure", params ?? {}, ["board"]) as Promise<TextMeasureResult>,
@@ -2218,7 +2236,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"] as const;
+export const METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

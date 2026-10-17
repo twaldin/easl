@@ -1,20 +1,31 @@
 package router
 
 import (
+	"bytes"
+	"encoding/base64"
+	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
+	"math"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/twaldin/easl/easld/internal/api"
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/clients"
-	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/weblink"
 )
 
-// render is view.render: its params are checked as the app checks them; a client draws it.
+// render is view.render. The client always draws inline and writes no file; easld checks
+// the bytes and, unless the caller asked for inline, writes them here (out, or a new file
+// under the temp easl-renders directory).
 func (r *Router) render(p map[string]any) (any, error) {
-	if inline, _ := p["inline"].(bool); inline {
+	inline, _ := p["inline"].(bool)
+	if inline {
 		if _, ok := p["out"]; ok {
 			return nil, invalid("inline returns the image in the reply and out writes it to a file: pass one of them")
 		}
@@ -89,13 +100,46 @@ func (r *Router) render(p map[string]any) (any, error) {
 	if err := imageDestination(p); err != nil {
 		return nil, err
 	}
+	format, ext := renderEncoding(p)
 	timeout := 8000
 	if n, ok := intParam(p, "timeoutMs"); ok {
 		timeout = n
 	}
 	params := copyParams(p)
 	params["board"] = b.ID()
-	return r.forward("view.render", b.ID(), params, millis(timeout)+clients.RenderGrace, "view.render is drawn by the app, as the user sees the board")
+	params["inline"] = true
+	params["format"] = format
+	delete(params, "out")
+	c, err := r.client("view.render", b.ID(), "view.render is drawn by the app, as the user sees the board")
+	if err != nil {
+		return nil, err
+	}
+	result, err := r.await(c, "view.render", params, millis(timeout)+clients.RenderGrace)
+	if err != nil {
+		return nil, err
+	}
+	raw, _ := result["data"].(string)
+	answered, _ := result["format"].(string)
+	data, w, h, err := decodeRender(c, raw, answered, format, result["width"], result["height"])
+	if err != nil {
+		return nil, err
+	}
+	reply := map[string]any{"format": format, "width": float64(w), "height": float64(h)}
+	for _, k := range []string{"canvasRect", "scale", "objects"} {
+		if v, ok := result[k]; ok {
+			reply[k] = v
+		}
+	}
+	if inline {
+		reply["data"] = raw
+		return reply, nil
+	}
+	path, err := r.writeRender(p, ext, data)
+	if err != nil {
+		return nil, err
+	}
+	reply["path"] = path
+	return reply, nil
 }
 
 func decodeFrame(m map[string]any) (model.Frame, bool) {
@@ -151,6 +195,107 @@ func imageDestination(p map[string]any) error {
 	}
 	if format, ok := optStr(p, "format"); ok && format != "png" && format != "jpeg" {
 		return invalid("format must be png or jpeg")
+	}
+	return nil
+}
+
+// renderEncoding is the image the client must return: out's extension, else format, else png.
+// A jpeg with no out is written as .jpg, matching the app's scratch names; an out of .jpeg stays .jpeg.
+func renderEncoding(p map[string]any) (format, ext string) {
+	if out, ok := optStr(p, "out"); ok {
+		switch strings.ToLower(filepath.Ext(out)) {
+		case ".jpg":
+			return "jpeg", "jpg"
+		case ".jpeg":
+			return "jpeg", "jpeg"
+		default:
+			return "png", "png"
+		}
+	}
+	if format, ok := optStr(p, "format"); ok && format == "jpeg" {
+		return "jpeg", "jpg"
+	}
+	return "png", "png"
+}
+
+func decodeRender(c *clients.Client, raw, answered, format string, width, height any) ([]byte, int, int, error) {
+	if raw == "" {
+		return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with no image data", c.Name())
+	}
+	if answered != "" && answered != format {
+		return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with format %s, not %s", c.Name(), answered, format)
+	}
+	data, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with image data that is not base64", c.Name())
+	}
+	config, err := decodeRenderImage(data, format)
+	if err != nil {
+		return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with image data that is not a %s", c.Name(), format)
+	}
+	w, h := config.Width, config.Height
+	if !samePixel(width, w) || !samePixel(height, h) {
+		return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with a %d×%d %s, not %v×%v", c.Name(), w, h, format, width, height)
+	}
+	return data, w, h, nil
+}
+
+func decodeRenderImage(data []byte, format string) (image.Config, error) {
+	switch format {
+	case "png":
+		return png.DecodeConfig(bytes.NewReader(data))
+	case "jpeg":
+		return jpeg.DecodeConfig(bytes.NewReader(data))
+	default:
+		return image.Config{}, fmt.Errorf("format %s", format)
+	}
+}
+
+func samePixel(v any, px int) bool {
+	n, ok := v.(float64)
+	return ok && px > 0 && n == float64(px) && n == math.Trunc(n)
+}
+
+func (r *Router) writeRender(p map[string]any, ext string, data []byte) (string, error) {
+	out, explicit := optStr(p, "out")
+	if !explicit {
+		r.renderScratch++
+		out = filepath.Join(os.TempDir(), "easl-renders", fmt.Sprintf("render-%d-%d.%s", time.Now().UnixMilli(), r.renderScratch, ext))
+	}
+	r.reg.Mu.Unlock()
+	err := writeRenderFile(out, data)
+	r.reg.Mu.Lock()
+	if err != nil {
+		return "", fail(api.CodeUnavailable, "cannot write %s: %s", out, localizedDescription(err))
+	}
+	return out, nil
+}
+
+func writeRenderFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	scratch := filepath.Join(os.TempDir(), "easl-renders")
+	if dir == scratch {
+		if err := os.MkdirAll(scratch, 0o755); err != nil {
+			return err
+		}
+	}
+	tmp, err := os.CreateTemp(dir, ".render-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil {
+		os.Remove(tmpName)
+		if werr != nil {
+			return werr
+		}
+		return cerr
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
 	}
 	return nil
 }
@@ -225,11 +370,14 @@ func (r *Router) reload(p map[string]any) (any, error) {
 	if timeout < 0 {
 		return nil, invalid("timeoutMs must be 0 or more")
 	}
-	need := "object.reload reloads the page in its browser tile"
 	if o.Type == model.Diagram {
-		need = "object.reload computes the diagram through its language servers"
+		need := "object.reload computes the diagram through its language servers"
+		if r.clients.Choose("object.reload", b.ID()) == nil {
+			return nil, noClient(b.ID(), need)
+		}
+		return nil, fail(api.CodeUnavailable, "%s", need)
 	}
-	return r.forward("object.reload", b.ID(), p, millis(timeout)+clients.ReloadGrace, need)
+	return r.forward("object.reload", b.ID(), p, millis(timeout)+clients.ReloadGrace, "object.reload reloads the page in its browser tile")
 }
 
 // measure is object.measure: the intrinsic frame size for a type and props.
@@ -258,7 +406,7 @@ func (r *Router) measure(p map[string]any) (any, error) {
 	if w, ok := num(p, "width"); ok {
 		width = &w
 	}
-	w, h, approximate, err := measure.Size(typ, props, width, pathRoot(b, typ, props), r.clients)
+	w, h, approximate, err := r.measuredSize(typ, props, width, b, r.callerOf(p), nil)
 	if err != nil {
 		return nil, err
 	}

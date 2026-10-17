@@ -20,7 +20,7 @@
       },
       "replies": {
         "object.reload": [{ "silent": true }],
-        "view.render": [{ "result": { "path": "/tmp/easl-render-studio.png", "width": 200, "height": 200, "scale": 2, "objects": [] } }]
+        "view.render": [{ "result": { "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "format": "png", "width": 1, "height": 1, "scale": 2, "objects": [] } }]
       },
       "ignore": {
         "request.schema": "the schema's hash changes with every schema edit",
@@ -95,8 +95,8 @@
     },
     {
       "call": "view.render",
-      "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 } },
-      "note": "laptop is gone: studio, which focused the board, comes before mini, which attached last"
+      "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 }, "inline": true },
+      "note": "laptop is gone: studio, which focused the board, comes before mini, which attached last; easld returns the image inline"
     }
   ]
 }

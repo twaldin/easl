@@ -1,0 +1,162 @@
+{
+  "description": "A scripted Mac client serves object.measure, view.render and object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a host-picture refusal is the caller's. client.list names attached clients. A diagram reload stays unavailable and is not forwarded. easld only.",
+  "steps": [
+    {
+      "call": "object.measure",
+      "params": { "board": "{{board}}", "type": "html", "props": { "html": "<p>Hi</p>" } },
+      "expect": { "response.ok": false, "response.error.code": "unavailable", "response.error.message": "an html page is measured by the app" }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "html", "props": { "html": "<p>Hi</p>" }, "size": "fit" },
+      "expect": { "response.ok": false, "response.error.code": "unavailable", "response.error.message": "an html page is measured by the app" }
+    },
+    {
+      "call": "client.list",
+      "expect": { "response.ok": true, "response.result.clients": [] }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "draw" }, "frame": { "x": 0, "y": 0, "w": 280, "h": 200 } },
+      "save": "n"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "browser", "props": { "url": "https://example.com/" }, "frame": { "x": 400, "y": 0, "w": 600, "h": 400 } },
+      "save": "web"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "diagram", "props": { "kind": "calls", "symbol": "main" }, "frame": { "x": 1100, "y": 0, "w": 600, "h": 400 } },
+      "save": "dg"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "html", "props": { "html": "<p>Page</p>" }, "frame": { "x": 0, "y": 400, "w": 400, "h": 300 } },
+      "save": "page"
+    },
+    {
+      "call": "client.attach",
+      "conn": "app",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "{{schemaHash}}",
+        "app": "0.2.0",
+        "host": "studio",
+        "serves": ["object.measure", "view.render", "object.reload"],
+        "boards": ["{{board}}"],
+        "focused": "{{board}}"
+      },
+      "replies": {
+        "object.measure": [
+          { "result": { "w": 800, "h": 210 } },
+          { "result": { "w": 640, "h": 100, "approximate": true } },
+          { "result": { "w": 500, "h": 140 } },
+          { "result": { "w": 500, "h": 90 } },
+          { "result": { "w": 640, "h": 80 } },
+          { "result": { "w": 320, "h": 70 } }
+        ],
+        "view.render": [
+          { "result": { "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "format": "png", "width": 1, "height": 1, "scale": 1, "objects": [] } },
+          { "result": { "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "format": "png", "width": 1, "height": 1, "scale": 1, "objects": [] } },
+          { "error": { "code": "unavailable", "message": "{{n.object.id}} is only a host picture: view.render cannot draw it" } }
+        ],
+        "object.reload": [
+          { "result": { "loaded": true, "url": "https://example.com/" } }
+        ]
+      },
+      "ignore": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "call": "client.attach",
+      "conn": "mini",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "{{schemaHash}}",
+        "serves": ["object.measure"],
+        "boards": ["{{board}}"]
+      },
+      "ignore": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      },
+      "note": "no app, host or focused: client.list omits them. studio focused the board, so it still serves it"
+    },
+    {
+      "call": "client.list",
+      "unordered": { "response.result.clients": "entries are sorted by client id, which is new each run" },
+      "note": "both clients; boards and serves are sorted, and focused is the board studio focused last"
+    },
+    {
+      "call": "object.measure",
+      "params": { "board": "{{board}}", "type": "html", "props": { "html": "<p>Hi</p>", "root": "sub", "zoom": 2 }, "width": 800 },
+      "expect": { "response.ok": true, "response.result.w": 800, "response.result.h": 210 },
+      "note": "exact: no approximate. props.root is the absolute link root, width is not divided by zoom"
+    },
+    {
+      "call": "object.measure",
+      "params": { "board": "{{board}}", "type": "html", "props": { "html": "<p>Approx</p>" } },
+      "expect": { "response.ok": true, "response.result.w": 640, "response.result.h": 100, "response.result.approximate": true }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "html", "props": { "html": "<p>Fit</p>" }, "size": "fit", "frame": { "x": 0, "y": 800, "w": 500 } },
+      "expect": { "response.ok": true, "response.result.object.frame.w": 500, "response.result.object.frame.h": 140, "response.result.object.frame.x": 0, "response.result.object.frame.y": 800 }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{page.object.id}}", "size": "fit", "frame": { "x": 0, "y": 400, "w": 500 } },
+      "expect": { "response.ok": true, "response.result.object.frame.w": 500, "response.result.object.frame.h": 90 }
+    },
+    {
+      "call": "object.upsert",
+      "params": { "board": "{{board}}", "key": "page", "type": "html", "props": { "html": "<p>Upsert</p>" }, "size": "fit", "frame": { "x": 0, "y": 1600, "w": 640 } },
+      "expect": { "response.ok": true, "response.result.created": true, "response.result.object.frame.w": 640, "response.result.object.frame.h": 80 }
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": [
+          { "method": "object.create", "params": { "type": "html", "props": { "html": "<p>pending</p>" }, "frame": { "x": 0, "y": 2000, "w": 320, "h": 200 } } },
+          { "method": "object.update", "params": { "id": "$0", "size": "fit", "frame": { "x": 0, "y": 2000 } } }
+        ]
+      },
+      "expect": { "response.ok": true, "response.result.results.1.object.frame.w": 320, "response.result.results.1.object.frame.h": 70, "response.result.results.1.object.frame.y": 2000 },
+      "note": "the update names the create in this batch; the frame is the client's size"
+    },
+    {
+      "call": "view.render",
+      "params": { "board": "{{board}}", "target": "{{n.object.id}}", "inline": true },
+      "expect": { "response.ok": true, "response.result.data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "response.result.format": "png", "response.result.width": 1, "response.result.height": 1 },
+      "note": "inline: the image is in the reply and easld writes no file. The client is asked with inline and no out"
+    },
+    {
+      "call": "view.render",
+      "params": { "board": "{{board}}", "target": "{{n.object.id}}", "out": "{{root}}/shot.png" },
+      "expect": { "response.ok": true, "response.result.path": "{{root}}/shot.png", "response.result.format": "png", "response.result.width": 1, "response.result.height": 1 },
+      "note": "non-inline: easld writes the client's bytes at out. The extension stays .png. The client is not given out"
+    },
+    {
+      "call": "view.render",
+      "params": { "board": "{{board}}", "target": "{{n.object.id}}", "inline": true },
+      "expect": { "response.ok": false, "response.error.code": "unavailable", "response.error.message": "{{n.object.id}} is only a host picture: view.render cannot draw it" },
+      "note": "a target the viewer has only as a host picture fails the whole call; the reason is the client's, and no file is written"
+    },
+    {
+      "call": "object.reload",
+      "params": { "id": "{{dg.object.id}}" },
+      "expect": { "response.ok": false, "response.error.code": "unavailable", "response.error.message": "object.reload computes the diagram through its language servers" },
+      "note": "a diagram is not forwarded, even though a client serves object.reload"
+    },
+    {
+      "call": "object.reload",
+      "params": { "id": "{{web.object.id}}", "timeoutMs": 1000 },
+      "expect": { "response.ok": true, "response.result.loaded": true, "response.result.url": "https://example.com/" },
+      "note": "a browser reload is forwarded"
+    }
+  ]
+}

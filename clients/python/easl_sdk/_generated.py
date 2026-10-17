@@ -771,6 +771,11 @@ class ClientApi:
         params = {"version": version, "schema": schema, "app": app, "host": host, "serves": serves, "boards": boards, "focused": focused}
         return self._call("client.attach", params, [])
 
+    def list(self) -> dict[str, Any]:
+        """The clients attached to easld, including background viewers. Each entry names its app, host, served boards and methods. Entries, boards and methods are sorted by id or name. The Mac app answers unsupported."""
+        params = {}
+        return self._call("client.list", params, [])
+
 @_snake_case_hints
 class TextApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
@@ -799,7 +804,7 @@ class GeneratedApi:
         self.client = ClientApi(call)
         self.text = TextApi(call)
 
-METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"]
+METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

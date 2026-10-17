@@ -1366,7 +1366,7 @@
         "properties": {
           "w": { "type": "number" },
           "h": { "type": "number" },
-          "approximate": { "const": true, "description": "text in it (a note, a text shape or a shape's label, a code tile's caption) was measured from easld's glyph table, because no attached Mac client serves text.measure (or it didn't answer in time): a few points off what the app draws, and a line near the edge may wrap differently. Absent when exact" }
+          "approximate": { "const": true, "description": "the size uses easld's glyph-table text approximation or a client's fallback HTML layout, rather than exact Mac layout. Absent when exact. easld itself has no fallback HTML layout engine" }
         },
         "additionalProperties": false
       }
@@ -2037,13 +2037,40 @@
           "schema": { "type": "string", "description": "the client's schema hash: the first 16 hex digits of the SHA-256 of its schema/easl-api.json (generated: ApiParams.schemaHash)" },
           "app": { "type": "string", "description": "the client's easl version, e.g. \"0.2.0\", for messages" },
           "host": { "type": "string", "description": "the machine it runs on, for messages" },
-          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, text.measure (others are ignored)" },
-          "boards": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "the boards it shows (open in one of its windows or tabs), each open on the server; default none" },
+          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure (others are ignored)" },
+          "boards": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "the boards this client serves, in a window, tab, or background attachment, each open on the server; default none" },
           "focused": { "$ref": "#/definitions/Id", "description": "the board its user is looking at now (the key window's selected tab), one of `boards`; the client focused last on a board serves that board first" }
         },
         "additionalProperties": true
       },
       "result": { "type": "object", "required": ["client", "version", "schema"], "properties": { "client": { "$ref": "#/definitions/Id", "description": "this client, cli_…" }, "version": { "type": "integer", "description": "the server's schema version" }, "schema": { "type": "string", "description": "the server's schema hash" } } }
+    },
+    "client.list": {
+      "description": "The clients attached to easld, including background viewers. Each entry names its app, host, served boards and methods. Entries, boards and methods are sorted by id or name. The Mac app answers unsupported.",
+      "params": { "type": "object", "properties": {}, "additionalProperties": false },
+      "result": {
+        "type": "object",
+        "required": ["clients"],
+        "properties": {
+          "clients": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "boards", "serves"],
+              "properties": {
+                "id": { "$ref": "#/definitions/Id" },
+                "app": { "type": "string", "description": "the client's easl version, absent when not reported" },
+                "host": { "type": "string", "description": "the client's machine, absent when not reported" },
+                "boards": { "type": "array", "items": { "$ref": "#/definitions/Id" } },
+                "serves": { "type": "array", "items": { "type": "string" } },
+                "focused": { "$ref": "#/definitions/Id", "description": "the board this client last focused, absent when it never focused" }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "text.measure": {
       "description": "Sizes of text as the board lays it out, in board points: an attached Mac client that serves text.measure (client.attach) measures it with AppKit, exactly as it draws; with none, or when it doesn't answer within 2 s, the server approximates from its glyph table (advance widths of the app's fonts, extracted on a Mac; no kerning) and says `approximate: true`. object.measure, `size: fit`, layout.check and arrow routing measure through it. note: `text` is markdown laid out as a note `width` wide (default 280) with its live fences and images read under `root`: the size is the note's whole frame (title bar included) and `tableShortfall` how much wider it would have to be to show every table cell whole; text: a text shape's text at `textSize` (default 1: 20 pt Shantell Sans) wrapped at `width` (default unwrapped): its bounds rounded up, plus 2; label: a rect's or ellipse's label (18 pt, centered) wrapped at `width`, likewise; arrowLabel: an arrow's caption (15 pt, centered, wrapped at 240): its chip, 8 wider than the text; caption: a code tile's caption strip (`inline code` in the code font): the narrowest frame that shows it whole, and the strip's height.",

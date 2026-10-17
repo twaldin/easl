@@ -1,7 +1,7 @@
 {
   "scenario": "client-delegation",
-  "description": "A scripted Mac client (client.attach) serves every delegated method: easld checks each call as before, forwards it as the same method (board and terminal resolved to ids), and relays the client's result or error; agent.prompt's mentions stay easld's (queued, withdrawn when the client fails); text is measured by the client, so nothing is approximate. easld only: the app doesn't speak the client protocol yet.",
-  "recordedOn": "easld (the app doesn't speak the client protocol yet; a scripted client serves it)",
+  "description": "A scripted Mac client (client.attach) serves every delegated method: easld checks each call as before, forwards it as the same method (board and terminal resolved to ids), and relays the client's result or error; view.render is asked inline with no out, and a non-inline caller gets the image written on easld; agent.prompt's mentions stay easld's (queued, withdrawn when the client fails); text is measured by the client, so nothing is approximate. easld only: the app doesn't speak the client protocol yet.",
+  "recordedOn": "easld unit 3 viewer render and HTML measurement",
   "steps": [
     {
       "step": "board.open",
@@ -340,6 +340,7 @@
           "agent.read",
           "agent.restart",
           "object.reload",
+          "object.measure",
           "text.measure"
         ],
         "version": 1
@@ -399,6 +400,7 @@
       "method": "view.render",
       "request": {
         "board": "<board>",
+        "inline": true,
         "scale": 2,
         "target": "<obj:1>"
       },
@@ -406,11 +408,12 @@
         "id": "r7",
         "ok": true,
         "result": {
-          "height": 400,
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+          "format": "png",
+          "height": 1,
           "objects": [],
-          "path": "/tmp/easl-render.png",
           "scale": 2,
-          "width": 560
+          "width": 1
         }
       },
       "forwarded": [
@@ -419,6 +422,8 @@
           "method": "view.render",
           "params": {
             "board": "<board>",
+            "format": "png",
+            "inline": true,
             "scale": 2,
             "target": "<obj:1>"
           }
@@ -469,6 +474,8 @@
           "method": "view.render",
           "params": {
             "board": "<board>",
+            "format": "png",
+            "inline": true,
             "target": {
               "h": 100,
               "w": 100,

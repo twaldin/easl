@@ -38,6 +38,7 @@ func (r *Router) batch(p map[string]any) (any, error) {
 		return params
 	}
 	pending := map[int]map[string]any{}
+	held := newFitGuard(b)
 	var sizes []*fit
 	plan := keyPlan{given: map[string]plannedHolder{}}
 	upserts := map[int]upsertPlan{}
@@ -99,7 +100,12 @@ func (r *Router) batch(p map[string]any) (any, error) {
 			}
 			params = x
 			resolvedOps[index] = map[string]any{"method": method, "params": params}
-			size, err := r.fitSize(method, params, pending)
+			if method == "object.update" {
+				if id, ok := params["id"].(string); ok {
+					held.note(b, id)
+				}
+			}
+			size, err := r.fitSize(method, params, pending, held)
 			if err != nil {
 				return err
 			}
