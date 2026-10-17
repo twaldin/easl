@@ -153,18 +153,20 @@ extension HostFiles {
       const root = source.root, requested = path.resolve(root, input);
       const area = source.commit ? writtenAreaOf(requested) : areaOf(requested);
       if (!area) fail('refused');
-      const relative = path.relative(root, requested);
       const effectiveLimit = Math.min(limit, remaining);
       if (source.commit) {
+        const directory = area.real;
+        const prefix = inside(area.lex, requested) ? area.lex : area.real;
+        const relative = path.relative(prefix, requested);
         const object = source.commit + ':./' + relative;
-        const entry = text(root, ['--literal-pathspecs', 'ls-tree', '-z', source.commit, '--', relative]);
+        const entry = text(directory, ['--literal-pathspecs', 'ls-tree', '-z', source.commit, '--', relative]);
         if (!entry) fail('not_found', { commit: source.commit });
         if (entry.startsWith('120000 ')) fail('refused');
         if (!/^100(644|755) /.test(entry)) fail('not_found', { commit: source.commit });
-        const size = text(root, ['cat-file', '-s', object]);
+        const size = text(directory, ['cat-file', '-s', object]);
         if (size === null) fail('not_found', { commit: source.commit });
         if (Number(size) > effectiveLimit) fail('too_large', { limit: effectiveLimit });
-        const data = req.bytes ? git(root, ['show', '--end-of-options', object], effectiveLimit) : Buffer.alloc(0);
+        const data = req.bytes ? git(directory, ['show', '--end-of-options', object], effectiveLimit) : Buffer.alloc(0);
         if (data === null) fail('not_found', { commit: source.commit });
         if (data.length > effectiveLimit) fail('too_large', { limit: effectiveLimit });
         remaining -= req.bytes ? data.length : Number(size);

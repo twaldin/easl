@@ -1,3 +1,4 @@
+import Darwin
 import AppKit
 import Foundation
 import Testing
@@ -72,6 +73,29 @@ struct HostNotesTests {
         #expect(read.excerpts[request.fences[0].key]?.lines == ["committed source"])
         #expect(read.observation.fences[1] == [.failure(.refused)])
         #expect(read.excerpts[request.fences[2].key]?.state == .missing)
+    }
+
+    @Test func pinnedAbsoluteFencesUseTheBoardsCanonicalAreaWithoutFollowingLiveFiles() async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.reader()
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("nested/file.swift", "committed\n")
+        try await repo.write("outside.swift", "outside\n")
+        try await repo.commit("source")
+        let canonical = try #require(realpath(repo.url("nested").path, nil))
+        defer { free(canonical) }
+        let area = String(cString: canonical)
+        let alias = fixture.directory.appendingPathComponent("board")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: repo.url("nested"))
+        try FileManager.default.removeItem(at: repo.url("nested/file.swift"))
+        try FileManager.default.createSymbolicLink(at: repo.url("nested/file.swift"), withDestinationURL: repo.url("outside.swift"))
+        let request = self.request("```swift path=\(area)/file.swift commit=main\n```\n```swift path=\(area)/../outside.swift commit=main\n```", root: alias)
+        let read = try await files.note(request)
+        #expect(read.excerpts[request.fences[0].key]?.lines == ["committed"])
+        #expect(read.excerpts[request.fences[0].key]?.path == area + "/file.swift")
+        #expect(read.observation.fences[1] == [.failure(.refused)])
+        #expect(try await files.note(request, bytes: false).observation == read.observation)
     }
 
     @Test(arguments: [true, false])
