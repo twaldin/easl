@@ -2,14 +2,13 @@
 # A development instance of easl for this checkout, isolated from the installed app and from
 # other agents' instances (own EASL_HOME: socket, boards, log). See docs/testing.md.
 #
-#   scripts/dev.sh start [root]     build + bundle, launch without activating on the testing Space
+#   scripts/dev.sh start [root]     build + bundle, launch unfocused on the current Space
 #                                   (no root: the tabs this home had open, else the checkout)
 #   scripts/dev.sh restart [root]   rebuild and relaunch, keeping terminal sessions (zmx) alive
 #   scripts/dev.sh stop             quit and kill this instance's zmx sessions
 #   scripts/dev.sh cli <args…>      run the easl CLI against this instance
 #   scripts/dev.sh shot [file]      real pixels: WindowServer capture of the window (default .easl-home/shot.png; yabai)
 #   scripts/dev.sh snapshot [file]  view.snapshot (in-process render, the agent-facing view) to a PNG
-#   scripts/dev.sh move [space]     move the window to a Space (default: the testing Space) and maximize it (yabai)
 #   scripts/dev.sh input <args…>    replay input (scripts/dev-input.swift) into this instance
 #   scripts/dev.sh sessions         list this instance's zmx sessions
 #
@@ -23,18 +22,11 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 home="${EASL_DEV_HOME:-$repo/.easl-home}"
 case "$home" in /*) ;; *) home="$PWD/$home" ;; esac
 app="${EASL_DEV_APP:-$repo/.build/easl.app}"
-# Window placement is optional and needs yabai (docs/testing.md, "Optional: a machine shared with
-# other agents"): YABAI, else ~/Applications/Yabai.app, else yabai on PATH.
+# Window-id lookup needs yabai: YABAI, else ~/Applications/Yabai.app, else yabai on PATH.
 yabai="${YABAI:-$HOME/Applications/Yabai.app/Contents/MacOS/yabai}"
 [ -x "$yabai" ] || yabai="$(command -v yabai || echo "$yabai")"
 need_yabai() {
   [ -x "$yabai" ] || { echo "scripts/dev.sh $1 needs yabai (https://github.com/koekeishiya/yabai): install it, or set YABAI to its path" >&2; exit 1; }
-}
-# The unviewed Space a launch's first window is parked on until it's placed.
-park="${EASL_DEV_PARK_SPACE:-7}"
-# Without a testing Space, leave the window parked.
-test_space() {
-  echo "${EASL_DEV_SPACE:-$park}"
 }
 
 window_id() {
@@ -126,21 +118,12 @@ launch() {
   n=$#
   while [ "$n" -gt 0 ]; do set -- "$@" --env "$1"; shift; n=$((n - 1)); done
   set -- --stdout "$home/app.log" --stderr "$home/app.log" --env EASL_HOME="$home" "$@" "$bundle"
-  # EASL_DEV_LAUNCHER (a command, split on spaces) launches instead of `open -g -n`, with the same
-  # `open` arguments, in the background (its output in $home/launcher.log), and places the window
-  # itself: a guard that keeps test windows off a shared Mac's viewed Spaces, such as
-  # `gui-launch --space 7 --guard-seconds 7200 -- -n` (docs/testing.md).
+  # EASL_DEV_LAUNCHER (split on spaces) replaces `open -g -n` with the same arguments.
+  # Custom launchers must not activate, add window rules, or move windows.
   if [ -n "${EASL_DEV_LAUNCHER:-}" ]; then
     # shellcheck disable=SC2086
     $EASL_DEV_LAUNCHER "$@" > "$home/launcher.log" 2>&1 &
   else
-    # Park the first window before it appears, then move it to the testing Space if set.
-    # One-shot and removed afterwards so later windows and other instances aren't grabbed.
-    rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
-    if [ -x "$yabai" ]; then
-      "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-      "$yabai" -m rule --add --one-shot label="$rule" app="^easl$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
-    fi
     open -g -n "$@"
   fi
   i=0
@@ -148,26 +131,15 @@ launch() {
   [ -S "$EASL_SOCKET" ] || { echo "easl did not open its socket; see $home/app.log" >&2; exit 1; }
   # The socket's owner, not the newest process of this bundle: parallel launches of one bundle race.
   lsof -t "$EASL_SOCKET" | head -n 1 > "$home/pid"
-  if [ -n "${EASL_DEV_LAUNCHER:-}" ] || [ ! -x "$yabai" ]; then
-    # The launcher places the window; callers that look it up by pid (perf-loop.py) find it here.
-    [ ! -x "$yabai" ] || wait_window
-    echo "easl pid $(cat "$home/pid"), EASL_SOCKET=$EASL_SOCKET"
-    return
+  if [ -x "$yabai" ]; then
+    wait_window
+    if [ -z "$(window_id)" ]; then
+      echo "easl did not open a window; see $home/app.log" >&2
+      quit
+      exit 1
+    fi
   fi
-  target="$(test_space)"
-  wait_window
-  wid="$(window_id)"
-  if [ -z "$wid" ]; then
-    echo "easl did not open a window; see $home/app.log" >&2
-    quit
-    "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-    exit 1
-  fi
-  if [ "$target" != "$park" ]; then
-    "$yabai" -m window "$wid" --space "$target" && "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
-  fi
-  "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-  echo "easl pid $(cat "$home/pid") on Space $target, EASL_SOCKET=$EASL_SOCKET"
+  echo "easl pid $(cat "$home/pid"), EASL_SOCKET=$EASL_SOCKET"
 }
 
 case "${1:-}" in
@@ -200,13 +172,6 @@ case "${1:-}" in
     [ -s "$capture_dir/shot.png" ] || { echo "screencapture did not write an image" >&2; exit 1; }
     mv -f "$capture_dir/shot.png" "$out"
     echo "$out"
-    ;;
-  move)
-    need_yabai move
-    wid="$(window_id)"
-    [ -n "$wid" ] || { echo "no easl window" >&2; exit 1; }
-    "$yabai" -m window "$wid" --space "${2:-$(test_space)}"
-    "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
     ;;
   snapshot)
     out="${2:-$home/snapshot.png}"

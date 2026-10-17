@@ -4,7 +4,7 @@ times interleaved, and prints medians with the targets as pass/fail (docs/testin
 "Performance benchmark").
 
     python3 scripts/perf-loop.py --app base=/tmp/a.app --app fix=/tmp/b.app [--board synthetic|<sanitized.json>]
-        [--scenarios visible-serial,hidden-serial,visible-batch,poll-idle,pan-zoom,agent-titles] [--runs 3] [--out rows.jsonl] [--headless]
+        [--scenarios visible-serial,hidden-serial,visible-batch,poll-idle,pan-zoom,agent-titles] [--runs 3] [--out rows.jsonl]
 
 Bundles are frozen release builds (`EASL_BUNDLE_APP=/tmp/a.app scripts/bundle.sh release`). Each
 run starts every bundle in turn (the order alternating between runs) on a development home of its
@@ -13,7 +13,7 @@ else is ever deleted, so an existing `EASL_DEV_HOME` is never touched) holding t
 scripts/perf-board.py, shows it at 100% over the densest html area, then runs the scenarios:
 
 - `visible-serial` / `hidden-serial`: scripts/perf-load.py's serial burst with the window shown
-  (on the testing Space) or minimized;
+  or minimized;
 - `visible-batch`: the same writes as one `object.batch`;
 - `poll-idle`: 60 s of `board.get` every 10 s, nothing else;
 - `pan-zoom`: pans 3000 pt across the html cards and back, zooms out three steps and in again,
@@ -26,9 +26,8 @@ scripts/perf-board.py, shows it at 100% over the densest html area, then runs th
 A row per scenario run records the app's CPU from the burst's start until it is quiet again
 (`ps`), the burst's wall time and RPC latencies, and the `DevPerf` spans over it (main thread
 busy time, the longest stretch it didn't sleep, and `route.board` routings), plus `app.metrics`
-where the bundle has it. Needs yabai and a displayed testing Space (`EASL_DEV_SPACE`) like
-scripts/dev.sh, or `--headless`. Headless windows stay on the unviewed parking Space, where they
-are always occluded (they render but composite nothing), so `visible-*` means not minimized.
+where the bundle has it. Needs yabai. Windows open unfocused on the current Space, like
+scripts/dev.sh; no window is moved. Long runs belong in an isolated VM.
 """
 import argparse
 import json
@@ -125,29 +124,23 @@ def cost(r0, r1, events=None):
 
 
 class Instance:
-    def __init__(self, label, app, tmp, board, headless=False):
+    def __init__(self, label, app, tmp, board):
         self.label, self.app, self.board = label, app, board
         # Created here and owned by this run: the only directory `stop` deletes.
         self.scratch = tempfile.mkdtemp(prefix="easl-perf-loop-", dir=tmp)
         self.home, self.root = os.path.join(self.scratch, "home"), os.path.join(self.scratch, "root")
         home = self.home
-        park = os.environ.get("EASL_DEV_PARK_SPACE", "7")
         self.env = dict(os.environ, EASL_DEV_HOME=home, EASL_DEV_APP=app,
-                        EASL_DEV_PARK_SPACE=park, EASL_SOCKET=os.path.join(home, "easl.sock"))
+                        EASL_SOCKET=os.path.join(home, "easl.sock"))
         # Run from an easl tile, the CLI would address the tile's own board, which the instance
         # doesn't have (`not_found`): the instance's board is the one on its socket.
         for key in ("EASL_BOARD_ID", "EASL_TILE_ID"):
             self.env.pop(key, None)
-        # Headless windows stay on the unviewed parking Space.
-        if headless:
-            self.env["EASL_DEV_SPACE"] = park
-        self.headless = headless
         self.variant = 0
         self.pid = None
         self.window = None
         self.has_metrics = None
         self.notch = None
-        self.space_moved = None
 
     def dev(self, *args, check=True):
         return sh(os.path.join(REPO, "scripts/dev.sh"), *args, env=self.env, check=check)
@@ -177,29 +170,7 @@ class Instance:
         if not self.window:
             raise RuntimeError(f"{self.label}: yabai never listed a window of pid {self.pid}")
         self.has_metrics = self.cli("app.metrics") is not None
-        self.check_space()
         self.zoom_to_cards()
-
-    def check_space(self, at="start"):
-        """Headless: the window must sit on the parking Space nobody views (a Space the user views
-        would be disturbed, and a window there renders and composites differently). Right after
-        the start, a window the launcher didn't place (a guard that lost the new window's id) is
-        moved there by its id, and the row says so (`space_moved`); later, a window found
-        elsewhere ends the run: its scenarios would not be comparable."""
-        if not self.headless:
-            return
-        target = self.env["EASL_DEV_SPACE"]
-        window = json.loads(sh(YABAI, "-m", "query", "--windows", "--window", str(self.window)))
-        if str(window.get("space")) == target:
-            return
-        if at != "start":
-            raise RuntimeError(f"{self.label}'s window {self.window} is on Space {window.get('space')}, not {target}")
-        print(f"  {self.label}: window {self.window} on Space {window.get('space')}, moving it to {target}", flush=True)
-        sh(YABAI, "-m", "window", str(self.window), "--space", target)
-        self.space_moved = window.get("space")
-        window = json.loads(sh(YABAI, "-m", "query", "--windows", "--window", str(self.window)))
-        if str(window.get("space")) != target:
-            raise RuntimeError(f"{self.label}'s window {self.window} stays on Space {window.get('space')}, not {target}")
 
     def stop(self):
         self.dev("stop", check=False)
@@ -224,11 +195,7 @@ class Instance:
         else:
             sh(YABAI, "-m", "window", str(self.window), "--minimize", check=False)
         for _ in range(30):
-            # A window on a Space nobody views is always occluded: headless, shown is not minimized.
-            if self.headless:
-                done = json.loads(sh(YABAI, "-m", "query", "--windows", "--window", str(self.window))).get("is-minimized") != shown
-            else:
-                done = (self.cli("view.get") or {}).get("visible") == shown
+            done = (self.cli("view.get") or {}).get("visible") == shown
             if done:
                 return
             time.sleep(0.2)
@@ -452,11 +419,10 @@ def run_scenario(inst, name):
     shown = not name.startswith("hidden")
     inst.visible(shown)
     inst.quiet(timeout=60)
-    inst.check_space(at=name)
     if name == "agent-titles":
         row = agent_titles(inst)
         inst.quiet(timeout=180)
-        return {"app": inst.label, "scenario": name, "visible": shown, "space_moved": inst.space_moved, **row}
+        return {"app": inst.label, "scenario": name, "visible": shown, **row}
     load_before = machine_load()  # outside the span: its `top` is ~2 s of other work
     inst.metrics(reset=True)
     inst.span_begin()
@@ -573,8 +539,6 @@ def main():
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--out", default="/tmp/easl-perf-loop.jsonl")
     ap.add_argument("--tmp", default="/tmp", help="where each bundle's scratch home is created (and deleted)")
-    ap.add_argument("--headless", action="store_true",
-                    help="leave the window on an unviewed parking Space (EASL_DEV_PARK_SPACE, default 7)")
     ap.add_argument("--summarize", action="store_true", help="only print the table for --out's rows")
     args = ap.parse_args()
     apps = [a.split("=", 1) for a in args.app]
@@ -583,15 +547,13 @@ def main():
         rows = [json.loads(l) for l in open(args.out)]
         summarize(rows, [a for a, _ in apps], scenarios)
         return
-    if not args.headless and not os.environ.get("EASL_DEV_SPACE"):
-        ap.error("set EASL_DEV_SPACE to your displayed testing Space, or use --headless")
     rows = []
     with open(args.out, "a") as out:
         for run in range(args.runs):
             order = apps if run % 2 == 0 else list(reversed(apps))
             for label, app in order:
                 print(f"run {run + 1}/{args.runs} {label}", flush=True)
-                inst = Instance(label, app, args.tmp, args.board, headless=args.headless)
+                inst = Instance(label, app, args.tmp, args.board)
                 try:
                     inst.start()
                     for name in scenarios:

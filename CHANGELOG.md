@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Development: `dev.sh start` and `restart` launch unfocused on the current Space without yabai rules or window moves. Removed `dev.sh move` and the parking/testing Space controls.
 - Development: `dev.sh shot` captures hidden windows in place without switching Spaces or taking focus. `EASL_DEV_FORBIDDEN_SPACES` can refuse captures on a forbidden showing Space.
 - **Paste or drop images into remote terminals.** ⌘V, Edit › Paste, and image-file drops copy the image to the terminal's own machine before pasting its path. omp and Claude Code can attach that file instead of looking for it on the Mac. Ctrl+V also carries an image when the clipboard has no text, while text Ctrl+V still reaches the program unchanged. Local terminals stage under the GUI temporary directory. Ending sessions when closing a Mac board cancels pending input and removes their image copies. Copies are isolated by owning board in private directories and expire after seven days, checked at host startup and hourly while its owner runs. Remote and hosted terminals need the updated host app or easld for unattended expiration.
 - **Scrolling text keeps its full width.** The raw note editor, easl Basics, code navigation popovers, and page error messages now keep overlay scroll bars even when macOS prefers legacy scroll bars. A scroll bar no longer narrows or rewraps their text. Fixed-row lists, tables, and the board canvas keep the system's scroll bars.
