@@ -39,6 +39,7 @@ type ComposerPrompt struct {
 	QueuedAt        time.Time
 	AnswerSettledAt *time.Time
 	Viewer          string
+	match           composerPattern
 }
 
 type composerKind int
@@ -55,7 +56,7 @@ type composerNotice struct {
 	ids      []string
 }
 
-// Fold is ComposerPrompt.fold: Unicode case fold, then letters and digits.
+// Fold is ComposerPrompt.fold: Unicode case folding of letters, numbers and marks, normalized to NFC.
 func Fold(text string) string {
 	folded := cases.Fold().String(text)
 	var b strings.Builder
@@ -67,11 +68,55 @@ func Fold(text string) string {
 	return norm.NFC.String(b.String())
 }
 
+type composerPattern struct {
+	clusters []string
+	fallback []int
+}
+
+func compileComposerPattern(text string) composerPattern {
+	pattern := composerPattern{clusters: make([]string, 0, uniseg.GraphemeClusterCount(text))}
+	rest, state := text, -1
+	for rest != "" {
+		var cluster string
+		cluster, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
+		pattern.clusters = append(pattern.clusters, cluster)
+	}
+	if len(pattern.clusters) < composerShortest {
+		return pattern
+	}
+	pattern.fallback = make([]int, len(pattern.clusters))
+	for i, matched := 1, 0; i < len(pattern.clusters); i++ {
+		for matched > 0 && pattern.clusters[i] != pattern.clusters[matched] {
+			matched = pattern.fallback[matched-1]
+		}
+		if pattern.clusters[i] == pattern.clusters[matched] {
+			matched++
+		}
+		pattern.fallback[i] = matched
+	}
+	return pattern
+}
+
 func (p ComposerPrompt) claimedBy(submitted string) bool {
-	if uniseg.GraphemeClusterCount(p.Folded) < composerShortest {
+	if len(p.match.clusters) < composerShortest {
 		return p.Folded == submitted
 	}
-	return strings.Contains(submitted, p.Folded)
+	matched := 0
+	rest, state := submitted, -1
+	for rest != "" {
+		var cluster string
+		cluster, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
+		for matched > 0 && cluster != p.match.clusters[matched] {
+			matched = p.match.fallback[matched-1]
+		}
+		if cluster == p.match.clusters[matched] {
+			matched++
+		}
+		if matched == len(p.match.clusters) {
+			return true
+		}
+	}
+	return false
 }
 
 func SkipsDrain(text string, terminal model.Object) bool {
@@ -122,6 +167,7 @@ func (b *Board) QueueComposerPrompt(text, terminal string, mentions []model.Ment
 		ID: model.NewID("cmp"), Prompt: text, Folded: Fold(text), Mentions: copies, Origins: origins,
 		Answer: answer, QueuedAt: now, Viewer: viewer,
 	}
+	prompt.match = compileComposerPattern(prompt.Folded)
 	if answer && !blocked {
 		settled := now
 		prompt.AnswerSettledAt = &settled
@@ -177,9 +223,9 @@ func (b *Board) claimComposerPrompt(caller, submitted string, now time.Time) *Co
 	if index < 0 {
 		lengths := make([]string, len(queue))
 		for i, prompt := range queue {
-			lengths[i] = strconv.Itoa(len([]rune(prompt.Folded)))
+			lengths[i] = strconv.Itoa(len(prompt.match.clusters))
 		}
-		log.Printf("easl: a submission drain from %s matched none of its %d composer prompts (drained %d letters and digits; waiting %s)", caller, len(queue), len([]rune(folded)), strings.Join(lengths, ", "))
+		log.Printf("easl: a submission drain from %s matched none of its %d composer prompts (drained %d folded characters; waiting %s)", caller, len(queue), uniseg.GraphemeClusterCount(folded), strings.Join(lengths, ", "))
 		return nil
 	}
 	found := queue[index]
@@ -416,8 +462,17 @@ func (b *Board) flushComposerNotices() {
 	}
 }
 
-func (b *Board) ComposerReceipts() []map[string]any {
-	return b.composerReceipts
+func (b *Board) ComposerReceipts(viewer string) []map[string]any {
+	if viewer == "" {
+		return nil
+	}
+	var receipts []map[string]any
+	for _, receipt := range b.composerReceipts {
+		if receipt["viewer"] == viewer {
+			receipts = append(receipts, receipt)
+		}
+	}
+	return receipts
 }
 
 func (b *Board) scheduleComposerExpiry() {

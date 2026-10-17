@@ -997,6 +997,7 @@ func (b *Board) Atomically(body func() error) error {
 		b.replayVerb, b.replayActor = "", UserActor
 		b.handoffs, b.messages, b.aliases = handed, queued, named
 		b.composerPrompts, b.composerNotices = prompts, notices
+		b.scheduleComposerExpiry()
 		return err
 	}
 	return nil

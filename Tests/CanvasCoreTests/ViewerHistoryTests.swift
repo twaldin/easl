@@ -272,4 +272,72 @@ final class ViewerHistoryTests {
         _ = try await undo(ViewerHistory.limit + 1)
         #expect(x(moved.id) == Double(ViewerHistory.limit))
     }
+
+    @Test func receiptRetirementPreservesTwoHundredLiveStepsAfterUndoThenEditCycles() async throws {
+        let moved = note("moved")
+        for step in 1...200 { try await move(moved.id, to: Double(step), step: step) }
+        for step in 201...401 {
+            _ = try await undo(step - 1)
+            try await move(moved.id, to: Double(step), step: step)
+        }
+        let revision = board.revision
+        let retained = try await undo(201)
+        #expect(retained["step"] == .number(201) && retained["pushed"] == .bool(false))
+        #expect(retained["retired"] == nil && ids(retained["changed"]) == [moved.id])
+        let retired = try await undo(200)
+        #expect(retired == .object(["step": 200, "changed": .array([]), "deleted": .array([]), "kept": .array([]), "pushed": .bool(false), "retired": .bool(true)]))
+        #expect(try ViewerReplay(reply: retired) == ViewerReplay(step: 200, retired: true))
+        #expect(board.revision == revision && x(moved.id) == 401)
+        let newest = try await undo(401)
+        #expect(newest["step"] == .number(401) && newest["pushed"] == .bool(true))
+        #expect(x(moved.id) == 199)
+        for step in stride(from: 199, through: 1, by: -1) {
+            let undone = try await undo(step)
+            #expect(undone["step"] == .number(Double(step)) && undone["pushed"] == .bool(true))
+            #expect(x(moved.id) == Double(step - 1))
+        }
+        let redone = try await undo(1, redo: true)
+        #expect(redone["step"] == .number(1) && redone["pushed"] == .bool(true))
+        #expect(x(moved.id) == 1)
+    }
+
+    @Test func aRetiredReceiptAliasCannotReplayAnotherLiveStepAfterRedo() async throws {
+        let first = note("first"), second = note("second", x: 400)
+        try await move(first.id, to: 100, step: 1)
+        try await move(second.id, to: 500, step: 2)
+        #expect(try await undo(3)["step"] == .number(2))
+        _ = try await undo(2, redo: true)
+        let revision = board.revision
+        let retired = try await undo(3)
+        #expect(retired == .object(["step": 3, "changed": .array([]), "deleted": .array([]), "kept": .array([]), "pushed": .bool(false), "retired": .bool(true)]))
+        #expect(board.revision == revision && x(first.id) == 100 && x(second.id) == 500)
+        try await move(second.id, to: 600, step: 3)
+        let late = try await undo(3)
+        #expect(late["step"] == .number(3) && late["pushed"] == .bool(true) && late["retired"] == nil)
+        #expect(x(second.id) == 500)
+        let redone = try await undo(3, redo: true)
+        #expect(redone["step"] == .number(3) && redone["pushed"] == .bool(true))
+        #expect(x(second.id) == 600)
+        try await move(first.id, to: 150, step: 1)
+        let older = try await undo(1)
+        #expect(older["step"] == .number(1) && older["pushed"] == .bool(true))
+        #expect(x(first.id) == 0 && x(second.id) == 600)
+        _ = try await undo(1, redo: true)
+        #expect(x(first.id) == 150)
+    }
+
+    @Test func evictingAStepRetiresItsReceiptAliasButItsOwnIDStillConflicts() async throws {
+        let moved = note("moved")
+        try await move(moved.id, to: 1, step: 1)
+        #expect(try await undo(1000)["step"] == .number(1))
+        for step in 2...202 { try await move(moved.id, to: Double(step), step: step) }
+        let revision = board.revision
+        let retired = try await undo(1000)
+        #expect(retired == .object(["step": 1000, "changed": .array([]), "deleted": .array([]), "kept": .array([]), "pushed": .bool(false), "retired": .bool(true)]))
+        let refused = try await reply("board.undo", ["board": .string(board.id), "viewer": .string(viewer), "step": 1])
+        #expect(refused["error"]?["code"] == "conflict")
+        #expect(board.revision == revision && x(moved.id) == 202)
+        #expect(try await undo(202)["step"] == .number(202))
+        #expect(x(moved.id) == 201)
+    }
 }

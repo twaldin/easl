@@ -97,3 +97,29 @@ func TestBoardUndoAndRedoReplayAViewersOwnSteps(t *testing.T) {
 		t.Fatal("the created note is still there")
 	}
 }
+
+func TestARetiredViewerReplayNamesOnlyTheRequestedStepAndLeavesLiveEditsAlone(t *testing.T) {
+	f := newFixture(t)
+	id := idOf(f.result("object.create", note(0, map[string]any{"markdown": "plan"})))
+	f.result("object.update", map[string]any{"id": id, "frame": map[string]any{"x": 300.0}, "viewer": testViewer, "step": 1.0})
+	undone := f.result("board.undo", map[string]any{"viewer": testViewer, "step": 2.0})
+	if undone["step"] != 1.0 || undone["pushed"] != true || undone["retired"] != nil {
+		t.Fatalf("aliased undo %v", undone)
+	}
+	f.result("board.redo", map[string]any{"viewer": testViewer, "step": 1.0})
+	revision := f.board.Objects()[id].Rev
+	want := map[string]any{"step": 2.0, "changed": []any{}, "deleted": []any{}, "kept": []any{}, "pushed": false, "retired": true}
+	if got := f.result("board.undo", map[string]any{"viewer": testViewer, "step": 2.0}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("retired replay %v, want %v", got, want)
+	}
+	if got := f.board.Objects()[id]; got.Rev != revision || got.Frame.X != 300 {
+		t.Fatalf("retired replay changed the note: rev %d, x %v", got.Rev, got.Frame.X)
+	}
+	undo := f.result("board.undo", map[string]any{"viewer": testViewer, "step": 1.0})
+	if changed, _ := undo["changed"].([]any); undo["step"] != 1.0 || undo["pushed"] != true || undo["retired"] != nil || len(changed) != 1 {
+		t.Fatalf("live undo below the receipt floor %v", undo)
+	}
+	if x := f.board.Objects()[id].Frame.X; x != 0 {
+		t.Fatalf("live undo left x %v, want 0", x)
+	}
+}

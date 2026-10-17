@@ -112,6 +112,7 @@ func TestComposerFoldKeepsMarksNumbersAndShortGraphemeEquality(t *testing.T) {
 		{"numeric-short", "①²", "prefix①²suffix", "①²"},
 		{"combining-contained", "a\u0301bc", "abc", "prefix ÁBC suffix"},
 		{"accent-is-content", "café", "cafe", "CAFE\u0301"},
+		{"substring-grapheme-boundary", "abcक", "abcकि", "prefix abcक suffix"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b, terminal, note := composerBoard(t)
@@ -185,8 +186,8 @@ func TestFailedDeleteNeitherLosesNorEmitsTheQueue(t *testing.T) {
 	if err != (stopError{}) {
 		t.Fatal(err)
 	}
-	if events != 0 || len(b.composerPrompts[alpha.ID]) != 1 || len(b.ComposerReceipts()) != 0 {
-		t.Fatalf("events %d queue %d receipts %d", events, len(b.composerPrompts[alpha.ID]), len(b.ComposerReceipts()))
+	if events != 0 || len(b.composerPrompts[alpha.ID]) != 1 || len(b.ComposerReceipts("vw_viewer01")) != 0 {
+		t.Fatalf("events %d queue %d receipts %d", events, len(b.composerPrompts[alpha.ID]), len(b.ComposerReceipts("vw_viewer01")))
 	}
 	_ = note
 }

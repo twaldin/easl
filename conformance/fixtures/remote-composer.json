@@ -1,7 +1,7 @@
 {
   "scenario": "remote-composer",
-  "description": "easld only. A scripted client types two composer prompts. Staged mentions are tray.stage results, in token order, sent with viewer after tray.commit has taken them off the host tray. A drain with no prompt, and a drain whose text does not match, leave the queue. A matching peek numbers those mentions from 1 and does not submit them. tray.commit of the peeked ids submits composer.submitted with the original staged ids. Release of a later uncommitted prompt emits composer.returned with that prompt's original id. Neither event carries captured targets.",
-  "recordedOn": "scratch easld schema2 remote edits and composer receipts",
+  "description": "easld only. A scripted client types three composer prompts. Staged mentions are tray.stage results, in token order, sent with viewer after tray.commit has taken them off the host tray. Matching drains number those mentions from 1. Committing a peek emits composer.submitted; releasing a target or closing its board emits composer.returned. Events name original staged ids, not captured targets. A viewer-scoped manifest recovers the same outcomes, including after board close and reopen.",
+  "recordedOn": "deckbox scratch easld reviewed remote-edit-1",
   "steps": [
     {
       "step": "board.open",
@@ -1082,7 +1082,8 @@
       "step": "board.get",
       "method": "board.get",
       "request": {
-        "board": "<board>"
+        "board": "<board>",
+        "viewer": "vw_composer1"
       },
       "response": {
         "id": "r21",
@@ -1228,6 +1229,352 @@
         "result": {
           "context": "",
           "mentions": []
+        }
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "seq": 2,
+        "source": "main",
+        "state": "idle",
+        "tile": "<obj:4>"
+      },
+      "response": {
+        "id": "r23",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:4>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker",
+              "worktree": "<root>"
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:4>"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:4>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "staged": [
+          {
+            "edited": false,
+            "id": "<men:5>",
+            "label": "shape box",
+            "stagedAt": "<time:number>",
+            "target": {
+              "kind": "object",
+              "object": "<obj:2>"
+            }
+          }
+        ],
+        "target": "<obj:4>",
+        "text": "close and return the box",
+        "viewer": "vw_composer1"
+      },
+      "response": {
+        "id": "r24",
+        "ok": true,
+        "result": {
+          "agent": {
+            "board": "<board>",
+            "kind": "omp",
+            "lifecycle": {
+              "state": "idle"
+            },
+            "root": "<root>",
+            "tile": "<obj:4>"
+          },
+          "delivery": "typed",
+          "submittedAt": "<time:iso>",
+          "waitable": true
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "agent.prompt",
+          "params": {
+            "composer": true,
+            "target": "<obj:4>",
+            "text": "close and return the box"
+          }
+        }
+      ]
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r25",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "ended": [],
+          "kept": [
+            {
+              "id": "<obj:4>",
+              "name": "worker"
+            }
+          ],
+          "root": "<root>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "event": "composer.returned",
+            "ids": [
+              "<men:5>"
+            ],
+            "receipt": "<crp:3>",
+            "terminal": "<obj:4>",
+            "viewer": "vw_composer1"
+          },
+          "event": "composer.returned"
+        },
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.closed"
+        }
+      ]
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r26",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 4,
+          "root": "<root>",
+          "worktree": {
+            "branch": "main",
+            "main": true,
+            "path": "<root>"
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.opened"
+        }
+      ]
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>",
+        "viewer": "vw_composer1"
+      },
+      "response": {
+        "id": "r27",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "composerReceipts": [
+            {
+              "event": "composer.submitted",
+              "ids": [
+                "<men:1>",
+                "<men:2>"
+              ],
+              "receipt": "<crp:1>",
+              "terminal": "<obj:4>",
+              "viewer": "vw_composer1"
+            },
+            {
+              "event": "composer.returned",
+              "ids": [
+                "<men:5>"
+              ],
+              "receipt": "<crp:2>",
+              "terminal": "<obj:4>",
+              "viewer": "vw_composer1"
+            },
+            {
+              "event": "composer.returned",
+              "ids": [
+                "<men:5>"
+              ],
+              "receipt": "<crp:3>",
+              "terminal": "<obj:4>",
+              "viewer": "vw_composer1"
+            }
+          ],
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 200,
+                "w": 300,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:1>",
+              "props": {
+                "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+              },
+              "rev": "<rev:1>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "z": 1
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 400,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "kind": "rect",
+                "text": "box"
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "z": 2
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 300,
+                "w": 640,
+                "x": 0,
+                "y": 400
+              },
+              "id": "<obj:3>",
+              "props": {
+                "anchor": "export function add(a: number, b: number): number {",
+                "path": "src/app.ts",
+                "range": {
+                  "end": 7,
+                  "start": 5
+                }
+              },
+              "rev": "<rev:1>",
+              "type": "code",
+              "updatedAt": "<time:number>",
+              "z": 3
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 400,
+                "w": 600,
+                "x": 50000,
+                "y": 50000
+              },
+              "id": "<obj:4>",
+              "props": {
+                "agent": {
+                  "draft": false,
+                  "kind": "omp"
+                },
+                "branch": "main",
+                "command": [
+                  "/bin/cat"
+                ],
+                "cwd": "<root>",
+                "lifecycle": {
+                  "seen": false,
+                  "state": "idle"
+                },
+                "name": "worker",
+                "worktree": "<root>"
+              },
+              "rev": "<rev:4>",
+              "type": "terminal",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "agent",
+                "tile": "<obj:4>"
+              },
+              "z": 4
+            }
+          ],
+          "revision": "<board:2>",
+          "root": "<root>"
         }
       }
     }

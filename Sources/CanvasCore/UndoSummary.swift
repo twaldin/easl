@@ -40,7 +40,7 @@ extension UndoHistory.Step {
             switch change {
             case .created(let object), .deleted(let object): born.insert(object.id)
             case .effect: effects = true
-            case .updated, .unstaged: break
+            case .updated, .unstaged, .noteRecovery: break
             }
         }
         var entries: [(verb: Verb, type: ObjectType)] = []
@@ -48,6 +48,7 @@ extension UndoHistory.Step {
             switch change {
             case .created(let object): entries.append((.create, object.type))
             case .deleted(let object): entries.append((.delete, object.type))
+            case .noteRecovery: entries.append((.change, .note))
             case .effect, .unstaged: continue
             case .updated(let before, let after):
                 guard !born.contains(after.id), !(effects && after.type == .changes) else { continue }

@@ -18,6 +18,9 @@ public final class UndoHistory {
         /// object's, or the ones Hyper-V pasted into the terminal `pastedInto`. Undo puts them
         /// back where they were; redo takes them out again.
         case unstaged([PlacedMention], pastedInto: ObjectID?)
+        /// Text the user kept out of a remote note. Replayed through a guarded host write,
+        /// never through the host's history cursor.
+        case noteRecovery(NoteRecovery)
     }
 
     /// Props a terminal's integrations keep current on their own.
@@ -53,7 +56,15 @@ public final class UndoHistory {
             changes.contains { change in
                 if case .effect = change { return false }
                 if case .unstaged = change { return false }
+                if case .noteRecovery = change { return false }
                 return true
+            }
+        }
+
+        public var noteRecoveries: [NoteRecovery] {
+            changes.compactMap {
+                if case .noteRecovery(let recovery) = $0 { return recovery }
+                return nil
             }
         }
     }
@@ -96,11 +107,19 @@ public final class UndoHistory {
             openUpdates[after.id] = open.count
         case .created(let object), .deleted(let object):
             openUpdates.removeValue(forKey: object.id)
-        case .effect, .unstaged:
+        case .effect, .unstaged, .noteRecovery:
             break
         }
         open.append(change)
         if depth == 0 { close() }
+    }
+
+    func recordNoteRecovery(_ recovery: NoteRecovery) {
+        guard !replaying, muted == 0 else { return }
+        if !open.isEmpty { close() }
+        open = [.noteRecovery(recovery)]
+        close()
+        if depth > 0 { openID = takeID() }
     }
 
     func begin() {
@@ -242,10 +261,10 @@ extension Board {
         return try body()
     }
 
-    func stepping<T>(_ body: (Int) throws -> T) rethrows -> T {
+    func stepping<T>(_ body: (Int?) throws -> T) rethrows -> T {
         history.begin()
         defer { endStep() }
-        return try body(history.openID)
+        return try body(history.muted == 0 && !history.replaying ? history.openID : nil)
     }
 
     /// Makes changes no one chose, which ⌘Z skips (a follow tile appearing or re-aiming, the
@@ -256,11 +275,12 @@ extension Board {
         return try body()
     }
 
-    /// Reverts the latest recorded step. False when there is nothing to undo, and on a remote
-    /// board when the step changed the board: that is its host's to revert (`BoardMirror.undo`).
+    /// Reverts the latest recorded step. False when there is nothing to undo, or the step needs
+    /// an asynchronous host write (remote board changes and note recovery use `BoardMirror.undo`).
     @discardableResult
     public func undo() -> Bool {
-        guard let next = nextUndo, !(isRemote && next.changesBoard), let step = history.popUndo() else { return false }
+        guard let next = nextUndo, !(isRemote && next.changesBoard), next.noteRecoveries.isEmpty,
+              let step = history.popUndo() else { return false }
         replayVerb = "undo"
         defer { replayVerb = nil }
         history.pushRedo(UndoHistory.Step(id: step.id, changes: revert(step.changes), author: step.author))
@@ -288,17 +308,20 @@ extension Board {
                 case .unstaged(let placed, _):
                     restageMentions(placed)
                     replayed.append(change)
+                case .noteRecovery:
+                    break
                 }
             }
         }
         return replayed.reversed()
     }
 
-    /// Re-applies the latest undone step. False when there is nothing to redo, and on a remote
-    /// board when the step changes the board (`undo`).
+    /// Re-applies the latest undone step. False when there is nothing to redo, or the step needs
+    /// an asynchronous host write (`undo`).
     @discardableResult
     public func redo() -> Bool {
-        guard let next = nextRedo, !(isRemote && next.changesBoard), let step = history.popRedo() else { return false }
+        guard let next = nextRedo, !(isRemote && next.changesBoard), next.noteRecoveries.isEmpty,
+              let step = history.popRedo() else { return false }
         replayVerb = "redo"
         defer { replayVerb = nil }
         var replayed: [UndoHistory.Change] = []
@@ -319,6 +342,8 @@ extension Board {
                 case .unstaged(let placed, _):
                     unstageMentions(placed)
                     replayed.append(change)
+                case .noteRecovery:
+                    break
                 }
             }
         }

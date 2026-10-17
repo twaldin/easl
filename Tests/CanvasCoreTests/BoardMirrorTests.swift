@@ -86,7 +86,7 @@ final class BoardMirrorTests {
         mirror.close()
     }
 
-    @Test func aRefusedSeenAckRequiresRefreshAndCanBeAcknowledgedAgain() async throws {
+    @Test func aRefusedSeenAckRestoresTheMarkerWithoutDisablingEditsOrUndo() async throws {
         let note = self.note("look")
         let marker = try host.raiseAttention(note.id, message: nil, caller: nil).marker
         let terminal = host.create(type: .terminal, props: .object([:])).id
@@ -105,26 +105,238 @@ final class BoardMirrorTests {
         try server.start()
         let (mirror, view) = try await mirror()
         defer { mirror.close() }
+        var notices: [String] = []
+        mirror.onNotice = { notices.append($0) }
         view.clearAttention(note.id)
-        try await eventually { mirror.problem != nil }
-        #expect(mirror.state == .offline && mirror.connection.state == .online)
+        try await eventually { notices.count == 1 && view.attention[note.id]?.stamp == marker.stamp }
+        #expect(mirror.state == .online && mirror.problem == nil)
         #expect(host.attention[note.id]?.stamp == marker.stamp)
+        _ = try view.update(note.id, frame: Frame(x: 300, y: 0, w: 280, h: 200))
+        try await eventually { host.objects[note.id]?.frame.x == 300 }
+        _ = await mirror.undo(redo: false).value
+        #expect(host.objects[note.id]?.frame == note.frame)
         refuse.withLock { $0 = false }
-        mirror.reconnect()
-        try await eventually { mirror.state == .online && view.attention[note.id]?.stamp == marker.stamp }
         view.clearAttention(note.id)
         try await eventually { host.attention[note.id] == nil }
 
         refuse.withLock { $0 = true }
         view.markSeen(terminal)
-        try await eventually { mirror.problem != nil }
+        try await eventually { notices.count == 2 }
         #expect(host.objects[terminal]?.props["lifecycle"]?["state"] == "done")
         refuse.withLock { $0 = false }
-        mirror.reconnect()
-        try await eventually { mirror.state == .online }
+        #expect(mirror.state == .online && mirror.problem == nil)
         view.markSeen(terminal)
         try await eventually { host.objects[terminal]?.props["lifecycle"]?["seen"]?.bool == true }
         #expect(host.objects[terminal]?.props["lifecycle"]?["state"] == "idle")
+    }
+
+    @Test func seeingBeforeAPropsEditKeepsItsGuardAgainstACrossedHostReplacement() async throws {
+        let edited = note("before")
+        _ = try host.raiseAttention(edited.id, message: "look", caller: nil)
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            guard request["method"]?.string == "view.seen", let reply else { return reply }
+            pending.withLock { $0 = { connection.send(reply) } }
+            return nil
+        }
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        var notices: [String] = []
+        mirror.onNotice = { notices.append($0) }
+        view.clearAttention(edited.id)
+        _ = try view.update(edited.id, props: .object(["markdown": "viewer preview"]))
+        try await eventually { pending.withLock { $0 != nil } }
+        _ = try host.update(edited.id, props: .object(["markdown": "host replacement"]))
+        pending.withLock { $0 }?()
+        try await eventually { view.objects[edited.id]?.props["markdown"] == "host replacement" }
+        #expect(host.objects[edited.id]?.props["markdown"] == "host replacement")
+        #expect(notices.count == 1)
+    }
+
+    @Test func anAcknowledgmentOfADeletedObjectLeavesEditingAndUndoUsable() async throws {
+        let deleted = note("gone"), kept = note("kept", at: 400)
+        _ = try host.raiseAttention(deleted.id, message: "look", caller: nil)
+        let remove = Once()
+        remove.body = { [unowned self] in try? host.delete(deleted.id) }
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "view.seen" { await remove.run() }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        var notices: [String] = []
+        mirror.onNotice = { notices.append($0) }
+        view.clearAttention(deleted.id)
+        try await eventually { view.objects[deleted.id] == nil }
+        _ = try view.update(kept.id, frame: Frame(x: 700, y: 0, w: 280, h: 200))
+        try await eventually { host.objects[kept.id]?.frame.x == 700 }
+        _ = await mirror.undo(redo: false).value
+        #expect(host.objects[kept.id]?.frame == kept.frame)
+        #expect(mirror.state == .online && mirror.problem == nil && notices.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func aRefusedAcknowledgmentDoesNotResurrectASupersededMarker(clearNewMarker: Bool) async throws {
+        let edited = note("look")
+        _ = try host.raiseAttention(edited.id, message: "first", caller: nil)
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            guard request["method"]?.string == "view.seen" else { return await router.handle(request, connection: connection) }
+            let failure: JSONValue = .object(["id": request["id"] ?? .null, "ok": false,
+                                             "error": .object(["code": "unavailable", "message": "ack refused"])])
+            pending.withLock { $0 = { connection.send(failure) } }
+            return nil
+        }
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        var notices: [String] = []
+        mirror.onNotice = { notices.append($0) }
+        view.clearAttention(edited.id)
+        try await eventually { pending.withLock { $0 != nil } }
+        let newer = try host.raiseAttention(edited.id, message: "second", caller: nil).marker
+        try await eventually { view.attention[edited.id]?.stamp == newer.stamp }
+        if clearNewMarker {
+            host.clearAttention(edited.id)
+            try await eventually { view.attention[edited.id] == nil }
+        }
+        pending.withLock { $0 }?()
+        try await eventually { notices.count == 1 }
+        #expect(view.attention[edited.id]?.message == (clearNewMarker ? nil : "second"))
+        #expect(mirror.state == .online && mirror.problem == nil)
+    }
+
+    @Test func aRevisionSeenWhileOfflineCanBeAcknowledgedAfterRefresh() async throws {
+        let terminal = host.create(type: .terminal, props: .object([:])).id
+        try host.reportLifecycle(tile: terminal, kind: "omp", state: .working, message: nil, seq: nil, source: nil)
+        try host.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        server.stop()
+        try await eventually { mirror.connection.state == .offline }
+        view.markSeen(terminal)
+        try await eventually { view.seenForwarded[terminal] == nil }
+        server = Self.serve(router, at: socket)
+        try server.start()
+        try await eventually { mirror.state == .online && mirror.reading == nil }
+        view.markSeen(terminal)
+        try await eventually { host.objects[terminal]?.props["lifecycle"]?["seen"]?.bool == true }
+        #expect(host.objects[terminal]?.props["lifecycle"]?["state"] == "idle")
+    }
+
+    @Test(arguments: [1, 2])
+    func aMissingAttentionSnapshotIsAuthoritativeOnlyOnANewHost(version: Int) async throws {
+        let edited = note("before")
+        server.stop()
+        let router = router
+        let handler: SocketServer.Handler = { request, connection in
+            if request["method"]?.string == "system.ping" {
+                return .object(["id": request["id"] ?? .null, "ok": true, "result": .object(["version": .number(Double(version)), "app": "easl"])])
+            }
+            if version == 1, request["params"]?["viewer"] != nil {
+                return .object(["id": request["id"] ?? .null, "ok": false, "error": .object(["code": "invalid_params", "message": "unknown viewer"])])
+            }
+            guard let reply = await router.handle(request, connection: connection) else { return nil }
+            guard request["method"]?.string == "board.get", var result = reply["result"]?.object else { return reply }
+            result["attention"] = nil
+            return reply.merging(.object(["result": .object(result)]))
+        }
+        server = SocketServer(path: socket, handler: handler)
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let marker = try host.raiseAttention(edited.id, message: "live", caller: nil).marker
+        try await eventually { view.attention[edited.id]?.stamp == marker.stamp }
+        server.stop()
+        try await eventually { mirror.state == .offline }
+        host.clearAttention(edited.id)
+        _ = try host.update(edited.id, props: .object(["markdown": "refreshed"]))
+        server = SocketServer(path: socket, handler: handler)
+        try server.start()
+        try await eventually { mirror.state == .online && mirror.reading == nil && view.objects[edited.id]?.props["markdown"] == "refreshed" }
+        #expect(view.attention[edited.id]?.message == (version == 1 ? "live" : nil))
+    }
+
+    @Test(arguments: [false, true])
+    func aComposerWithoutANegotiatedHostDoesNotReportAnUpgradeError(missingVersion: Bool) async throws {
+        let terminal = host.create(type: .terminal, props: .object([:])).id
+        let quoted = note("quoted")
+        if missingVersion {
+            server.stop()
+            let router = router
+            server = SocketServer(path: socket) { request, connection in
+                if request["method"]?.string == "system.ping" {
+                    return .object(["id": request["id"] ?? .null, "ok": true, "result": .object(["app": "easl"])])
+                }
+                return await router.handle(request, connection: connection)
+            }
+            try server.start()
+        }
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let mention = try view.stage(.object(quoted.id))
+        if !missingVersion {
+            server.stop()
+            try await eventually { mirror.connection.state == .offline }
+        }
+        do {
+            try await mirror.prompt("review [1]", to: terminal, mentions: [mention], answer: false)
+            Issue.record("an offline prompt must fail")
+        } catch let failure as ApiRouter.Failure {
+            #expect(failure.code == "unavailable")
+            #expect(failure.message.contains("offline") && !failure.message.contains("older"))
+        }
+        #expect(view.tray.map(\.id) == [mention.id])
+    }
+
+    @Test func aRefreshDoesNotRestoreAMarkerWhoseClearIsHeldBehindUndo() async throws {
+        _ = host.create(type: .html, props: .object(["html": "<p>read whole</p>"]))
+        let moved = note("move"), marked = note("look", at: 400)
+        _ = try host.raiseAttention(marked.id, message: "pending", caller: nil)
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        server.stop()
+        try await eventually { mirror.state == .offline }
+        let read = Locked<(@Sendable () -> Void)?>(nil)
+        let update = Locked<(@Sendable () -> Void)?>(nil)
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            guard let reply else { return nil }
+            if request["method"]?.string == "object.get" {
+                read.withLock { $0 = { connection.send(reply) } }
+                return nil
+            }
+            if request["method"]?.string == "object.update" {
+                update.withLock { $0 = { connection.send(reply) } }
+                return nil
+            }
+            return reply
+        }
+        try server.start()
+        try await eventually { read.withLock { $0 != nil } }
+        _ = try view.update(moved.id, frame: Frame(x: 300, y: 0, w: 280, h: 200))
+        try await eventually { update.withLock { $0 != nil } }
+        let undo = mirror.undo(redo: false)
+        view.clearAttention(marked.id)
+        read.withLock { $0 }?()
+        try await eventually { mirror.reading == nil }
+        #expect(view.attention[marked.id] == nil)
+        #expect(host.attention[marked.id]?.message == "pending")
+        update.withLock { $0 }?()
+        _ = await undo.value
+        try await eventually { host.attention[marked.id] == nil }
+        #expect(host.objects[moved.id]?.frame == moved.frame)
+        #expect(view.attention[marked.id] == nil && mirror.state == .online)
     }
 
     @Test func composerReturnedRestagesOnlyThisViewersTerminal() async throws {

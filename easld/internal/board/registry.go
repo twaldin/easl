@@ -3,8 +3,10 @@ package board
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -31,9 +33,10 @@ type subscriber struct {
 // Registry is every open board plus event fan-out to subscribers (BoardRegistry in
 // ApiRouter.swift). Mu serialises all board work: hold it while calling into any board.
 type Registry struct {
-	Mu     sync.Mutex
-	Store  *store.Store
-	boards map[string]*Board
+	Mu                     sync.Mutex
+	Store                  *store.Store
+	boards                 map[string]*Board
+	closedComposerReceipts map[string][]map[string]any
 	// Frontmost is the default board for a call that names none.
 	Frontmost   string
 	subscribers []subscriber
@@ -98,6 +101,8 @@ func (r *Registry) Open(root string) (*Board, error) {
 	if err != nil {
 		return nil, err
 	}
+	b.composerReceipts = r.closedComposerReceipts[id]
+	delete(r.closedComposerReceipts, id)
 	if worktree != nil {
 		b.OpenedFrom(*worktree)
 	}
@@ -215,10 +220,19 @@ func (r *Registry) Close(id string, persistClosed func() error) error {
 		}
 	}
 	id = b.id
-	delete(r.boards, id)
 	b.closed = true
 	b.StopQuestionExpiry()
 	b.StopComposerExpiry()
+	for _, terminal := range slices.Sorted(maps.Keys(b.composerPrompts)) {
+		b.DropComposerPrompts(terminal)
+	}
+	if len(b.composerReceipts) > 0 {
+		if r.closedComposerReceipts == nil {
+			r.closedComposerReceipts = map[string][]map[string]any{}
+		}
+		r.closedComposerReceipts[id] = b.composerReceipts
+	}
+	delete(r.boards, id)
 	b.OnChange, b.OnEvent, b.OnMessagesBounced, b.OnTerminals = nil, nil, nil, nil
 	b.Viewport, b.Texts = nil, nil
 	r.Store.Cancel(id)

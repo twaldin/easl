@@ -28,6 +28,8 @@ export type ViewerReplay = {
   step?: number;
   /** The replay created an opposite-stack step. The viewer uses this authoritative receipt even when repeating a command whose reply was lost. */
   pushed: boolean;
+  /** True when this non-live request's outcome receipt was retired. No changes are replayed; older live history is retained. Omitted otherwise. */
+  retired?: boolean;
   changed: CanvasObject[];
   deleted: Id[];
   /** Objects with fields left unchanged because another edit replaced them. */
@@ -770,7 +772,8 @@ export type Mention = {
   id: Id;
   target: MentionTarget;
   label: string;
-  stagedAt: string;
+  /** Staging time: API seconds since 2001-01-01 or an RFC 3339 timestamp. */
+  stagedAt: number | string;
   /** target changed since staging */
   edited: boolean;
 };
@@ -1073,6 +1076,8 @@ export type AppMetricsResult = {
 
 export type BoardGetParams = {
   board?: Id;
+  /** Include only this remote window's retained composer outcome receipts; omitted otherwise. */
+  viewer?: ViewerId;
   /** board revision cursor from a previous call */
   since?: number;
   /** only branch `branch`'s part of a repository board: the regions keyed `branch:<branch>` and what they hold, objects whose `ref` is the branch, terminals that started on it (`branch`), and arrows between those */
@@ -1089,7 +1094,7 @@ export type BoardGetResult = {
   objects: CanvasObject[];
   /** Unseen markers on the returned objects, sorted by id; omitted when none. A reread replaces the viewer's marker snapshot. */
   attention?: AttentionMarker[];
-  /** Newest 2000 committed composer outcomes, in order; transient like viewer history, omitted when empty. A reconnect applies unseen receipt identities before held live events, filtering by its viewer. */
+  /** Newest retained composer outcomes for the requested viewer, in order; transient, omitted without viewer or when empty. Each board keeps at most 2000 outcomes across viewers. */
   composerReceipts?: ComposerReceipt[];
   changed?: Id[];
   /** with `branch`: the ids of the branch's regions (groups keyed `branch:<branch>`), `[]` when it has none */

@@ -189,7 +189,7 @@ public struct ComposerState: Codable, Equatable, Sendable {
 /// prompt's drain: one with mentions, or an answer the integration turns into a prompt (Codex's
 /// queued questions). A drain from that terminal that carries a `prompt` (its integration's
 /// submission drain) claims the oldest one whose text it contains, compared folded (`fold`:
-/// letters and digits only), which survives what agents do to the text (Claude Code's paste
+/// Unicode alphanumerics), which survives what agents do to the text (Claude Code's paste
 /// wrapper, Codex's IDE context, omp's emoji, text already in the input editor), and takes its
 /// `mentions` (numbered from 1) instead of the tray, whatever the tray, the prompt target or the
 /// composer's later prompts are by then. A prompt typed in the terminal or sent by `agent.prompt`
@@ -223,7 +223,7 @@ public struct ComposerPrompt: Equatable, Sendable {
     /// A folded text this short only matches a drain's folded text that equals it.
     public static let shortest = 3
 
-    /// `text` with only its letters and digits, case-folded: what survives every agent's
+    /// `text` with only its Unicode alphanumerics, case-folded: what survives every agent's
     /// rewrite of a prompt (emoji, punctuation, brackets, whitespace drop out).
     public static func fold(_ text: String) -> String {
         String(text.folding(options: [.caseInsensitive], locale: nil).unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(Character.init))
@@ -270,7 +270,7 @@ extension Board {
         guard var queue = composerPrompts[caller] else { return nil }
         let folded = ComposerPrompt.fold(submitted)
         guard let index = queue.firstIndex(where: { $0.isClaimed(by: folded) }) else {
-            NSLog("easl: a submission drain from \(caller) matched none of its \(queue.count) composer prompts (drained \(folded.count) letters and digits; waiting \(queue.map { String($0.folded.count) }.joined(separator: ", ")))")
+            NSLog("easl: a submission drain from \(caller) matched none of its \(queue.count) composer prompts (drained \(folded.count) folded characters; waiting \(queue.map { String($0.folded.count) }.joined(separator: ", ")))")
             return nil
         }
         let found = queue[index]
@@ -352,6 +352,16 @@ extension Board {
     public func dropComposerPrompts(of terminal: ObjectID) {
         guard let queue = composerPrompts.removeValue(forKey: terminal) else { return }
         returnUndelivered(queue, from: terminal)
+    }
+
+    func returnRemoteComposerPrompts() {
+        for terminal in composerPrompts.keys.sorted() {
+            guard let queue = composerPrompts[terminal] else { continue }
+            let remote = queue.filter { $0.viewer != nil }
+            let local = queue.filter { $0.viewer == nil }
+            composerPrompts[terminal] = local.isEmpty ? nil : local
+            returnUndelivered(remote, from: terminal)
+        }
     }
 
     /// A deleted object leaves every queued prompt's mentions; a deleted terminal's own prompts

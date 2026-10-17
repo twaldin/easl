@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "43a2dbf4727eedef"
+const SchemaHash = "c528b08b2690ce80"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -67,7 +67,7 @@ var Methods = map[string]ParamSpec{
 		Required: nil,
 	},
 	"board.get": {
-		Accepted: []string{"board", "since", "branch"},
+		Accepted: []string{"board", "viewer", "since", "branch"},
 		Required: nil,
 	},
 	"board.undo": {
@@ -310,7 +310,9 @@ type ViewerReplay struct {
 	// The viewer's step that was replayed; omitted when no host history remains.
 	Step *int `json:"step,omitempty"`
 	// The replay created an opposite-stack step. The viewer uses this authoritative receipt even when repeating a command whose reply was lost.
-	Pushed  bool           `json:"pushed"`
+	Pushed bool `json:"pushed"`
+	// True when this non-live request's outcome receipt was retired. No changes are replayed; older live history is retained. Omitted otherwise.
+	Retired *bool          `json:"retired,omitempty"`
 	Changed []CanvasObject `json:"changed"`
 	Deleted []Id           `json:"deleted"`
 	// Objects with fields left unchanged because another edit replaced them.
@@ -964,10 +966,11 @@ type PageLog struct {
 type MentionTarget = map[string]any
 
 type Mention struct {
-	ID       Id            `json:"id"`
-	Target   MentionTarget `json:"target"`
-	Label    string        `json:"label"`
-	StagedAt string        `json:"stagedAt"`
+	ID     Id            `json:"id"`
+	Target MentionTarget `json:"target"`
+	Label  string        `json:"label"`
+	// Staging time: API seconds since 2001-01-01 or an RFC 3339 timestamp.
+	StagedAt any `json:"stagedAt"`
 	// target changed since staging
 	Edited bool `json:"edited"`
 }

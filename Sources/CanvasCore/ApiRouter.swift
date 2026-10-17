@@ -9,6 +9,7 @@ public final class BoardRegistry {
     public let store: BoardStore
     private var subscribers: [(connection: SocketServer.Connection, board: BoardID?, events: Set<String>?)] = []
     private var closedWindows: Set<BoardID> = []
+    private var closedComposerReceipts: [BoardID: [ComposerNotice]] = [:]
     /// App-level observer for every board's events (UI reconciliation). Socket subscribers are fed separately.
     public var onEvent: ((Board, BoardEvent) -> Void)?
     /// The router's own observer (agent.wait), kept apart from the app-level hook.
@@ -47,6 +48,7 @@ public final class BoardRegistry {
             return existing
         }
         let board = store.load(root: worktree.map { URL(fileURLWithPath: $0.canonicalRoot) } ?? root, id: id, repo: worktree?.commonDir)
+        board.composerReceipts = closedComposerReceipts.removeValue(forKey: id) ?? []
         if let worktree { board.opened(from: worktree) }
         board.onEvent = { [weak self, weak board] event in
             guard let self, let board else { return }
@@ -114,6 +116,8 @@ public final class BoardRegistry {
         } catch {
             throw ApiRouter.Failure("unavailable", "cannot save board \(board.id) before closing: \(error.localizedDescription)")
         }
+        board.returnRemoteComposerPrompts()
+        if !board.composerReceipts.isEmpty { closedComposerReceipts[board.id] = board.composerReceipts }
         boards.removeValue(forKey: board.id)
         board.deactivate()
         if frontmost == board.id { frontmost = boards.keys.sorted().first }
@@ -1021,10 +1025,18 @@ public final class ApiRouter {
     static func stagedMentions(_ p: JSONValue, on board: Board) throws -> [Mention] {
         guard let raw = p["staged"], raw != .null else { return [] }
         guard let items = raw.array else { throw Failure("invalid_params", "staged must be a list of mentions") }
-        return try items.map { json in
+        return try items.map { input in
+            var json = input
+            if let stamp = input["stagedAt"]?.string {
+                guard let date = (try? Date(stamp, strategy: .iso8601))
+                    ?? (try? Date(stamp, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true))) else {
+                    throw Failure("invalid_params", "a staged mention needs a valid stagedAt time")
+                }
+                json = input.merging(.object(["stagedAt": .number(date.timeIntervalSinceReferenceDate)]))
+            }
             let mention: Mention
             do { mention = try json.decode(Mention.self) } catch {
-                throw Failure("invalid_params", "a staged mention needs id, target, label and stagedAt")
+                throw Failure("invalid_params", "a staged mention needs id, target, label, stagedAt and edited")
             }
             for id in mention.target.objectIDs where board.objects[id] == nil {
                 throw Failure("not_found", "object \(id)")
@@ -1411,6 +1423,7 @@ public final class ApiRouter {
 
         case "board.get":
             let board = try board(p)
+            let receiptViewer = try p["viewer"].map { try ViewerEdit.viewer($0) }
             var snapshot = board.snapshot.objects
             var regions: [ObjectID]?
             if let branch = p["branch"]?.string {
@@ -1431,7 +1444,10 @@ public final class ApiRouter {
             let scope = p["branch"]?.string == nil ? nil : Set(snapshot.map(\.id))
             let markers = board.attentionMarkers(on: scope)
             if !markers.isEmpty { result["attention"] = .array(markers.map(\.json)) }
-            if !board.composerReceipts.isEmpty { result["composerReceipts"] = .array(board.composerReceipts.map(\.json)) }
+            if let receiptViewer {
+                let receipts = board.composerReceipts.compactMap { $0.viewer == receiptViewer ? $0.json : nil }
+                if !receipts.isEmpty { result["composerReceipts"] = .array(receipts) }
+            }
             return .object(result)
 
         case "board.history":

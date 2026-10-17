@@ -41,6 +41,7 @@ type replayed struct {
 	step                   int
 	changed, deleted, kept []string
 	pushed                 bool
+	retired                bool
 }
 
 func replayOf(t *testing.T, b *Board, viewer string, step int, redo bool) replayed {
@@ -49,7 +50,7 @@ func replayOf(t *testing.T, b *Board, viewer string, step int, redo bool) replay
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := replayed{changed: []string{}, deleted: append([]string{}, r.Deleted...), kept: append([]string{}, r.Kept...), pushed: r.Pushed}
+	out := replayed{changed: []string{}, deleted: append([]string{}, r.Deleted...), kept: append([]string{}, r.Kept...), pushed: r.Pushed, retired: r.Retired}
 	if r.Step != nil {
 		out.step = *r.Step
 	}
@@ -381,5 +382,125 @@ func TestAViewerUndoBelowTheRetainedStepsIsAConflict(t *testing.T) {
 	}
 	if got := replayOf(t, b, viewerA, 2, false).step; got != 2 {
 		t.Fatalf("undo of 2 replayed step %d", got)
+	}
+}
+
+func TestReceiptRetirementPreservesTwoHundredLiveStepsAfterUndoThenEditCycles(t *testing.T) {
+	b := New("brd", "/r")
+	n := b.Create(model.Note, map[string]any{"markdown": "plan"}, frame(0, 0, 200, 100), "", "")
+	for step := 1; step <= 200; step++ {
+		viewerMove(t, b, viewerA, step, n.ID, frame(float64(step), 0, 200, 100))
+	}
+	for step := 201; step <= 401; step++ {
+		replayOf(t, b, viewerA, step-1, false)
+		viewerMove(t, b, viewerA, step, n.ID, frame(float64(step), 0, 200, 100))
+	}
+	revision := b.Objects()[n.ID].Rev
+	retained := replayed{step: 201, changed: []string{n.ID}, deleted: []string{}, kept: []string{}}
+	if got := replayOf(t, b, viewerA, 201, false); !reflect.DeepEqual(got, retained) {
+		t.Fatalf("retained receipt %+v, want %+v", got, retained)
+	}
+	retired := replayed{step: 200, changed: []string{}, deleted: []string{}, kept: []string{}, retired: true}
+	if got := replayOf(t, b, viewerA, 200, false); !reflect.DeepEqual(got, retired) {
+		t.Fatalf("retired receipt %+v, want %+v", got, retired)
+	}
+	if got := b.Objects()[n.ID]; got.Rev != revision || got.Frame.X != 401 {
+		t.Fatalf("receipt retry changed the note: rev %d, x %v", got.Rev, got.Frame.X)
+	}
+	if got := replayOf(t, b, viewerA, 401, false); got.step != 401 || !got.pushed || got.retired {
+		t.Fatalf("newest undo %+v", got)
+	}
+	if x := b.Objects()[n.ID].Frame.X; x != 199 {
+		t.Fatalf("newest undo left x %v, want 199", x)
+	}
+	for step := 199; step >= 1; step-- {
+		want := replayed{step: step, changed: []string{n.ID}, deleted: []string{}, kept: []string{}, pushed: true}
+		if got := replayOf(t, b, viewerA, step, false); !reflect.DeepEqual(got, want) {
+			t.Fatalf("undo %d: %+v, want %+v", step, got, want)
+		}
+		if x := b.Objects()[n.ID].Frame.X; x != float64(step-1) {
+			t.Fatalf("undo %d left x %v, want %d", step, x, step-1)
+		}
+	}
+	if got := replayOf(t, b, viewerA, 1, true); got.step != 1 || !got.pushed || got.retired {
+		t.Fatalf("live redo below the receipt floor %+v", got)
+	}
+	if x := b.Objects()[n.ID].Frame.X; x != 1 {
+		t.Fatalf("redo left x %v, want 1", x)
+	}
+}
+
+func TestARetiredReceiptAliasCannotReplayAnotherLiveStepAfterRedo(t *testing.T) {
+	b := New("brd", "/r")
+	first := b.Create(model.Note, map[string]any{"markdown": "first"}, frame(0, 0, 200, 100), "", "")
+	second := b.Create(model.Note, map[string]any{"markdown": "second"}, frame(400, 0, 200, 100), "", "")
+	viewerMove(t, b, viewerA, 1, first.ID, frame(100, 0, 200, 100))
+	viewerMove(t, b, viewerA, 2, second.ID, frame(500, 0, 200, 100))
+	if got := replayOf(t, b, viewerA, 3, false); got.step != 2 {
+		t.Fatalf("aliased undo %+v, want step 2", got)
+	}
+	replayOf(t, b, viewerA, 2, true)
+	revision := b.Objects()[second.ID].Rev
+	want := replayed{step: 3, changed: []string{}, deleted: []string{}, kept: []string{}, retired: true}
+	if got := replayOf(t, b, viewerA, 3, false); !reflect.DeepEqual(got, want) {
+		t.Fatalf("retired alias %+v, want %+v", got, want)
+	}
+	if one, two := b.Objects()[first.ID], b.Objects()[second.ID]; one.Frame.X != 100 || two.Frame.X != 500 || two.Rev != revision {
+		t.Fatalf("retired alias changed the notes: first x %v, second x %v rev %d", one.Frame.X, two.Frame.X, two.Rev)
+	}
+	viewerMove(t, b, viewerA, 3, second.ID, frame(600, 0, 200, 100))
+	if got := replayOf(t, b, viewerA, 3, false); got.step != 3 || !got.pushed || got.retired {
+		t.Fatalf("late exact undo %+v", got)
+	}
+	if x := b.Objects()[second.ID].Frame.X; x != 500 {
+		t.Fatalf("late exact undo left x %v, want 500", x)
+	}
+	if got := replayOf(t, b, viewerA, 3, true); got.step != 3 || !got.pushed || got.retired {
+		t.Fatalf("live redo below the receipt floor %+v", got)
+	}
+	if x := b.Objects()[second.ID].Frame.X; x != 600 {
+		t.Fatalf("redo left x %v, want 600", x)
+	}
+	viewerMove(t, b, viewerA, 1, first.ID, frame(150, 0, 200, 100))
+	if got := replayOf(t, b, viewerA, 1, false); got.step != 1 || !got.pushed || got.retired {
+		t.Fatalf("older joined undo %+v", got)
+	}
+	if one, two := b.Objects()[first.ID].Frame.X, b.Objects()[second.ID].Frame.X; one != 0 || two != 600 {
+		t.Fatalf("older joined undo left first x %v, second x %v", one, two)
+	}
+	replayOf(t, b, viewerA, 1, true)
+	if x := b.Objects()[first.ID].Frame.X; x != 150 {
+		t.Fatalf("joined redo left x %v, want 150", x)
+	}
+}
+
+func TestEvictingAStepRetiresItsReceiptAliasButItsOwnIDStillConflicts(t *testing.T) {
+	b := New("brd", "/r")
+	n := b.Create(model.Note, map[string]any{"markdown": "plan"}, frame(0, 0, 200, 100), "", "")
+	viewerMove(t, b, viewerA, 1, n.ID, frame(1, 0, 200, 100))
+	if got := replayOf(t, b, viewerA, 1000, false); got.step != 1 {
+		t.Fatalf("aliased undo %+v, want step 1", got)
+	}
+	for step := 2; step <= 202; step++ {
+		viewerMove(t, b, viewerA, step, n.ID, frame(float64(step), 0, 200, 100))
+	}
+	revision := b.Objects()[n.ID].Rev
+	want := replayed{step: 1000, changed: []string{}, deleted: []string{}, kept: []string{}, retired: true}
+	if got := replayOf(t, b, viewerA, 1000, false); !reflect.DeepEqual(got, want) {
+		t.Fatalf("retired alias %+v, want %+v", got, want)
+	}
+	_, err := b.ReplayViewer(viewerA, 1, false)
+	var be *Error
+	if !errors.As(err, &be) || be.Code != "conflict" {
+		t.Fatalf("evicted step undo: %v", err)
+	}
+	if got := b.Objects()[n.ID]; got.Rev != revision || got.Frame.X != 202 {
+		t.Fatalf("retired alias changed the note: rev %d, x %v", got.Rev, got.Frame.X)
+	}
+	if got := replayOf(t, b, viewerA, 202, false); got.step != 202 || !got.pushed || got.retired {
+		t.Fatalf("latest live undo %+v", got)
+	}
+	if x := b.Objects()[n.ID].Frame.X; x != 201 {
+		t.Fatalf("latest live undo left x %v, want 201", x)
 	}
 }

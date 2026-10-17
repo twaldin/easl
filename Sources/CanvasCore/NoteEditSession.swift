@@ -53,16 +53,35 @@ public final class NoteEditSession {
 
     /// Esc with the conflict shown: their markdown stays, and the user's `text` becomes the
     /// board's latest undo step, as if theirs had replaced it: ⌘Z puts `text` over theirs, ⇧⌘Z
-    /// theirs back. Returns whether there was anything of the user's to keep (an edit that
-    /// changed nothing, or matches theirs, records nothing).
+    /// theirs back. Remote recovery refuses if the markdown changed again. Returns whether
+    /// there was anything of the user's to keep (an edit that changed nothing, or matches
+    /// theirs, records nothing).
     @discardableResult
     public func keepTheirs(discarding text: String, on board: Board) -> Bool {
         guard let current = board.objects[objectID] else { return false }
         let theirs = current.props["markdown"]?.string ?? ""
         guard text != base, text != theirs else { return false }
-        var yours = current
-        yours.props = current.props.merging(.object(["markdown": .string(text)]))
-        board.history.record(.updated(before: yours, after: current))
+        if board.isRemote {
+            board.history.recordNoteRecovery(NoteRecovery(objectID: objectID, yours: text, theirs: theirs))
+        } else {
+            var yours = current
+            yours.props = current.props.merging(.object(["markdown": .string(text)]))
+            board.history.record(.updated(before: yours, after: current))
+        }
         return true
+    }
+}
+
+/// Unsubmitted text kept by a remote viewer. Undo replaces `theirs` with `yours`; redo replaces
+/// `yours` with `theirs`, each guarded against the host's current note revision and markdown.
+public struct NoteRecovery: Equatable, Sendable {
+    public let objectID: ObjectID
+    public let yours: String
+    public let theirs: String
+
+    public init(objectID: ObjectID, yours: String, theirs: String) {
+        self.objectID = objectID
+        self.yours = yours
+        self.theirs = theirs
     }
 }

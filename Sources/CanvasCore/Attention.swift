@@ -176,13 +176,13 @@ extension Board {
         return (cleared, marked)
     }
 
-    func replaceHostAttention(_ markers: [SeenMarker], skipping busy: Set<ObjectID>) {
+    func replaceHostAttention(_ markers: [SeenMarker], skipping isBusy: (ObjectID) -> Bool) {
         let incoming = Dictionary(uniqueKeysWithValues: markers.map { ($0.id, $0) })
-        for id in Array(attention.keys) where incoming[id] == nil && !busy.contains(id) {
+        for id in Array(attention.keys) where incoming[id] == nil && !isBusy(id) {
             attention[id] = nil
             onEvent?(.attentionChanged(object: id, attention: nil))
         }
-        for marker in markers where !busy.contains(marker.id) && objects[marker.id] != nil {
+        for marker in markers where !isBusy(marker.id) && objects[marker.id] != nil {
             if let current = attention[marker.id], current.stamp == marker.raisedAt, current.message == marker.message, current.raisedBy == marker.raisedBy {
                 continue
             }

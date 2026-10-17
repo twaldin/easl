@@ -5,7 +5,7 @@
     "README.md": "# Sample\n\nA repository for the conformance suite.\n\n## Usage\n\nRun it.\n",
     "notes/plan.md": "# Plan\n\n- step one\n- step two\n"
   },
-  "description": "easld only. A scripted client types two composer prompts. Staged mentions are tray.stage results, in token order, sent with viewer after tray.commit has taken them off the host tray. A drain with no prompt, and a drain whose text does not match, leave the queue. A matching peek numbers those mentions from 1 and does not submit them. tray.commit of the peeked ids submits composer.submitted with the original staged ids. Release of a later uncommitted prompt emits composer.returned with that prompt's original id. Neither event carries captured targets.",
+  "description": "easld only. A scripted client types three composer prompts. Staged mentions are tray.stage results, in token order, sent with viewer after tray.commit has taken them off the host tray. Matching drains number those mentions from 1. Committing a peek emits composer.submitted; releasing a target or closing its board emits composer.returned. Events name original staged ids, not captured targets. A viewer-scoped manifest recovers the same outcomes, including after board close and reopen.",
   "steps": [
     {
       "call": "object.create",
@@ -79,6 +79,14 @@
             "result": {
               "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "kind": "omp", "lifecycle": { "state": "idle" } },
               "submittedAt": "2026-10-05T12:00:01Z",
+              "waitable": true,
+              "delivery": "typed"
+            }
+          },
+          {
+            "result": {
+              "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "kind": "omp", "lifecycle": { "state": "idle" } },
+              "submittedAt": "2026-10-05T12:00:02Z",
               "waitable": true,
               "delivery": "typed"
             }
@@ -244,7 +252,7 @@
     },
     {
       "call": "board.get",
-      "params": { "board": "{{board}}" },
+      "params": { "board": "{{board}}", "viewer": "vw_composer1" },
       "expect": {
         "response.result.composerReceipts.0.event": "composer.submitted",
         "response.result.composerReceipts.0.viewer": "vw_composer1",
@@ -269,6 +277,39 @@
         "eventCount": 0
       },
       "note": "release returned the prompt; it is not still queued"
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "seq": 2, "source": "main", "draft": false }
+    },
+    {
+      "call": "agent.prompt",
+      "params": {
+        "target": "{{t.object.id}}",
+        "text": "close and return the box",
+        "composer": true,
+        "viewer": "vw_composer1",
+        "staged": ["{{box.mention}}"]
+      },
+      "expect": { "response.ok": true, "eventCount": 0 }
+    },
+    {
+      "call": "board.close",
+      "params": { "board": "{{board}}" },
+      "note": "The queued prompt returns before board.closed."
+    },
+    {
+      "call": "board.open",
+      "params": { "root": "{{root}}" }
+    },
+    {
+      "call": "board.get",
+      "params": { "board": "{{board}}", "viewer": "vw_composer1" },
+      "expect": {
+        "response.result.composerReceipts.2.event": "composer.returned",
+        "response.result.composerReceipts.2.ids": ["{{box.mention.id}}"]
+      },
+      "note": "Close and reopen retain the return receipt for this viewer in the host process."
     }
   ]
 }

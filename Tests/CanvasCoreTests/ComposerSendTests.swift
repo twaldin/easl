@@ -478,6 +478,40 @@ final class ComposerSendTests {
         #expect(board.tray.isEmpty)
     }
 
+    @Test func documentedRFC3339StagedMentionsCanBeSubmitted() async throws {
+        let alpha = try terminal("alpha")
+        let staged = try board.stage(line(code("a.py"), "a.py"))
+        var fields = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(staged)) as? [String: Any])
+        fields["stagedAt"] = "2026-10-17T22:14:00.123Z"
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: fields), as: UTF8.self)
+        let response = try await call("agent.prompt", #"{"target":"\#(alpha)","text":"inspect [1]","composer":true,"viewer":"vw_viewer01","staged":[\#(encoded)]}"#)
+        #expect(response["ok"] == .bool(true))
+        board.withdraw([staged.id])
+        #expect(try await drain(alpha, "inspect [1]") == ["[1] a.py"])
+        #expect(board.tray.isEmpty)
+    }
+
+    @Test func closingReturnsRemoteMentionsBeforeClosedAndReopenRetainsTheirReceipt() async throws {
+        let alpha = try terminal("alpha")
+        let staged = try board.stage(line(code("a.py"), "a.py"))
+        board.queueComposerPrompt("inspect [1]", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        board.withdraw([staged.id])
+        let subscriber = try LineClient(path: dir.appendingPathComponent("s").path)
+        subscriber.send(#"{"id":"sub","method":"events.subscribe","params":{"board":"\#(board.id)","events":["composer.returned","board.closed"]}}"#)
+        #expect(try await subscriber.next()["ok"] == .bool(true))
+        try registry.close(board.id)
+        let returned = try await subscriber.next()
+        let closed = try await subscriber.next()
+        #expect(returned["event"]?.string == "composer.returned")
+        #expect(returned["data"]?["ids"]?.array == [.string(staged.id)])
+        #expect(closed["event"]?.string == "board.closed")
+        let reopened = registry.open(root: board.root)
+        let manifest = try await call("board.get", #"{"board":"\#(reopened.id)","viewer":"vw_viewer01"}"#)
+        let receipt = try #require(manifest["result"]?["composerReceipts"]?.array?.first)
+        #expect(receipt["receipt"] == returned["data"]?["receipt"])
+        #expect(reopened.composerPrompts.isEmpty && reopened.tray.isEmpty)
+    }
+
     @Test func anUnrelatedDrainAndADrainWithoutAPromptLeaveTheQueue() async throws {
         let alpha = try terminal("alpha")
         let a = code("a.py")

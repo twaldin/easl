@@ -54,6 +54,7 @@ class AttentionMarker(TypedDict):
 class ViewerReplay(TypedDict):
     step: NotRequired[int]
     pushed: Required[bool]
+    retired: NotRequired[bool]
     changed: Required[list["CanvasObject"]]
     deleted: Required[list["Id"]]
     kept: Required[list["Id"]]
@@ -354,7 +355,7 @@ class Mention(TypedDict):
     id: Required["Id"]
     target: Required["MentionTarget"]
     label: Required[str]
-    stagedAt: Required[str]
+    stagedAt: Required[Union[float, str]]
     edited: Required[bool]
 
 class ResolvedMention(TypedDict):
@@ -520,9 +521,9 @@ class BoardApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
-    def get(self, *, board: "Id" | None = None, since: int | None = None, branch: str | None = None) -> dict[str, Any]:
+    def get(self, *, board: "Id" | None = None, viewer: "ViewerId" | None = None, since: int | None = None, branch: str | None = None) -> dict[str, Any]:
         """Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged."""
-        params = {"board": board, "since": since, "branch": branch}
+        params = {"board": board, "viewer": viewer, "since": since, "branch": branch}
         return self._call("board.get", params, ["board"])
 
     def undo(self, *, viewer: "ViewerId", step: int, board: "Id" | None = None) -> dict[str, Any]:

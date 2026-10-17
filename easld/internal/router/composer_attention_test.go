@@ -1,7 +1,10 @@
 package router
 
 import (
+	"encoding/json"
+	"maps"
 	"testing"
+	"time"
 
 	"github.com/twaldin/easl/easld/internal/model"
 )
@@ -88,13 +91,57 @@ func TestStagedMentionsKeepOrderAndRejectAMissingObject(t *testing.T) {
 	note := f.board.Create(model.Note, map[string]any{"markdown": "n"}, &model.Frame{W: 10, H: 10}, "", "")
 	raw := []any{
 		map[string]any{"id": "men_b", "label": "b", "edited": false, "stagedAt": 7.5e8, "target": map[string]any{"kind": "object", "object": note.ID}},
-		map[string]any{"id": "men_a", "label": "a", "edited": false, "stagedAt": 7.5e8, "target": map[string]any{"kind": "object", "object": note.ID}},
+		map[string]any{"id": "men_a", "label": "a", "edited": false, "stagedAt": "2026-10-17T22:14:00.123Z", "target": map[string]any{"kind": "object", "object": note.ID}},
 	}
 	got, err := stagedMentions(raw, f.board)
 	if err != nil || len(got) != 2 || got[0].ID != "men_b" || got[1].ID != "men_a" {
 		t.Fatalf("%v %v", got, err)
 	}
-	if _, err := stagedMentions([]any{map[string]any{"id": "men_x", "label": "x", "stagedAt": 1.0, "target": map[string]any{"kind": "object", "object": "obj_missing"}}}, f.board); err == nil {
+	if _, err := stagedMentions([]any{map[string]any{"id": "men_x", "label": "x", "edited": false, "stagedAt": 1.0, "target": map[string]any{"kind": "object", "object": "obj_missing"}}}, f.board); err == nil {
 		t.Fatal("a missing target was accepted")
+	}
+	for _, field := range []string{"label", "edited", "stagedAt"} {
+		incomplete := maps.Clone(raw[0].(map[string]any))
+		delete(incomplete, field)
+		if _, err := stagedMentions([]any{incomplete}, f.board); err == nil {
+			t.Fatalf("a staged mention without %s was accepted", field)
+		}
+	}
+}
+
+func TestComposerManifestRemainsScopedAndStableDuringReceiptRollover(t *testing.T) {
+	f := newFixture(t)
+	terminal := f.board.Create(model.Terminal, map[string]any{}, &model.Frame{W: 100, H: 100}, "", "")
+	note := f.board.Create(model.Note, map[string]any{"markdown": "context"}, &model.Frame{Y: 120, W: 100, H: 100}, "", "")
+	mention := model.Mention{ID: "men_original", Target: map[string]any{"kind": "object", "object": note.ID}, Label: "context", StagedAt: time.Now()}
+	returnPrompt := func() {
+		f.board.QueueComposerPrompt("inspect the context", terminal.ID, []model.Mention{mention}, false, "vw_viewer01", time.Now())
+		f.board.DropComposerPrompts(terminal.ID)
+	}
+	for range 2_000 {
+		returnPrompt()
+	}
+	if _, present := f.result("board.get", map[string]any{})["composerReceipts"]; present {
+		t.Fatal("an agent's unscoped manifest included viewer receipts")
+	}
+	if _, present := f.result("board.get", map[string]any{"viewer": "vw_viewer02"})["composerReceipts"]; present {
+		t.Fatal("another viewer received private composer outcomes")
+	}
+	response := f.result("board.get", map[string]any{"viewer": "vw_viewer01"})
+	receipts := response["composerReceipts"].([]map[string]any)
+	first, last := receipts[0]["receipt"], receipts[len(receipts)-1]["receipt"]
+	returnPrompt()
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Receipts []struct{ Receipt string } `json:"composerReceipts"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if len(wire.Receipts) != 2_000 || wire.Receipts[0].Receipt != first || wire.Receipts[len(wire.Receipts)-1].Receipt != last {
+		t.Fatal("a later host outcome changed an already-built manifest response")
 	}
 }

@@ -77,9 +77,6 @@ func TestComposerExitReturnsOnlyTheOwnedShellQueueOnce(t *testing.T) {
 	if !reflect.DeepEqual(*events, want) {
 		t.Fatalf("returned events %v, want %v", *events, want)
 	}
-	if props := f.result("object.get", map[string]any{"id": tiles["exited"]})["object"].(map[string]any)["props"].(map[string]any); props["agent"] != nil || props["lifecycle"] != nil {
-		t.Fatalf("exited working agent was not released: %v", props)
-	}
 	for _, name := range []string{"running", "unknown", "hosted", "foreign", "unreachable"} {
 		got := f.result("tray.drain", map[string]any{"caller": tiles[name], "prompt": "fix " + name})
 		if mentions := got["mentions"].([]any); len(mentions) != 1 {

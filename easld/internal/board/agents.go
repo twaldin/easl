@@ -191,7 +191,7 @@ func (b *Board) ReportLifecycle(r Report) error {
 		b.endAgentSession(r.Tile)
 	}
 	b.emit(EventAgentLifecycle, map[string]any{"tile": r.Tile, "lifecycle": model.Clone(lifecycle)})
-	b.ComposerAgentReported(r.Tile, r.State, time.Now())
+	b.ComposerAgentReported(r.Tile, state, time.Now())
 	return nil
 }
 

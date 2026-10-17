@@ -306,6 +306,14 @@ func (r *Router) boardGet(p map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	viewer := ""
+	if raw, present := p["viewer"]; present {
+		var ok bool
+		viewer, ok = raw.(string)
+		if !ok || !board.ValidViewer(viewer) {
+			return nil, invalid("viewer must be a remote window's id: vw_ and 8 to 64 letters, digits, _ or -")
+		}
+	}
 	snapshot := b.Snapshot().Objects
 	var regions []string
 	branch, hasBranch := optStr(p, "branch")
@@ -339,7 +347,7 @@ func (r *Router) boardGet(p map[string]any) (any, error) {
 		}
 		result["attention"] = list
 	}
-	if receipts := b.ComposerReceipts(); len(receipts) > 0 {
+	if receipts := b.ComposerReceipts(viewer); len(receipts) > 0 {
 		result["composerReceipts"] = receipts
 	}
 	if b.Repo != nil && len(b.Repo.Merged) > 0 {

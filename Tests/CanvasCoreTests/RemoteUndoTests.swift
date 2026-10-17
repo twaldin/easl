@@ -377,6 +377,194 @@ extension BoardMirrorTests {
         try await eventually { other.objects[back.id]?.z == back.z && other.objects[middle.id]?.z == middle.z }
     }
 
+    @Test func conflictedTextRecoveryWritesTheHostWithoutUndoingAnEarlierGesture() async throws {
+        let edited = note("base")
+        let (mirror, view) = try await mirror()
+        let (watcher, other) = try await self.mirror()
+        defer {
+            mirror.close()
+            watcher.close()
+        }
+        _ = try view.update(edited.id, frame: Frame(x: 300, y: 0, w: 280, h: 200))
+        try await eventually { view.objects[edited.id] == host.objects[edited.id] && host.objects[edited.id]?.frame.x == 300 }
+        let session = NoteEditSession(try view.object(edited.id))
+        _ = try host.update(edited.id, props: .object(["markdown": "theirs"]))
+        try await eventually { view.objects[edited.id]?.props["markdown"] == "theirs" }
+        #expect(try session.commit("my unsent text", confirmed: false, on: view) == .conflict)
+        #expect(session.keepTheirs(discarding: "my unsent text", on: view))
+        _ = await mirror.undo(redo: false).value
+        #expect(host.objects[edited.id]?.props["markdown"] == "my unsent text")
+        #expect(host.objects[edited.id]?.frame.x == 300)
+        try await eventually { other.objects[edited.id]?.props["markdown"] == "my unsent text" }
+        _ = await mirror.undo(redo: true).value
+        #expect(host.objects[edited.id]?.props["markdown"] == "theirs")
+        #expect(host.objects[edited.id]?.frame.x == 300)
+        _ = await mirror.undo(redo: false).value
+        _ = await mirror.undo(redo: false).value
+        #expect(host.objects[edited.id]?.frame == edited.frame)
+        #expect(host.objects[edited.id]?.props["markdown"] == "my unsent text")
+        try await eventually { view.objects[edited.id] == host.objects[edited.id] && other.objects[edited.id] == host.objects[edited.id] }
+    }
+
+    @Test(arguments: [false, true])
+    func noteRecoveryRefusesALaterAgentsTextAndKeepsItsStep(redo: Bool) async throws {
+        let edited = note("base")
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let session = NoteEditSession(try view.object(edited.id))
+        _ = try host.update(edited.id, props: .object(["markdown": "theirs"]))
+        try await eventually { view.objects[edited.id]?.props["markdown"] == "theirs" }
+        #expect(session.keepTheirs(discarding: "mine", on: view))
+        if redo { _ = await mirror.undo(redo: false).value }
+        let undoIDs = view.history.undoSteps.map(\.id), redoIDs = view.history.redoSteps.map(\.id)
+        _ = try host.update(edited.id, props: .object(["markdown": "later agent text"]))
+        try await eventually { view.objects[edited.id]?.props["markdown"] == "later agent text" }
+        let refusal = await mirror.undo(redo: redo).value
+        #expect(refusal?.hasPrefix("Couldn't") == true)
+        #expect(host.objects[edited.id]?.props["markdown"] == "later agent text")
+        #expect(view.history.undoSteps.map(\.id) == undoIDs)
+        #expect(view.history.redoSteps.map(\.id) == redoIDs)
+        _ = try host.update(edited.id, props: .object(["markdown": .string(redo ? "mine" : "theirs")]))
+        try await eventually { view.objects[edited.id] == host.objects[edited.id] }
+        _ = await mirror.undo(redo: redo).value
+        #expect(host.objects[edited.id]?.props["markdown"]?.string == (redo ? "theirs" : "mine"))
+    }
+
+    @Test(arguments: [false, true])
+    func noteRecoveryGuardsAHostWriteThatCrossesItsRequest(redo: Bool) async throws {
+        let edited = note("base")
+        let cross = Once()
+        cross.body = { [unowned self] in
+            _ = try? host.update(edited.id, props: .object(["markdown": "crossed agent write"]))
+        }
+        let armed = Locked(false)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "object.update", request["params"]?["viewer"] == nil, armed.withLock({ $0 }) {
+                await cross.run()
+            }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let session = NoteEditSession(try view.object(edited.id))
+        _ = try host.update(edited.id, props: .object(["markdown": "theirs"]))
+        try await eventually { view.objects[edited.id]?.props["markdown"] == "theirs" }
+        #expect(session.keepTheirs(discarding: "mine", on: view))
+        if redo { _ = await mirror.undo(redo: false).value }
+        let undoIDs = view.history.undoSteps.map(\.id), redoIDs = view.history.redoSteps.map(\.id)
+        armed.withLock { $0 = true }
+        let refusal = await mirror.undo(redo: redo).value
+        #expect(refusal?.hasPrefix("Couldn't") == true)
+        #expect(host.objects[edited.id]?.props["markdown"] == "crossed agent write")
+        try await eventually { view.objects[edited.id] == host.objects[edited.id] }
+        #expect(view.history.undoSteps.map(\.id) == undoIDs)
+        #expect(view.history.redoSteps.map(\.id) == redoIDs)
+    }
+
+    @Test func noteRecoveryStaysAvailableAfterAnOfflineRefusal() async throws {
+        let edited = note("base")
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let session = NoteEditSession(try view.object(edited.id))
+        _ = try host.update(edited.id, props: .object(["markdown": "theirs"]))
+        try await eventually { view.objects[edited.id]?.props["markdown"] == "theirs" }
+        #expect(session.keepTheirs(discarding: "mine", on: view))
+        let recovery = try #require(view.nextUndo).id
+        server.stop()
+        try await eventually { mirror.state == .offline }
+        let refusal = await mirror.undo(redo: false).value
+        #expect(refusal?.hasPrefix("Couldn't") == true)
+        #expect(view.nextUndo?.id == recovery && !view.history.canRedo)
+        #expect(host.objects[edited.id]?.props["markdown"] == "theirs")
+        server = Self.serve(router, at: socket)
+        try server.start()
+        try await eventually { mirror.state == .online && mirror.reading == nil }
+        _ = await mirror.undo(redo: false).value
+        #expect(host.objects[edited.id]?.props["markdown"] == "mine")
+        #expect(view.nextRedo?.id == recovery)
+    }
+
+    @Test func aGestureHeldBehindNoteRecoveryUsesTheRecoveredRevision() async throws {
+        let edited = note("base")
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            guard request["method"]?.string == "object.update", request["params"]?["viewer"] == nil, let reply else { return reply }
+            pending.withLock { $0 = { connection.send(reply) } }
+            return nil
+        }
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let session = NoteEditSession(try view.object(edited.id))
+        _ = try host.update(edited.id, props: .object(["markdown": "theirs"]))
+        try await eventually { view.objects[edited.id]?.props["markdown"] == "theirs" }
+        #expect(session.keepTheirs(discarding: "mine", on: view))
+        let recovery = mirror.undo(redo: false)
+        _ = try view.update(edited.id, props: .object(["markdown": "later gesture"]))
+        try await eventually { pending.withLock { $0 != nil } }
+        #expect(host.objects[edited.id]?.props["markdown"] == "mine")
+        #expect(view.objects[edited.id]?.props["markdown"] == "later gesture")
+        pending.withLock { $0 }?()
+        _ = await recovery.value
+        try await eventually { host.objects[edited.id]?.props["markdown"] == "later gesture" && view.objects[edited.id] == host.objects[edited.id] }
+        _ = await mirror.undo(redo: false).value
+        #expect(host.objects[edited.id]?.props["markdown"] == "mine")
+    }
+
+    @Test func aRetiredOutcomeDropsOnlyItsOwnStepAndReleasesALaterGesture() async throws {
+        let moved = note("move"), deleted = note("delete", at: 400)
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            guard request["method"]?.string == "board.undo", reply?["result"]?["retired"]?.bool == true, let reply else { return reply }
+            pending.withLock { $0 = { connection.send(reply) } }
+            return nil
+        }
+        try server.start()
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        _ = try view.update(moved.id, frame: Frame(x: 100, y: 0, w: 280, h: 200))
+        try await eventually { host.objects[moved.id]?.frame.x == 100 }
+        let older = try #require(view.nextUndo).id
+        try view.stage(.object(deleted.id))
+        try view.delete(deleted.id)
+        try await eventually { host.objects[deleted.id] == nil }
+        let retired = try #require(view.nextUndo).id
+        _ = try host.replayViewer(mirror.viewer, step: retired, redo: false)
+        for id in (retired + 1)...(retired + 201) {
+            let edit = try #require(ViewerEdit(.object(["viewer": .string(mirror.viewer), "step": .number(Double(id))])))
+            _ = try host.asViewerEdit(edit) {
+                try host.update(deleted.id, frame: Frame(x: Double(id), y: 0, w: 280, h: 200))
+            }
+            _ = try host.replayViewer(mirror.viewer, step: id, redo: false)
+        }
+        try await eventually { view.objects[deleted.id] == host.objects[deleted.id] }
+        #expect(view.tray.isEmpty)
+        let replay = mirror.undo(redo: false)
+        _ = try view.update(moved.id, frame: Frame(x: 700, y: 0, w: 280, h: 200))
+        let later = try #require(view.nextUndo).id
+        try await eventually { pending.withLock { $0 != nil } }
+        pending.withLock { $0 }?()
+        let notice = await replay.value
+        #expect(notice?.hasPrefix("Couldn't") == true)
+        try await eventually { host.objects[moved.id]?.frame.x == 700 }
+        #expect(view.history.undoSteps.map(\.id) == [older, later])
+        #expect(view.history.redoSteps.isEmpty && view.tray.isEmpty)
+        _ = await mirror.undo(redo: false).value
+        #expect(host.objects[moved.id]?.frame.x == 100)
+        _ = await mirror.undo(redo: false).value
+        #expect(host.objects[moved.id]?.frame == moved.frame)
+        #expect(view.tray.isEmpty)
+    }
+
     @Test func anOlderHostTakesPlainEditsAndSaysUndoNeedsAnUpdate() async throws {
         let moved = note("moved")
         server.stop()

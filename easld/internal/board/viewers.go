@@ -61,22 +61,23 @@ type viewerReceipt struct {
 }
 
 type viewerHistory struct {
-	undo     []viewerStep
-	redo     []viewerStep
-	receipts map[int]viewerReceipt
-	floor    int
-	used     uint64
+	undo         []viewerStep
+	redo         []viewerStep
+	receipts     map[int]viewerReceipt
+	floor        int
+	receiptFloor int
+	used         uint64
 }
 
-// ViewerReplay is board.undo's and board.redo's answer: the step replayed (nil: none), what it
-// changed as it is now, what it removed, what it left because someone changed it since, and
-// whether the step now waits on the opposite stack.
+// ViewerReplay answers board.undo and board.redo with the replayed step and its current effects.
+// A retired outcome names the requested step without replaying it or reporting old effects.
 type ViewerReplay struct {
 	Step    *int
 	Changed []model.Object
 	Deleted []string
 	Kept    []string
 	Pushed  bool
+	Retired bool
 }
 
 // JSON is the replay as the API answers it.
@@ -88,6 +89,9 @@ func (r ViewerReplay) JSON(b *Board) map[string]any {
 	out := map[string]any{"changed": changed, "deleted": anyList(r.Deleted), "kept": anyList(r.Kept), "pushed": r.Pushed}
 	if r.Step != nil {
 		out["step"] = float64(*r.Step)
+	}
+	if r.Retired {
+		out["retired"] = true
 	}
 	return out
 }
@@ -164,7 +168,13 @@ func (h *viewerHistory) file(changes []change, id int) {
 }
 
 func (h *viewerHistory) forget(id int) {
-	maps.DeleteFunc(h.receipts, func(key int, r viewerReceipt) bool { return key == id || r.step == id })
+	maps.DeleteFunc(h.receipts, func(key int, r viewerReceipt) bool {
+		if key != id && r.step != id {
+			return false
+		}
+		h.receiptFloor = max(h.receiptFloor, key)
+		return true
+	})
 }
 
 func (h *viewerHistory) raise(f int) {
@@ -172,7 +182,13 @@ func (h *viewerHistory) raise(f int) {
 	below := func(s viewerStep) bool { return s.id <= h.floor }
 	h.undo = slices.DeleteFunc(h.undo, below)
 	h.redo = slices.DeleteFunc(h.redo, below)
-	maps.DeleteFunc(h.receipts, func(key int, r viewerReceipt) bool { return key <= h.floor || r.step <= h.floor })
+	maps.DeleteFunc(h.receipts, func(key int, r viewerReceipt) bool {
+		if key > h.floor && r.step > h.floor {
+			return false
+		}
+		h.receiptFloor = max(h.receiptFloor, key)
+		return true
+	})
 }
 
 func (h *viewerHistory) holds(id int) bool {
@@ -181,19 +197,28 @@ func (h *viewerHistory) holds(id int) bool {
 }
 
 func (h *viewerHistory) trimReceipts() {
-	for {
-		var consumed []int
-		for key, r := range h.receipts {
-			if !h.holds(r.step) {
-				consumed = append(consumed, key)
-			}
+	var consumed []int
+	for key, r := range h.receipts {
+		if !h.holds(r.step) {
+			consumed = append(consumed, key)
 		}
-		if len(consumed) <= viewerSteps {
-			return
-		}
-		slices.Sort(consumed)
-		h.raise(consumed[len(consumed)-viewerSteps-1])
 	}
+	if len(consumed) <= viewerSteps {
+		return
+	}
+	slices.Sort(consumed)
+	for _, key := range consumed[:len(consumed)-viewerSteps] {
+		h.receiptFloor = max(h.receiptFloor, key)
+		delete(h.receipts, key)
+	}
+}
+
+func (h *viewerHistory) retired(step int, redo bool) bool {
+	stack := h.undo
+	if redo {
+		stack = h.redo
+	}
+	return step <= h.receiptFloor && !slices.ContainsFunc(stack, func(s viewerStep) bool { return s.id == step })
 }
 
 func (h *viewerHistory) answer(r viewerReceipt, b *Board) ViewerReplay {
@@ -232,6 +257,9 @@ func (b *Board) ReplayViewer(viewer string, step int, redo bool) (ViewerReplay, 
 	}
 	if step <= h.floor {
 		return ViewerReplay{}, Conflict("step %d is older than the %d steps this board keeps for viewer %s", step, viewerSteps, viewer)
+	}
+	if h.retired(step, redo) {
+		return ViewerReplay{Step: &step, Retired: true}, nil
 	}
 	var stack []viewerStep
 	var i int

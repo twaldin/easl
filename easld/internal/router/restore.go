@@ -294,11 +294,6 @@ func (r *Router) sweepComposerExits(foreground func(int) (int, bool)) {
 				model.Equal(current.Props["agent"], p.terminal.Props["agent"]) &&
 				b.HasComposerQueue(tile, p.token) && r.typing[tile] == 0 && !restarting && !b.AwaitsRelaunchedAgent(tile) {
 				b.DropComposerPrompts(tile)
-				if board.NotifyingReports(current) || stateOf(current) == "working" || stateOf(current) == "blocked" {
-					_ = b.ReleaseAgent(tile)
-				} else {
-					b.EndAgentSession(tile)
-				}
 			}
 		}
 		r.reg.Mu.Unlock()

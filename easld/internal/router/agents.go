@@ -876,8 +876,7 @@ func (r *Router) forwardComposer(p map[string]any, b *board.Board, terminal mode
 		delete(r.typing, terminal.ID)
 	}
 	if err != nil {
-		var failure *Failure
-		if queued != "" && (!errors.As(err, &failure) || failure.Code != api.CodeTimeout) {
+		if queued != "" {
 			b.WithdrawComposerPrompt(queued)
 		}
 		return nil, err
@@ -911,9 +910,23 @@ func stagedMentions(raw any, b *board.Board) ([]model.Mention, error) {
 	}
 	out := make([]model.Mention, 0, len(items))
 	for _, item := range items {
+		fields, ok := item.(map[string]any)
+		if !ok {
+			return nil, invalid("a staged mention needs id, target, label, stagedAt and edited")
+		}
+		_, labelOK := fields["label"].(string)
+		_, editedOK := fields["edited"].(bool)
+		timeOK := false
+		switch stamp := fields["stagedAt"].(type) {
+		case float64:
+			timeOK = true
+		case string:
+			_, err := time.Parse(time.RFC3339Nano, stamp)
+			timeOK = err == nil
+		}
 		parsed, ok := model.MentionFromJSON(item)
-		if !ok || parsed.Target == nil {
-			return nil, invalid("a staged mention needs id, target, label and stagedAt")
+		if !ok || parsed.Target == nil || !labelOK || !editedOK || !timeOK {
+			return nil, invalid("a staged mention needs id, target, label, stagedAt and edited")
 		}
 		target, err := mention.ValidateTarget(parsed.Target)
 		if err != nil {

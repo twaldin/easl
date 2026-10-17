@@ -49,6 +49,7 @@ struct ViewerHistory {
     private(set) var redo: [Step] = []
     private var receipts: [Int: Receipt] = [:]
     private(set) var floor = 0
+    private var receiptFloor = 0
     var used: UInt64 = 0
 
     mutating func file(_ changes: [UndoHistory.Change], step id: Int) {
@@ -66,6 +67,10 @@ struct ViewerHistory {
 
     func receipt(redo: Bool, asked: Int) -> Receipt? {
         receipts[asked].flatMap { $0.redo == redo ? $0 : nil }
+    }
+
+    func retired(redo: Bool, asked: Int) -> Bool {
+        asked <= receiptFloor && !(redo ? self.redo : undo).contains { $0.id == asked }
     }
 
     func holds(_ receipt: Receipt) -> Bool {
@@ -96,21 +101,36 @@ struct ViewerHistory {
     }
 
     private mutating func forget(_ id: Int) {
-        receipts = receipts.filter { $0.key != id && $0.value.step != id }
+        var retired = receiptFloor
+        receipts = receipts.filter {
+            guard $0.key == id || $0.value.step == id else { return true }
+            retired = max(retired, $0.key)
+            return false
+        }
+        receiptFloor = retired
     }
 
     private mutating func raise(to id: Int) {
         floor = max(floor, id)
         undo.removeAll { $0.id <= floor }
         redo.removeAll { $0.id <= floor }
-        receipts = receipts.filter { $0.key > floor && $0.value.step > floor }
+        var retired = receiptFloor
+        receipts = receipts.filter {
+            guard $0.key <= floor || $0.value.step <= floor else { return true }
+            retired = max(retired, $0.key)
+            return false
+        }
+        receiptFloor = retired
     }
 
     private mutating func trimReceipts() {
         let live = Set(undo.map(\.id) + redo.map(\.id))
-        let consumed = receipts.filter { !live.contains($0.value.step) }.keys.sorted()
+        let consumed = receipts.compactMap { live.contains($0.value.step) ? nil : $0.key }.sorted()
         guard consumed.count > Self.limit else { return }
-        raise(to: consumed[consumed.count - Self.limit - 1])
+        for key in consumed.prefix(consumed.count - Self.limit) {
+            receiptFloor = max(receiptFloor, key)
+            receipts.removeValue(forKey: key)
+        }
     }
 
     static func touched(_ changes: [UndoHistory.Change]) -> [ObjectID] {
@@ -120,7 +140,7 @@ struct ViewerHistory {
             switch change {
             case .created(let object), .deleted(let object): id = object.id
             case .updated(_, let after): id = after.id
-            case .effect, .unstaged: continue
+            case .effect, .unstaged, .noteRecovery: continue
             }
             if !ids.contains(id) { ids.append(id) }
         }
@@ -147,7 +167,7 @@ struct ViewerHistories {
 
 /// What one `board.undo` or `board.redo` did.
 public struct ViewerReplay: Equatable, Sendable {
-    /// The viewer's step replayed; nil when the host has none to replay.
+    /// The viewer's step replayed, or requested when retired; nil when the host has none.
     public var step: Int?
     /// The objects the replay changed, as they are now.
     public var changed: [CanvasObject]
@@ -157,13 +177,16 @@ public struct ViewerReplay: Equatable, Sendable {
     public var kept: [ObjectID]
     /// The step went onto the other stack: ⇧⌘Z (after an undo) or ⌘Z (after a redo) takes it back.
     public var pushed: Bool
+    /// The requested outcome was retired; no step was replayed.
+    public var retired: Bool
 
-    public init(step: Int? = nil, changed: [CanvasObject] = [], deleted: [ObjectID] = [], kept: [ObjectID] = [], pushed: Bool = false) {
+    public init(step: Int? = nil, changed: [CanvasObject] = [], deleted: [ObjectID] = [], kept: [ObjectID] = [], pushed: Bool = false, retired: Bool = false) {
         self.step = step
         self.changed = changed
         self.deleted = deleted
         self.kept = kept
         self.pushed = pushed
+        self.retired = retired
     }
 
     init(reply: JSONValue) throws {
@@ -172,6 +195,7 @@ public struct ViewerReplay: Equatable, Sendable {
         deleted = (reply["deleted"]?.array ?? []).compactMap(\.string)
         kept = (reply["kept"]?.array ?? []).compactMap(\.string)
         pushed = reply["pushed"]?.bool ?? false
+        retired = reply["retired"]?.bool ?? false
     }
 
     @MainActor func json(_ board: Board) -> JSONValue {
@@ -180,6 +204,7 @@ public struct ViewerReplay: Equatable, Sendable {
             "kept": .array(kept.map(JSONValue.string)), "pushed": .bool(pushed),
         ]
         if let step { fields["step"] = .number(Double(step)) }
+        if retired { fields["retired"] = .bool(true) }
         return .object(fields)
     }
 }
@@ -225,6 +250,7 @@ extension Board {
         guard asked > steps.floor else {
             throw BoardError.conflict("step \(asked) is older than the \(ViewerHistory.limit) steps this board keeps for viewer \(viewer)")
         }
+        if steps.retired(redo: redo, asked: asked) { return ViewerReplay(step: asked, retired: true) }
         guard let step = steps.step(redo: redo, asked: asked) else { return ViewerReplay() }
         let plan = inverse(of: step.changes)
         var replayed: [UndoHistory.Change] = []
@@ -263,7 +289,7 @@ extension Board {
             case .updated(let before, let after): note(after.id, before: before, after: after)
             case .deleted(let object): note(object.id, before: object, after: nil)
             case .unstaged(let placed, _): unstaged += placed
-            case .effect: break
+            case .effect, .noteRecovery: break
             }
         }
         var plan = GuardedInverse()
@@ -366,13 +392,17 @@ extension Board {
                 if redo { unstageMentions(placed) } else { restageMentions(placed) }
             case .effect(let effect):
                 if redo { effect.redo() } else { effect.undo() }
-            case .created, .updated, .deleted:
+            case .created, .updated, .deleted, .noteRecovery:
                 break
             }
         }
     }
 
     func reconcile(_ reply: ViewerReplay, asked: UndoHistory.Step, redo: Bool) -> UndoHistory.Step? {
+        if reply.retired {
+            history.remove(redo: redo) { $0.id == asked.id }
+            return nil
+        }
         if redo {
             guard let id = reply.step else {
                 history.remove(redo: true) { $0.changesBoard }
