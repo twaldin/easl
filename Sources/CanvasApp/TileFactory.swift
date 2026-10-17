@@ -14,8 +14,8 @@ enum TileFactory {
         object.type == .question && QuestionSpec(object.props).archived
     }
 
-    /// Remote HTML runs here; terminals attach where their sessions run. Other file-backed
-    /// tiles show the host's rendering (docs/design.md "Client mode").
+    /// Remote HTML runs here; terminals attach where their sessions run. Code, changes, image,
+    /// and diagram tiles show the host's rendering. A browser tile streams that host's page.
     static func make(_ object: CanvasObject, board: Board, remote: RemoteSource? = nil) -> any TileContent {
         if let remote {
             switch object.type {
@@ -23,7 +23,8 @@ enum TileFactory {
             case .note: return NoteTile(object: object, board: board)
             case .question: return QuestionTile(object: object, board: board)
             case .html: return HtmlTile(object: object, board: board, files: remote.files)
-            case .code, .changes, .browser, .image, .diagram: return RemoteImageTile(object: object, remote: remote)
+            case .code, .changes, .image, .diagram: return RemoteImageTile(object: object, remote: remote)
+            case .browser: return RemoteBrowserTile(object: object, remote: remote)
             default: return CardTile(object: object)
             }
         }

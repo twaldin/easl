@@ -78,7 +78,7 @@ var idKeys = map[string]bool{
 	"promptTarget": true, "region": true, "regions": true, "selection": true, "target": true, "tile": true,
 	// Untyped on the wire: an object's graph (arrowsIn/arrowsOut ends, enclosure), the terminal a
 	// follow tile follows, who raised an attention marker.
-	"from": true, "to": true, "enclosedBy": true, "encloses": true, "follow": true, "raisedBy": true,
+	"from": true, "to": true, "enclosedBy": true, "encloses": true, "follow": true, "raisedBy": true, "stream": true, "dialog": true,
 }
 
 // idMaps are maps keyed by id (layout results' `frames`).

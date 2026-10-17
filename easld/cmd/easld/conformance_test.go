@@ -26,6 +26,8 @@ var passing = []string{
 }
 
 // Not passing, and why:
+//   - browser-surfaces: frames and native input belong to the Mac app's WKWebView.
+//     easld returns unsupported until it relays surface sessions between attached clients.
 //   - measure-notes: recorded against the app, whose AppKit measured its notes and text shapes
 //     exactly (SF Pro, TextKit 2; Shantell Sans with GPOS kerning). With no client attached easld
 //     measures them from the glyph table (measure/glyphs): within a few points, and marked

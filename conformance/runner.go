@@ -326,6 +326,16 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 		}
 		r.events, r.strays = collect(conns, subscribed, settle)
 		r.forwarded = forwarded(conns)
+		if len(step.Expect) > 0 || len(step.ExpectShape) > 0 {
+			if len(step.ExpectShape) > 0 && schema == nil {
+				if schema, err = loadSchema(o.Schema); err != nil {
+					return nil, err
+				}
+			}
+			if err := checkExpectations(step, r.response, r.events, vars, schema); err != nil {
+				return nil, fmt.Errorf("step %d (%s): %w", i, step.Label(), err)
+			}
+		}
 		if step.NoEvents {
 			r.events = nil
 		}

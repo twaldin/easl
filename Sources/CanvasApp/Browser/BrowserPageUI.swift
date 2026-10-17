@@ -9,6 +9,8 @@ import WebKit
 /// Each is a sheet on the board's window naming the page's host, never an app-modal panel
 /// (that would stall every socket request until answered). Without a window (the tile closed,
 /// or a page an agent drives from the stage) the page gets the answer a dismissed dialog gives.
+/// A page another Mac streams (`BrowserSurface`) asks its viewer instead, and what a viewer
+/// can't answer for this Mac (a file, a certificate, the camera, another app) is refused.
 extension BrowserTile {
     /// "localhost:8000", "accounts.google.com": who is asking.
     static func host(of origin: WKSecurityOrigin) -> String {
@@ -48,6 +50,10 @@ extension BrowserTile {
     // MARK: alert, confirm, prompt
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable () -> Void) {
+        if let surface {
+            surface.relay(.alert(completionHandler), origin: Self.host(of: frame.securityOrigin), message: message)
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "\(Self.host(of: frame.securityOrigin)) says"
         alert.informativeText = message
@@ -56,6 +62,10 @@ extension BrowserTile {
     }
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable (Bool) -> Void) {
+        if let surface {
+            surface.relay(.confirm(completionHandler), origin: Self.host(of: frame.securityOrigin), message: message)
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "\(Self.host(of: frame.securityOrigin)) says"
         alert.informativeText = message
@@ -65,6 +75,10 @@ extension BrowserTile {
     }
 
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable (String?) -> Void) {
+        if let surface {
+            surface.relay(.prompt(defaultText: defaultText, completionHandler), origin: Self.host(of: frame.securityOrigin), message: prompt, text: defaultText)
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "\(Self.host(of: frame.securityOrigin)) says"
         alert.informativeText = prompt
@@ -80,8 +94,13 @@ extension BrowserTile {
     // MARK: File upload
 
     /// `<input type=file>`: an open panel as a sheet (several files, or folders, when the input
-    /// allows them). Cancelling sends the page no files.
+    /// allows them). Cancelling sends the page no files. A page another Mac streams gets none:
+    /// its viewer can't choose this Mac's files, and nobody here asked.
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable ([URL]?) -> Void) {
+        if let surface {
+            surface.refuse("upload")
+            return completionHandler(nil)
+        }
         guard let window else { return completionHandler(nil) }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -98,8 +117,13 @@ extension BrowserTile {
 
     /// Camera and microphone: asked once per site and kind while easl runs (Allow or Don't
     /// Allow), then remembered until quit. Granting here still leaves macOS's own camera and
-    /// microphone permission for easl, which macOS asks for the first time.
+    /// microphone permission for easl, which macOS asks for the first time. A page another Mac
+    /// streams is denied: this Mac's camera would answer a viewer's click.
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void) {
+        if let surface {
+            surface.refuse("media")
+            return decisionHandler(.deny)
+        }
         let site = "\(origin.protocol)://\(Self.host(of: origin))"
         let key = "\(site) \(type.rawValue)"
         if let remembered = MediaDecisions.answers[key] { return decisionHandler(remembered ? .grant : .deny) }
@@ -150,12 +174,16 @@ extension BrowserTile {
     private func askForLogin(_ challenge: URLAuthenticationChallenge, _ completionHandler: @escaping @MainActor @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         let space = challenge.protectionSpace
         let host = space.port == 0 || space.port == 80 || space.port == 443 ? space.host : "\(space.host):\(space.port)"
-        let alert = NSAlert()
-        alert.messageText = "Log in to \(host)"
         var lines: [String] = []
         if let realm = space.realm, !realm.isEmpty { lines.append("The site says: “\(realm)”") }
         if challenge.previousFailureCount > 0 { lines.append("The user name or password was wrong.") }
         if !space.receivesCredentialSecurely { lines.append("Your password will be sent unencrypted.") }
+        if let surface {
+            surface.relay(.login(completionHandler), origin: host, message: lines.joined(separator: "\n"))
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Log in to \(host)"
         alert.informativeText = lines.joined(separator: "\n")
         let user = NSTextField(frame: NSRect(x: 0, y: 30, width: 260, height: 24))
         user.placeholderString = "User name"
@@ -179,6 +207,11 @@ extension BrowserTile {
     }
 
     private func askForIdentity(_ challenge: URLAuthenticationChallenge, _ completionHandler: @escaping @MainActor @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        // A viewer on another Mac can't choose among this Mac's keychain identities.
+        if let surface {
+            surface.refuse("certificate")
+            return completionHandler(.cancelAuthenticationChallenge, nil)
+        }
         let identities = Self.identities(issuedBy: challenge.protectionSpace.distinguishedNames ?? [])
         guard !identities.isEmpty else { return completionHandler(.performDefaultHandling, nil) }
         let alert = NSAlert()
@@ -220,6 +253,8 @@ extension BrowserTile {
     /// opens loads as before (the tile says it can't open it); a subframe's goes nowhere.
     func openInOtherApp(_ url: URL, from frame: WKFrameInfo?) {
         guard let app = NSWorkspace.shared.urlForApplication(toOpen: url) else { return }
+        // Not on this Mac for a viewer's click on another Mac.
+        if let surface { return surface.refuse("app link") }
         let name = FileManager.default.displayName(atPath: app.path).replacingOccurrences(of: ".app", with: "")
         let alert = NSAlert()
         alert.messageText = "Open “\(name)”?"
