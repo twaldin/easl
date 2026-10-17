@@ -121,9 +121,14 @@ public enum MentionContext {
         case .group(let objects, let name):
             lines.append(contentsOf: await groupLines(objects, name: name, index: index, edited: edited, on: board, caller: caller))
         case .image(let object, let path, let x, let y):
-            let file = LocalImage.tileFile(path, root: board.root)
-            let size = await offPool { LocalImage.naturalSize(of: file) }
-            let extent = size.map { " of \(Int($0.width))×\(Int($0.height))" } ?? " (file unreadable)"
+            let extent: String
+            if board.isRemote {
+                extent = ""
+            } else {
+                let file = LocalImage.tileFile(path, root: board.root)
+                let size = await offPool { LocalImage.naturalSize(of: file) }
+                extent = size.map { " of \(Int($0.width))×\(Int($0.height))" } ?? " (file unreadable)"
+            }
             lines.append("[\(index)] image \(path) · pixel (\(x), \(y))\(extent), from its top-left · tile \(object)\(edited)")
         case .note(let object, let item):
             lines.append(contentsOf: noteItemLines(item, of: object, index: index, edited: edited, on: board))

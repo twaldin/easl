@@ -71,22 +71,33 @@ public enum LocalImage {
     /// the file isn't a readable image. Blocking: call off the main thread.
     nonisolated public static func naturalSize(of url: URL) -> CGSize? {
         let type = url.pathExtension.lowercased()
-        if type != "svg", type != "pdf", let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-           let width = properties[kCGImagePropertyPixelWidth] as? Double, let height = properties[kCGImagePropertyPixelHeight] as? Double,
-           width > 0, height > 0 {
-            // EXIF orientations 5–8 are rotated a quarter turn.
-            let rotated = ((properties[kCGImagePropertyOrientation] as? Int) ?? 1) >= 5
-            return rotated ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
-        }
+        if type != "svg", type != "pdf", let size = bitmapSize(CGImageSourceCreateWithURL(url as CFURL, nil)) { return size }
         guard let data = try? Data(contentsOf: url), let image = NSImage(data: data), image.size.width > 0, image.size.height > 0 else { return nil }
         return image.size
+    }
+
+    /// The natural size of image bytes, without a file or cache. Bitmap pixels ignore DPI;
+    /// SVG and the first PDF page retain their document size. Blocking: call off the main thread.
+    nonisolated public static func naturalSize(of data: Data) -> CGSize? {
+        if let size = bitmapSize(CGImageSourceCreateWithData(data as CFData, nil)) { return size }
+        guard let image = NSImage(data: data), image.size.width > 0, image.size.height > 0 else { return nil }
+        return image.size
+    }
+
+    nonisolated private static func bitmapSize(_ source: CGImageSource?) -> CGSize? {
+        guard let source,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Double,
+              let height = properties[kCGImagePropertyPixelHeight] as? Double,
+              width > 0, height > 0 else { return nil }
+        let orientation = (properties[kCGImagePropertyOrientation] as? Int) ?? 1
+        return (5...8).contains(orientation) ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
     }
 
     /// The file's bytes and natural size, read off the main thread. Nil when unreadable.
     public static func read(_ url: URL) async -> (data: Data, size: CGSize)? {
         await offPool {
-            guard let data = try? Data(contentsOf: url), let size = naturalSize(of: url) else { return nil }
+            guard let data = try? Data(contentsOf: url), let size = naturalSize(of: data) else { return nil }
             return (data, size)
         }
     }

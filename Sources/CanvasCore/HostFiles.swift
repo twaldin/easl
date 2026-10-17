@@ -9,6 +9,7 @@ public struct HostFileRequest: Sendable, Equatable {
 
     public enum Policy: Sendable, Equatable {
         case boardFile(String)
+        case boardImage(String)
         case pageImage(relative: String?, absolute: String?, temps: [String])
     }
 
@@ -23,11 +24,41 @@ public struct HostFileRequest: Sendable, Equatable {
     }
 }
 
+public struct HostFileVersion: Sendable, Equatable {
+    public var root: String
+    public var path: String?
+    public var commit: String?
+    public var stamp: String?
+
+    public init(root: String, path: String? = nil, commit: String? = nil, stamp: String? = nil) {
+        self.root = root
+        self.path = path
+        self.commit = commit
+        self.stamp = stamp
+    }
+}
+
+public enum HostFileObservation: Sendable, Equatable {
+    case version(HostFileVersion)
+    case failure(HostFileError)
+}
+
 public struct HostFile: Sendable, Equatable {
     public var root: String
     public var path: String?
     public var commit: String?
     public var data: Data
+    public var stamp: String?
+    public var version: HostFileVersion { HostFileVersion(root: root, path: path, commit: commit, stamp: stamp) }
+
+    public init(root: String, path: String?, commit: String?, data: Data, stamp: String? = nil) {
+        self.root = root
+        self.path = path
+        self.commit = commit
+        self.data = data
+        self.stamp = stamp
+    }
+
     public var mimeType: String { HtmlKit.mimeType(URL(fileURLWithPath: path ?? "")) }
 }
 
@@ -100,7 +131,7 @@ public struct HostFiles: Sendable {
         guard let root = reply.root, let encoded = reply.data, let bytes = Data(base64Encoded: encoded) else {
             throw HostFileError.unavailable("invalid host file bytes")
         }
-        return HostFile(root: root, path: reply.path, commit: reply.commit, data: bytes)
+        return HostFile(root: root, path: reply.path, commit: reply.commit, data: bytes, stamp: reply.stamp)
     }
 
     private struct Reply: Decodable {
@@ -108,6 +139,7 @@ public struct HostFiles: Sendable {
         var root: String?
         var path: String?
         var commit: String?
+        var stamp: String?
         var data: String?
         var code: String?
         var message: String?
@@ -131,6 +163,8 @@ public struct HostFiles: Sendable {
         switch request.policy {
         case .boardFile(let relative):
             policy = .object(["kind": .string("board"), "relative": .string(try HtmlKit.boardRelative(relative))])
+        case .boardImage(let path):
+            policy = .object(["kind": .string("boardImage"), "path": .string(path)])
         case .pageImage(let relative, let absolute, let temps):
             policy = .object(["kind": .string("image"), "relative": relative.map(JSONValue.string) ?? .null,
                               "absolute": absolute.map(JSONValue.string) ?? .null, "temps": .array(temps.map(JSONValue.string))])
@@ -245,16 +279,17 @@ public struct HostFiles: Sendable {
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode):
                 return {'ok': False, 'code': 'not_found'}
-            if not request['bytes']:
-                return {'ok': True, 'path': p, 'data': ''}
+            stamp = ':'.join(str(value) for value in (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns))
             limit = request['limit']
-            if limit is not None and st.st_size > limit:
+            if limit is not None and st.st_size > limit and (request['bytes'] or request['metadataLimit']):
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
+            if not request['bytes']:
+                return {'ok': True, 'path': p, 'stamp': stamp, 'data': ''}
             with os.fdopen(fd, 'rb', closefd=False) as stream:
                 data = stream.read() if limit is None else stream.read(limit + 1)
             if limit is not None and len(data) > limit:
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
-            return {'ok': True, 'path': p, 'data': base64.b64encode(data).decode('ascii')}
+            return {'ok': True, 'path': p, 'stamp': stamp, 'data': base64.b64encode(data).decode('ascii')}
         except OSError as error:
             code = 'refused' if error.errno in (errno.ELOOP, errno.ENOTDIR) else 'not_found' if error.errno == errno.ENOENT else 'unreadable'
             return {'ok': False, 'code': code}
@@ -268,7 +303,7 @@ public struct HostFiles: Sendable {
 
     print(json.dumps(read_regular(json.loads(sys.argv[1]))))
     `;
-      const result = cp.spawnSync('python3', ['-I', '-S', '-B', '-c', python, JSON.stringify({ path: p, roots, bytes: req.bytes, limit })], {
+      const result = cp.spawnSync('python3', ['-I', '-S', '-B', '-c', python, JSON.stringify({ path: p, roots, bytes: req.bytes, limit, metadataLimit: policy.kind === 'boardImage' })], {
         encoding: 'utf8', maxBuffer: Infinity, stdio: ['ignore', 'pipe', 'pipe']
       });
       if (result.error?.code === 'ENOENT') fail('unavailable', { message: 'python3 is required for secure host file reads but is not installed on the host' });
@@ -286,11 +321,39 @@ public struct HostFiles: Sendable {
         const base = resolved(root), candidate = resolved(path.join(root, rel));
         if (candidate === base || !inside(base, candidate)) fail('refused');
         if (commit) {
-          if (!req.bytes) return { ok: true, root, commit, data: '' };
+          if (!req.bytes) return { ok: true, root, path: rel, commit, data: '' };
           const data = git(root, ['show', '--end-of-options', commit + ':./' + rel], \#(NoteSource.maxOutput));
           if (data === null) fail('not_found', { commit });
-          return { ok: true, root, commit, data: data.toString('base64') };
+          return { ok: true, root, path: rel, commit, data: data.toString('base64') };
         }
+        const p = real(candidate);
+        if (!p) fail('not_found');
+        return readRegular(p, root, [base], \#(SourceExcerpt.maxFileBytes));
+      }
+      if (policy.kind === 'boardImage') {
+        let input = policy.path;
+        if (typeof input !== 'string' || !input || input.includes('\0') || input.startsWith('~')) fail('refused');
+        if (input.startsWith('file:')) {
+          try { input = require('node:url').fileURLToPath(input); }
+          catch { fail('refused'); }
+        } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) fail('refused');
+        if (input.includes('\0')) fail('refused');
+        const requested = path.resolve(root, input);
+        if (requested === root || !inside(root, requested)) fail('refused');
+        if (commit) {
+          const rel = path.relative(root, requested);
+          if (!req.bytes) {
+            const size = text(root, ['cat-file', '-s', commit + ':./' + rel]);
+            if (size === null) fail('not_found', { commit });
+            if (Number(size) > \#(SourceExcerpt.maxFileBytes)) fail('too_large', { limit: \#(SourceExcerpt.maxFileBytes) });
+            return { ok: true, root, path: rel, commit, data: '' };
+          }
+          const data = git(root, ['show', '--end-of-options', commit + ':./' + rel], \#(SourceExcerpt.maxFileBytes));
+          if (data === null) fail('not_found', { commit });
+          return { ok: true, root, path: rel, commit, data: data.toString('base64') };
+        }
+        const base = resolved(root), candidate = resolved(requested);
+        if (candidate === base || !inside(base, candidate)) fail('refused');
         const p = real(candidate);
         if (!p) fail('not_found');
         return readRegular(p, root, [base], \#(SourceExcerpt.maxFileBytes));

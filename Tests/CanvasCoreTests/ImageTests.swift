@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ImageIO
 import Testing
 import CanvasCore
 
@@ -69,6 +70,45 @@ final class ImageTests {
         // Never scaled up past its pixels.
         #expect(try await size(.object(["path": "out/chart.png"]), width: 2000) == CGSize(width: 1200, height: title + 675))
         await #expect(throws: ObjectMeasure.Failure.self) { try await size(.object(["path": "out/missing.png"])) }
+    }
+
+    @Test func inMemoryBitmapSizeUsesPixelsAndEXIFOrientationRatherThanDPI() throws {
+        let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 30, pixelsHigh: 12, bitsPerSample: 8, samplesPerPixel: 4,
+                                               hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let image = try #require(rep.cgImage)
+        for orientation in 1...8 {
+            let data = NSMutableData()
+            let destination = try #require(CGImageDestinationCreateWithData(data as CFMutableData, "public.tiff" as CFString, 1, nil))
+            CGImageDestinationAddImage(destination, image, [
+                kCGImagePropertyOrientation: orientation,
+                kCGImagePropertyDPIWidth: 144,
+                kCGImagePropertyDPIHeight: 144,
+            ] as CFDictionary)
+            #expect(CGImageDestinationFinalize(destination))
+            let expected = orientation >= 5 ? CGSize(width: 12, height: 30) : CGSize(width: 30, height: 12)
+            #expect(LocalImage.naturalSize(of: data as Data) == expected, "EXIF orientation \(orientation)")
+        }
+    }
+
+    @Test func inMemoryVectorImagesKeepTheirDocumentSize() throws {
+        let svg = Data(#"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="90" viewBox="0 0 24 9"><rect width="24" height="9" fill="red"/></svg>"#.utf8)
+        #expect(LocalImage.naturalSize(of: svg) == CGSize(width: 240, height: 90))
+
+        let pdf = NSMutableData()
+        let consumer = try #require(CGDataConsumer(data: pdf as CFMutableData))
+        var page = CGRect(x: 0, y: 0, width: 180, height: 72)
+        let context = try #require(CGContext(consumer: consumer, mediaBox: &page, nil))
+        context.beginPDFPage(nil)
+        context.fill(page)
+        context.endPDFPage()
+        var secondPage = CGRect(x: 0, y: 0, width: 300, height: 200)
+        let secondBox = NSData(bytes: &secondPage, length: MemoryLayout<CGRect>.size)
+        context.beginPDFPage([kCGPDFContextMediaBox: secondBox] as CFDictionary)
+        context.fill(secondPage)
+        context.endPDFPage()
+        context.closePDF()
+        #expect(LocalImage.naturalSize(of: pdf as Data) == CGSize(width: 180, height: 72))
+        #expect(LocalImage.naturalSize(of: Data("not an image".utf8)) == nil)
     }
 
     @Test func aNoteGrowsToShowItsImage() async throws {

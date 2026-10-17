@@ -536,6 +536,7 @@ final class TileFrameView: NSView {
     }
 
     private func requestCard() {
+        syncTitle()
         let request = cardRequest
         let asked = DevPerf.mark()
         let kind = String(describing: type(of: content))

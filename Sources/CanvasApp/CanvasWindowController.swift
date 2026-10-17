@@ -30,7 +30,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     static var frontmost: CanvasWindowController? {
         NSApp.orderedWindows.lazy.compactMap { window -> CanvasWindowController? in
             guard window.isVisible, window.tabGroup.map({ $0.selectedWindow === window }) ?? true else { return nil }
-            return window.windowController as? CanvasWindowController
+            guard let controller = window.windowController as? CanvasWindowController, controller.isBoardOpen else { return nil }
+            return controller
         }.first
     }
 
@@ -269,6 +270,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func apply(_ event: BoardEvent) {
+        guard !canvas.discarded else { return }
         canvas.apply(event)
         drawing?.apply(event)
         switch event {
@@ -534,6 +536,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        guard isBoardOpen else { return }
         // The API's default board is one of this app's own, never a mirror of another's.
         if let remote { remote.mirror.userFocused() } else { registry.frontmost = board.id }
     }
@@ -553,18 +556,20 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     var isLastOpenBoard: Bool {
         guard let window, isBoardOpen else { return false }
-        return !(window.tabbedWindows?.contains {
-            $0 !== window && ($0.windowController as? CanvasWindowController)?.isBoardOpen == true
-        } ?? false) && !NSApp.windows.contains {
-            $0 !== window && ($0.windowController as? CanvasWindowController)?.isBoardOpen == true
+        let app = NSApp.delegate as? AppDelegate
+        func isOtherLiveBoard(_ candidate: NSWindow) -> Bool {
+            candidate !== window && (candidate.windowController as? CanvasWindowController)?.isBoardOpen == true
+                && app?.isHoldingClose(candidate) != true
         }
+        return !(window.tabbedWindows?.contains(where: isOtherLiveBoard) ?? false)
+            && !NSApp.windows.contains(where: isOtherLiveBoard)
     }
 
     func discard() {
         remote?.mirror.close()
+        BrowserExtensions.closedWindow(self)
         responderObservation = nil
         canvas.discard()
-        window?.contentView = nil
     }
 
     /// Closing the tab or window ends nothing: its terminals' sessions keep running (agents go
@@ -603,6 +608,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        guard isBoardOpen else {
+            window?.contentView = nil
+            return
+        }
         isBoardOpen = false
         if let remote {
             remote.mirror.close()
@@ -1360,6 +1369,13 @@ final class CanvasWindow: NSWindow {
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
         NotificationCenter.default.addObserver(self, selector: #selector(cancelMiddlePan), name: NSApplication.didResignActiveNotification, object: nil)
+    }
+
+    override func close() {
+        let app = NSApp.delegate as? AppDelegate
+        guard app?.holdNativeClose(self) != true else { return }
+        super.close()
+        app?.releaseHeldCloses()
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
