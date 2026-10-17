@@ -18,13 +18,6 @@ struct HostGitTests {
         try fixture.reader(body: "sed 's/\"\(limit)\":[0-9]*/\"\(limit)\":\(value)/' | /bin/sh -c \"$command\"")
     }
 
-    private func reader(_ fixture: HostFileFixture, running injection: String) throws -> HostFiles {
-        try fixture.reader(body: """
-        eval "set -- $command"
-        exec "$1" "$2" "$3" "$4" \(RemoteHost.quote(injection + "\n"))"$5" "$6"
-        """)
-    }
-
     @Test func aCodeTileReadsItsFileOnTheHostAsALocalTileDoes() async throws {
         let fixture = try HostFileFixture()
         let git = HostGit(files: try fixture.reader())
@@ -297,7 +290,7 @@ struct HostGitTests {
         try await repo.git("branch", "feature", first)
         try await repo.git("reset", "-q", "--hard", base)
         let constants = String(decoding: try JSONEncoder().encode([repo.root.path, second]), as: UTF8.self)
-        let racing = HostGit(files: try reader(fixture, running: """
+        let racing = HostGit(files: try fixture.reader(running: """
         (() => {
           const cp = require('node:child_process');
           const [root, second] = \(constants);
@@ -404,7 +397,7 @@ struct HostGitTests {
         try await repo.git("branch", "feature")
         let worktree = fixture.directory.appendingPathComponent("feature")
         let constants = String(decoding: try JSONEncoder().encode([repo.root.path, worktree.path]), as: UTF8.self)
-        let arriving = HostGit(files: try reader(fixture, running: """
+        let arriving = HostGit(files: try fixture.reader(running: """
         (() => {
           const cp = require('node:child_process');
           const [root, worktree] = \(constants);
@@ -439,7 +432,7 @@ struct HostGitTests {
         try await repo.commit("base")
         try await repo.write("a.txt", "before\n")
         let constants = String(decoding: try JSONEncoder().encode([repo.url("a.txt").path]), as: UTF8.self)
-        let editing = HostGit(files: try reader(fixture, running: """
+        let editing = HostGit(files: try fixture.reader(running: """
         (() => {
           const cp = require('node:child_process');
           const fs = require('node:fs');

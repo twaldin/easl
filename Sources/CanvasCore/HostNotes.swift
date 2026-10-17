@@ -74,8 +74,7 @@ extension HostFiles {
                                         "imagesSource": .object(try sourcePayload(request.imagesSource)),
                                         "fences": .array(fences), "images": .array(request.images.map(JSONValue.string)),
                                         "temps": .array(temps.map(JSONValue.string)), "bytes": .bool(bytes)])
-        let argument = String(decoding: try JSONEncoder().encode(payload), as: UTF8.self)
-        let output = try await execute([Self.noteScript, argument], what: "host note reader")
+        let output = try await execute(Self.noteProgram, request: JSONEncoder().encode(payload), what: "host note reader")
         guard let reply = try? JSONDecoder().decode(NoteReply.self, from: Data(output.utf8)),
               reply.fences.count == request.fences.count, reply.images.count == request.images.count else {
             throw HostFileError.unavailable("invalid host note reply")
@@ -130,8 +129,7 @@ extension HostFiles {
         }
     }
 
-    private static let noteScript = prelude + #"""
-    const req = JSON.parse(process.argv.at(-1));
+    private static let noteProgram = HostProgram(prelude + #"""
     const limit = \#(SourceExcerpt.maxFileBytes);
     let remaining = \#(NoteSource.maxOutput);
     const areas = boardAreas(req.boardRoot);
@@ -229,5 +227,5 @@ extension HostFiles {
       const result = protect(() => fence(item));
       return Array.isArray(result) ? result : [result];
     }), images: req.images.map(input => protect(() => image(input))) }));
-    """#
+    """#)
 }

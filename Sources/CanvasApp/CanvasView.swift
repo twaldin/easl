@@ -412,9 +412,10 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// Every remote image tile asks the host for a fresh drawing (`BoardMirror.onRedraw`).
     func redrawRemoteTiles() {
-        for tile in tiles.values { (tile.content as? RemoteImageTile)?.redraw() }
+        for tile in tiles.values {
+            (tile.content as? DiagramTile)?.hostDidReconnect()
+        }
     }
 
     /// A tile's view off the board (its object deleted, or an archived question), out of the
@@ -511,9 +512,7 @@ final class CanvasView: NSScrollView {
         // Created where it wouldn't be live (a batch building a board zoomed out or offscreen),
         // a code, note, or HTML tile starts as its card rather than building its live view for
         // the liveness pass to swap out. Terminals and browsers start live: they run a session
-        // or a page an agent may be driving. A remote board's browser tile is the host's picture
-        // (`RemoteImageTile`) and starts as its card like the rest, so it asks the host for nothing
-        // until it is near the view.
+        // or a page an agent may be driving.
         if !(content is TerminalTile), !(content is BrowserTile), !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
         document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay)
         tiles[id] = tile

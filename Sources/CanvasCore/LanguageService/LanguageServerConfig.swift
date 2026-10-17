@@ -48,11 +48,13 @@ public struct LanguageServerConfig: Sendable, Equatable {
     public var overrideVariable: String { "EASL_LSP_" + language.uppercased() }
 
     /// Why the server can't run, for navigation panels: where easl looked, how to install it,
-    /// and how to point easl at a binary elsewhere.
-    public var notFound: String {
+    /// and how to point easl at a binary elsewhere; `host` names the machine it was looked for on
+    /// (nil: this Mac).
+    public func notFound(on host: String? = nil) -> String {
         let places = ["on the login shell's PATH", "in " + (Self.toolDirectories + directories).joined(separator: ", ")] + locators.map { "with `\($0)`" }
         let looked = places.dropLast().joined(separator: ", ") + " and " + places.last!
-        return "\(command) not found (easl looked \(looked)). " + (installHint.map { "\($0). " } ?? "") + "Or set \(overrideVariable) to its path in your shell profile."
+        return "\(command) not found\(host.map { " on \($0)" } ?? "") (easl looked \(looked)). " + (installHint.map { "\($0). " } ?? "")
+            + "Or set \(overrideVariable) to its path in your shell profile\(host.map { " on \($0)" } ?? "")."
     }
 
     public static let defaults: [LanguageServerConfig] = [
@@ -150,13 +152,16 @@ public final class LoginShell: @unchecked Sendable {
     public func locate(_ config: LanguageServerConfig) -> URL? {
         if config.command.hasPrefix("/") { return Self.executable(config.command) }
         return cached("server:\(config.language):\(config.command)") {
-            let probes = ["${\(config.overrideVariable)-}", "$(command -v \(Self.quote(config.command)))"] + config.locators.map { "$(\($0) 2>/dev/null)" }
-            let answers = probe(probes)
+            let answers = probe(Self.probes(config))
             let directories = (LanguageServerConfig.toolDirectories + config.directories).map { directory in
                 (directory.hasPrefix("~/") ? home + directory.dropFirst() : directory) + "/" + config.command
             }
             return (Array(answers.prefix(2)) + directories + Array(answers.dropFirst(2))).lazy.compactMap(Self.executable).first
         }
+    }
+
+    static func probes(_ config: LanguageServerConfig) -> [String] {
+        ["${\(config.overrideVariable)-}", "$(command -v \(quote(config.command)))"] + config.locators.map { "$(\($0) 2>/dev/null)" }
     }
 
     private func cached(_ key: String, _ find: () -> URL?) -> URL? {

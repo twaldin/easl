@@ -4,7 +4,9 @@ import Foundation
 /// the root function, its callers and/or callees `depth` levels out, one more level under each
 /// expanded node. Only symbols in the board's files are nodes (not the SDK's, not generated
 /// code). Nodes re-resolve by symbol on every build, and a node of the previous graph whose
-/// symbol is gone from its file stays, stale (`DiagramGraph.merged`).
+/// symbol is gone from its file stays, stale (`DiagramGraph.merged`). Every read, search and
+/// listing of the code goes through `languages`, on that service's machine: this Mac, or a
+/// remote board's host.
 public enum CallGraphBuilder {
     /// Past this many nodes the rest are counted (`DiagramGraph.omitted`), not drawn.
     public static let maxNodes = 60
@@ -22,7 +24,7 @@ public enum CallGraphBuilder {
     /// Never throws but for cancellation: what went wrong is the graph's `error` (with the
     /// previous graph kept when there was one).
     /// `scope` is the checkout the graph is of (default the board root): the board root's
-    /// counterpart in another worktree for a diagram there (`Board.checkoutRoot`). Its files are
+    /// counterpart in another worktree for a diagram there (`DiagramRefresh.scope`). Its files are
     /// the nodes and where a bare symbol is looked for; paths are written as the board stores
     /// them, relative to `boardRoot` or absolute.
     public static func build(_ spec: DiagramSpec, boardRoot: URL, scope: URL? = nil, previous: DiagramGraph?, languages: LanguageService) async throws -> DiagramGraph {
@@ -42,6 +44,8 @@ public enum CallGraphBuilder {
         } catch let failure as Failure {
             if case .rootGone(let reason) = failure, let previous { return DiagramGraph.stalled(previous, reason: reason) }
             return failed(aim, previous: previous, reason: failure.message)
+        } catch let error as HostFileError where languages.hostName != nil {
+            return failed(aim, previous: previous, reason: HostGit.refusal(error))
         } catch {
             return failed(aim, previous: previous, reason: (error as? LocalizedError)?.errorDescription ?? "\(error)")
         }
@@ -122,7 +126,7 @@ public enum CallGraphBuilder {
         let scope: URL
         let languages: LanguageService
         private var symbols: [URL: [(symbol: LSPSymbol, containers: [String])]] = [:]
-        private var texts: [URL: [String]] = [:]
+        private var texts: [URL: [String]?] = [:]
         /// Lines each node's declaration moved since the server's index saw it (sourcekit-lsp
         /// places call hierarchy items and calls where the last build found them): what the
         /// node's calls shift by too.
@@ -135,13 +139,13 @@ public enum CallGraphBuilder {
         }
 
         func url(_ path: String) -> URL {
-            URL(fileURLWithPath: path.hasPrefix("/") ? path : boardRoot.appendingPathComponent(path).path).standardizedFileURL
+            URL(fileURLWithPath: path.hasPrefix("/") ? path : boardRoot.appendingPathComponent(path, isDirectory: false).path, isDirectory: false).standardizedFileURL
         }
 
-        func boardPath(_ url: URL) -> String { Board.relativePath(url.path, root: boardRoot) }
+        func boardPath(_ url: URL) -> String { languages.relativePath(url.path, boardRoot: boardRoot) }
 
         /// Whether `url` is one of the files the graph is of (in `scope`).
-        func inScope(_ url: URL) -> Bool { !Board.relativePath(url.path, root: scope).hasPrefix("/") }
+        func inScope(_ url: URL) -> Bool { !languages.relativePath(url.path, boardRoot: scope).hasPrefix("/") }
 
         /// Every symbol of `file` with the names of the symbols it is inside, outermost first.
         mutating func documentSymbols(_ file: URL) async throws -> [(symbol: LSPSymbol, containers: [String])] {
@@ -154,11 +158,21 @@ public enum CallGraphBuilder {
             return found
         }
 
-        mutating func lines(_ file: URL) async -> [String] {
+        mutating func source(_ file: URL) async throws -> [String]? {
             if let known = texts[file] { return known }
-            let read = await offPool { (try? String(contentsOf: file, encoding: .utf8)).map(NoteSource.lines(of:)) ?? [] }
+            let read: [String]?
+            do {
+                let text = try await languages.text(file: file, boardRoot: scope)
+                read = await offPool { NoteSource.lines(of: text) }
+            } catch HostFileError.notFound(_) {
+                read = nil
+            }
             texts[file] = read
             return read
+        }
+
+        mutating func lines(_ file: URL) async -> [String] {
+            (try? await source(file)) ?? []
         }
 
         /// The symbol `qualified` (`Type.member`, a bare name, labels optional) declares in
@@ -199,30 +213,22 @@ public enum CallGraphBuilder {
 
         // MARK: Finding a bare symbol
 
-        /// The file declaring `symbol` when no path is given. Fast path: the first tracked file
-        /// a declaration keyword names it in (`NoteSource.locate`), when that file's document
-        /// symbols have it. Else the language servers' workspace symbols (`locateInWorkspace`).
         mutating func locate(_ symbol: String) async throws -> String {
-            if let found = await NoteSource.locate(symbol: symbol, root: scope).map({ boardPath(scope.appendingPathComponent($0)) }),
+            if let found = try await languages.locate(symbol: symbol, boardRoot: boardRoot, scope: scope).map({ boardPath(scope.appendingPathComponent($0)) }),
                try await declaration(symbol, in: url(found)) != nil {
                 return found
             }
             return try await locateInWorkspace(symbol)
         }
 
-        /// Asks `workspace/symbol` for the name of `symbol` in the projects of the files that
-        /// mention it (`git grep`, declaration-like lines first; at most `maxSymbolProjects`
-        /// projects, so a monorepo doesn't start a server per package), keeps the board's files,
-        /// and checks each answer against its file's document symbols (servers such as
-        /// typescript-language-server give no container): the one declaration left is the
-        /// root's file; several are an error listing them.
         mutating func locateInWorkspace(_ symbol: String) async throws -> String {
             let (container, name) = CallGraphBuilder.split(symbol)
             let base = baseName(name)
             guard !base.isEmpty, base.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }) else {
                 throw Failure.unresolved("\(symbol) is not a symbol name; give props.path")
             }
-            let projects = await languages.projects(await mentioningFiles(base), boardRoot: scope).prefix(CallGraphBuilder.maxSymbolProjects)
+            let mentioning = try await languages.mentioningFiles(base, boardRoot: boardRoot, scope: scope, limit: CallGraphBuilder.maxMentioningFiles)
+            let projects = try await languages.projects(mentioning.map { scope.appendingPathComponent($0) }, boardRoot: scope).prefix(CallGraphBuilder.maxSymbolProjects)
             guard !projects.isEmpty else { throw Failure.unresolved("no file of the board that a language server reads mentions \(base); give props.path") }
             let wanted = container.map(Self.containerNames) ?? []
             /// The answers that are declarations of `symbol` in the board's files, once each.
@@ -266,26 +272,6 @@ public enum CallGraphBuilder {
             return only.path
         }
 
-        /// Tracked files mentioning `name` as a word, those where it looks declared (not after a
-        /// `.`, followed by `(`, `<`, `=` or `:`) first, at most `maxMentioningFiles`.
-        func mentioningFiles(_ name: String) async -> [URL] {
-            guard let data = try? await GitRunner.shared.run(["grep", "-n", "-I", "-w", "-F", "-e", name], in: scope, allowedStatus: [0, 1],
-                                                              maxOutput: NoteSource.maxOutput, timeout: NoteSource.timeout),
-                  let output = String(data: data, encoding: .utf8) else { return [] }
-            let declared = try? NSRegularExpression(pattern: #"(^|[^\w.$])"# + NSRegularExpression.escapedPattern(for: name) + #"\s*[(<=:]"#)
-            var order: [String] = []
-            var looksDeclared: Set<String> = []
-            for line in output.split(separator: "\n") {
-                let parts = line.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
-                guard parts.count == 3 else { continue }
-                let path = String(parts[0]), text = String(parts[2])
-                if !order.contains(path) { order.append(path) }
-                if declared?.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)) != nil { looksDeclared.insert(path) }
-            }
-            let ranked = order.filter(looksDeclared.contains) + order.filter { !looksDeclared.contains($0) }
-            return ranked.prefix(CallGraphBuilder.maxMentioningFiles).map { scope.appendingPathComponent($0) }
-        }
-
         // MARK: Root
 
         mutating func resolveRoot(_ spec: DiagramSpec, previous: DiagramGraph?) async throws -> LSPCallHierarchyItem {
@@ -301,7 +287,7 @@ public enum CallGraphBuilder {
                 throw Failure.unresolved("a calls diagram needs props.symbol or props.path")
             }
             let file = url(path)
-            guard FileManager.default.fileExists(atPath: file.path) else {
+            guard try await source(file) != nil else {
                 if previous != nil { throw Failure.rootGone("\(path) is gone") }
                 throw Failure.unresolved("no file \(path)")
             }
@@ -467,7 +453,7 @@ public enum CallGraphBuilder {
         /// Whether `node`'s symbol is no longer declared in its file (or the file is gone).
         mutating func isGone(_ node: DiagramNode) async throws -> Bool {
             let file = url(node.path)
-            guard FileManager.default.fileExists(atPath: file.path) else { return true }
+            guard try await source(file) != nil else { return true }
             return try await declaration(node.qualifiedName, in: file) == nil
         }
     }

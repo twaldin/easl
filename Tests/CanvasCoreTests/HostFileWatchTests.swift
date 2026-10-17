@@ -23,11 +23,10 @@ struct HostFileWatchTests {
     private func recordedReader(_ fixture: HostFileFixture) throws -> (HostFiles, URL) {
         let log = fixture.directory.appendingPathComponent("completed-requests")
         let files = try fixture.reader(body: """
-        eval "set -- $command"
-        payload=$6
-        /bin/sh -c "$command"
+        frame=$(cat)
+        printf '%s' "$frame" | /bin/sh -c "$command"
         result=$?
-        printf '%s\\n' "$payload" >> \(RemoteHost.quote(log.path))
+        printf '%s\\n' "$frame" | sed 1d >> \(RemoteHost.quote(log.path))
         exit "$result"
         """)
         return (files, log)
