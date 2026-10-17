@@ -183,6 +183,7 @@ func TestAQuestionMovesOpenToAnsweredCancelledOrExpiredAndNoFurther(t *testing.T
 			"an option":   {"recommended": "b"},
 			"expiry":      {"expiresAt": "2026-10-05T17:00:00Z"},
 		} {
+			beforeRev := b.Objects()[q.ID].Rev
 			_, err := writeErr(b, q.ID, change, nil, "")
 			if status == "cancelled" && name == "another end" {
 				if err != nil {
@@ -190,7 +191,7 @@ func TestAQuestionMovesOpenToAnsweredCancelledOrExpiredAndNoFurther(t *testing.T
 				}
 				continue
 			}
-			if err == nil || b.Objects()[q.ID].Rev != 2 {
+			if err == nil || b.Objects()[q.ID].Rev != beforeRev || b.Objects()[q.ID].Props["status"] != status {
 				t.Errorf("%s then %s: %v", status, name, err)
 			}
 		}
