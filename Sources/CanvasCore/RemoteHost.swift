@@ -71,6 +71,11 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         ["-T"] + Self.batchOptions + [sshTarget, "nc", "-U"] + (ncShutdown ? ["-N"] : []) + [Self.quote(socketPath)]
     }
 
+    /// Runs a script with the same GUI temporary directory as this host's terminals.
+    public func scriptArguments(_ script: String, _ args: [String]) -> [String] {
+        ["-T"] + Self.batchOptions + [sshTarget, "env", Self.quote("TMPDIR=" + tmpdir), HostedTerminal.remote(script, args)]
+    }
+
     /// The session runs on `props.host` when hosted, otherwise on the board host. Its owner is
     /// always the board host's home, with this tile and a current or merged board label.
     public func terminalAttachCommand(for terminal: CanvasObject, board: BoardID, merged: [BoardID]) -> [String] {
@@ -295,10 +300,9 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         text.split(whereSeparator: \.isNewline).last.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    /// Runs `executable` off the cooperative pool (it blocks on pipes), terminated after
-    /// `timeout`; stdin is empty. Cancelling the calling task ends and reaps the process and
-    /// throws `CancellationError`, also when the task was cancelled before the process started.
-    public static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval) async throws -> (status: Int32, output: String, errors: String) {
+    /// Runs off the cooperative pool, draining output while optional bytes stream to stdin.
+    /// Timeout and cancellation end and reap the process, including a blocked stdin writer.
+    public static func run(_ executable: String, _ arguments: [String], input: Data? = nil, timeout: TimeInterval) async throws -> (status: Int32, output: String, errors: String) {
         try Task.checkCancellation()
         let job = RunningProcess()
         let result: (status: Int32, output: String, errors: String) = await withTaskCancellationHandler {
@@ -309,17 +313,33 @@ public struct RemoteHost: Codable, Hashable, Sendable {
                 let output = Pipe(), errors = Pipe()
                 process.standardOutput = output
                 process.standardError = errors
-                process.standardInput = FileHandle.nullDevice
+                let stdin = input.map { _ in Pipe() }
+                if let stdin {
+                    process.standardInput = stdin
+                } else {
+                    process.standardInput = FileHandle.nullDevice
+                }
                 do {
                     guard try job.launch(process) else { return (-1, "", "cancelled") }
                 } catch {
                     return (-1, "", "cannot run \(executable): \(error.localizedDescription)")
                 }
                 let running = UncheckedBox(process)
-                let deadline = DispatchWorkItem { if running.value.isRunning { running.value.terminate() } }
+                let deadline = DispatchWorkItem { RemoteProcesses.stop(running.value) }
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
                 let stderr = Locked(Data())
                 let drained = DispatchGroup()
+                try? stdin?.fileHandleForReading.close()
+                if let stdin, let input {
+                    let writer = stdin.fileHandleForWriting
+                    _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
+                    drained.enter()
+                    DispatchQueue.global().async {
+                        try? writer.write(contentsOf: input)
+                        try? writer.close()
+                        drained.leave()
+                    }
+                }
                 drained.enter()
                 DispatchQueue.global().async {
                     let data = errors.fileHandleForReading.readDataToEndOfFile()

@@ -2,6 +2,120 @@ import AppKit
 import CanvasCore
 import GhosttyKit
 import GhosttyTerminal
+import ImageIO
+import UniformTypeIdentifiers
+
+enum TerminalImageInput: Sendable {
+    case bytes(Data)
+    case fileURL(URL)
+}
+
+struct TerminalPasteDestination: Sendable {
+    enum Machine: Sendable {
+        case local
+        case hosted(HostRoute)
+        case remote(RemoteHost)
+    }
+
+    let machine: Machine
+    let instance: String
+    let session: String
+
+    var key: String {
+        let host: String = switch machine {
+        case .local: "local"
+        case .hosted(let route): route.target
+        case .remote(let host): host.sshTarget
+        }
+        return "\(host)\n\(instance)\n\(session)"
+    }
+
+    private func run(_ arguments: [String], input: Data? = nil) async throws -> String {
+        let result: (status: Int32, output: String, errors: String)
+        switch machine {
+        case .local:
+            result = try await RemoteHost.run("/bin/sh", ["-c", TerminalPaste.script, "easl"] + arguments, input: input, timeout: 60)
+        case .hosted(let route):
+            result = try await RemoteHost.run("/usr/bin/ssh", route.ssh(HostedTerminal.remote(TerminalPaste.hostScript, arguments)), input: input, timeout: 60)
+        case .remote(let host):
+            let base = ((host.zmxDir ?? host.socketPath) as NSString).deletingLastPathComponent
+            let script = "export EASL_PASTE_BASE=\(RemoteHost.quote(base))\n" + TerminalPaste.script
+            result = try await RemoteHost.run(RemoteHost.ssh, host.scriptArguments(script, arguments), input: input, timeout: 60)
+        }
+        guard result.status == 0 else {
+            throw EaslConnection.Failure("unavailable", "Image copy failed on the terminal's host. \(result.errors.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        return result.output
+    }
+    private static func encodedImage(_ input: TerminalImageInput) throws -> (data: Data, ext: String) {
+        let data: Data
+        switch input {
+        case .bytes(let bytes):
+            data = bytes
+        case .fileURL(let url):
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            data = try Data(contentsOf: url)
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            throw EaslConnection.Failure("invalid", "The pasted image couldn't be read")
+        }
+        let ext: String?
+        switch CGImageSourceGetType(source) as String? {
+        case UTType.png.identifier: ext = "png"
+        case UTType.jpeg.identifier: ext = "jpg"
+        case UTType.gif.identifier: ext = "gif"
+        case "org.webmproject.webp": ext = "webp"
+        default: ext = nil
+        }
+        if let ext { return (data, ext) }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        guard let width = properties?[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties?[kCGImagePropertyPixelHeight] as? Int,
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: max(width, height),
+              ] as CFDictionary) else {
+            throw EaslConnection.Failure("invalid", "The pasted image couldn't be read")
+        }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else {
+            throw EaslConnection.Failure("invalid", "The pasted image couldn't be converted to PNG")
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw EaslConnection.Failure("invalid", "The pasted image couldn't be converted to PNG")
+        }
+        return (output as Data, "png")
+    }
+
+
+    func stage(_ images: [TerminalImageInput]) async throws -> String {
+        var paths: [String] = []
+        for input in images {
+            try Task.checkCancellation()
+            let encoded = await offPool { Result { try Self.encodedImage(input) } }
+            let image = try encoded.get()
+            try Task.checkCancellation()
+            let output = try await run(TerminalPaste.stageArguments(instance: instance, session: session, name: UUID().uuidString + "." + image.ext, size: image.data.count), input: image.data)
+            guard let path = TerminalPaste.stagedPath(output) else {
+                throw EaslConnection.Failure("unavailable", "The terminal's host returned an invalid image path")
+            }
+            paths.append(path)
+        }
+        try Task.checkCancellation()
+        return TerminalPaste.text(paths: paths)
+    }
+
+    func discard() async {
+        do {
+            _ = try await run(TerminalPaste.discardArguments(instance: instance, session: session))
+        } catch {
+            NSLog("easl: couldn't remove terminal image copies: %@", (error as? EaslConnection.Failure)?.message ?? error.localizedDescription)
+        }
+    }
+}
 
 /// The Ghostty view of a terminal tile, with ⌘-hover and ⌘-click on `path:line` references
 /// (`TerminalReferences`) that resolve to a file. Everything else (URLs included) stays Ghostty's.
@@ -19,6 +133,293 @@ final class CanvasTerminalView: TerminalView {
     var onFocusChange: (() -> Void)?
     /// Whether the terminal has scrollback to scroll (more rows than its screen).
     var hasScrollback: (() -> Bool)?
+    var imageDestination: (() -> TerminalPasteDestination?)?
+    var onImageProblem: ((String) -> Void)?
+
+    private final class SubmissionCancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        var isCancelled: Bool { lock.withLock { cancelled } }
+        func cancel() { lock.withLock { cancelled = true } }
+    }
+
+    @MainActor
+    private final class Submission {
+        let id: UUID
+        let paste: @MainActor () -> Bool
+        let delay: Duration
+        let cancellation: SubmissionCancellation
+        private var continuation: CheckedContinuation<Bool, Never>?
+
+        init(id: UUID, paste: @escaping @MainActor () -> Bool, delay: Duration, cancellation: SubmissionCancellation, continuation: CheckedContinuation<Bool, Never>) {
+            self.id = id
+            self.paste = paste
+            self.delay = delay
+            self.cancellation = cancellation
+            self.continuation = continuation
+        }
+
+        var isPending: Bool { continuation != nil && !cancellation.isCancelled }
+
+        func resolve(_ result: Bool) {
+            let continuation = continuation
+            self.continuation = nil
+            continuation?.resume(returning: result)
+        }
+
+        deinit { continuation?.resume(returning: false) }
+    }
+
+    private enum Input {
+        case key(NSEvent)
+        case text(String)
+        case images([TerminalImageInput], TerminalPasteDestination)
+        case submission(Submission)
+        case problem(String)
+    }
+
+    private struct ActiveInput: Sendable {
+        let token: UUID
+        let task: Task<Void, Never>
+        let submission: Submission?
+    }
+
+    private var pendingInput: [Input] = []
+    private var inputIndex = 0
+    private var activeInput: ActiveInput?
+    private var pasteKeyUp: UInt16?
+    private static var imageUploads: [String: [UUID: Task<Void, Never>]] = [:]
+
+    private static let imageDragTypes: [NSPasteboard.PasteboardType] = {
+        let images = CGImageSourceCopyTypeIdentifiers() as! [String]
+        return [.fileURL] + images.map { NSPasteboard.PasteboardType($0) }
+    }()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        registerForDraggedTypes(Self.imageDragTypes)
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    deinit { activeInput?.task.cancel() }
+
+    func cancelImageInput() {
+        let active = activeInput
+        activeInput = nil
+        active?.task.cancel()
+        active?.submission?.resolve(false)
+        for input in pendingInput[inputIndex...] {
+            if case .submission(let submission) = input { submission.resolve(false) }
+        }
+        pendingInput.removeAll()
+        inputIndex = 0
+    }
+
+    static func cancelImageUploads(for key: String) -> [Task<Void, Never>] {
+        let tasks = imageUploads[key].map { Array($0.values) } ?? []
+        for task in tasks { task.cancel() }
+        return tasks
+    }
+
+    func submitOrdered(_ paste: @escaping @MainActor () -> Bool, delay: Duration) async -> Bool {
+        let id = UUID()
+        let cancellation = SubmissionCancellation()
+        let cancelOnMain: @MainActor @Sendable () -> Void = { [weak self] in self?.cancelSubmission(id) }
+        let result = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                enqueue(.submission(Submission(id: id, paste: paste, delay: delay, cancellation: cancellation, continuation: continuation)))
+            }
+        } onCancel: {
+            cancellation.cancel()
+            Task { await cancelOnMain() }
+        }
+        return result && !Task.isCancelled
+    }
+
+    private func cancelSubmission(_ id: UUID) {
+        if let active = activeInput, active.submission?.id == id {
+            activeInput = nil
+            active.task.cancel()
+            active.submission?.resolve(false)
+            drainInput()
+            return
+        }
+        for input in pendingInput[inputIndex...] {
+            if case .submission(let submission) = input, submission.id == id {
+                submission.resolve(false)
+                return
+            }
+        }
+    }
+
+    private func finishInput(_ token: UUID, result: Bool = false) {
+        guard let active = activeInput, active.token == token else { return }
+        activeInput = nil
+        active.submission?.resolve(result)
+        drainInput()
+    }
+
+    @discardableResult
+    func pasteOrdered(_ text: String) -> Bool {
+        guard activeInput != nil else { return paste(text: text) }
+        guard !text.isEmpty else { return false }
+        enqueue(.text(text))
+        return true
+    }
+
+    private static func imageFile(_ item: NSPasteboardItem) -> URL? {
+        guard let text = item.string(forType: .fileURL), let url = URL(string: text), url.isFileURL,
+              UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else { return nil }
+        return url
+    }
+
+    private static func imageType(_ item: NSPasteboardItem) -> NSPasteboard.PasteboardType? {
+        if item.types.contains(.png) { return .png }
+        return item.types.first { UTType($0.rawValue)?.conforms(to: .image) == true }
+    }
+
+    private static func hasImages(_ pasteboard: NSPasteboard) -> Bool {
+        guard let items = pasteboard.pasteboardItems,
+              !items.contains(where: { $0.types.contains(.fileURL) && imageFile($0) == nil }) else { return false }
+        return items.contains { imageFile($0) != nil || imageType($0) != nil }
+    }
+
+
+    @discardableResult
+    func pasteImages(from pasteboard: NSPasteboard, imageOnly: Bool = false, dropping: Bool = false) -> Bool {
+        let hasText = pasteboard.types?.contains(.string) == true
+        if !dropping, imageOnly, hasText { return false }
+        let items = pasteboard.pasteboardItems ?? []
+        if !dropping, hasText, !items.contains(where: { Self.imageFile($0) != nil }) { return false }
+        guard Self.hasImages(pasteboard) else { return false }
+        do {
+            var images: [TerminalImageInput] = []
+            for item in items {
+                if let url = Self.imageFile(item) {
+                    images.append(.fileURL(url))
+                } else if let type = Self.imageType(item) {
+                    guard let data = item.data(forType: type) else {
+                        throw EaslConnection.Failure("invalid", "The pasted image couldn't be read")
+                    }
+                    images.append(.bytes(data))
+                }
+            }
+            guard let destination = imageDestination?() else {
+                throw EaslConnection.Failure("unavailable", "The terminal's image destination isn't available yet")
+            }
+            enqueue(.images(images, destination))
+        } catch {
+            enqueue(.problem((error as? EaslConnection.Failure)?.message ?? error.localizedDescription))
+        }
+        return true
+    }
+
+
+    @IBAction override func paste(_ sender: Any?) {
+        if pasteImages(from: .general) { return }
+        if activeInput != nil {
+            if let text = TerminalPasteboardContent.text() { enqueue(.text(text)) }
+        } else {
+            super.paste(sender)
+        }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.hasImages(sender.draggingPasteboard) && sender.draggingSourceOperationMask.contains(.copy) ? .copy : []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        draggingEntered(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard !draggingEntered(sender).isEmpty else { return false }
+        window?.makeFirstResponder(self)
+        return pasteImages(from: sender.draggingPasteboard, dropping: true)
+    }
+
+    private func enqueue(_ input: Input) {
+        pendingInput.append(input)
+        drainInput()
+    }
+
+    private func drainInput() {
+        guard activeInput == nil else { return }
+        while inputIndex < pendingInput.count {
+            let input = pendingInput[inputIndex]
+            inputIndex += 1
+            switch input {
+            case .key(let event):
+                switch event.type {
+                case .keyDown: super.keyDown(with: event)
+                case .keyUp: super.keyUp(with: event)
+                case .flagsChanged: super.flagsChanged(with: event)
+                default: break
+                }
+            case .text(let text):
+                if !super.paste(text: text) { onImageProblem?("The terminal isn't ready to receive pasted text") }
+            case .problem(let problem):
+                onImageProblem?(problem)
+            case .submission(let submission):
+                guard submission.isPending else {
+                    submission.resolve(false)
+                    continue
+                }
+                let token = submission.id
+                let task = Task { [weak self] in
+                    guard self?.activeInput?.token == token else { return }
+                    guard !Task.isCancelled, submission.isPending, submission.paste() else {
+                        self?.finishInput(token)
+                        return
+                    }
+                    do {
+                        try await Task.sleep(for: submission.delay)
+                    } catch {
+                        self?.finishInput(token)
+                        return
+                    }
+                    guard !Task.isCancelled, submission.isPending, let self, self.activeInput?.token == token else {
+                        self?.finishInput(token)
+                        return
+                    }
+                    self.finishInput(token, result: self.sendKey(.enter))
+                }
+                activeInput = ActiveInput(token: token, task: task, submission: submission)
+                return
+            case .images(let images, let destination):
+                let ticket = UUID()
+                let key = destination.key
+                let task = Task { [weak self] in
+                    defer {
+                        Self.imageUploads[key]?[ticket] = nil
+                        if Self.imageUploads[key]?.isEmpty == true { Self.imageUploads[key] = nil }
+                        self?.finishInput(ticket)
+                    }
+                    do {
+                        let text = try await destination.stage(images)
+                        guard !Task.isCancelled, let self, self.activeInput?.token == ticket else { return }
+                        if !self.paste(text: text) {
+                            self.onImageProblem?("The terminal isn't ready to receive the copied image paths")
+                        }
+                    } catch {
+                        guard !Task.isCancelled, let self, self.activeInput?.token == ticket else { return }
+                        self.onImageProblem?((error as? EaslConnection.Failure)?.message ?? error.localizedDescription)
+                    }
+                }
+                activeInput = ActiveInput(token: ticket, task: task, submission: nil)
+                Self.imageUploads[key, default: [:]][ticket] = task
+                return
+            }
+        }
+        pendingInput.removeAll(keepingCapacity: true)
+        inputIndex = 0
+    }
 
     private var swallowedMouseUp = false
     private var hovered: TerminalReferences.Hit?
@@ -141,6 +542,25 @@ final class CanvasTerminalView: TerminalView {
     /// thread, which this doesn't see, and a consumed binding or a composing IME key writes
     /// nothing at all.
     override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if event.charactersIgnoringModifiers?.lowercased() == "v" {
+            if !event.isARepeat { pasteKeyUp = nil }
+            if modifiers == [.command] || modifiers == [.control] {
+                if pasteImages(from: .general, imageOnly: modifiers == [.control]) {
+                    pasteKeyUp = event.keyCode
+                    return
+                }
+                if modifiers == [.command], activeInput != nil {
+                    pasteKeyUp = event.keyCode
+                    if let text = TerminalPasteboardContent.text() { enqueue(.text(text)) }
+                    return
+                }
+            }
+        }
+        if activeInput != nil {
+            enqueue(.key(event))
+            return
+        }
         let waited = (ProcessInfo.processInfo.systemUptime - event.timestamp) * 1000
         let start = Metrics.now()
         super.keyDown(with: event)
@@ -148,8 +568,16 @@ final class CanvasTerminalView: TerminalView {
         MainMetricsBatch.shared.latency.add(waitMs: waited, handleMs: handled)
     }
 
+    override func keyUp(with event: NSEvent) {
+        if pasteKeyUp == event.keyCode {
+            pasteKeyUp = nil
+            return
+        }
+        if activeInput != nil { enqueue(.key(event)) } else { super.keyUp(with: event) }
+    }
+
     override func flagsChanged(with event: NSEvent) {
-        super.flagsChanged(with: event)
+        if activeInput != nil { enqueue(.key(event)) } else { super.flagsChanged(with: event) }
         guard let window else { return }
         updateHover(at: convert(window.mouseLocationOutsideOfEventStream, from: nil), command: event.modifierFlags.contains(.command))
     }

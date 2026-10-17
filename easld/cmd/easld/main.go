@@ -78,6 +78,8 @@ func run(args []string, stderr io.Writer) int {
 		return fail(err)
 	}
 	defer lock.release()
+	stopPasteMaintenance := startPasteMaintenance(*home, pasteSweepInterval, stderr)
+	defer stopPasteMaintenance()
 	// Integrations spool undelivered reports in `agent-reports/` beside the socket.
 	reg := board.NewRegistry(filepath.Join(*home, "boards"), store.DefaultDebounce, filepath.Join(filepath.Dir(path), "agent-reports"))
 	r := router.New(reg)

@@ -323,18 +323,6 @@ final class TerminalHost {
         throw ApiRouter.Failure("unavailable", "\(target) still lists terminal \(tile)'s session, or cannot confirm it is gone, 3 s after ending it")
     }
 
-    /// Ends `tile`'s session (owner-guarded by this instance's home label); logged when the host
-    /// can't be reached, and the session keeps running there.
-    func kill(_ tile: ObjectID) {
-        Task {
-            do {
-                _ = try await call("session.kill", .object(["tile": .string(tile), "home": .string(TerminalTile.homeLabel)]))
-            } catch {
-                NSLog("easl: couldn't end %@'s session on %@: %@", tile, target, "\(error)")
-            }
-        }
-    }
-
     /// Replays the reports `tiles`' integrations spooled on the host while they couldn't reach
     /// this instance (`HostedTerminal.spooled`), as a board replays its local spool when it opens
     /// (the staleness rule drops what a live report already overtook), then deletes them there.

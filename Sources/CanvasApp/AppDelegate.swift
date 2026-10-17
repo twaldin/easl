@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// tab group.
     private var heldTabs: [ObjectIdentifier: HeldTab] = [:]
     private var terminationSignal: DispatchSourceSignal?
+    private var pasteMaintenance: TerminalPaste.Maintenance?
     private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
         guard let self else { return nil }
@@ -57,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !DevPerf.enabled { Metrics.shared.sampleStalls(into: AppPaths.support.appendingPathComponent("stalls", isDirectory: true)) }
         // easl's own leftovers: dead sessions' zmx logs, read Ghostty configs, old renders.
         Housekeeping.pruneAtLaunch()
+        pasteMaintenance = TerminalPaste.Maintenance(baseDirectories: [AppPaths.support, FileManager.default.temporaryDirectory])
         if let url = AppPaths.asset(DrawingStyle.fontAsset) { DrawingStyle.registerFonts(url) }
         registry.onEvent = { [weak self] board, event in
             self?.controllers[board.id]?.apply(event)
@@ -65,8 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Every delete of a terminal (UI close, API, batch, undo/redo) ends its zmx session (a
         // hosted one's on its host), and with it any report its agent spooled here
         // (`AgentReportSpool`), which nothing would replay.
-        registry.onTerminalsEnded = { _, ended in
-            for terminal in ended { TerminalTile.killSession(terminal) }
+        registry.onTerminalsEnded = { board, ended in
+            for terminal in ended { TerminalTile.killSession(terminal, board: board.id) }
             Self.removeSpooledReports(ended)
         }
         // object.measure, size: "fit", and layout.check lay HTML pages out in WebKit.
@@ -254,6 +256,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        pasteMaintenance?.stop()
+        pasteMaintenance = nil
         for controller in controllers.values { controller.canvas.saveViewport() }
         registry.store.flush(Array(registry.boards.values))
         for controller in controllers.values { controller.saveComposer() }
@@ -358,12 +362,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if endSessions == true {
                     let terminals = board.objects.values.filter { $0.type == .terminal }.sorted { $0.id < $1.id }
                     for terminal in terminals {
+                        (controller?.canvas.tiles[terminal.id]?.content as? TerminalTile)?.endingSession = true
+                    }
+                    defer {
+                        for terminal in terminals {
+                            (controller?.canvas.tiles[terminal.id]?.content as? TerminalTile)?.endingSession = false
+                        }
+                    }
+                    for terminal in terminals {
                         guard board.objects[terminal.id] != nil else { continue }
                         let shown = controller?.canvas.tiles[terminal.id]?.content as? TerminalTile
-                        shown?.endingSession = true
-                        defer { shown?.endingSession = false }
                         do {
-                            try await TerminalTile.endSession(terminal)
+                            try await TerminalTile.endSession(terminal, board: board.id)
                         } catch {
                             let message = (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
                             throw ApiRouter.Failure("unavailable", message)

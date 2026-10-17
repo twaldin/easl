@@ -133,7 +133,7 @@ public enum TerminalPasteboardContent {
 
     #elseif canImport(AppKit)
         /// The pasteboard as text — see ``text(string:urls:)``.
-        static func text(from pasteboard: NSPasteboard = .general) -> String? {
+        public static func text(from pasteboard: NSPasteboard = .general) -> String? {
             text(
                 string: pasteboard.string(forType: .string),
                 urls: (pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL]) ?? []
