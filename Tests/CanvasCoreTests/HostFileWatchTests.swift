@@ -3,6 +3,7 @@ import Foundation
 import Testing
 @testable import CanvasCore
 
+@Suite(.serialized)
 @MainActor
 struct HostFileWatchTests {
     private func eventually(_ condition: () -> Bool) async throws -> Bool {
