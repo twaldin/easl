@@ -680,7 +680,10 @@ final class ApiRouterTests {
         // It never reads again, while the board emits far more than a socket buffer holds: the
         // broadcasts run on the main actor, which a blocking write would freeze for good.
         let text = String(repeating: "x", count: 4000)
-        for index in 0..<400 { board.create(type: .note, props: .object(["markdown": .string("\(index) \(text)")])) }
+        for index in 0..<400 {
+            board.create(type: .note, props: .object(["markdown": .string("\(index) \(text)")]),
+                         frame: Frame(x: Double(index) * 400, y: 0, w: 360, h: 240))
+        }
         let other = try connect()
         other.send(#"{"id":"p","method":"system.ping","params":{}}"#)
         #expect(try await other.next()["id"] == .string("p"))

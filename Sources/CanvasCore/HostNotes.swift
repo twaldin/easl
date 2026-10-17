@@ -195,7 +195,8 @@ extension HostFiles {
         return [noteFile(source, input)];
       }
       if (!item.pattern) return [];
-      const args = ['grep', '-l', '-z', '-I', '-E', '-e', item.pattern];
+      const name = item.symbol.split('.').filter(Boolean).at(-1).replaceAll('$', '\\$');
+      const args = ['grep', '-l', '-z', '-I', '-E', '-e', name, '--and', '-e', item.pattern];
       if (source.commit) args.push(source.commit);
       const names = git(source.root, args, limit);
       if (names === null) return [];
