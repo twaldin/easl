@@ -24,6 +24,7 @@ Each version's section is its GitHub release's notes.
 - Socket connections send requests on their own nonblocking queue instead of waiting for shared GCD workers; large writes resume when their descriptor is ready.
 - Streamed requests and replies scan only newly received bytes for line endings instead of repeatedly scanning a partial frame.
 - Host-note replies are decoded and interpreted on utility workers, leaving the cooperative executor available for socket handlers.
+- Synchronous board-load anchor checks take the next free Git slot ahead of queued background reads, without raising the two-process cap or preempting running commands.
 - Quitting tracks SSH process exit independently of output-draining callbacks, so a delayed reader cannot keep an already-reaped child registered.
 - Remote metadata polling runs off the main thread; change notifications remain on it and are discarded if cancelled before delivery.
 - Symbol-only note fences check the name before the declaration regex, avoiding expensive regex scans of long lines that cannot contain that symbol.

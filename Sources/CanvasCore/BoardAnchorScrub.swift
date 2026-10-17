@@ -27,9 +27,10 @@ enum BoardAnchorScrub {
         guard !candidates.isEmpty else { return nil }
         let result = Locked<BoardSnapshot?>(nil)
         let finished = DispatchSemaphore(value: 0)
-        // Load is synchronous. This task touches only Sendable snapshots and never the main actor.
+        // Load is synchronous. This task touches only Sendable snapshots and never the main actor;
+        // the main thread waits for it, so its git goes ahead of queued git (`synchronousLoad`).
         Task.detached {
-            let normalized = await scrub(snapshot, candidates: candidates)
+            let normalized = await GitRunner.$synchronousLoad.withValue(true) { await scrub(snapshot, candidates: candidates) }
             result.withLock { $0 = normalized }
             finished.signal()
         }
