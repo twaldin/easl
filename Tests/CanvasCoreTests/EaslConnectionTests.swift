@@ -135,6 +135,102 @@ final class EaslConnectionTests {
     }
 
     @Test(arguments: ["socket", "relay"])
+    func largeAndSmallConcurrentRequestsArriveWholeWithoutInterleaving(_ transport: String) async throws {
+        let server = try FakeServer(path: path)
+        defer { server.stop() }
+        let connection = transport == "socket" ? EaslConnection.unixSocket(path) : relay()
+        defer { connection.close() }
+        let text = "begin\n" + String(repeating: "0123456789abcdef", count: 65_536) + "\nend"
+        async let large = connection.request("echo", .object(["text": .string(text)]), timeout: .seconds(10))
+        async let next = connection.request("echo", .object(["after": "large request"]), timeout: .seconds(10))
+        let (whole, following) = try await (large, next)
+        #expect(whole == .object(["text": .string(text)]))
+        #expect(following == .object(["after": "large request"]))
+    }
+
+    @Test func theFirstSocketHandshakeGoesOnlineWhileGlobalWorkersAreBlocked() async throws {
+        let isolated = try await runIsolatedTestIfParallel("theFirstSocketHandshakeGoesOnlineWhileGlobalWorkersAreBlocked")
+        if isolated { return }
+        let server = try FakeServer(path: path)
+        defer { server.stop() }
+        let path = path
+        typealias Observation = (saturated: Bool, first: EaslConnection.State?, ping: String?, reader: Task<Void, Never>?)
+        let result: Observation = await withCheckedContinuation { continuation in
+            Thread.detachNewThread {
+                let observe = { () -> Observation in
+                    let release = DispatchSemaphore(value: 0)
+                    let blockers = DispatchGroup()
+                    let started = Locked(0)
+                    // Darwin's constrained worker cap is max(64, 5 * CPUs). Queue more without
+                    // depending on the capacity this particular runner actually grants.
+                    let count = max(128, ProcessInfo.processInfo.activeProcessorCount * 5 + 16)
+                    for _ in 0..<count {
+                        blockers.enter()
+                        DispatchQueue.global().async {
+                            defer { blockers.leave() }
+                            started.withLock { $0 += 1 }
+                            release.wait()
+                        }
+                    }
+                    var connection: EaslConnection?
+                    defer {
+                        for _ in 0..<count { release.signal() }
+                        blockers.wait()
+                        connection?.close()
+                        if let connection { _ = connection.state }
+                    }
+
+                    let setupDeadline = ContinuousClock.now + .seconds(15)
+                    var lastCount = 0
+                    var lastChange = ContinuousClock.now
+                    var saturated = false
+                    while ContinuousClock.now < setupDeadline {
+                        let currentCount = started.withLock { $0 }
+                        if currentCount != lastCount {
+                            lastCount = currentCount
+                            lastChange = .now
+                        }
+                        if currentCount > 0, ContinuousClock.now - lastChange >= .seconds(2) {
+                            saturated = true
+                            break
+                        }
+                        Thread.sleep(forTimeInterval: 0.01)
+                    }
+
+                    guard saturated else {
+                        return (saturated: false, first: nil, ping: nil, reader: nil)
+                    }
+                    let first = Locked<EaslConnection.State?>(nil)
+                    let deadline = ContinuousClock.now + .seconds(10)
+                    let client = EaslConnection.unixSocket(path)
+                    connection = client
+                    let states = client.states()
+                    let reader = Task {
+                        for await state in states {
+                            if state == .online || state == .offline {
+                                first.withLock { $0 = state }
+                                break
+                            }
+                        }
+                    }
+                    while first.withLock({ $0 == nil }), ContinuousClock.now < deadline {
+                        Thread.sleep(forTimeInterval: 0.01)
+                    }
+                    let outcome = first.withLock { $0 }
+                    let ping = server.calls.first
+                    reader.cancel()
+                    return (saturated: true, first: outcome, ping: ping, reader: reader)
+                }
+                continuation.resume(returning: observe())
+            }
+        }
+        await result.reader?.value
+        try #require(result.saturated, "global blockers did not reach a stable started count within 15 seconds")
+        #expect(result.first == .online, "the first handshake must finish before its unchanged 10-second deadline")
+        #expect(result.ping == "system.ping")
+    }
+
+    @Test(arguments: ["socket", "relay"])
     func answersGoToTheRequestThatAskedEvenOutOfOrder(_ transport: String) async throws {
         let server = try FakeServer(path: path)
         defer { server.stop() }

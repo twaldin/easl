@@ -18,10 +18,16 @@ public actor GitRunner {
     public static let shared = GitRunner(limit: 2)
     /// stderr past this is dropped; it only feeds error messages.
     static let maxDiagnostics = 16 << 10
+    /// A synchronous board load holds MainActor while awaiting its git. Serve those requests
+    /// before queued background work; running jobs keep their slots and the cap still holds.
+    @TaskLocal static var synchronousLoad: Bool = false
 
+    private typealias Waiter = (id: UInt64, continuation: CheckedContinuation<Void, Error>)
     private let limit: Int
     private var running = 0
-    private var waiting: [(id: UInt64, continuation: CheckedContinuation<Void, Error>)] = []
+    private var waiting: [Waiter] = []
+    /// `synchronousLoad` requests, each served before any of `waiting`.
+    private var loadWaiting: [Waiter] = []
     private var nextWaiter: UInt64 = 0
 
     public init(limit: Int) {
@@ -57,10 +63,13 @@ public actor GitRunner {
         }
         let id = nextWaiter
         nextWaiter += 1
+        let load = Self.synchronousLoad
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 if Task.isCancelled {
                     continuation.resume(throwing: CancellationError())
+                } else if load {
+                    loadWaiting.append((id, continuation))
                 } else {
                     waiting.append((id, continuation))
                 }
@@ -72,16 +81,21 @@ public actor GitRunner {
 
     /// A cancelled waiter leaves the queue without ever holding a slot.
     private func abandon(_ id: UInt64) {
-        guard let index = waiting.firstIndex(where: { $0.id == id }) else { return }
-        waiting.remove(at: index).continuation.resume(throwing: CancellationError())
+        if let index = loadWaiting.firstIndex(where: { $0.id == id }) {
+            loadWaiting.remove(at: index).continuation.resume(throwing: CancellationError())
+        } else if let index = waiting.firstIndex(where: { $0.id == id }) {
+            waiting.remove(at: index).continuation.resume(throwing: CancellationError())
+        }
     }
 
     /// Hands the slot straight to the next waiter so a burst can't overshoot the cap.
     private func release() {
-        if waiting.isEmpty {
-            running -= 1
-        } else {
+        if !loadWaiting.isEmpty {
+            loadWaiting.removeFirst().continuation.resume()
+        } else if !waiting.isEmpty {
             waiting.removeFirst().continuation.resume()
+        } else {
+            running -= 1
         }
     }
 
