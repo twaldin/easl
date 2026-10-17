@@ -438,12 +438,20 @@ public final class EaslConnection: @unchecked Sendable {
         return fd
     }
 
-    /// Starts reading and writing `link`; its read fd is closed when reading stops, its write fd
-    /// when the writer is closed.
+    /// Starts reading and writing `link`. Each fd is closed by its source's cancel handler: the
+    /// read fd's once reading stops, the write fd's once writing stops (`Link.stopWriting`).
     private func start(_ link: Link) -> Link {
-        _ = fcntl(link.writeFD, F_SETNOSIGPIPE, 1)
         let writeFD = link.writeFD
-        link.writer = DispatchIO(type: .stream, fileDescriptor: writeFD, queue: queue) { _ in Darwin.close(writeFD) }
+        _ = fcntl(writeFD, F_SETNOSIGPIPE, 1)
+        // `write` runs on `queue`, so a full pipe or socket must refuse rather than block it.
+        _ = fcntl(writeFD, F_SETFL, fcntl(writeFD, F_GETFL) | O_NONBLOCK)
+        let writable = DispatchSource.makeWriteSource(fileDescriptor: writeFD, queue: queue)
+        writable.setEventHandler { [weak self, weak link] in
+            guard let self, let link else { return }
+            self.flush(link)
+        }
+        writable.setCancelHandler { Darwin.close(writeFD) }
+        link.writer = .idle(writable)
         let readFD = link.readFD
         _ = fcntl(readFD, F_SETFL, fcntl(readFD, F_GETFL) | O_NONBLOCK)
         let source = DispatchSource.makeReadSource(fileDescriptor: readFD, queue: queue)
@@ -560,13 +568,56 @@ public final class EaslConnection: @unchecked Sendable {
         }
     }
 
+    /// Sends `line` after what `link` hasn't written yet; dropped once the link stopped writing.
     private func write(_ line: Data, on link: Link) {
+        guard link.writer != nil else { return }
+        link.outbox.append(line)
+        // Lines already waiting hold the source, which writes this one after them.
+        if link.outbox.count == 1 { flush(link) }
+    }
+
+    /// Writes `link.outbox` in order until it is empty or the fd is full; a full fd's source calls
+    /// this again once the fd takes more. A failure is reported on a later turn of the queue, as
+    /// DispatchIO's was, so no caller sees its link dropped in the middle of a write.
+    private func flush(_ link: Link) {
         guard let writer = link.writer else { return }
-        let bytes = line.withUnsafeBytes { DispatchData(bytes: $0) }
-        let generation = link.generation
-        writer.write(offset: 0, data: bytes, queue: queue) { [weak self] done, _, error in
-            guard done, error != 0 else { return }
-            self?.lost(generation, reason: "write failed: \(String(cString: strerror(error)))")
+        var done = link.outboxHead
+        while done < link.outbox.count {
+            let line = link.outbox[done]
+            let count = line.withUnsafeBytes { bytes in
+                let rest = UnsafeRawBufferPointer(rebasing: bytes[link.written...])
+                return Darwin.write(link.writeFD, rest.baseAddress, rest.count)
+            }
+            if count > 0 {
+                link.written += count
+                if link.written == line.count {
+                    link.written = 0
+                    link.outbox[done] = Data()
+                    done += 1
+                }
+                continue
+            }
+            let code = errno
+            if code == EINTR { continue }
+            if code == EAGAIN {
+                link.outboxHead = done
+                if case .idle(let source) = writer {
+                    source.resume()
+                    link.writer = .blocked(source)
+                }
+                return
+            }
+            link.stopWriting()
+            let generation = link.generation
+            let reason = "write failed: \(String(cString: strerror(code)))"
+            queue.async { [weak self] in self?.lost(generation, reason: reason) }
+            return
+        }
+        link.outbox.removeAll(keepingCapacity: true)
+        link.outboxHead = 0
+        if case .blocked(let source) = writer {
+            source.suspend()
+            link.writer = .idle(source)
         }
     }
 
@@ -632,7 +683,13 @@ private final class Link: @unchecked Sendable {
     let writeFD: Int32
     let process: Process?
     var source: DispatchSourceRead?
-    var writer: DispatchIO?
+    /// The write fd's source, made in `start` and resumed only while `outbox` waits on a full fd,
+    /// so a link that never fills it gets no write events. Nil before `start` and once stopped.
+    var writer: Writer?
+    /// Cleared slots before `outboxHead` avoid shifting pending lines after every partial drain.
+    var outbox: [Data] = []
+    var outboxHead = 0
+    var written = 0
     var errors: Pipe?
     var buffer: [UInt8] = []
     var chunk = [UInt8](repeating: 0, count: 64 * 1024)
@@ -665,13 +722,37 @@ private final class Link: @unchecked Sendable {
         return "\(name) exited\(status)" + (last.map { ": \($0)" } ?? "")
     }
 
+    enum Writer {
+        /// Suspended, or not activated yet.
+        case idle(DispatchSourceWrite)
+        /// Resumed: fires once the fd takes more.
+        case blocked(DispatchSourceWrite)
+    }
+
     func tearDown() {
         source?.cancel()
         source = nil
-        writer?.close(flags: .stop)
-        writer = nil
+        stopWriting()
         errors?.fileHandleForReading.readabilityHandler = nil
         if let process, process.isRunning { process.terminate() }
+    }
+
+    /// Drops what wasn't written. The source's cancel handler closes the write fd, and runs only
+    /// once the source is resumed, so an idle one is resumed after it is cancelled.
+    func stopWriting() {
+        switch writer {
+        case .idle(let source)?:
+            source.cancel()
+            source.resume()
+        case .blocked(let source)?:
+            source.cancel()
+        case nil:
+            break
+        }
+        writer = nil
+        outbox = []
+        outboxHead = 0
+        written = 0
     }
 }
 
