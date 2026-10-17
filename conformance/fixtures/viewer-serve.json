@@ -1,7 +1,7 @@
 {
   "scenario": "viewer-serve",
   "description": "A scripted Mac client serves object.measure, view.render and object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a host-picture refusal is the caller's. client.list names attached clients. A diagram reload stays unavailable and is not forwarded. easld only.",
-  "recordedOn": "easld unit 3 viewer contracts: schema-valid reload replies",
+  "recordedOn": "easld a780b45 + final review fixes; binary SHA256 251b44868afbc655ec6449ce0aec8fbde427171f9db0dc8d119a550fbabd29a3",
   "steps": [
     {
       "step": "board.open",

@@ -1634,6 +1634,9 @@ public final class ApiRouter {
             guard let state = viewState(board) else { throw Failure("unavailable", "board \(board.id) has no window") }
             return Self.viewResult(state, board: board.id)
 
+        case "client.list":
+            throw Failure("unsupported", "client.list lists clients attached to easld")
+
         case "session.spawn", "session.list", "session.kill", "relay.open":
             // A hosted terminal's session runs under the host's easld, which relays its way back
             // here (docs/contracts.md "Hosted terminals"); the app's own sessions are its tiles'.

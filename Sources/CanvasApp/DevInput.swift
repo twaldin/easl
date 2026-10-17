@@ -173,7 +173,7 @@ enum DevInput {
             return
         }
         if fields["kind"] == "reopen" {
-            let visible = NSApp.windows.contains { $0.isVisible }
+            let visible = NSApp.windows.contains { $0.isVisible && $0.alphaValue > 0 }
             _ = (NSApp.delegate as? AppDelegate)?.applicationShouldHandleReopen(NSApp, hasVisibleWindows: visible)
             return
         }

@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -21,6 +22,8 @@ import (
 	"github.com/twaldin/easl/easld/internal/swiftjson"
 	"github.com/twaldin/easl/easld/internal/weblink"
 )
+
+const renderOutputTooLarge = "inline view.render response exceeds the %d-byte output limit; omit inline or use out to write the image to a file"
 
 // render is view.render. The client always draws inline and writes no file; easld checks
 // the bytes and, unless the caller asked for inline, writes them here (out, or a new file
@@ -121,8 +124,11 @@ func (r *Router) render(id any, p map[string]any) (any, error) {
 		return nil, err
 	}
 	raw, _ := result["data"].(string)
+	if inline && len(raw) > server.MaxPendingOutput {
+		return nil, invalid(renderOutputTooLarge, server.MaxPendingOutput)
+	}
 	answered, _ := result["format"].(string)
-	data, w, h, err := decodeRender(c, raw, answered, format, result["width"], result["height"])
+	data, w, h, err := decodeRender(c, raw, answered, format, result["width"], result["height"], inline)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +151,7 @@ func (r *Router) render(id any, p map[string]any) (any, error) {
 		// and CR/LF, so count those without encoding another copy of the image.
 		size := len(envelope) + len(raw) + strings.Count(raw, "/") + strings.Count(raw, "\r") + strings.Count(raw, "\n") + 1
 		if size > server.MaxPendingOutput {
-			return nil, invalid("inline view.render response exceeds the %d-byte output limit; omit inline or use out to write the image to a file", server.MaxPendingOutput)
+			return nil, invalid(renderOutputTooLarge, server.MaxPendingOutput)
 		}
 		reply["data"] = raw
 		return reply, nil
@@ -234,19 +240,32 @@ func renderEncoding(p map[string]any) (format, ext string) {
 	return "png", "png"
 }
 
-func decodeRender(c *clients.Client, raw, answered, format string, width, height any) ([]byte, int, int, error) {
+func decodeRender(c *clients.Client, raw, answered, format string, width, height any, inline bool) ([]byte, int, int, error) {
 	if raw == "" {
 		return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with no image data", c.Name())
 	}
 	if answered != "" && answered != format {
 		return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with format %s, not %s", c.Name(), answered, format)
 	}
-	data, err := base64.StdEncoding.DecodeString(raw)
-	if err != nil {
-		return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with image data that is not base64", c.Name())
+	var data []byte
+	var reader io.Reader
+	if inline {
+		reader = base64.NewDecoder(base64.StdEncoding, strings.NewReader(raw))
+	} else {
+		var err error
+		data, err = base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with image data that is not base64", c.Name())
+		}
+		reader = bytes.NewReader(data)
 	}
-	config, err := decodeRenderImage(data, format)
-	if err != nil {
+	config, imageErr := decodeRenderImage(reader, format)
+	if inline {
+		if _, err := io.Copy(io.Discard, reader); err != nil {
+			return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with image data that is not base64", c.Name())
+		}
+	}
+	if imageErr != nil {
 		return nil, 0, 0, fail(api.CodeInternal, "%s answered view.render with image data that is not a %s", c.Name(), format)
 	}
 	w, h := config.Width, config.Height
@@ -256,12 +275,12 @@ func decodeRender(c *clients.Client, raw, answered, format string, width, height
 	return data, w, h, nil
 }
 
-func decodeRenderImage(data []byte, format string) (image.Config, error) {
+func decodeRenderImage(reader io.Reader, format string) (image.Config, error) {
 	switch format {
 	case "png":
-		return png.DecodeConfig(bytes.NewReader(data))
+		return png.DecodeConfig(reader)
 	case "jpeg":
-		return jpeg.DecodeConfig(bytes.NewReader(data))
+		return jpeg.DecodeConfig(reader)
 	default:
 		return image.Config{}, fmt.Errorf("format %s", format)
 	}

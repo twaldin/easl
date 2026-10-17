@@ -1150,13 +1150,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// (`UISettings`). Off ends the closed windows' attachments now; on attaches the reopen list's
     /// boards again with their windows closed.
     @objc func toggleBackgroundAttach(_ sender: Any?) {
-        backgroundAttach.toggle()
-        let on = backgroundAttach
+        let on = !backgroundAttach
         do {
             try settings.update { $0.backgroundAttach = on }
         } catch {
             NSLog("easl: cannot save background attach to %@: %@", settings.url.path, error.localizedDescription)
+            return
         }
+        backgroundAttach = on
         if on { attachInBackground() } else { endBackgroundAttachments() }
     }
     @objc func clearBrowsingData(_ sender: Any?) {

@@ -146,4 +146,38 @@ struct ClientUIStateTests {
         #expect(RemoteClose.window.outcome(backgroundAttach: true, server: .app) == .detach, "a Mac host takes no client")
         #expect(RemoteClose.window.outcome(backgroundAttach: true, server: nil) == .detach)
     }
+
+    @Test func changingSettingsDoesNotOverwriteAnUnreadableFile() throws {
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = UISettings.Store(url: home.appendingPathComponent("ui-settings.json"))
+        let damaged = Data(#"{"scale":1.3,"backgroundAttach":false"#.utf8)
+        try damaged.write(to: store.url)
+        #expect(throws: (any Error).self) {
+            try store.update { $0.chromeTextScale = 1.5 }
+        }
+        #expect(try Data(contentsOf: store.url) == damaged)
+    }
+
+    @Test func changingTheReopenListCannotSucceedWithoutReadingIt() throws {
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = RemoteReopen.Store(url: home.appendingPathComponent("remote-boards.json"))
+        let first = RemoteReopen(host: "deckbox", sshTarget: "deckbox", board: "brd_a")
+        let second = RemoteReopen(host: "home", sshTarget: "home", board: "brd_b")
+        let saved = try JSONEncoder().encode([first])
+        var damaged = saved
+        damaged.append(contentsOf: "[".utf8)
+        try damaged.write(to: store.url)
+        #expect(throws: (any Error).self) {
+            try store.forget(sshTarget: first.sshTarget, board: first.board)
+        }
+        #expect(try Data(contentsOf: store.url) == damaged)
+        #expect(throws: (any Error).self) { try store.remember(second) }
+        #expect(try Data(contentsOf: store.url) == damaged)
+        try saved.write(to: store.url)
+        #expect(store.load() == [first])
+        try store.forget(sshTarget: first.sshTarget, board: first.board)
+        #expect(store.load() == [])
+    }
 }

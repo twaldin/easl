@@ -128,7 +128,7 @@ func (r *Router) batch(p map[string]any) (any, error) {
 		return params
 	}
 	pending := map[int]map[string]any{}
-	held := newFitGuard(b)
+	var held *fitGuard
 	var sizes []*fit
 	plan := keyPlan{given: map[string]plannedHolder{}}
 	upserts := map[int]upsertPlan{}
@@ -144,6 +144,7 @@ func (r *Router) batch(p map[string]any) (any, error) {
 		defaultFit := creates && (params["type"] == string(model.Note) || params["type"] == string(model.Image)) && !hasH
 		if state == nil && (sized || defaultFit) {
 			state = &batchState{live: b, inputs: map[string]batchInput{}}
+			held = newFitGuard(b)
 		}
 	}
 	resolvedOps := make([]map[string]any, len(ops))

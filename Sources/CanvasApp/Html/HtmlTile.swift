@@ -531,8 +531,15 @@ final class HtmlTile: NSView, TileContent {
         web.load(URLRequest(url: pageURL))
         guard await Self.wait(until: { [unowned self] in offscreenSettled }, limit: limit) else { return .failure(.unsettled("the page did not finish rendering")) }
         let measure = "[Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0), Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)]"
-        let extent = (try? await web.evaluateJavaScript(measure)) as? [Double] ?? []
-        return .success(CGSize(width: extent.first ?? size.width, height: extent.count > 1 ? extent[1] : size.height))
+        do {
+            guard let extent = try await web.evaluateJavaScript(measure) as? [Double],
+                  extent.count == 2, extent.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
+                return .failure(.unsettled("cannot read the page's dimensions"))
+            }
+            return .success(CGSize(width: extent[0], height: extent[1]))
+        } catch {
+            return .failure(.unsettled("cannot read the page's dimensions"))
+        }
     }
 
     /// Polls `condition` until it holds, the task is cancelled (the render deadline), or `limit` passes.

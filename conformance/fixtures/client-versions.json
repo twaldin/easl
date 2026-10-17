@@ -1,7 +1,7 @@
 {
   "scenario": "client-versions",
-  "description": "Scripted Mac clients on other easl versions (client.attach): one built from an older schema version is refused `unavailable` and serves nothing; one with the server's version and another schema hash, and one built from a newer version, are accepted and serve the methods both sides know. easld ignores the attach params and `serves` names it doesn't know and never sends a client a method it doesn't list. easld only: the app doesn't speak the client protocol yet.",
-  "recordedOn": "easld unit 3 viewer render and HTML measurement",
+  "description": "Scripted Mac clients on other easl versions (client.attach): one built from an older schema version is refused `unavailable` and serves nothing; one with the server's version and another schema hash, and one built from a newer version, are accepted and serve the methods both sides know. easld ignores the attach params and `serves` names it doesn't know and never sends a client a method it doesn't list. This records easld's protocol with scripted clients.",
+  "recordedOn": "easld a780b45 + final review fixes; binary SHA256 251b44868afbc655ec6449ce0aec8fbde427171f9db0dc8d119a550fbabd29a3",
   "steps": [
     {
       "step": "board.open",

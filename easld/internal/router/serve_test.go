@@ -322,6 +322,7 @@ func TestViewRenderWritesTheDaemonFileAndRelaysTargetErrors(t *testing.T) {
 		pixelAnswer(),
 		{"ok": false, "error": map[string]any{"code": "unavailable", "message": id + " is only a host picture: view.render cannot draw it"}},
 		{"ok": true, "result": map[string]any{"data": "not-base64", "format": "png", "width": 1.0, "height": 1.0}},
+		{"ok": true, "result": map[string]any{"data": pixelPNG + "!", "format": "png", "width": 1.0, "height": 1.0}},
 		{"ok": true, "result": map[string]any{"data": pixelPNG, "format": "png", "width": 9.0, "height": 1.0}},
 	}}
 	attachApp(f, app, map[string]any{"app": "0.2.0", "host": "studio", "focused": f.board.ID()})
@@ -372,6 +373,10 @@ func TestViewRenderWritesTheDaemonFileAndRelaysTargetErrors(t *testing.T) {
 	code, message = errorOf(f.call("view.render", map[string]any{"target": id, "inline": true}))
 	if code != "internal" || !strings.Contains(message, "not base64") {
 		t.Fatalf("bad base64: %s %s", code, message)
+	}
+	code, message = errorOf(f.call("view.render", map[string]any{"target": id, "inline": true}))
+	if code != "internal" || !strings.Contains(message, "not base64") {
+		t.Fatalf("bad base64 after the image header: %s %s", code, message)
 	}
 	code, message = errorOf(f.call("view.render", map[string]any{"target": id, "inline": true}))
 	if code != "internal" || !strings.Contains(message, "1×1") || !strings.Contains(message, "not 9×1") {

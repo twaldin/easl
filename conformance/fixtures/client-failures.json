@@ -1,7 +1,7 @@
 {
   "scenario": "client-failures",
-  "description": "Three scripted Mac clients (client.attach) show one board. A call goes to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call `unavailable`, naming it, and nothing is retried on another client; the next call goes to the client the choice order picks then. easld only: the app doesn't speak the client protocol yet.",
-  "recordedOn": "easld unit 3 viewer render and HTML measurement",
+  "description": "Three scripted Mac clients (client.attach) show one board. A call goes to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call `unavailable`, naming it, and nothing is retried on another client; the next call goes to the client the choice order picks then. This records easld's protocol with scripted clients.",
+  "recordedOn": "easld a780b45 + final review fixes; binary SHA256 251b44868afbc655ec6449ce0aec8fbde427171f9db0dc8d119a550fbabd29a3",
   "steps": [
     {
       "step": "board.open",

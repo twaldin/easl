@@ -137,15 +137,21 @@ public struct UISettings: Equatable, Sendable {
         }
 
         /// The saved settings; 100% and on where there is none or the file is unreadable.
-        public func load() -> UISettings {
-            guard let data = try? Data(contentsOf: url), let file = try? JSONDecoder().decode(File.self, from: data) else { return UISettings() }
-            return UISettings(chromeTextScale: file.scale.map(ChromeTextScale.level(nearest:)) ?? ChromeTextScale.normal,
-                              backgroundAttach: file.backgroundAttach ?? true)
+        public func load() -> UISettings { (try? read()) ?? UISettings() }
+
+        private func read() throws -> UISettings {
+            do {
+                let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: url))
+                return UISettings(chromeTextScale: file.scale.map(ChromeTextScale.level(nearest:)) ?? ChromeTextScale.normal,
+                                  backgroundAttach: file.backgroundAttach ?? true)
+            } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+                return UISettings()
+            }
         }
 
         /// Writes the settings as the file holds them now, with `change` applied.
         public func update(_ change: (inout UISettings) -> Void) throws {
-            var settings = load()
+            var settings = try read()
             change(&settings)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(File(settings)).write(to: url, options: .atomic)
@@ -179,14 +185,20 @@ public struct RemoteReopen: Codable, Hashable, Sendable {
 
         /// An unreadable file is an empty list. A hand-edited entry ssh would misread, or that names
         /// no board, is left out (`RemoteHost.problem(withHost:)`).
-        public func load() -> [RemoteReopen] {
-            guard let data = try? Data(contentsOf: url), let entries = try? JSONDecoder().decode([RemoteReopen].self, from: data) else { return [] }
-            return entries.filter { RemoteHost.problem(withHost: $0.sshTarget) == nil && ApiRouter.isBoardID($0.board) }
+        public func load() -> [RemoteReopen] { (try? read()) ?? [] }
+
+        private func read() throws -> [RemoteReopen] {
+            do {
+                let entries = try JSONDecoder().decode([RemoteReopen].self, from: Data(contentsOf: url))
+                return entries.filter { RemoteHost.problem(withHost: $0.sshTarget) == nil && ApiRouter.isBoardID($0.board) }
+            } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+                return []
+            }
         }
 
         /// `entry` is in the list: added at the end, or in place of the one for its host and board.
         public func remember(_ entry: RemoteReopen) throws {
-            var entries = load()
+            var entries = try read()
             if let index = entries.firstIndex(where: { $0.sshTarget == entry.sshTarget && $0.board == entry.board }) {
                 guard entries[index] != entry else { return }
                 entries[index] = entry
@@ -198,7 +210,7 @@ public struct RemoteReopen: Codable, Hashable, Sendable {
 
         /// No entry for `board` on `sshTarget` is left.
         public func forget(sshTarget: String, board: BoardID) throws {
-            let entries = load()
+            let entries = try read()
             let kept = entries.filter { $0.sshTarget != sshTarget || $0.board != board }
             guard kept.count != entries.count else { return }
             try save(kept)
