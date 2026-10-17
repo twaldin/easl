@@ -28,24 +28,32 @@ public enum ZmxIsolation {
         guard let layout = layout(home: home) else {
             return .refuse("EASL_HOME is not an absolute path, so zmx state cannot be kept under that home")
         }
-        let root = physical(home)
-        let installed = installedPaths(environment: environment, uid: uid, accountHome: accountHome, guiTemp: guiTemp, layout: layout).map(physical)
-        for path in [layout.zmxDir, layout.zmxDir + "/logs", layout.stateHome, layout.stateHome + "/zmx/logs", layout.tmpDir, layout.tmpDir + "/zmx-\(uid)"] {
-            let resolved = physical(path)
-            guard resolved == root || resolved.hasPrefix(root == "/" ? "/" : root + "/") else {
-                return .refuse("development zmx path \(resolved) is outside its home \(root)")
-            }
-            if let shared = installed.first(where: { shares(resolved, $0) }) {
-                return .refuse("development zmx path \(resolved) is the installed app's zmx path \(shared)")
-            }
+        // zmx 0.8.1 allows 103 socket-path bytes; canvas session names need 29.
+        guard layout.zmxDir.utf8.count + 1 + 29 <= 103 else {
+            return .refuse("home is too long for a zmx socket; choose a shorter EASL_DEV_HOME")
         }
-        return .isolated(layout)
+        do {
+            let root = try physical(home)
+            let installed = try installedPaths(environment: environment, uid: uid, accountHome: accountHome, guiTemp: guiTemp, layout: layout).map(physical)
+            for path in [layout.zmxDir, layout.zmxDir + "/logs", layout.stateHome, layout.stateHome + "/zmx/logs", layout.tmpDir, layout.tmpDir + "/zmx-\(uid)"] {
+                let resolved = try physical(path)
+                guard resolved == root || resolved.hasPrefix(root == "/" ? "/" : root + "/") else {
+                    return .refuse("development zmx path \(resolved) is outside its home \(root)")
+                }
+                if let shared = installed.first(where: { shares(resolved, $0) }) {
+                    return .refuse("development zmx path \(resolved) is the installed app's zmx path \(shared)")
+                }
+            }
+            return .isolated(layout)
+        } catch {
+            return .refuse("cannot resolve development zmx paths: \(error.localizedDescription)")
+        }
     }
 
     /// Installed-app zmx directories: account logs, `/tmp/zmx-<uid>`, the GUI
     /// temp's `zmx-<uid>` when known, and `XDG_RUNTIME_DIR/zmx` when set. A
     /// development override already in `environment` is not treated as installed.
-    private static func installedPaths(environment: [String: String], uid: UInt32, accountHome: String, guiTemp: String?, layout: Layout) -> [String] {
+    private static func installedPaths(environment: [String: String], uid: UInt32, accountHome: String, guiTemp: String?, layout: Layout) throws -> [String] {
         var paths: [String] = []
         func add(_ path: String?) {
             guard let path, path.hasPrefix("/") else { return }
@@ -55,6 +63,8 @@ public enum ZmxIsolation {
         add(account + "/.local/state/zmx")
         add(account + "/Library/Application Support/Easl")
         add(account + "/.local/state/easl")
+        add("/Applications/easl.app")
+        add(account + "/Applications/easl.app")
         add(account + "/.local/state/zmx/logs")
         if let home = environment["HOME"], home.hasPrefix("/"), trimSlash(home) != account {
             let root = trimSlash(home)
@@ -68,11 +78,11 @@ public enum ZmxIsolation {
         if let runtime = environment["XDG_RUNTIME_DIR"], runtime.hasPrefix("/") {
             add(runtime + "/zmx")
         }
-        if let state = environment["XDG_STATE_HOME"], state.hasPrefix("/"), trimSlash(state) != layout.stateHome {
+        if let state = environment["XDG_STATE_HOME"], state.hasPrefix("/"), try physical(state) != physical(layout.stateHome) {
             add(trimSlash(state) + "/zmx")
             add(trimSlash(state) + "/zmx/logs")
         }
-        if let zmx = environment["ZMX_DIR"], zmx.hasPrefix("/"), trimSlash(zmx) != layout.zmxDir {
+        if let zmx = environment["ZMX_DIR"], zmx.hasPrefix("/"), try physical(zmx) != physical(layout.zmxDir) {
             add(zmx)
         }
         return paths
@@ -80,8 +90,13 @@ public enum ZmxIsolation {
 
     /// Symlink-free absolute path, including a suffix that does not exist yet.
     /// `..` is applied after the symlink it follows, which a lexical prefix misses.
-    static func physical(_ path: String) -> String {
-        guard path.hasPrefix("/") else { return path }
+    static func physical(_ path: String) throws -> String {
+        try physical(path, links: 0)
+    }
+
+    private static func physical(_ path: String, links: Int) throws -> String {
+        guard links < 40 else { throw POSIXError(.ELOOP) }
+        guard path.hasPrefix("/") else { throw POSIXError(.EINVAL) }
         var resolved = "/"
         var pending: [String] = []
         for part in path.split(separator: "/") {
@@ -96,9 +111,16 @@ public enum ZmxIsolation {
                 }
                 continue
             }
-            if pending.isEmpty, let real = existingRealpath(resolved == "/" ? "/" + name : resolved + "/" + name) {
-                resolved = real
-                continue
+            if pending.isEmpty {
+                let candidate = resolved == "/" ? "/" + name : resolved + "/" + name
+                if let target = try? FileManager.default.destinationOfSymbolicLink(atPath: candidate) {
+                    resolved = try physical(target.hasPrefix("/") ? target : resolved + "/" + target, links: links + 1)
+                    continue
+                }
+                if let real = existingRealpath(candidate) {
+                    resolved = real
+                    continue
+                }
             }
             pending.append(name)
         }
@@ -120,7 +142,6 @@ public enum ZmxIsolation {
     }
 
     private static func existingRealpath(_ path: String) -> String? {
-        guard FileManager.default.fileExists(atPath: path) else { return nil }
         guard let resolved = realpath(path, nil) else { return nil }
         defer { free(resolved) }
         let value = String(cString: resolved)

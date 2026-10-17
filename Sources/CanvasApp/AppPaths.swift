@@ -92,13 +92,10 @@ enum AppPaths {
         return ZmxIsolation.layout(home: home)?.zmxDir
     }()
 
-    /// Where zmx writes each session's log (`<session>.log`). zmx 0.8.1 uses
-    /// `$ZMX_DIR/logs` when `ZMX_DIR` is set, else `$XDG_STATE_HOME/zmx/logs`, else
-    /// `~/.local/state/zmx/logs`. A development home's is `<EASL_HOME>/zmx/logs`.
-    /// easl deletes its sessions' logs (`Housekeeping`).
+    /// Development logs follow the forced zmx namespace. Installed launches keep
+    /// the account's XDG state location, as their tile attach strips inherited ZMX_DIR.
     static let zmxLogs: URL = {
-        let forced = devZmxDir ?? ProcessInfo.processInfo.environment["ZMX_DIR"].flatMap { $0.hasPrefix("/") ? $0 : nil }
-        if let forced { return URL(fileURLWithPath: forced, isDirectory: true).appendingPathComponent("logs", isDirectory: true) }
+        if let forced = devZmxDir { return URL(fileURLWithPath: forced, isDirectory: true).appendingPathComponent("logs", isDirectory: true) }
         let state = ProcessInfo.processInfo.environment["XDG_STATE_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state", isDirectory: true)
         return state.appendingPathComponent("zmx/logs", isDirectory: true)
