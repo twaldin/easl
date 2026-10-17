@@ -115,6 +115,37 @@ func AnchoringRanges(markdown string, reading measure.LinkReading) string {
 	return text
 }
 
+// ScrubRefusedAnchors removes only metadata tokens from policy-refused opening fences.
+// The AST identifies fences; decoded token boundaries map back to the original bytes.
+func ScrubRefusedAnchors(markdown string, reading measure.LinkReading) string {
+	d := parseMarkdown(markdown)
+	var out strings.Builder
+	end := 0
+	for _, block := range d.codeBlocks() {
+		anchors := measure.FenceAnchorRanges(block.info)
+		if len(anchors) == 0 {
+			continue
+		}
+		fence := measure.ParseFenceInfo(block.info)
+		if fence.Mode() == measure.FenceFree || !reading.RefusesFence(fence) {
+			continue
+		}
+		var offsets []int
+		decodeInlineMapped(d.source[block.infoStart:block.infoEnd], &offsets)
+		for _, anchor := range anchors {
+			start := block.infoStart + offsets[anchor.Start]
+			stop := block.infoStart + offsets[anchor.End]
+			out.WriteString(markdown[end:start])
+			end = stop
+		}
+	}
+	if end == 0 {
+		return markdown
+	}
+	out.WriteString(markdown[end:])
+	return out.String()
+}
+
 // anchoring is NoteMarkdown.anchoring: ` anchor="…"` appended to the opening fence lines.
 func anchoring(markdown string, fenceLines []int, anchor string) (string, bool) {
 	text := measure.TrimWS(anchor)

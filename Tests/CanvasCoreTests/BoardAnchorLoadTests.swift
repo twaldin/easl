@@ -136,4 +136,28 @@ final class BoardAnchorLoadTests {
         #expect(try loaded.object(code.id).props["anchor"] == nil)
         #expect(try loaded.object(refCode.id).props == refCode.props)
     }
+
+    @Test func orderedListParenthesesDoNotHideFenceMetadata() throws {
+        let store = store()
+        let board = try makeBoard()
+        let note = board.create(type: .note, props: .object(["markdown": "1) ~~~txt file=../outside.txt#L1 anchor=DROP\n   authored body\n   ~~~\n"]))
+        try persist(board.snapshot, in: store)
+        let loaded = store.load(root: board.root)
+        #expect(try loaded.object(note.id).props["markdown"] == "1) ~~~txt file=../outside.txt#L1 \n   authored body\n   ~~~\n")
+    }
+
+    @Test func invalidRevisionsDoNotAuthorizeOutsideMetadata() throws {
+        let store = store()
+        let board = try makeBoard()
+        let note = board.create(type: .note, props: .object(["markdown": "```txt file=../outside.txt commit=-invalid anchor=DROP\n```\n```txt file=inside.txt commit=-invalid anchor=KEEP\n```\n"]))
+        let outside = board.create(type: .code, props: .object(["path": "../outside.txt", "pinnedCommit": "-invalid", "anchor": "DROP"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
+        let inside = board.create(type: .code, props: .object(["path": "inside.txt", "pinnedCommit": "-invalid", "anchor": "KEEP"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
+        let empty = board.create(type: .code, props: .object(["path": "", "anchor": "DROP"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
+        try persist(board.snapshot, in: store)
+        let loaded = store.load(root: board.root)
+        #expect(try loaded.object(note.id).props["markdown"] == "```txt file=../outside.txt commit=-invalid \n```\n```txt file=inside.txt commit=-invalid anchor=KEEP\n```\n")
+        #expect(try loaded.object(outside.id).props["anchor"] == nil)
+        #expect(try loaded.object(inside.id).props == inside.props)
+        #expect(try loaded.object(empty.id).props["anchor"] == nil)
+    }
 }

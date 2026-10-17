@@ -139,3 +139,47 @@ func TestRegistryLoadPropagatesAnchorNormalizationSaveFailure(t *testing.T) {
 	}
 }
 
+func TestSnapshotAnchorScrubTreatsEveryCodeAnchorAsMetadata(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "inside.rs"), []byte("inside anchor\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../outside.rs", filepath.Join(root, "escape.rs")); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name  string
+		props map[string]any
+		scrub bool
+	}{
+		{"explicit anchor without range", map[string]any{"path": "../outside.rs", "anchor": "explicit metadata"}, true},
+		{"follow anchor", map[string]any{"path": "../outside.rs", "followOf": "obj_source", "anchor": "follow metadata"}, true},
+		{"pinned outside path", map[string]any{"path": "../outside.rs", "pinnedCommit": "HEAD", "anchor": "pinned metadata"}, true},
+		{"invalid pin outside path", map[string]any{"path": "../outside.rs", "pinnedCommit": "-invalid", "anchor": "pinned metadata"}, true},
+		{"empty path", map[string]any{"path": "", "anchor": "invalid metadata"}, true},
+		{"symlink escape", map[string]any{"path": "escape.rs", "anchor": "symlink metadata"}, true},
+		{"code ignores note root override", map[string]any{"path": "inside.rs", "root": "..", "anchor": "inside metadata"}, false},
+		{"allowed explicit anchor", map[string]any{"path": "inside.rs", "anchor": "authored metadata"}, false},
+		{"missing inside file", map[string]any{"path": "missing.rs", "anchor": "missing metadata"}, false},
+		{"unresolved ref", map[string]any{"path": "inside.rs", "ref": "gone", "anchor": "unresolved metadata"}, false},
+		{"failed pin", map[string]any{"path": "inside.rs", "pinnedCommit": "unknown", "anchor": "unresolved metadata"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			object := model.Object{ID: "obj_code", Type: model.Code, Props: test.props}
+			expected := object.Clone()
+			if test.scrub {
+				delete(expected.Props, "anchor")
+			}
+			snap := &store.Snapshot{Root: root, Objects: []model.Object{object}}
+			if changed := scrubSnapshotAnchors(snap); changed != test.scrub {
+				t.Fatalf("changed = %v, want %v", changed, test.scrub)
+			}
+			if !reflect.DeepEqual(snap.Objects[0], expected) {
+				t.Fatalf("scrubbed object = %#v, want %#v", snap.Objects[0], expected)
+			}
+			if scrubSnapshotAnchors(snap) {
+				t.Fatal("a second scrub changed normalized metadata")
+			}
+		})
+	}
+}

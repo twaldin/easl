@@ -245,9 +245,17 @@ func (d *document) writePlain(b *strings.Builder, n ast.Node) {
 
 // decodeInline resolves CommonMark backslash escapes and entity references in one pass.
 func decodeInline(raw []byte) string {
+	return decodeInlineMapped(raw, nil)
+}
+
+// decodeInlineMapped optionally maps each decoded byte boundary back to its source.
+func decodeInlineMapped(raw []byte, offsets *[]int) string {
 	var b strings.Builder
 	for i := 0; i < len(raw); i++ {
 		c := raw[i]
+		if offsets != nil {
+			*offsets = append(*offsets, i)
+		}
 		if c == '\\' && i+1 < len(raw) && util.IsPunct(raw[i+1]) {
 			b.WriteByte(raw[i+1])
 			i++
@@ -256,6 +264,11 @@ func decodeInline(raw []byte) string {
 		if c == '&' {
 			if end := strings.IndexByte(string(raw[i:min(len(raw), i+40)]), ';'); end > 1 {
 				if s, ok := entity(string(raw[i+1 : i+end])); ok {
+					if offsets != nil {
+						for j := 1; j < len(s); j++ {
+							*offsets = append(*offsets, i)
+						}
+					}
 					b.WriteString(s)
 					i += end
 					continue
@@ -263,6 +276,9 @@ func decodeInline(raw []byte) string {
 			}
 		}
 		b.WriteByte(c)
+	}
+	if offsets != nil {
+		*offsets = append(*offsets, len(raw))
 	}
 	return b.String()
 }
@@ -310,9 +326,11 @@ func PlainTextOfLine(line string) string {
 // fencedBlock is a fenced or indented code block: its info string (escapes and entities
 // processed), its code, and its opening line.
 type fencedBlock struct {
-	info string
-	code string
-	line int
+	info      string
+	code      string
+	line      int
+	infoStart int
+	infoEnd   int
 }
 
 // codeBlocks are every code block in document order (NoteMarkdown.anchoredFences' walk).
@@ -330,7 +348,11 @@ func (d *document) codeBlocks() []fencedBlock {
 			if s := d.spans[n]; s != nil {
 				line = s.start
 			}
-			out = append(out, fencedBlock{info: info, code: d.code(block), line: line})
+			f := fencedBlock{info: info, code: d.code(block), line: line}
+			if block.Info != nil {
+				f.infoStart, f.infoEnd = block.Info.Segment.Start, block.Info.Segment.Stop
+			}
+			out = append(out, f)
 			return
 		case *ast.CodeBlock:
 			line := 0

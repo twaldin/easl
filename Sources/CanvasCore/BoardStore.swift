@@ -62,6 +62,12 @@ public final class BoardStore {
         if let data = try? Data(contentsOf: url(for: id)), var snapshot = try? Self.decoder.decode(BoardSnapshot.self, from: data) {
             // The root may have moved (renamed checkout); the board follows its identity.
             snapshot.root = root.path
+            if let normalized = BoardAnchorScrub.normalize(snapshot) {
+                snapshot = normalized
+                if let data = try? Self.encoder.encode(snapshot) {
+                    try? data.write(to: url(for: id), options: .atomic)
+                }
+            }
             board = Board(snapshot: snapshot)
         } else {
             board = Board(id: id, root: root)
