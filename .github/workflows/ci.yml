@@ -18,9 +18,9 @@ jobs:
           sudo xcode-select -s /Library/Developer/CommandLineTools
           swift --version
       - name: Build
-        run: swift build
+        run: swift build -j 2
       - name: Test
-        run: swift run CanvasCoreTests
+        run: swift run -j 2 CanvasCoreTests --no-parallel
       - name: Generated clients are current
         run: bun scripts/gen-clients.ts --check
       - name: Python client tests
