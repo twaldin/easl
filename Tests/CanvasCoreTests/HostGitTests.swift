@@ -373,6 +373,21 @@ struct HostGitTests {
         #expect(try await repo.git("ls-files", "--stage", "--", "script.sh").hasPrefix("100755 "))
     }
 
+    @Test func filesPastTheListingsByteBudgetAreTooLargeNotChanging() async throws {
+        let fixture = try HostFileFixture()
+        let git = HostGit(files: try reader(fixture, limit: "total", of: 20))
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        for name in ["a.txt", "b.txt", "c.txt"] { try await repo.write(name, "one\n") }
+        try await repo.commit("base")
+        for name in ["a.txt", "b.txt", "c.txt"] { try await repo.write(name, "changed\n") }
+
+        let load = try await git.changes(boardRoot: repo.root.path, spec: ChangesSpec(.object([:])), highlight: false)
+        #expect(load.set.files.map(\.path) == ["a.txt", "b.txt", "c.txt"])
+        #expect(load.set.files[0].notice == nil && load.set.files[1].notice == nil && load.set.files[2].notice != nil)
+        #expect(load.set.files[2].hunks.isEmpty && load.sides["c.txt"] == nil)
+        #expect(load.set.files.map { $0.new.text } == ["changed\n", "changed\n", ""])
+    }
 
     @Test func anEditWhileTheListingIsReadShowsTheEditedFile() async throws {
         let fixture = try HostFileFixture()

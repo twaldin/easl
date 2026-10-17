@@ -494,6 +494,9 @@ final class CodeTile: NSView, TileContent {
         }
         await MainTurns.next()
         guard !Task.isCancelled, current == generation, path == displayed.path, source == self.source else { return nil }
+        // A live host tile installs only from its own load. This read answers the card or render
+        // that asked, and must not replace the document, watch baseline, or ref cache.
+        if git != nil, isLive { return document }
         if let hostLoad { learn(hostLoad, source: source) }
         if !showsCurrent || loadedSource != source || reanchorPending || self.document?.text != document.text || self.document?.signs != document.signs {
             install(document, source: source)

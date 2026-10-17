@@ -308,7 +308,8 @@ public struct HostGit: Sendable {
         request.target = patch.target.rawValue
         request.reverse = patch.reverse
         request.patch = patch.text
-        request.expect = [Expect(path: file.path, head: sides.head?.id, index: sides.index?.id, worktree: sides.worktree?.id)]
+        request.expect = [Expect(path: file.path, head: sides.head.map(SideIdentity.init), index: sides.index.map(SideIdentity.init),
+                                 worktree: sides.worktree.map(SideIdentity.init))]
         let reply: ApplyReply = try await call(request)
         guard reply.ok else {
             switch reply.code {
@@ -405,9 +406,19 @@ public struct HostGit: Sendable {
 
     private struct Expect: Encodable {
         var path: String
-        var head: String?
-        var index: String?
-        var worktree: String?
+        var head: SideIdentity?
+        var index: SideIdentity?
+        var worktree: SideIdentity?
+    }
+
+    private struct SideIdentity: Encodable {
+        var mode: String
+        var id: String
+
+        init(_ side: ReviewSides.Side) {
+            mode = side.mode
+            id = side.id
+        }
     }
 
     private struct RefState: Decodable {
@@ -645,8 +656,10 @@ extension HostGit {
     const crypto = require('node:crypto');
     const req = JSON.parse(fs.readFileSync(0, 'utf8'));
     const limits = req.limits;
-    let budget = limits.total;
+    let budget = limits.total, room = limits.reply;
     let watch = null, baseline = null;
+    const unsettled = 'unsettled';
+    const oversized = { limit: limits.reply, message: 'the listing is too large for one host reply' };
     const empty = Buffer.alloc(0);
     const b64 = data => data == null ? null : Buffer.from(data).toString('base64');
     const sha256 = data => crypto.createHash('sha256').update(data).digest('hex');
@@ -662,6 +675,13 @@ extension HostGit {
       if (r.error) fail('unavailable', { message: 'git failed: ' + (r.error.code || r.error.message) });
       if (!allowed.includes(r.status)) return { failed: true, status: r.status, err: r.stderr.toString('utf8') };
       return { status: r.status, out: r.stdout };
+    }
+    function capture(dir, args, max) {
+      const fits = Math.floor(room / 4) * 3;
+      const r = run(dir, args, { max: Math.min(max, fits) });
+      if (r.tooLarge && fits < max) fail('too_large', oversized);
+      if (r.out) room -= 4 * Math.ceil(r.out.length / 3);
+      return r;
     }
     const output = r => r.out ?? empty;
     class GitFailed { constructor(r) { this.r = r; } }
@@ -736,8 +756,8 @@ extension HostGit {
       const place = path.relative(real(top) || top, areas[0].real);
       if (place === '..' || place.startsWith('../') || path.isAbsolute(place)) return areas;
       for (const entry of worktreeEntries(top)) {
-        const area = path.join(entry, place);
-        if (!areas.some(a => a.lex === area)) areas.push({ lex: area, real: resolved(area) });
+        const area = path.join(entry, place), canonical = path.join(real(entry), place);
+        if (resolved(area) === canonical && !areas.some(a => a.lex === area)) areas.push({ lex: area, real: canonical });
       }
       return areas;
     }
@@ -757,23 +777,23 @@ extension HostGit {
       if (!area) fail('refused');
       return reroot ? path.join(root, path.relative(written(area, lex), lex)) : lex;
     }
-    function readPaths(paths, areas, bytes, spend = false) {
+    function readPaths(paths, areas, want, spend = false) {
       const requests = [], slots = [];
       const results = paths.map((abs, i) => {
         const area = areaOf(areas, abs);
         if (!area) return { kind: 'refused' };
         const p = resolved(abs);
         if (isDir(p)) return { kind: fs.existsSync(path.join(p, '.git')) ? 'submodule' : 'directory' };
-        requests.push({ path: p, roots: [area.real], bytes, limit: limits.file, metadataLimit: false });
+        requests.push({ path: p, roots: [area.real], bytes: want !== 'stamp', digest: want === 'digest', limit: limits.file, metadataLimit: false });
         slots.push(i);
         return null;
       });
-      readFiles(requests, bytes && spend ? budget : null).forEach((reply, j) => {
+      readFiles(requests, want === 'bytes' && spend ? budget : null).forEach((reply, j) => {
         const i = slots[j];
         if (reply.ok) {
-          const data = bytes ? Buffer.from(reply.data, 'base64') : null;
+          const data = want === 'bytes' ? Buffer.from(reply.data, 'base64') : null;
           if (data && spend) budget -= data.length;
-          results[i] = { kind: 'regular', data, exec: reply.exec, stamp: reply.stamp };
+          results[i] = { kind: 'regular', data, exec: reply.exec, digest: data ? sha256(data) : reply.sha256 };
         } else if (reply.code === 'unavailable') {
           fail('unavailable', { message: reply.message });
         } else {
@@ -782,7 +802,7 @@ extension HostGit {
       });
       return results;
     }
-    const same = (a, b) => a.kind === b.kind && (a.data == null ? b.data == null : b.data != null && a.data.equals(b.data));
+    const same = (a, b) => a.kind === b.kind && a.digest === b.digest;
     function statusPaths(listing) {
       const records = listing.toString('utf8').split('\0'), paths = [];
       for (let i = 0; i < records.length; i++) {
@@ -835,7 +855,7 @@ extension HostGit {
     }
     function patches(top, sha, paths) {
       if (!paths.length) return { tree: empty, status: empty, patch: empty, tooLarge: false };
-      const tree = output(run(top, ['--literal-pathspecs', 'ls-tree', '-l', '-z', '--full-tree', sha, '--', ...paths], { max: 64 << 20 }));
+      const tree = output(capture(top, ['--literal-pathspecs', 'ls-tree', '-l', '-z', '--full-tree', sha, '--', ...paths], 64 << 20));
       const entries = byName();
       for (const record of tree.toString('utf8').split('\0')) {
         const tab = record.indexOf('\t');
@@ -846,18 +866,18 @@ extension HostGit {
       const diffed = paths.filter(p => !entries[p] || (entries[p].type !== 'commit' && !(entries[p].type === 'blob' && entries[p].size > limits.file)));
       const absent = paths.filter(p => !entries[p]);
       const status = absent.length
-        ? output(run(top, ['--literal-pathspecs', 'status', '--porcelain=v1', '-z', '--ignored=matching', '--untracked-files=all', '--', ...absent], { max: 64 << 20 }))
+        ? output(capture(top, ['--literal-pathspecs', 'status', '--porcelain=v1', '-z', '--ignored=matching', '--untracked-files=all', '--', ...absent], 64 << 20))
         : empty;
       let patch = empty, tooLarge = false;
       if (diffed.length) {
-        const r = run(top, [...limits.changeRecords, sha, '--', ...diffed], { max: diffed.length * 3 * limits.file });
+        const r = capture(top, [...limits.changeRecords, sha, '--', ...diffed], diffed.length * 3 * limits.file);
         if (r.tooLarge) tooLarge = true;
         else patch = output(r);
       }
       return { tree, status, patch, tooLarge };
     }
     function liveRead(abs, areas) {
-      const [file] = readPaths([abs], areas, true);
+      const [file] = readPaths([abs], areas, 'bytes');
       if (file.kind === 'refused' || file.kind === 'unreadable') fail(file.kind);
       const read = { kind: file.kind, data: b64(file.data) };
       if (file.kind === 'tooLarge') return { read };
@@ -870,7 +890,7 @@ extension HostGit {
       const rel = path.relative(real(repo.top) || repo.top, resolved(abs));
       if (!rel || rel === '..' || rel.startsWith('../')) return { read, repository: false };
       const captured = patches(repo.top, base.sha, [rel]);
-      const [again] = readPaths([abs], areas, true);
+      const [again] = readPaths([abs], areas, 'digest');
       if (!same(file, again)) return { read: { kind: 'moved' } };
       return { ...found, base, rel, tree: b64(captured.tree), status: b64(captured.status), patch: b64(captured.patch), patchTooLarge: captured.tooLarge };
     }
@@ -888,6 +908,15 @@ extension HostGit {
       const r = run(repo.top, ['cat-file', 'blob', '--end-of-options', base.sha + ':' + name], { max: limits.file });
       return { ...found, commit: { sha: base.sha, label: revision, data: r.out ? b64(r.out) : null } };
     }
+    function settled(resolve, source) {
+      let now;
+      try { now = resolve(); }
+      catch (e) {
+        if (e.code !== 'ref') throw e;
+        now = e;
+      }
+      return JSON.stringify(now) === JSON.stringify(source);
+    }
     function code() {
       const areas = areasOf(req.boardRoot);
       const board = areas[0].lex;
@@ -899,10 +928,12 @@ extension HostGit {
         if (e.code === 'ref') {
           watch = { dir: board, revisions: [req.ref], refs: true, worktrees: true };
           baseline = observe(watch, areas);
+          if (!settled(resolve, e)) baseline = unsettled;
         }
         throw e;
       }
       for (let attempt = 0; ; attempt++) {
+        room = limits.reply;
         const abs = target(req.path, areas, source.root, reroot);
         const commit = req.pinned || source.commit || null;
         const dir = (areas.find(a => inside(a.lex, abs)) || areas[0]).lex;
@@ -910,9 +941,12 @@ extension HostGit {
         watch = req.pinned ? null : { dir: commit ? board : dir, files: commit ? [] : [abs], revisions, refs: true, index: !commit, worktrees: reroot };
         baseline = watch && observe(watch, areas);
         const now = resolve();
-        if (now.root !== source.root || (now.commit || null) !== (source.commit || null)) {
-          source = now;
-          if (attempt < 2) continue;
+        if (JSON.stringify(now) !== JSON.stringify(source)) {
+          if (attempt < 2) {
+            source = now;
+            continue;
+          }
+          baseline = unsettled;
         }
         const ref = reroot ? { state: source.state, sha: source.sha, merge: source.merge, worktree: source.worktree } : null;
         const reply = commit ? commitRead(abs, commit, areas) : liveRead(abs, areas);
@@ -1018,14 +1052,15 @@ extension HostGit {
       const absOf = p => path.join(repo.top, p);
       for (let attempt = 0; ; attempt++) {
         budget = limits.total;
+        room = limits.reply;
         baseline = observe(watch, areas);
         const base = resolveBase(repo.top, spec.base);
         if (!base.sha) return { ...common, base, notice: { text: base.label } };
         let head = base.sha;
         if (spec.base.kind !== 'head') { try { head = verify(repo.top, 'HEAD'); } catch { head = null; } }
-        const raw = run(repo.top, ['--literal-pathspecs', 'diff', '--raw', '-z', '-M', '--no-color', '--no-ext-diff', '--no-textconv', base.sha, '--', ...specs], { max: 64 << 20 });
+        const raw = capture(repo.top, ['--literal-pathspecs', 'diff', '--raw', '-z', '-M', '--no-color', '--no-ext-diff', '--no-textconv', base.sha, '--', ...specs], 64 << 20);
         if (!raw.out) return { ...common, base, head, notice: { text: failure(raw) } };
-        const others = run(repo.top, ['--literal-pathspecs', 'ls-files', '-z', '--others', '--exclude-standard', '--', ...specs], { max: 64 << 20 });
+        const others = capture(repo.top, ['--literal-pathspecs', 'ls-files', '-z', '--others', '--exclude-standard', '--', ...specs], 64 << 20);
         if (!others.out) return { ...common, base, head, notice: { text: failure(others) } };
         const entries = parseRaw(raw.out);
         const listed = new Set(entries.map(e => e.path));
@@ -1035,7 +1070,7 @@ extension HostGit {
         const listing = { ...common, base, head, raw: b64(raw.out), others: b64(others.out), selected: selected.map(e => e.path), omitted: entries.length - selected.length,
           boardPaths: boardPaths(repo.top, selected, areas[0]) };
         if (!selected.length) return listing;
-        const reads = readPaths(selected.map(e => absOf(e.path)), areas, true, true);
+        const reads = readPaths(selected.map(e => absOf(e.path)), areas, 'bytes', true);
         const refused = new Set(selected.filter((e, i) => reads[i].kind === 'refused' || reads[i].kind === 'unreadable'
           || (e.oldPath && !areaOf(areas, absOf(e.oldPath)))).map(e => e.path));
         const kept = selected.filter(e => !refused.has(e.path));
@@ -1043,21 +1078,22 @@ extension HostGit {
         const captured = patches(repo.top, base.sha, kept.filter(e => !renamed.includes(e)).map(e => e.path));
         const renames = byName();
         for (const e of renamed) {
-          const old = run(repo.top, ['cat-file', 'blob', '--end-of-options', base.sha + ':' + e.oldPath], { max: limits.file });
-          const patch = run(repo.top, [...limits.renameRecords, base.sha, '--', e.oldPath, e.path], { max: 3 * limits.file });
+          const old = capture(repo.top, ['cat-file', 'blob', '--end-of-options', base.sha + ':' + e.oldPath], limits.file);
+          const patch = capture(repo.top, [...limits.renameRecords, base.sha, '--', e.oldPath, e.path], 3 * limits.file);
           renames[e.path] = { old: b64(old.out), patch: b64(patch.out) };
         }
         const paths = kept.map(e => e.path);
-        const diff = against => paths.length ? output(run(repo.top, [...limits.changeRecords, ...against, '--', ...paths], { max: 64 << 20 })) : empty;
+        const diff = against => paths.length ? output(capture(repo.top, [...limits.changeRecords, ...against, '--', ...paths], 64 << 20)) : empty;
         const unstaged = diff([]), staged = head ? diff(['--cached']) : empty, againstHead = head ? diff([head]) : empty;
         const sides = sidesOf(repo.top, head, paths);
-        const again = readPaths(selected.map(e => absOf(e.path)), areas, true);
-        const moved = new Set(selected.filter((e, i) => !refused.has(e.path) && !same(reads[i], again[i])).map(e => e.path));
+        const checked = selected.flatMap((e, i) => refused.has(e.path) || reads[i].kind === 'tooLarge' ? [] : [i]);
+        const again = readPaths(checked.map(i => absOf(selected[i].path)), areas, 'digest');
+        const moved = new Set(checked.filter((i, j) => !same(reads[i], again[j])).map(i => selected[i].path));
         if (moved.size && attempt < 2) continue;
         const files = byName();
         selected.forEach((e, i) => {
           const r = refused.has(e.path) ? { kind: reads[i].kind === 'unreadable' ? 'unreadable' : 'refused' } : moved.has(e.path) ? { kind: 'unstable' } : reads[i];
-          files[e.path] = { kind: r.kind, data: b64(r.data), exec: r.exec ?? null, sha: r.data ? sha256(r.data) : null };
+          files[e.path] = { kind: r.kind, data: b64(r.data), exec: r.exec ?? null, sha: r.digest ?? null };
         });
         return {
           ...listing, files, tree: b64(captured.tree), status: b64(captured.status), patch: b64(captured.patch), patchTooLarge: captured.tooLarge, renames,
@@ -1121,17 +1157,17 @@ extension HostGit {
       }
       if (!base) return refusal({ unrelated: true }, label);
       const listing = { ...common, top, head: headSha, baseLabel: label, baseTip: tip, baseSha: base, gone };
-      const raw = run(top, ['--literal-pathspecs', 'diff', '--raw', '-z', '-M', '--no-abbrev', '--no-color', '--no-ext-diff', '--no-textconv', base, headSha, '--', ...specs], { max: 64 << 20 });
+      const raw = capture(top, ['--literal-pathspecs', 'diff', '--raw', '-z', '-M', '--no-abbrev', '--no-color', '--no-ext-diff', '--no-textconv', base, headSha, '--', ...specs], 64 << 20);
       if (!raw.out) return { ...listing, notice: { text: failure(raw) } };
       const entries = parseRaw(raw.out).sort(byPath);
       const selected = entries.slice(0, limits.maxFiles);
       const ids = [...new Set(selected.flatMap(e => [[e.oldBlob, e.oldMode], [e.newBlob, e.newMode]]).filter(([id, mode]) => id && mode !== '160000').map(([id]) => id))].sort();
       const samePath = selected.filter(e => e.status === 'modified' && e.oldBlob !== e.newBlob).map(e => e.path);
-      const changes = samePath.length ? output(run(top, [...limits.changeRecords, base, headSha, '--', ...samePath], { max: 64 << 20 })) : empty;
+      const changes = samePath.length ? output(capture(top, [...limits.changeRecords, base, headSha, '--', ...samePath], 64 << 20)) : empty;
       const renamePatches = byName();
       for (const e of selected) {
         if (e.status !== 'renamed' || !e.oldBlob || !e.newBlob || e.oldBlob === e.newBlob) continue;
-        const r = run(top, [...limits.changeRecords, e.oldBlob, e.newBlob], { max: 3 * limits.file });
+        const r = capture(top, [...limits.changeRecords, e.oldBlob, e.newBlob], 3 * limits.file);
         if (r.out) renamePatches[e.path] = b64(r.out);
       }
       return { ...listing, raw: b64(raw.out), selected: selected.map(e => e.path), omitted: entries.length - selected.length, boardPaths: boardPaths(top, selected, areas[0]),
@@ -1142,22 +1178,32 @@ extension HostGit {
       const board = areas[0].lex;
       const spec = req.spec;
       if (spec.ref) {
+        const resolve = () => resolveSource({ kind: 'ref', root: board, ref: spec.ref, sha: spec.refSha });
+        const refWatch = { dir: board, revisions: [spec.ref], refs: true, worktrees: true };
         let source;
-        try { source = resolveSource({ kind: 'ref', root: board, ref: spec.ref, sha: spec.refSha }); }
+        try { source = resolve(); }
         catch (e) {
           if (e.code !== 'ref') throw e;
-          watch = { dir: board, revisions: [spec.ref], refs: true, worktrees: true };
+          watch = refWatch;
           baseline = observe(watch, areas);
+          if (!settled(resolve, e)) baseline = unsettled;
           if (e.message === 'not in a git repository') return { ok: true, kind: 'notice', notice: { text: e.message }, branch: spec.ref };
           return { ok: true, kind: 'notice', notice: { missing: spec.ref, remotes: remotes(board) }, branch: spec.ref };
         }
         const ref = { state: source.state, sha: source.sha, merge: source.merge };
-        if (source.state === 'live') {
-          const own = repository(board), live = repository(source.root);
-          return worktreeListing(areas, own && live && own.gitDir === live.gitDir ? board : source.root, spec, { ref });
+        try {
+          if (source.state === 'live') {
+            const own = repository(board), live = repository(source.root);
+            return worktreeListing(areas, own && live && own.gitDir === live.gitDir ? board : source.root, spec, { ref });
+          }
+          const gone = source.state === 'merged' ? { merged: source.merge } : source.state === 'missing' ? {} : null;
+          return commitsListing(areas, source.sha, spec.ref, spec, gone, { ref });
+        } finally {
+          if (!settled(resolve, source)) {
+            watch ??= refWatch;
+            baseline = unsettled;
+          }
         }
-        const gone = source.state === 'merged' ? { merged: source.merge } : source.state === 'missing' ? {} : null;
-        return commitsListing(areas, source.sha, spec.ref, spec, gone, { ref });
       }
       if (spec.head) return commitsListing(areas, spec.head, spec.head, spec, null, {});
       if (!spec.root) return worktreeListing(areas, board, spec, {});
@@ -1226,20 +1272,24 @@ extension HostGit {
       const heads = byName(), indexed = byName();
       for (const record of output(run(top, ['--literal-pathspecs', 'ls-tree', '-z', '--full-tree', 'HEAD', '--', ...named], { max: 64 << 20 })).toString('utf8').split('\0')) {
         const tab = record.indexOf('\t');
-        if (tab >= 0) heads[record.slice(tab + 1)] = record.slice(0, tab).split(' ')[2];
+        if (tab < 0) continue;
+        const [mode, , id] = record.slice(0, tab).split(' ');
+        heads[record.slice(tab + 1)] = { mode, id };
       }
       for (const record of output(run(top, ['--literal-pathspecs', 'ls-files', '-s', '-z', '--', ...named], { max: 64 << 20 })).toString('utf8').split('\0')) {
         const tab = record.indexOf('\t');
-        if (tab >= 0 && !(record.slice(tab + 1) in indexed)) indexed[record.slice(tab + 1)] = record.slice(0, tab).split(' ')[1];
+        if (tab < 0 || record.slice(tab + 1) in indexed) continue;
+        const [mode, id] = record.slice(0, tab).split(' ');
+        indexed[record.slice(tab + 1)] = { mode, id };
       }
-      const reads = readFiles(files.map(f => ({ path: path.join(top, f.path), roots: [f.area.real], bytes: true, limit: limits.file, metadataLimit: false })));
+      const sameSide = (side, expected) => side == null ? expected == null : expected != null && side.mode === expected.mode && side.id === expected.id;
+      const reads = readFiles(files.map(f => ({ path: path.join(top, f.path), roots: [f.area.real], bytes: true, digest: true, limit: limits.file, metadataLimit: false })));
       files.forEach((f, i) => {
         const read = reads[i], e = expected.get(f.path);
         if (read.code === 'refused') fail('refused');
-        const worktree = read.ok ? sha256(Buffer.from(read.data, 'base64')) : read.code === 'not_found' ? null : '?';
-        if ((heads[f.path] ?? null) !== (e.head ?? null) || (indexed[f.path] ?? null) !== (e.index ?? null) || worktree !== (e.worktree ?? null)) {
-          fail('stale', { path: f.path });
-        }
+        if (!read.ok && read.code !== 'not_found') fail('stale', { path: f.path });
+        const worktree = read.ok ? { mode: read.exec ? '100755' : '100644', id: read.sha256 } : null;
+        if (!sameSide(heads[f.path], e.head) || !sameSide(indexed[f.path], e.index) || !sameSide(worktree, e.worktree)) fail('stale', { path: f.path });
       });
       const r = run(top, ['apply', '--whitespace=nowarn', ...(req.target === 'index' ? ['--cached'] : []), ...(req.reverse ? ['-R'] : []), '-'], { input: Buffer.from(String(req.patch), 'utf8') });
       if (r.failed) fail('apply', { message: r.err });
@@ -1250,7 +1300,7 @@ extension HostGit {
       const areas = areasOf(req.boardRoot);
       const paths = Array.isArray(req.paths) ? req.paths : [];
       const abs = paths.map(p => { try { return target(p, areas, areas[0].lex, false); } catch { return null; } });
-      const reads = readPaths(abs.filter(Boolean), areas, false);
+      const reads = readPaths(abs.filter(Boolean), areas, 'stamp');
       let next = 0;
       return { ok: true, exists: abs.map(p => p !== null && reads[next++].kind === 'regular') };
     }
@@ -1267,7 +1317,7 @@ extension HostGit {
     reply.watch = watch;
     reply.baseline = baseline;
     let json = JSON.stringify(reply);
-    if (json.length > limits.reply) json = JSON.stringify({ ok: false, code: 'too_large', limit: limits.reply, message: 'the listing is too large for one host reply' });
+    if (json.length > limits.reply) json = JSON.stringify({ ok: false, code: 'too_large', ...oversized, watch, baseline });
     process.stdout.write(json);
     """#
 }

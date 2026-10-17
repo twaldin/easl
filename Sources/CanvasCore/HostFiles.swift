@@ -264,6 +264,7 @@ public struct HostFiles: Sendable {
     const reader = String.raw`
     import base64
     import errno
+    import hashlib
     import json
     import os
     import stat
@@ -306,6 +307,8 @@ public struct HostFiles: Sendable {
                 data = stream.read() if limit is None else stream.read(limit + 1)
             if limit is not None and len(data) > limit:
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
+            if request.get('digest'):
+                return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'sha256': hashlib.sha256(data).hexdigest()}
             if budget is not None:
                 if len(data) > budget[0]:
                     return {'ok': False, 'code': 'too_large', 'limit': limit}
