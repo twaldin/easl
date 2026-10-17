@@ -111,6 +111,12 @@ public final class BoardRegistry {
         subscribers.append((connection, board, events.map(Set.init)))
     }
 
+    /// Whether `connection` subscribed to `event` on `board` itself, not on every board: a
+    /// browser stream's private events (`SurfaceEvent`) go to its own connection only once it has.
+    public func subscribes(_ connection: SocketServer.Connection, to event: String, on board: BoardID) -> Bool {
+        subscribers.contains { $0.connection === connection && $0.board == board && ($0.events?.contains(event) ?? true) }
+    }
+
     private func broadcast(_ event: BoardEvent, board: BoardID) {
         subscribers.removeAll { !$0.connection.isOpen }
         Metrics.shared.gauge("events.subscribers", Double(subscribers.count))
@@ -214,6 +220,10 @@ public final class ApiRouter {
     /// Throws the picker's failures: `unavailable` (the host can't be reached or its easl doesn't
     /// answer), `not_found` (the host has no such board open), `ambiguous` (a name two hosts have).
     public var openRemoteBoard: ((_ host: String, _ board: BoardID, _ select: Bool) async throws -> OpenedRemoteBoard)?
+    /// The app's browser surfaces (`surface.*`, `SurfaceRequest`): a `surface.stream` reaches it
+    /// only for a browser tile on an open board whose `surface.frame` this connection subscribed
+    /// to; every other request names a stream the app checks belongs to this connection.
+    public var surface: ((SurfaceRequest, SocketServer.Connection) async throws -> JSONValue)?
     public static let schemaVersion = 1
     static let readLinesDefault = 100
     static let readLinesMax = 2000
@@ -327,6 +337,7 @@ public final class ApiRouter {
                 connection.send(.object(["id": id, "ok": .bool(true), "result": .object([:])]))
                 return nil
             }
+            if let request = try SurfaceRequest(method: method, params: params) { return Self.ok(id, try await serveSurface(request, connection)) }
             if method == "agent.wait" { return try wait(id, params, connection) }
             if method == "agent.inbox" { return try await inbox(id, params, connection) }
             if method == "agent.read" { return Self.ok(id, try await read(params)) }
@@ -427,6 +438,20 @@ public final class ApiRouter {
         var result = result
         if !warnings.isEmpty { result["warnings"] = .array(warnings.map(JSONValue.string)) }
         return .object(result)
+    }
+
+    // MARK: surface.*
+
+    private func serveSurface(_ request: SurfaceRequest, _ connection: SocketServer.Connection) async throws -> JSONValue {
+        guard let surface else { throw Failure("unavailable", "browser surfaces need the easl app") }
+        if case .stream(let tile, _, _) = request {
+            let board = try board(forObject: tile)
+            guard board.objects[tile]?.type == .browser else { throw Failure("not_found", "\(tile) is not a browser tile") }
+            guard registry.subscribes(connection, to: "surface.frame", on: board.id) else {
+                throw Failure("invalid_params", "subscribe this connection to surface.frame on board \(board.id) (events.subscribe) before surface.stream")
+            }
+        }
+        return try await surface(request, connection)
     }
 
     // MARK: agent.wait

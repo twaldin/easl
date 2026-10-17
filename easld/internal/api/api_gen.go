@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "05b93bfd3d850025"
+const SchemaHash = "7403d458c759798f"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -36,6 +36,26 @@ type ParamSpec struct {
 
 // Methods is each method's ParamSpec: what the server checks every request against, and names in its `invalid_params` errors.
 var Methods = map[string]ParamSpec{
+	"surface.stream": {
+		Accepted: []string{"id", "scale", "format"},
+		Required: []string{"id"},
+	},
+	"surface.ack": {
+		Accepted: []string{"stream", "frame"},
+		Required: []string{"stream", "frame"},
+	},
+	"surface.input": {
+		Accepted: []string{"stream", "events"},
+		Required: []string{"stream", "events"},
+	},
+	"surface.answer": {
+		Accepted: []string{"stream", "dialog", "accept", "text", "user", "password", "choice"},
+		Required: []string{"stream", "dialog", "accept"},
+	},
+	"surface.stop": {
+		Accepted: []string{"stream"},
+		Required: []string{"stream"},
+	},
 	"system.ping": {
 		Accepted: nil,
 		Required: nil,
@@ -237,6 +257,66 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"items"},
 	},
 }
+
+// SurfaceStream: A session owned only by the connection that opened it; never transferable between connections or reconnected clients.
+type SurfaceStream = string
+
+// SurfaceSize: Host WKWebView bounds in points, top-left origin. Input uses these points, not CSS pixels or encoded image pixels.
+type SurfaceSize struct {
+	W float64 `json:"w"`
+	H float64 `json:"h"`
+}
+
+// SurfaceInputEvent: Closed native-input union. Positive seq values increase strictly within each batch. Previously accepted seq values are ignored; callers never automatically resend input after reconnect. Raw mods are NSEvent modifier flags. Context menus are viewer-local.
+//
+// SurfaceInputEvent is a union of JSON objects (variants: "mouse", "scroll", "key", "text", "compose", "unmark", "focus", "command", "command", "navigate"); decode it as a generic map.
+type SurfaceInputEvent = map[string]any
+
+// SurfaceFrame: surface.frame data. Full current page image held in memory, never a profile, cookie jar, page source, dirty rectangle or image-less acknowledgement. Only the subscribed owning connection receives it.
+type SurfaceFrame struct {
+	Stream SurfaceStream `json:"stream"`
+	Seq    int           `json:"seq"`
+	// Conservative sequence fence. Host native-input processing and presentation complete before an input sequence can appear here; queue acceptance alone does not advance it.
+	Input int         `json:"input"`
+	Size  SurfaceSize `json:"size"`
+	Scale float64     `json:"scale"`
+	// One of "jpeg", "png".
+	Format  string `json:"format"`
+	Data    string `json:"data"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	Back    bool   `json:"back"`
+	Forward bool   `json:"forward"`
+	Loading bool   `json:"loading"`
+}
+
+// SurfaceDialog: surface.dialog data, private to the subscribed owning connection. Completed once by surface.answer, safely dismissed when the connection or stream closes.
+type SurfaceDialog struct {
+	Stream SurfaceStream `json:"stream"`
+	Dialog string        `json:"dialog"`
+	// One of "alert", "confirm", "prompt", "login", "select".
+	Kind     string   `json:"kind"`
+	Origin   string   `json:"origin"`
+	Message  *string  `json:"message,omitempty"`
+	Text     *string  `json:"text,omitempty"`
+	Choices  []string `json:"choices,omitempty"`
+	Selected *int     `json:"selected,omitempty"`
+}
+
+// SurfaceNotice: surface.notice data, private to the subscribed owning connection. Downloads remain host files. File uploads are refused, not silently accepted.
+type SurfaceNotice struct {
+	Stream SurfaceStream `json:"stream"`
+	// One of "closed", "download", "refused".
+	Kind   string  `json:"kind"`
+	Reason *string `json:"reason,omitempty"`
+	Name   *string `json:"name,omitempty"`
+	State  *string `json:"state,omitempty"`
+}
+
+// SurfaceEvent: Private pushed events, never board broadcasts. Canonical board id and matching subscription are required on the owning connection.
+//
+// SurfaceEvent is a union of JSON objects (variants: "", "", ""); decode it as a generic map.
+type SurfaceEvent = map[string]any
 
 // Id: Prefixed id, e.g. obj_01H…, men_…
 type Id = string

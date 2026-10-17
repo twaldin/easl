@@ -36,6 +36,51 @@ def _snake_case_hints(cls: type[_Api]) -> type[_Api]:
     return cls
 
 
+SurfaceStream = str
+
+class SurfaceSize(TypedDict):
+    """Host WKWebView bounds in points, top-left origin. Input uses these points, not CSS pixels or encoded image pixels."""
+    w: Required[float]
+    h: Required[float]
+
+SurfaceInputEvent = Union[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
+
+class SurfaceFrame(TypedDict):
+    """surface.frame data. Full current page image held in memory, never a profile, cookie jar, page source, dirty rectangle or image-less acknowledgement. Only the subscribed owning connection receives it."""
+    stream: Required["SurfaceStream"]
+    seq: Required[int]
+    input: Required[int]
+    size: Required["SurfaceSize"]
+    scale: Required[float]
+    format: Required[Literal["jpeg", "png"]]
+    data: Required[str]
+    width: Required[int]
+    height: Required[int]
+    back: Required[bool]
+    forward: Required[bool]
+    loading: Required[bool]
+
+class SurfaceDialog(TypedDict):
+    """surface.dialog data, private to the subscribed owning connection. Completed once by surface.answer, safely dismissed when the connection or stream closes."""
+    stream: Required["SurfaceStream"]
+    dialog: Required[str]
+    kind: Required[Literal["alert", "confirm", "prompt", "login", "select"]]
+    origin: Required[str]
+    message: NotRequired[str]
+    text: NotRequired[str]
+    choices: NotRequired[list[str]]
+    selected: NotRequired[int]
+
+class SurfaceNotice(TypedDict):
+    """surface.notice data, private to the subscribed owning connection. Downloads remain host files. File uploads are refused, not silently accepted."""
+    stream: Required["SurfaceStream"]
+    kind: Required[Literal["closed", "download", "refused"]]
+    reason: NotRequired[str]
+    name: NotRequired[str]
+    state: NotRequired[str]
+
+SurfaceEvent = Union[dict[str, Any], dict[str, Any], dict[str, Any]]
+
 Id = str
 
 MessageId = str
@@ -387,6 +432,36 @@ class MetricsCounter(TypedDict):
     last10m: Required["MetricsTally"]
 
 @_snake_case_hints
+class SurfaceApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def stream(self, *, id: str, scale: float | None = None, format: Literal["jpeg", "png"] | None = None) -> dict[str, Any]:
+        """Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Currently served by the Swift app only; easld relay is not implemented."""
+        params = {"id": id, "scale": scale, "format": format}
+        return self._call("surface.stream", params, [])
+
+    def ack(self, *, stream: "SurfaceStream", frame: int) -> dict[str, Any]:
+        """On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging."""
+        params = {"stream": stream, "frame": frame}
+        return self._call("surface.ack", params, [])
+
+    def input(self, *, stream: "SurfaceStream", events: list["SurfaceInputEvent"]) -> dict[str, Any]:
+        """Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance does not mean delivery or presentation; only a later frame input fence reports those. Result text is present only for an explicit copy operation."""
+        params = {"stream": stream, "events": events}
+        return self._call("surface.input", params, [])
+
+    def answer(self, *, stream: "SurfaceStream", dialog: str, accept: bool, text: str | None = None, user: str | None = None, password: str | None = None, choice: int | None = None) -> dict[str, Any]:
+        """Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords are transient request data, never logged or read from the viewer's keychain."""
+        params = {"stream": stream, "dialog": dialog, "accept": accept, "text": text, "user": user, "password": password, "choice": choice}
+        return self._call("surface.answer", params, [])
+
+    def stop(self, *, stream: "SurfaceStream") -> dict[str, Any]:
+        """Stop the opening connection's stream and cancel its capture work. Never delete or release the host page; its existing driven-lease policy takes over. Another connection cannot control this stream."""
+        params = {"stream": stream}
+        return self._call("surface.stop", params, [])
+
+@_snake_case_hints
 class SystemApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -682,7 +757,7 @@ class EventsApi:
         self._call = call
 
     def subscribe(self, *, board: "Id" | None = None, events: list[str] | None = None) -> dict[str, Any]:
-        """Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?})."""
+        """Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}). Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers."""
         params = {"board": board, "events": events}
         return self._call("events.subscribe", params, ["board"])
 
@@ -708,6 +783,7 @@ class TextApi:
 
 class GeneratedApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self.surface = SurfaceApi(call)
         self.system = SystemApi(call)
         self.app = AppApi(call)
         self.board = BoardApi(call)
@@ -723,7 +799,7 @@ class GeneratedApi:
         self.client = ClientApi(call)
         self.text = TextApi(call)
 
-METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"]
+METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]
