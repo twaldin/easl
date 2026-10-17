@@ -456,7 +456,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !heldCloses.contains(where: { $0 === controller }) {
             heldCloses.append(controller)
             window.isExcludedFromWindowsMenu = true
-            if controller.isBoardOpen { saveOpenBoards(closing: window) }
+            if controller.isBoardOpen {
+                saveOpenBoards(closing: window)
+                if controller.remote == nil { controller.onClose = nil }
+            }
         }
         return true
     }
@@ -775,7 +778,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// so that board stays recorded, as Quit keeps every tab.
     private func saveOpenBoards(closing: NSWindow? = nil) {
         guard !terminating else { return }
-        let open = controllers.values.filter { $0.window.map { isShown($0) && !isHoldingClose($0) } ?? false }
+        let open = controllers.values.filter { controller in
+            guard let window = controller.window else { return false }
+            return (controller.isBoardOpen || window === closing) && !isHoldingClose(window)
+        }
         let others = open.filter { $0.window !== closing }
         let shown = others.isEmpty ? open : others
         try? writeOpenBoards(shown)
