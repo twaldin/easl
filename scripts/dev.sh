@@ -133,11 +133,6 @@ launch() {
   lsof -t "$EASL_SOCKET" | head -n 1 > "$home/pid"
   if [ -x "$yabai" ]; then
     wait_window
-    if [ -z "$(window_id)" ]; then
-      echo "easl did not open a window; see $home/app.log" >&2
-      quit
-      exit 1
-    fi
   fi
   echo "easl pid $(cat "$home/pid"), EASL_SOCKET=$EASL_SOCKET"
 }
