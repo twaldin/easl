@@ -28,6 +28,23 @@ func closeEntries(names map[string]string) []any {
 	return entries
 }
 
+func TestBoardCloseAnnouncesAvailabilityAndReopenOnTheSameSubscription(t *testing.T) {
+	f := newFixture(t)
+	subscriber := &conn{}
+	f.on(subscriber, "events.subscribe", map[string]any{"board": f.board.ID(), "events": []any{"board.closed", "board.opened"}})
+	before := len(subscriber.messages())
+	f.result("board.close", map[string]any{})
+	want := []map[string]any{{"event": "board.closed", "board": f.board.ID(), "data": map[string]any{}}}
+	if got := subscriber.messages()[before:]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("close signal %v, want %v", got, want)
+	}
+	f.result("board.open", map[string]any{"root": f.board.Root()})
+	want = append(want, map[string]any{"event": "board.opened", "board": f.board.ID(), "data": map[string]any{}})
+	if got := subscriber.messages()[before:]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("reopen signal %v, want %v", got, want)
+	}
+}
+
 func TestBoardCloseKeepsSessionsThroughSweepsRestartAndReopen(t *testing.T) {
 	f, state := restorable(t)
 	id, root := f.board.ID(), f.board.Root()
