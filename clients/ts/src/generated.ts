@@ -80,7 +80,7 @@ export type SurfaceInputEvent = {
 export type SurfaceFrame = {
   stream: SurfaceStream;
   seq: number;
-  /** Conservative sequence fence. Host native-input processing and presentation complete before an input sequence can appear here; queue acceptance alone does not advance it. */
+  /** Conservative host app-queue watermark. Pending mouse/key processing checks hold it back until confirmed, and missing checks leave it unconfirmed. Direct text, scroll and commands have no WebKit processing check; this field does not guarantee their effects are visible in the image. */
   input: number;
   size: SurfaceSize;
   scale: number;
@@ -943,7 +943,7 @@ export type SurfaceInputParams = {
   events: SurfaceInputEvent[];
 };
 export type SurfaceInputResult = {
-  /** Count of newly queued events in this batch; duplicates contribute zero. Not a presentation acknowledgement. surface.frame input reports the delivered and presented sequence fence. */
+  /** Count of newly queued events in this batch; duplicates contribute zero. Not a delivery or presentation acknowledgement. */
   accepted: number;
   text?: string;
 };
@@ -1987,7 +1987,7 @@ export interface CanvasApi {
     stream(params: SurfaceStreamParams): Promise<SurfaceStreamResult>;
     /** On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging. */
     ack(params: SurfaceAckParams): Promise<SurfaceAckResult>;
-    /** Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance does not mean delivery or presentation; only a later frame input fence reports those. Result text is present only for an explicit copy operation. */
+    /** Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation. */
     input(params: SurfaceInputParams): Promise<SurfaceInputResult>;
     /** Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords are transient request data, never logged or read from the viewer's keychain. */
     answer(params: SurfaceAnswerParams): Promise<SurfaceAnswerResult>;

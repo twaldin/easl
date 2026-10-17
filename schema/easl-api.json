@@ -99,7 +99,7 @@
       "type": "object", "required": ["stream", "seq", "input", "size", "scale", "format", "data", "width", "height", "back", "forward", "loading"],
       "properties": {
         "stream": { "$ref": "#/definitions/SurfaceStream" }, "seq": { "type": "integer", "minimum": 1 },
-        "input": { "type": "integer", "minimum": 0, "description": "Conservative sequence fence. Host native-input processing and presentation complete before an input sequence can appear here; queue acceptance alone does not advance it." },
+        "input": { "type": "integer", "minimum": 0, "description": "Conservative host app-queue watermark. Pending mouse/key processing checks hold it back until confirmed, and missing checks leave it unconfirmed. Direct text, scroll and commands have no WebKit processing check; this field does not guarantee their effects are visible in the image." },
         "size": { "$ref": "#/definitions/SurfaceSize" }, "scale": { "type": "number", "exclusiveMinimum": 0 },
         "format": { "enum": ["jpeg", "png"] }, "data": { "type": "string", "minLength": 1, "contentEncoding": "base64" },
         "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 },
@@ -956,9 +956,9 @@
       "result": { "type": "object", "properties": {}, "additionalProperties": false }
     },
     "surface.input": {
-      "description": "Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance does not mean delivery or presentation; only a later frame input fence reports those. Result text is present only for an explicit copy operation.",
+      "description": "Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation.",
       "params": { "type": "object", "required": ["stream", "events"], "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "events": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/definitions/SurfaceInputEvent" } } }, "additionalProperties": false },
-      "result": { "type": "object", "required": ["accepted"], "properties": { "accepted": { "type": "integer", "minimum": 0, "description": "Count of newly queued events in this batch; duplicates contribute zero. Not a presentation acknowledgement. surface.frame input reports the delivered and presented sequence fence." }, "text": { "type": "string" } }, "additionalProperties": false }
+      "result": { "type": "object", "required": ["accepted"], "properties": { "accepted": { "type": "integer", "minimum": 0, "description": "Count of newly queued events in this batch; duplicates contribute zero. Not a delivery or presentation acknowledgement." }, "text": { "type": "string" } }, "additionalProperties": false }
     },
     "surface.answer": {
       "description": "Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords are transient request data, never logged or read from the viewer's keychain.",

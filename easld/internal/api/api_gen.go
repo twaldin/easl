@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "7403d458c759798f"
+const SchemaHash = "4433373c28128273"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -276,7 +276,7 @@ type SurfaceInputEvent = map[string]any
 type SurfaceFrame struct {
 	Stream SurfaceStream `json:"stream"`
 	Seq    int           `json:"seq"`
-	// Conservative sequence fence. Host native-input processing and presentation complete before an input sequence can appear here; queue acceptance alone does not advance it.
+	// Conservative host app-queue watermark. Pending mouse/key processing checks hold it back until confirmed, and missing checks leave it unconfirmed. Direct text, scroll and commands have no WebKit processing check; this field does not guarantee their effects are visible in the image.
 	Input int         `json:"input"`
 	Size  SurfaceSize `json:"size"`
 	Scale float64     `json:"scale"`

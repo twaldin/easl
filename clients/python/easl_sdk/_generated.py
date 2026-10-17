@@ -447,7 +447,7 @@ class SurfaceApi:
         return self._call("surface.ack", params, [])
 
     def input(self, *, stream: "SurfaceStream", events: list["SurfaceInputEvent"]) -> dict[str, Any]:
-        """Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance does not mean delivery or presentation; only a later frame input fence reports those. Result text is present only for an explicit copy operation."""
+        """Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation."""
         params = {"stream": stream, "events": events}
         return self._call("surface.input", params, [])
 
