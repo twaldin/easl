@@ -338,10 +338,10 @@ public struct HostFiles: Sendable {
           catch { fail('refused'); }
         } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) fail('refused');
         if (input.includes('\0')) fail('refused');
-        const base = resolved(root), candidate = resolved(path.resolve(root, input));
-        if (candidate === base || !inside(base, candidate)) fail('refused');
-        const rel = path.relative(base, candidate);
+        const requested = path.resolve(root, input);
+        if (requested === root || !inside(root, requested)) fail('refused');
         if (commit) {
+          const rel = path.relative(root, requested);
           if (!req.bytes) {
             const size = text(root, ['cat-file', '-s', commit + ':./' + rel]);
             if (size === null) fail('not_found', { commit });
@@ -352,6 +352,8 @@ public struct HostFiles: Sendable {
           if (data === null) fail('not_found', { commit });
           return { ok: true, root, path: rel, commit, data: data.toString('base64') };
         }
+        const base = resolved(root), candidate = resolved(requested);
+        if (candidate === base || !inside(base, candidate)) fail('refused');
         const p = real(candidate);
         if (!p) fail('not_found');
         return readRegular(p, root, [base], \#(SourceExcerpt.maxFileBytes));

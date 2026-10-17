@@ -172,6 +172,44 @@ struct HostFilesTests {
         #expect(try await files.read(HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage("alias.png"))).data == bytes)
     }
 
+    @Test func committedImagesKeepTheirRequestedPathDespiteLiveSymlinks() async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.reader()
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("pkg/chart.png", "committed chart")
+        try await repo.write("pkg/other.png", "committed other")
+        let commit = try await repo.commit("images")
+        try await repo.git("branch", "snapshot")
+        let root = repo.url("pkg")
+        let chart = root.appendingPathComponent("chart.png")
+        let source = HostFileRequest.Source.ref("snapshot", lastKnownSha: nil, boardRoot: root.path)
+        let outsideTarget = fixture.temp.appendingPathComponent("outside.png")
+        try Data("outside live image".utf8).write(to: outsideTarget)
+        for destination in ["other.png", outsideTarget.path, fixture.temp.appendingPathComponent("missing.png").path] {
+            try FileManager.default.removeItem(at: chart)
+            try FileManager.default.createSymbolicLink(atPath: chart.path, withDestinationPath: destination)
+            for path in ["chart.png", chart.path, chart.absoluteString] {
+                for bytes in [true, false] {
+                    let result = try await files.read(HostFileRequest(source: source, policy: .boardImage(path), bytes: bytes))
+                    #expect(result.data == (bytes ? Data("committed chart".utf8) : Data()))
+                    #expect(result.version == HostFileVersion(root: root.path, path: "chart.png", commit: commit))
+                }
+            }
+        }
+        try FileManager.default.removeItem(at: chart)
+        try FileManager.default.createSymbolicLink(atPath: chart.path, withDestinationPath: "other.png")
+        let outside = fixture.temp.appendingPathComponent("alias.png")
+        try FileManager.default.createSymbolicLink(at: outside, withDestinationURL: chart)
+        for source in [source, .directory(root.path)] {
+            for bytes in [true, false] {
+                await #expect(throws: HostFileError.refused) {
+                    try await files.read(HostFileRequest(source: source, policy: .boardImage(outside.path), bytes: bytes))
+                }
+            }
+        }
+    }
+
     @Test func imageTileMetadataRetainsSizeRefusalsAndRecoversMissingFiles() async throws {
         let fixture = try HostFileFixture()
         let files = try fixture.reader()
