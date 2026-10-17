@@ -87,22 +87,25 @@ struct ClientUIStateTests {
         #expect(store.load().chromeTextScale == ChromeTextScale.normal)
     }
 
-    @Test func eachSettingsWriteKeepsTheOtherSetting() throws {
+    @Test func eachSettingsWriteKeepsTheOthers() throws {
         let url = home.appendingPathComponent("ui-settings.json")
-        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1, backgroundAttach: true), "no file: 100%, background attach on")
         // A file from before background attach holds only the scale.
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         try Data(#"{"scale":1.3}"#.utf8).write(to: url)
         #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.3, backgroundAttach: true))
-        // The menu's background attach and View's chrome text size each write the one file.
+        try Data(#"{"scale":1.3,"questionArchiveAfter":30}"#.utf8).write(to: url)
         try UISettings.Store(url: url).update { $0.backgroundAttach = false }
         try UISettings.Store(url: url).update { $0.chromeTextScale = 1.5 }
-        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.5, backgroundAttach: false))
+        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.5, backgroundAttach: false, questionArchiveAfter: 30))
         try UISettings.Store(url: url).update { $0.backgroundAttach = true }
-        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.5, backgroundAttach: true))
-        // A damaged field is that setting's default; the other one stands.
-        try Data(#"{"scale":1.15,"backgroundAttach":"no"}"#.utf8).write(to: url)
-        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.15, backgroundAttach: true))
+        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.5, backgroundAttach: true, questionArchiveAfter: 30))
+        // A damaged field is that setting's default; the others stand.
+        try Data(#"{"scale":1.15,"backgroundAttach":"no","questionArchiveAfter":0}"#.utf8).write(to: url)
+        #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.15, backgroundAttach: true, questionArchiveAfter: 0))
+        for damaged in ["-1", "86400.5", #""30""#, "null"] {
+            try Data(#"{"scale":1.15,"backgroundAttach":false,"questionArchiveAfter":\#(damaged)}"#.utf8).write(to: url)
+            #expect(UISettings.Store(url: url).load() == UISettings(chromeTextScale: 1.15, backgroundAttach: false, questionArchiveAfter: 10), "\(damaged)")
+        }
     }
 
     @Test func theReopenListKeepsOnlyHowToReachEachBoard() throws {

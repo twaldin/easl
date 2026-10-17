@@ -164,6 +164,9 @@ type Board struct {
 	// deadline (Board.questionExpiry); expirySeq tells a timer that was replaced.
 	questionExpiry *time.Timer
 	expirySeq      int
+	// defaultQuestionArchiveAfter is the host delay for a new question that names none.
+	// The registry copies it on open; a standalone board is the historical 10. Not saved.
+	defaultQuestionArchiveAfter float64
 }
 
 // New is an empty board.
@@ -177,6 +180,7 @@ func New(id, root string) *Board {
 		pendingApprovals: map[string][]approval{}, relaunchedAgents: map[string]bool{}, restartingAgents: map[string]bool{}, revHighWater: map[string]int{}, history: newHistory(),
 		Activity: NewActivityLog(DefaultActivityCapacity, nil), replayActor: UserActor, cascades: map[string]cascade{}, cascadeRev: -1,
 		workingDirectories: map[string]string{}, promptTarget: store.PromptTargetState{FocusOrder: []string{}},
+		defaultQuestionArchiveAfter: question.DefaultArchiveAfter,
 	}
 }
 

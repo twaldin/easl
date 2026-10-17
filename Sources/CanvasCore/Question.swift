@@ -119,7 +119,7 @@ public struct QuestionSpec: Equatable, Sendable {
         return updatedAt.addingTimeInterval(archiveAfter)
     }
 
-    static let defaultArchiveAfter: TimeInterval = 10
+    public static let defaultArchiveAfter: TimeInterval = 10
     static let archiveAfterRange: ClosedRange<TimeInterval> = 0...86_400
 
     /// `props.archiveAfter` as a delay: a number of seconds within `archiveAfterRange`; nil otherwise.
@@ -143,12 +143,17 @@ public struct QuestionSpec: Equatable, Sendable {
     static let optionsShape = "an array of {id, label, why?}"
     static let answerShape = "an answered question needs answer: {option, note?} or {note}"
 
-    /// `object.create` props of a question as stored: `status` open and, when the call has a
-    /// caller and names no asker, the calling terminal as `asker`.
-    public static func creating(_ props: JSONValue, caller: ObjectID?) -> JSONValue {
+    /// `object.create` props of a question as stored: `status` open; when the call has a caller
+    /// and names no asker, the calling terminal as `asker`; when it names no `archiveAfter` (or
+    /// null), the host's `defaultDelay` (`Board.defaultQuestionArchiveAfter`) unless that is the
+    /// historical 10, so boards without a host setting store their questions as before.
+    public static func creating(_ props: JSONValue, caller: ObjectID?, defaultDelay: TimeInterval) -> JSONValue {
         var fields = props.object ?? [:]
         if fields["status"] == nil || fields["status"] == .null { fields["status"] = .string(Status.open.rawValue) }
         if fields["asker"] == nil || fields["asker"] == .null, let caller { fields["asker"] = .object(["tile": .string(caller)]) }
+        if defaultDelay != defaultArchiveAfter, fields["archiveAfter"] == nil || fields["archiveAfter"] == .null {
+            fields["archiveAfter"] = .number(defaultDelay)
+        }
         return .object(fields)
     }
 
@@ -355,9 +360,10 @@ public struct QuestionSpec: Equatable, Sendable {
 }
 
 extension Board {
-    /// `object.create` props for a question: `QuestionSpec.creating`, then validated.
+    /// `object.create` props for a question: `QuestionSpec.creating` with this board's default
+    /// delay, then validated.
     public func questionToCreate(_ props: JSONValue, caller: ObjectID?) throws -> JSONValue {
-        let props = QuestionSpec.creating(props, caller: caller)
+        let props = QuestionSpec.creating(props, caller: caller, defaultDelay: defaultQuestionArchiveAfter)
         if let problem = QuestionSpec.problem(props, before: nil) { throw BoardError.invalidParams(problem) }
         return props
     }

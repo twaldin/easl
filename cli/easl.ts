@@ -77,7 +77,8 @@ const ASK_HELP = [
   "--asker defaults to the asking terminal tile; outside a tile, to <user>@<short hostname>. --expires takes 45s, 30m, 2h, 1d or an ISO 8601 date-time.",
   "--wait blocks until the user answers: the answer {id, option, label, note, at, by} prints as JSON, exit 0. Cancelled, expired or deleted: why on stderr, exit 2.",
   "`ask wait <id>` does the same for a question already posted; `ask cancel <id>` withdraws one; `ask list --open` lists the open ones.",
-  "Closed questions leave the board after 10 seconds. --keep leaves the tile on the board; ask get and ask list still return archived questions.",
+  "Closed questions leave the board after 10 seconds by default. --keep leaves the tile on the board. ask get and ask list still return archived questions.",
+  "The host can set the default delay. --json '{\"archiveAfter\":30}' overrides it for one question.",
 ];
 
 function usage(help = false): never {

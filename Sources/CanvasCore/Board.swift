@@ -179,6 +179,9 @@ public final class Board {
     var codePreviews: [ObjectID: (tile: ObjectID, rev: Int)] = [:]
     /// The pending check for the earliest open question's `expiresAt` or closed one's `archiveAt` (Question.swift).
     var questionExpiry: DispatchWorkItem?
+    /// The `archiveAfter` a new question that names none gets (`questionToCreate`): its host's
+    /// setting, given by the registry that opened it (`BoardRegistry.open`); in memory, never saved.
+    var defaultQuestionArchiveAfter = QuestionSpec.defaultArchiveAfter
     public private(set) var isClosed = false
 
     func deactivate() {

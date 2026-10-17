@@ -3,7 +3,8 @@ import CanvasCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let registry = BoardRegistry(store: BoardStore(directory: AppPaths.boards), agentReports: AppPaths.agentReports)
+    private let registry = BoardRegistry(store: BoardStore(directory: AppPaths.boards), agentReports: AppPaths.agentReports,
+                                         defaultQuestionArchiveAfter: UISettings.Store(url: AppPaths.uiSettings).load().questionArchiveAfter)
     private lazy var router = ApiRouter(registry: registry)
     private var server: SocketServer?
     private var cmuxServer: SocketServer?

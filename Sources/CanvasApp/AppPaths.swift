@@ -52,7 +52,6 @@ enum AppPaths {
     static func viewport(of board: BoardID) -> URL {
         support.appendingPathComponent("viewport", isDirectory: true).appendingPathComponent("\(board).json")
     }
-    /// The app's own settings (`UISettings`): the chrome text scale and background attach.
     static let uiSettings = support.appendingPathComponent("ui-settings.json")
     static let clientID = support.appendingPathComponent("client-id")
     /// easl › Check for Updates…'s downloads (`Updater`): one folder per version with the zip,

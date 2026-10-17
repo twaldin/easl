@@ -510,7 +510,7 @@
         },
         "archived": { "type": "boolean", "description": "true hides a closed question's tile (archive is not a status: `status` keeps how it ended, `answer` stays); an open question can't be archived. The host also sets it when a closed question's archive delay elapses" },
         "keep": { "type": "boolean", "description": "true exempts a closed question from automatic archiving; it does not stop expiry or an explicit archive. Absent or false is not exempt. May change after closure; null removes it" },
-        "archiveAfter": { "type": "number", "minimum": 0, "maximum": 86400, "description": "seconds after updatedAt before a closed, unkept question is archived. Default 10 when absent, null, or not a finite number from 0 to 86400. A fraction is a fraction of a second. May change after closure" },
+        "archiveAfter": { "type": "number", "minimum": 0, "maximum": 86400, "description": "seconds after updatedAt before a closed, unkept question is archived. The implicit delay is 10 for stored questions without a readable value. On create, an absent or null value uses the host's questionArchiveAfter app setting or easld --question-archive-after default; a nondefault host delay is stored in this prop. An explicit value wins. A fraction is a fraction of a second. May change after closure; null then restores the implicit 10" },
         "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" }
       },

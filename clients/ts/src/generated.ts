@@ -498,7 +498,7 @@ export type QuestionProps = {
   archived?: boolean;
   /** true exempts a closed question from automatic archiving; it does not stop expiry or an explicit archive. Absent or false is not exempt. May change after closure; null removes it */
   keep?: boolean;
-  /** seconds after updatedAt before a closed, unkept question is archived. Default 10 when absent, null, or not a finite number from 0 to 86400. A fraction is a fraction of a second. May change after closure */
+  /** seconds after updatedAt before a closed, unkept question is archived. The implicit delay is 10 for stored questions without a readable value. On create, an absent or null value uses the host's questionArchiveAfter app setting or easld --question-archive-after default; a nondefault host delay is stored in this prop. An explicit value wins. A fraction is a fraction of a second. May change after closure; null then restores the implicit 10 */
   archiveAfter?: number;
   zoom?: Zoom;
   key?: ObjectKey;

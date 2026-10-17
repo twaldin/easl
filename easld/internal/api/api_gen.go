@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "ca5d155c1a884802"
+const SchemaHash = "c5f59eacd445986e"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -727,7 +727,7 @@ type QuestionProps struct {
 	Archived *bool `json:"archived,omitempty"`
 	// true exempts a closed question from automatic archiving; it does not stop expiry or an explicit archive. Absent or false is not exempt. May change after closure; null removes it
 	Keep *bool `json:"keep,omitempty"`
-	// seconds after updatedAt before a closed, unkept question is archived. Default 10 when absent, null, or not a finite number from 0 to 86400. A fraction is a fraction of a second. May change after closure
+	// seconds after updatedAt before a closed, unkept question is archived. The implicit delay is 10 for stored questions without a readable value. On create, an absent or null value uses the host's questionArchiveAfter app setting or easld --question-archive-after default; a nondefault host delay is stored in this prop. An explicit value wins. A fraction is a fraction of a second. May change after closure; null then restores the implicit 10
 	ArchiveAfter *float64   `json:"archiveAfter,omitempty"`
 	Zoom         *Zoom      `json:"zoom,omitempty"`
 	Key          *ObjectKey `json:"key,omitempty"`

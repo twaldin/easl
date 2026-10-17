@@ -14,9 +14,14 @@ import (
 const maxExpiryWait = 24 * time.Hour
 
 // QuestionToCreate is Board.questionToCreate: `object.create` props for a question:
-// question.Creating, then validated.
+// question.Creating, the host delay when that is not the historical 10 and the call
+// gave no archiveAfter, then validated. An explicit value, valid or not, is left for validation.
 func (b *Board) QuestionToCreate(props map[string]any, caller string) (map[string]any, error) {
 	props = question.Creating(props, caller)
+	// A host default of 10 stays absent so a new question matches the historical implicit delay.
+	if b.defaultQuestionArchiveAfter != question.DefaultArchiveAfter && props["archiveAfter"] == nil {
+		props["archiveAfter"] = b.defaultQuestionArchiveAfter
+	}
 	if problem, bad := question.Problem(props, nil); bad {
 		return nil, InvalidParams("%s", problem)
 	}

@@ -97,35 +97,43 @@ public enum ChromeTextScale {
     }
 }
 
-/// The app's own settings in an easl home (`ui-settings.json`): the chrome text scale and
-/// background attach. Each change reads the file again and writes back only its own field, so one
-/// setting's write keeps the other's.
+/// The app's own settings in an easl home (`ui-settings.json`): the chrome text scale, background
+/// attach and new questions' archive delay. Each change reads the file again and writes back only
+/// its own field, so one setting's write keeps the others'.
 public struct UISettings: Equatable, Sendable {
     /// `ChromeTextScale`'s level.
     public var chromeTextScale: Double
     /// Remote easld boards in the reopen list (`RemoteReopen`) stay attached while easl runs, also
     /// with their windows closed (docs/design.md "Client mode"). On unless turned off.
     public var backgroundAttach: Bool
+    /// Seconds a closed question that was created naming no `archiveAfter` stays in view on the
+    /// boards this Mac hosts (`BoardRegistry.defaultQuestionArchiveAfter`), read at launch.
+    public var questionArchiveAfter: TimeInterval
 
-    public init(chromeTextScale: Double = ChromeTextScale.normal, backgroundAttach: Bool = true) {
+    public init(chromeTextScale: Double = ChromeTextScale.normal, backgroundAttach: Bool = true,
+                questionArchiveAfter: TimeInterval = QuestionSpec.defaultArchiveAfter) {
         self.chromeTextScale = chromeTextScale
         self.backgroundAttach = backgroundAttach
+        self.questionArchiveAfter = questionArchiveAfter
     }
 
     /// On disk: a missing or damaged field is that setting's default, whatever the others hold.
     private struct File: Codable {
         var scale: Double?
         var backgroundAttach: Bool?
+        var questionArchiveAfter: Double?
 
         init(_ settings: UISettings) {
             scale = settings.chromeTextScale
             backgroundAttach = settings.backgroundAttach
+            questionArchiveAfter = settings.questionArchiveAfter
         }
 
         init(from decoder: Decoder) throws {
             let fields = try decoder.container(keyedBy: CodingKeys.self)
             scale = try? fields.decodeIfPresent(Double.self, forKey: .scale)
             backgroundAttach = try? fields.decodeIfPresent(Bool.self, forKey: .backgroundAttach)
+            questionArchiveAfter = try? fields.decodeIfPresent(Double.self, forKey: .questionArchiveAfter)
         }
     }
 
@@ -136,14 +144,15 @@ public struct UISettings: Equatable, Sendable {
             self.url = url
         }
 
-        /// The saved settings; 100% and on where there is none or the file is unreadable.
+        /// The saved settings; 100%, on and 10 seconds where there is none or the file is unreadable.
         public func load() -> UISettings { (try? read()) ?? UISettings() }
 
         private func read() throws -> UISettings {
             do {
                 let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: url))
                 return UISettings(chromeTextScale: file.scale.map(ChromeTextScale.level(nearest:)) ?? ChromeTextScale.normal,
-                                  backgroundAttach: file.backgroundAttach ?? true)
+                                  backgroundAttach: file.backgroundAttach ?? true,
+                                  questionArchiveAfter: file.questionArchiveAfter.flatMap { QuestionSpec.archiveDelay(.number($0)) } ?? QuestionSpec.defaultArchiveAfter)
             } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
                 return UISettings()
             }

@@ -280,6 +280,40 @@ final class QuestionTests {
         #expect(QuestionSpec(try board.object(delayed).props).archived, "never an archive the app made")
     }
 
+    /// Synchronous on the main actor, so the board's timer never runs between injected deadlines.
+    @Test func aHostsDefaultDelayArchivesOnlyQuestionsThatNameNoDelayOfTheirOwn() throws {
+        let root = dir.appendingPathComponent("thirty")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = BoardStore(directory: dir.appendingPathComponent("thirty-boards"), debounce: 60)
+        let stored = Board(id: BoardStore.boardID(for: root), root: root)
+        let existing = try ask(on: stored)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(stored.snapshot).write(to: store.url(for: stored.id))
+        let configured = BoardRegistry(store: store, defaultQuestionArchiveAfter: 30)
+        let hosted = configured.open(root: root)
+        #expect(throws: BoardError.self, "a caller's delay is never replaced") {
+            try self.ask(on: hosted, ["archiveAfter": -1])
+        }
+        let own = try ask(on: hosted, ["archiveAfter": 5]), historical = try ask(on: hosted, ["archiveAfter": 10])
+        let kept = try ask(on: hosted, ["keep": .bool(true)]), cleared = try ask(on: hosted, ["archiveAfter": .null])
+        let unnamed = try ask(on: hosted)
+        let ownAt = try hosted.answerQuestion(own, option: "now", note: nil).updatedAt
+        try hosted.answerQuestion(existing, option: "now", note: nil)
+        let historicalAt = try hosted.answerQuestion(historical, option: "now", note: nil).updatedAt
+        try hosted.answerQuestion(kept, option: "now", note: nil)
+        try hosted.answerQuestion(cleared, option: "now", note: nil)
+        let unnamedAt = try hosted.answerQuestion(unnamed, option: "now", note: nil).updatedAt
+
+        #expect(hosted.archiveQuestions(now: ownAt.addingTimeInterval(4)) == [])
+        #expect(hosted.archiveQuestions(now: ownAt.addingTimeInterval(5)) == [own], "its own delay")
+        #expect(hosted.archiveQuestions(now: historicalAt.addingTimeInterval(9)) == [])
+        #expect(hosted.archiveQuestions(now: historicalAt.addingTimeInterval(10)) == [existing, historical].sorted(), "existing implicit 10 and explicit 10, not the host's 30")
+        #expect(hosted.archiveQuestions(now: unnamedAt.addingTimeInterval(29)) == [])
+        #expect(hosted.archiveQuestions(now: unnamedAt.addingTimeInterval(30)) == [cleared, unnamed].sorted(), "none or null: the host's 30")
+        #expect(hosted.archiveQuestions(now: .distantFuture) == [], "keep still exempts a question")
+    }
+
     /// The question once the board's own timer archived it, or as it is after 15 seconds.
     func archivedByTheTimer(_ id: ObjectID) async throws -> QuestionSpec {
         let deadline = Date().addingTimeInterval(15)
