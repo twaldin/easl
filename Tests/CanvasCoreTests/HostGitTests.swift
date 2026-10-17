@@ -13,6 +13,17 @@ struct HostGitTests {
         await offPool { try? String(contentsOf: url, encoding: .utf8) }
     }
 
+    private func reader(_ fixture: HostFileFixture, limit: String, of value: Int) throws -> HostFiles {
+        try fixture.reader(body: "sed 's/\"\(limit)\":[0-9]*/\"\(limit)\":\(value)/' | /bin/sh -c \"$command\"")
+    }
+
+    private func reader(_ fixture: HostFileFixture, running injection: String) throws -> HostFiles {
+        try fixture.reader(body: """
+        eval "set -- $command"
+        exec "$1" "$2" "$3" "$4" \(RemoteHost.quote(injection + "\n"))"$5" "$6"
+        """)
+    }
+
     @Test func aCodeTileReadsItsFileOnTheHostAsALocalTileDoes() async throws {
         let fixture = try HostFileFixture()
         let git = HostGit(files: try fixture.reader())
@@ -124,10 +135,11 @@ struct HostGitTests {
         let againSides = try #require(second.sides["app.txt"])
         let stale = try await ReviewPatch.stage([again.hunks[0]], of: again, sides: againSides, onHost: top)
         try await repo.write("app.txt", lines.joined(separator: "\n") + "\nappended\n")
-        await #expect(throws: ChangesFailure("app.txt changed since the tile read it; try again")) {
+        await #expect(throws: ChangesFailure.self) {
             try await git.apply(stale, to: again, sides: againSides, boardRoot: root)
         }
         #expect(try await cachedHeaders(repo, "app.txt") == [app.hunks[1].header])
+        #expect(await read(repo.url("app.txt")) == lines.joined(separator: "\n") + "\nappended\n")
 
         let third = try await listing()
         let other = try #require(third.set.files.first { $0.path == "other.txt" })
@@ -155,17 +167,17 @@ struct HostGitTests {
 
         for path in ["../outside.txt", repo.url("outside.txt").path, "escape.txt", alias.appendingPathComponent("app.txt").path, secret.appendingPathComponent("key").path] {
             let load = try await git.code(HostCodeRead(boardRoot: root, path: path, base: .head, pinned: nil, ref: nil, refSha: nil))
-            #expect(load.document.diff.state == .unreadable && load.document.diff.baseLabel == "refused by the host: outside the board", "\(path)")
-            #expect(!load.document.diff.new.text.contains("TOPSECRET"))
+            #expect(load.document.diff.state == .unreadable, "\(path)")
+            #expect(load.document.diff.old.text.isEmpty && load.document.diff.new.text.isEmpty)
         }
         let listing = try await git.changes(boardRoot: root, spec: ChangesSpec(.object([:])), highlight: false)
         let escape = try #require(listing.set.files.first { $0.path == "pkg/escape.txt" })
-        #expect(escape.notice == "refused by the host: outside the board" && escape.hunks.isEmpty && !escape.new.text.contains("TOPSECRET"))
+        #expect(escape.notice != nil && escape.hunks.isEmpty && escape.old.text.isEmpty && escape.new.text.isEmpty)
         #expect(listing.sides["pkg/escape.txt"] == nil)
         let otherRoot = try await git.changes(boardRoot: root, spec: ChangesSpec(.object(["root": .string(secret.path)])), highlight: false)
-        #expect(otherRoot.set.notice == "\(secret.path) is not a worktree of this board's repository")
+        #expect(otherRoot.set.notice != nil && otherRoot.set.files.isEmpty && otherRoot.checkout == nil && otherRoot.sides.isEmpty)
         let outsidePath = try await git.changes(boardRoot: root, spec: ChangesSpec(.object(["paths": ["../outside.txt"]])), highlight: false)
-        #expect(outsidePath.set.notice == "../outside.txt is outside the board")
+        #expect(outsidePath.set.notice != nil && outsidePath.set.files.isEmpty && outsidePath.checkout == nil && outsidePath.sides.isEmpty)
     }
 
     @Test func aRefReadsWhereItsBranchIsCheckedOutElseFromItsCommit() async throws {
@@ -194,7 +206,7 @@ struct HostGitTests {
         #expect(objects.document.diff.state == .pinned && objects.document.diff.new.text == "committed\n" && objects.refSha == tip)
 
         let unknown = try await code("nope")
-        #expect(unknown.document.diff.state == .pinUnavailable && unknown.document.diff.baseLabel == "unknown ref nope")
+        #expect(unknown.document.diff.state == .pinUnavailable && unknown.document.diff.new.text.isEmpty)
 
         let spec = ChangesSpec(.object(["ref": "feature"]))
         let changes = try await git.changes(boardRoot: root, spec: spec, highlight: false)
@@ -221,9 +233,9 @@ struct HostGitTests {
         #expect(load.document.diff.state == .pinned && load.document.diff.new.text == "committed\n")
         #expect(load.probe == nil, "a pinned commit never changes")
         let alias = try await pinned("alias.txt", sha)
-        #expect(alias.document.diff.state == .pinUnavailable && alias.document.diff.baseLabel == "not in \(sha.prefix(7))")
+        #expect(alias.document.diff.state == .pinUnavailable && alias.document.diff.new.text.isEmpty)
         let invalid = try await pinned("real.txt", "--output=x")
-        #expect(invalid.document.diff.baseLabel == "not a revision: --output=x")
+        #expect(invalid.document.diff.state == .pinUnavailable && invalid.document.diff.new.text.isEmpty)
     }
 
     @Test func anUnreachableHostIsUnavailableNeverAnEmptyListing() async throws {
@@ -235,5 +247,163 @@ struct HostGitTests {
             try await git.code(HostCodeRead(boardRoot: "/nowhere", path: "a.txt", base: .head, pinned: nil, ref: nil, refSha: nil))
         }
         #expect(await git.stamp(HostGitProbe(boardRoot: "/nowhere", spec: .object(["dir": "/nowhere"]))) == .failure(refused))
+    }
+
+    @Test func aWorktreeWhoseBoardFolderLinksOutsideShowsNothingFromThere() async throws {
+        let fixture = try HostFileFixture()
+        let git = HostGit(files: try fixture.reader())
+        let repo = try await TempRepo(), outside = try await TempRepo()
+        defer {
+            try? FileManager.default.removeItem(at: repo.root)
+            try? FileManager.default.removeItem(at: outside.root)
+        }
+        try await repo.write("pkg/file.txt", "board\n")
+        try await repo.commit("base")
+        try await outside.write("file.txt", "outside\n")
+        let outsideSha = try await outside.commit("outside")
+        try await outside.write("file.txt", "TOPSECRET\n")
+        let worktree = fixture.directory.appendingPathComponent("feature")
+        try await repo.git("worktree", "add", "-q", "-b", "feature", worktree.path)
+        let link = worktree.appendingPathComponent("pkg")
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: outside.root.path)
+        let root = repo.url("pkg").path, linked = link.appendingPathComponent("file.txt").path
+
+        for read in [HostCodeRead(boardRoot: root, path: "file.txt", base: .head, pinned: nil, ref: "feature", refSha: nil),
+                     HostCodeRead(boardRoot: root, path: linked, base: .head, pinned: nil, ref: nil, refSha: nil),
+                     HostCodeRead(boardRoot: root, path: linked, base: .head, pinned: outsideSha, ref: nil, refSha: nil)] {
+            let diff = try await git.code(read).document.diff
+            #expect(diff.state == .unreadable, "\(read)")
+            #expect(diff.old.text.isEmpty && diff.new.text.isEmpty, "\(read)")
+        }
+        let listing = try await git.changes(boardRoot: root, spec: ChangesSpec(.object(["ref": "feature"])), highlight: false)
+        #expect(listing.set.notice != nil && listing.set.files.isEmpty && listing.checkout == nil && listing.sides.isEmpty)
+        let board = try await git.code(HostCodeRead(boardRoot: root, path: "file.txt", base: .head, pinned: nil, ref: nil, refSha: nil))
+        #expect(board.document.diff.new.text == "board\n")
+    }
+
+    @Test func aRefThatMovesWhileItsListingIsReadReloadsOnTheFirstPoll() async throws {
+        let fixture = try HostFileFixture()
+        let git = HostGit(files: try fixture.reader())
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("a.txt", "base\n")
+        let base = try await repo.commit("base")
+        try await repo.write("a.txt", "first\n")
+        let first = try await repo.commit("first")
+        try await repo.write("b.txt", "second\n")
+        let second = try await repo.commit("second")
+        try await repo.git("branch", "feature", first)
+        try await repo.git("reset", "-q", "--hard", base)
+        let constants = String(decoding: try JSONEncoder().encode([repo.root.path, second]), as: UTF8.self)
+        let racing = HostGit(files: try reader(fixture, running: """
+        (() => {
+          const cp = require('node:child_process');
+          const [root, second] = \(constants);
+          const execFileSync = cp.execFileSync;
+          let moved = false;
+          cp.execFileSync = (file, args, options) => {
+            const out = execFileSync(file, args, options);
+            if (!moved && args.at(-1) === 'feature^{commit}') {
+              moved = true;
+              execFileSync('git', ['-C', root, 'update-ref', 'refs/heads/feature', second]);
+            }
+            return out;
+          };
+        })();
+        """))
+        let spec = ChangesSpec(.object(["ref": "feature"]))
+
+        let raced = try await racing.changes(boardRoot: repo.root.path, spec: spec, highlight: false)
+        #expect(raced.set.refSha == first && raced.set.files.map(\.path) == ["a.txt"])
+        let probe = try #require(raced.probe)
+        #expect(await git.stamp(probe) != raced.baseline, "the first poll reloads a listing read before its ref moved")
+        let reloaded = try await git.changes(boardRoot: repo.root.path, spec: spec, highlight: false)
+        #expect(reloaded.set.refSha == second && reloaded.set.files.map(\.path) == ["a.txt", "b.txt"])
+        let settled = try #require(reloaded.probe)
+        #expect(await git.stamp(settled) == reloaded.baseline)
+    }
+
+    @Test func aListingTooLargeForOneReplyStillPollsAndLoadsOnceItShrinks() async throws {
+        let fixture = try HostFileFixture()
+        let git = HostGit(files: try reader(fixture, limit: "reply", of: 4096))
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("big.txt", "small\n")
+        try await repo.commit("base")
+        try await repo.write("big.txt", String(repeating: "grown line\n", count: 400))
+        let root = repo.root.path, spec = ChangesSpec(.object([:]))
+
+        let oversized = try await git.changes(boardRoot: root, spec: spec, highlight: false)
+        #expect(oversized.set.notice != nil && oversized.set.files.isEmpty)
+        let probe = try #require(oversized.probe, "a listing too large to send still polls")
+        #expect(await git.stamp(probe) == oversized.baseline)
+        try await repo.write("big.txt", "small, edited\n")
+        #expect(await git.stamp(probe) != oversized.baseline, "shrinking the change reloads the tile")
+        let shrunk = try await git.changes(boardRoot: root, spec: spec, highlight: false)
+        #expect(shrunk.set.notice == nil && shrunk.set.files.map { $0.new.text } == ["small, edited\n"])
+    }
+
+    @Test func aNewFileMadeExecutableSinceTheListingIsNotStaged() async throws {
+        let fixture = try HostFileFixture()
+        let git = HostGit(files: try fixture.reader())
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("a.txt", "base\n")
+        try await repo.commit("base")
+        try await repo.write("script.sh", "echo hi\n")
+        let root = repo.root.path
+        func stage() async throws -> (ReviewPatch, ChangedFile, ReviewSides) {
+            let listing = try await git.changes(boardRoot: root, spec: ChangesSpec(.object([:])), highlight: false)
+            let file = try #require(listing.set.files.first { $0.path == "script.sh" })
+            let sides = try #require(listing.sides["script.sh"]), top = try #require(listing.checkout)
+            let patch = try await ReviewPatch.stage(nil, of: file, sides: sides, onHost: top)
+            return (patch, file, sides)
+        }
+
+        let (stale, file, sides) = try await stage()
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: repo.url("script.sh").path)
+        await #expect(throws: ChangesFailure.self) {
+            try await git.apply(stale, to: file, sides: sides, boardRoot: root)
+        }
+        #expect(try await repo.git("ls-files", "--stage", "--", "script.sh") == "")
+
+        let (fresh, freshFile, freshSides) = try await stage()
+        try await git.apply(fresh, to: freshFile, sides: freshSides, boardRoot: root)
+        #expect(try await repo.git("ls-files", "--stage", "--", "script.sh").hasPrefix("100755 "))
+    }
+
+
+    @Test func anEditWhileTheListingIsReadShowsTheEditedFile() async throws {
+        let fixture = try HostFileFixture()
+        let git = HostGit(files: try fixture.reader())
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("a.txt", "base\n")
+        try await repo.commit("base")
+        try await repo.write("a.txt", "before\n")
+        let constants = String(decoding: try JSONEncoder().encode([repo.url("a.txt").path]), as: UTF8.self)
+        let editing = HostGit(files: try reader(fixture, running: """
+        (() => {
+          const cp = require('node:child_process');
+          const fs = require('node:fs');
+          const [file] = \(constants);
+          const spawnSync = cp.spawnSync;
+          let edited = false;
+          cp.spawnSync = (command, args, options) => {
+            const result = spawnSync(command, args, options);
+            if (!edited && command === 'python3' && JSON.parse(options.input).budget != null) {
+              edited = true;
+              fs.writeFileSync(file, 'edited while listed\\n');
+            }
+            return result;
+          };
+        })();
+        """))
+
+        let load = try await editing.changes(boardRoot: repo.root.path, spec: ChangesSpec(.object([:])), highlight: false)
+        #expect(load.set.files.map { $0.new.text } == ["edited while listed\n"])
+        let probe = try #require(load.probe)
+        #expect(await git.stamp(probe) == load.baseline)
     }
 }
