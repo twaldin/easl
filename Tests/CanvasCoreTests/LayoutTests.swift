@@ -203,6 +203,7 @@ final class LayoutApiTests {
         #expect(results[0]["warnings"]?.array?.count == 1 && results[1]["warnings"] == nil)
     }
 
+
     @Test func noteHeightFollowsItsWrapWidthAndResolvedFences() async throws {
         let prose: JSONValue = .object(["markdown": .string(String(repeating: "A sentence that wraps across the note. ", count: 12))])
         let narrow = Self.size(try await result("object.measure", .object(["type": "note", "props": prose, "width": 240])))
