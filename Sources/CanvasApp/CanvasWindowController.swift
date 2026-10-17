@@ -251,7 +251,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         let mirror = remote.mirror, host = remote.host.name
         banner.onRetry = { mirror.reconnect() }
         banner.show(mirror.state, host: host, problem: mirror.problem)
-        mirror.onState = { [weak self] state in self?.banner.show(state, host: host, problem: mirror.problem) }
+        mirror.onState = { [weak self, weak mirror] state in self?.banner.show(state, host: host, problem: mirror?.problem) }
         mirror.onNotice = { [weak self] text in self?.canvas.showNotice(text) }
         mirror.onRedraw = { [weak self] in self?.canvas.redrawRemoteTiles() }
         sendPrompt = { text, terminal, mentions, answer in
@@ -1154,7 +1154,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return true
         case #selector(clearAttentionMarkers(_:)): return !board.attention.isEmpty
         case #selector(copyAsImage(_:)), #selector(saveAsPNG(_:)): return !selection.isEmpty
-        case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selected(.html) != nil
+        case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selected(.html) != nil && !board.isRemote
         case #selector(openPageInBrowser(_:)): return selected(.browser) != nil
         case #selector(copyNoteAsMarkdown(_:)), #selector(saveNoteAsMarkdown(_:)): return selected(.note) != nil
         case #selector(toggleWebInspector(_:)):

@@ -9,8 +9,6 @@ public struct ViewerWindow {
     public var focused: () -> Bool
     /// What the window shows (`view.get`); nil once it is gone.
     public var viewState: () -> ViewState?
-    /// The window as shown, encoded in `format`, with the viewport it shows.
-    public var snapshot: (_ format: ImageFormat) async -> (output: RenderOutput, viewport: Viewport)?
     /// Types text into a terminal tile's surface (bracketed paste) and presses Enter once the paste
     /// landed; false when the tile has no surface.
     public var submit: (ObjectID, _ text: String) async -> Bool
@@ -24,12 +22,10 @@ public struct ViewerWindow {
     public var status: (ObjectID) -> TerminalStatus?
 
     public init(focused: @escaping () -> Bool, viewState: @escaping () -> ViewState?,
-                snapshot: @escaping (ImageFormat) async -> (output: RenderOutput, viewport: Viewport)?,
                 submit: @escaping (ObjectID, String) async -> Bool, surfaceTail: @escaping (ObjectID, Int) -> TerminalTail.Tail?,
                 block: @escaping (ObjectID, Int) throws -> (command: TerminalCommand, output: String), status: @escaping (ObjectID) -> TerminalStatus?) {
         self.focused = focused
         self.viewState = viewState
-        self.snapshot = snapshot
         self.submit = submit
         self.surfaceTail = surfaceTail
         self.block = block
@@ -56,9 +52,9 @@ public struct ClientIdentity: Equatable, Sendable {
 /// itself on that link, or come straight back here (the composer's own prompt).
 @MainActor
 final class DelegatedCalls {
-    /// What a viewer serves (`client.attach` `serves`). Never `view.render` or `object.reload`: the
-    /// viewer has only the host's drawings of those tiles, and would ask the host to draw them.
-    static let served = ["view.get", "view.snapshot", "agent.prompt", "agent.read", "text.measure"]
+    /// Drawings would recurse to the host; snapshots would persist content on the viewer's disk.
+    /// Neither is a capability of this remote-board window.
+    static let served = ["view.get", "agent.prompt", "agent.read", "text.measure"]
 
     let board: Board
     let window: ViewerWindow
@@ -80,7 +76,6 @@ final class DelegatedCalls {
             case "view.get":
                 guard let state = window.viewState() else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
                 return .success(ApiRouter.viewResult(state, board: board.id))
-            case "view.snapshot": return .success(try await snapshot(p))
             case "agent.prompt": return .success(try await prompt(p))
             case "agent.read": return .success(try read(p))
             case "text.measure": return .success(try measure(p))
@@ -90,18 +85,6 @@ final class DelegatedCalls {
             let failure = ApiRouter.failure(for: error)
             return .failure(EaslConnection.Failure(failure.code, failure.message))
         }
-    }
-
-    /// The window's picture, saved on this Mac, whose path the answer names. A caller's `out` is a
-    /// path on easld's machine, which this Mac can't write: refused, never written here.
-    private func snapshot(_ p: JSONValue) async throws -> JSONValue {
-        if let out = p["out"], out != .null {
-            throw ApiRouter.Failure("unavailable", "nothing was written at \(out.string ?? "out"): this board's window is on another machine, "
-                + "which can't write a file on this one; without out, view.snapshot saves the picture on that machine and answers its path there")
-        }
-        let (format, path) = try ApiRouter.imageDestination(p, name: "snapshot")
-        guard let shot = await window.snapshot(format) else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
-        return try await ApiRouter.snapshotResult(shot, to: path)
     }
 
     /// Types the prompt into the terminal's surface, as the app's own `agent.prompt` does once its

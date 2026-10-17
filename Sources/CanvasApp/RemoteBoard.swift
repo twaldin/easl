@@ -2,16 +2,18 @@ import AppKit
 import CanvasCore
 
 /// A remote board's window (docs/design.md "Client mode"): the host it mirrors, and how its tiles
-/// reach their sessions or drawings. Terminals attach over ssh where they run; tiles drawn from
-/// the board host's files or pages show its rendering (`RemoteImageTile`).
+/// reach that host. HTML pages run here; terminals attach over ssh where their sessions run.
+/// The remaining file-backed tiles show the host's rendering (`RemoteImageTile`).
 @MainActor
 final class RemoteSource {
     let host: RemoteHost
     let mirror: BoardMirror
+    let files: HostFiles
 
     init(host: RemoteHost, mirror: BoardMirror) {
         self.host = host
         self.mirror = mirror
+        files = HostFiles(host: host, master: .named(host.sshTarget, support: AppPaths.support.path))
     }
 
     /// The window's title: the board's name (its root folder, as a local board's window says it) at the host.
@@ -32,7 +34,6 @@ extension ViewerWindow {
         self.init(
             focused: { [weak controller] in controller?.window?.isKeyWindow == true },
             viewState: { [weak controller] in controller?.canvas.viewState },
-            snapshot: { [weak controller] format in await controller?.snapshot(format: format) },
             submit: { id, text in await terminal(id)?.submit(text) ?? false },
             surfaceTail: { id, lines in terminal(id)?.surfaceTail(lines: lines) },
             block: { id, index in

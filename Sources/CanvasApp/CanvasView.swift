@@ -1453,7 +1453,7 @@ final class CanvasView: NSScrollView {
         menu.addItem(.separator())
         menu.addItem(MenuAction.item("Copy as Image") { [weak self] in self?.copySelectionAsImage() })
         menu.addItem(MenuAction.item("Save as PNG…") { [weak self] in self?.saveSelectionAsPNG() })
-        if count == 1, board.objects[id]?.type == .html {
+        if count == 1, board.objects[id]?.type == .html, !board.isRemote {
             menu.addItem(MenuAction.item("Save as HTML…") { [weak self] in self?.saveHTML(id) })
             menu.addItem(MenuAction.item("Open in Browser") { [weak self] in self?.openHTMLInBrowser(id) })
         }

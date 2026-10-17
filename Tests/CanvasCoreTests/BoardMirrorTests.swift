@@ -290,6 +290,160 @@ final class BoardMirrorTests {
         try await eventually { board.objects[added.id] != nil }
     }
 
+    @Test func htmlArrivesWholeWithoutChangingTheHostAndFollowsUpdates() async throws {
+        let pages = ["", "(12 bytes, use object.get)", "<main>" + String(repeating: "live page ", count: 100) + "</main>"]
+        let objects = pages.map { html in
+            host.create(type: .html, props: .object(["html": .string(html), "state": .object(["choice": .string("kept")])]),
+                        frame: Frame(x: 0, y: 0, w: 600, h: 400))
+        }
+        let original = host.objects
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        #expect(host.objects == original)
+        for object in objects { #expect(board.objects[object.id] == object) }
+        let page = objects[2]
+        _ = try host.update(page.id, props: .object(["html": .string("<h1>Changed on the host</h1>")]))
+        try await eventually { board.objects[page.id] == host.objects[page.id] }
+        #expect(board.objects[page.id]?.props["state"]?["choice"] == .string("kept"))
+
+        server.stop()
+        try await eventually { mirror.state != .online }
+        _ = try host.update(page.id, props: .object(["html": .string("<h1>Changed while disconnected</h1>")]))
+        server = Self.serve(router, at: socket)
+        try server.start()
+        try await eventually { board.objects[page.id] == host.objects[page.id] }
+        #expect(board.objects[page.id]?.type == .html)
+    }
+
+    @Test func htmlDeletedBetweenTheManifestAndContentReadIsNotShown() async throws {
+        let page = host.create(type: .html, props: .object(["html": .string("<h1>Deleted during load</h1>")]),
+                               frame: Frame(x: 0, y: 0, w: 600, h: 400))
+        server.stop()
+        let once = Once()
+        once.body = { [unowned self] in try? host.delete(page.id) }
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            let reply = await router.handle(request, connection: connection)
+            if request["method"]?.string == "board.get" { await once.run() }
+            return reply
+        }
+        try server.start()
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        #expect(board.objects[page.id] == nil)
+        #expect(host.objects[page.id] == nil)
+    }
+
+    @Test func unreadableHtmlFailsTheReadRatherThanShowingItsSummary() async throws {
+        _ = host.create(type: .html, props: .object(["html": .string("<h1>Must arrive whole</h1>")]),
+                        frame: Frame(x: 0, y: 0, w: 600, h: 400))
+        server.stop()
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "object.get" {
+                return .object(["id": request["id"] ?? .null, "ok": .bool(false),
+                                "error": .object(["code": .string("unavailable"), "message": .string("content read failed")])])
+            }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        do {
+            _ = try await mirror()
+            Issue.record("a failed content read must not install summarized HTML")
+        } catch let failure as ApiRouter.Failure {
+            #expect(failure.code == "unavailable")
+            #expect(failure.message == "content read failed")
+        }
+        #expect(mirrors.last?.board == nil)
+        for mirror in mirrors { mirror.close() }
+    }
+
+    @Test func failedHtmlRefreshIsVisibleAndRetryWorksWithoutDroppingTheLink() async throws {
+        let page = host.create(type: .html, props: .object(["html": .string("<p>Before</p>")]),
+                               frame: Frame(x: 0, y: 0, w: 600, h: 400))
+        let other = note("before")
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        var shownProblem: String?
+        mirror.onState = { [weak mirror] _ in shownProblem = mirror?.problem }
+        server.stop()
+        try await eventually { mirror.state != .online }
+        _ = try host.update(page.id, props: .object(["html": .string("<p>After reconnect</p>")]))
+        _ = try host.update(other.id, props: .object(["markdown": .string("after reconnect")]))
+        let refuse = Locked<String?>("HTML refresh failed")
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "object.get", let message = refuse.withLock({ value in
+                defer { value = nil }
+                return value
+            }) {
+                return .object(["id": request["id"] ?? .null, "ok": .bool(false),
+                                "error": .object(["code": .string("unavailable"), "message": .string(message)])])
+            }
+            return await router.handle(request, connection: connection)
+        }
+        try server.start()
+        try await eventually { refuse.withLock { $0 == nil } && mirror.reading == nil }
+        #expect(mirror.connection.state == .online)
+        #expect(mirror.state == .offline)
+        #expect(mirror.problem?.contains("HTML refresh failed") == true)
+        #expect(shownProblem?.contains("HTML refresh failed") == true)
+        refuse.withLock { $0 = "HTML retry failed differently" }
+        mirror.reconnect()
+        try await eventually { refuse.withLock { $0 == nil } && mirror.reading == nil }
+        #expect(mirror.connection.state == .online)
+        #expect(mirror.state == .offline)
+        #expect(shownProblem?.contains("HTML retry failed differently") == true)
+        mirror.reconnect()
+        try await eventually { board.objects[page.id] == host.objects[page.id] && board.objects[other.id] == host.objects[other.id] }
+        #expect(mirror.state == .online)
+        #expect(shownProblem == nil)
+    }
+
+    @Test func htmlRefreshFailureDoesNotPreventClientAttachmentOrTerminalPrompts() async throws {
+        let page = host.create(type: .html, props: .object(["html": .string("<p>Before</p>")]),
+                               frame: Frame(x: 0, y: 0, w: 600, h: 400))
+        let agent = host.create(type: .terminal, props: .object(["cwd": .string(dir.path), "name": "worker"])).id
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        server.stop()
+        try await eventually { mirror.state != .online }
+        _ = try host.update(page.id, props: .object(["html": .string("<p>After reconnect</p>")]))
+        let easld = Easld()
+        let failure = Locked<String?>("HTML refresh failed")
+        host.repo = RepoRecord(commonDir: dir.appendingPathComponent("root/.git").path, merged: ["brd_old"])
+        let added = host.create(type: .terminal, props: .object(["cwd": .string(host.root.path)]))
+        var ownershipAtCreation: [BoardID]?
+        board.onEvent = { [weak mirror] event in
+            if case .objectCreated(let object) = event, object.id == added.id {
+                ownershipAtCreation = mirror?.mergedBoards
+            }
+        }
+        try serveEasld(easld, refusingHtml: failure)
+        try await eventually { failure.withLock { $0 == nil } && mirror.reading == nil }
+        #expect(mirror.state == .offline)
+        #expect(mirror.problem?.contains("HTML refresh failed") == true)
+        #expect(board.objects[page.id]?.props["html"] == .string("<p>Before</p>"))
+        var pasted: [String] = []
+        mirror.serve(window(submit: { id, text in
+            pasted.append("\(id): \(text)")
+            return true
+        }), as: identity)
+        try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
+        try await mirror.prompt("still connected", to: agent, mentions: [], answer: false)
+        #expect(pasted == ["\(agent): still connected"])
+        #expect(mirror.state == .offline)
+        mirror.reconnect()
+        try await eventually { board.objects[page.id] == host.objects[page.id] && mirror.state == .online }
+        #expect(mirror.problem == nil)
+        #expect(board.objects[added.id] == host.objects[added.id])
+        #expect(ownershipAtCreation == ["brd_old"])
+        #expect(mirror.mergedBoards == ["brd_old"])
+        #expect(board.repo == nil)
+        #expect(mirror.attachment == .attached(client: "cli_1", version: 1))
+        #expect(easld.attaches.count == 1)
+    }
+
     @Test func aMoveShowsAtOnceAndTheHostsVersionReplacesIt() async throws {
         let moved = note("drag me")
         let (mirror, board) = try await mirror()
@@ -682,7 +836,8 @@ final class BoardMirrorTests {
     }
 
     @Test func whatTheHostChangesWhileTheViewerReadsItAgainStays() async throws {
-        let edited = note("before")
+        let edited = host.create(type: .html, props: .object(["html": .string("<p>Before</p>")]),
+                                 frame: Frame(x: 0, y: 0, w: 600, h: 400))
         let doomed = note("doomed", at: 400)
         let (mirror, board) = try await mirror()
         defer { mirror.close() }
@@ -693,7 +848,7 @@ final class BoardMirrorTests {
         var created: ObjectID?
         let once = Once()
         once.body = { [unowned self] in
-            _ = try? host.update(edited.id, props: .object(["markdown": .string("changed during the read")]))
+            _ = try? host.update(edited.id, props: .object(["html": .string("<p>Changed during the read</p>")]))
             try? host.delete(doomed.id)
             created = note("created during the read", at: 800).id
         }
@@ -714,7 +869,7 @@ final class BoardMirrorTests {
         try await eventually {
             board.objects[edited.id] == host.objects[edited.id] && board.objects[doomed.id] == nil && board.objects[added] == host.objects[added]
         }
-        #expect(board.objects[edited.id]?.props["markdown"]?.string == "changed during the read")
+        #expect(board.objects[edited.id]?.props["html"]?.string == "<p>Changed during the read</p>")
     }
 
     @Test func queuedWritesKeepTheHostRevisionTheyWereBasedOn() async throws {
@@ -832,7 +987,7 @@ final class BoardMirrorTests {
     }
 
     /// The host's socket served as `easld` fronts it from now on.
-    func serveEasld(_ easld: Easld) throws {
+    func serveEasld(_ easld: Easld, refusingHtml failure: Locked<String?>? = nil) throws {
         server.stop()
         let router = router
         server = SocketServer(path: socket) { request, connection in
@@ -846,6 +1001,15 @@ final class BoardMirrorTests {
                 easld.attaching(params, on: connection)
                 guard easld.accepts else { return await router.handle(request, connection: connection) }
                 return .object(["id": id, "ok": .bool(true), "result": .object(["client": "cli_1", "version": 1, "schema": .string(ApiParams.schemaHash)])])
+            case "object.get"? where failure != nil:
+                if let message = failure?.withLock({ value in
+                    defer { value = nil }
+                    return value
+                }) {
+                    return .object(["id": id, "ok": .bool(false),
+                                    "error": .object(["code": .string("unavailable"), "message": .string(message)])])
+                }
+                return await router.handle(request, connection: connection)
             case "agent.prompt"?:
                 easld.prompted(params)
                 var forwarded = params.object ?? [:]
@@ -869,7 +1033,7 @@ final class BoardMirrorTests {
 
     /// A board's window for `serve`: key while `focused` says, its terminals typed into by `submit`.
     func window(focused: @escaping () -> Bool = { false }, submit: @escaping (ObjectID, String) async -> Bool = { _, _ in false }) -> ViewerWindow {
-        ViewerWindow(focused: focused, viewState: { nil }, snapshot: { _ in nil }, submit: submit, surfaceTail: { _, _ in nil },
+        ViewerWindow(focused: focused, viewState: { nil }, submit: submit, surfaceTail: { _, _ in nil },
                      block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") }, status: { _ in nil })
     }
 
@@ -918,9 +1082,9 @@ final class BoardMirrorTests {
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
         let attach: JSONValue = .object([
             "version": 1, "schema": .string(ApiParams.schemaHash), "app": "0.2.7", "host": "studio",
-            "serves": ["view.get", "view.snapshot", "agent.prompt", "agent.read", "text.measure"], "boards": [.string(host.id)],
+            "serves": ["view.get", "agent.prompt", "agent.read", "text.measure"], "boards": [.string(host.id)],
         ])
-        #expect(easld.attaches == [attach], "never view.render or object.reload")
+        #expect(easld.attaches == [attach])
         key = true
         mirror.userFocused()
         try await eventually { easld.attaches.count == 2 }

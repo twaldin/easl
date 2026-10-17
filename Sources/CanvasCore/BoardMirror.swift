@@ -27,7 +27,7 @@ protocol BoardHost: AnyObject {
 /// A board another easl hosts, mirrored over that easl's API (docs/design.md "Client mode").
 ///
 /// `load` subscribes to the board's events, then reads it (`board.get`, and `object.get` for the
-/// notes it cut), into a `Board` marked remote that nothing stores. The host's events replace
+/// HTML and notes it cut), into a `Board` marked remote that nothing stores. The host's events replace
 /// objects with the host's (`rev` included) unless a newer host revision is already here. The
 /// user's writes on that board are previews sent here (`send`): one at a time per object, a props
 /// write carrying the host `rev` the user's change was based on; while an object has writes in
@@ -53,8 +53,10 @@ public final class BoardMirror: BoardHost {
     private let renders: EaslConnection
     /// Nil until `load` succeeded.
     public private(set) var board: Board?
-    public private(set) var state: EaslConnection.State = .connecting
-    /// Each state change, after the board was loaded.
+    public var state: EaslConnection.State { refreshFailure != nil && linkState == .online ? .offline : linkState }
+    private var linkState: EaslConnection.State = .connecting
+    private var refreshFailure: String?
+    /// The board's availability or refresh problem changed, after it loaded.
     public var onState: ((EaslConnection.State) -> Void)?
     /// Something to tell the user (a write the host refused, a create that failed).
     public var onNotice: ((String) -> Void)?
@@ -190,8 +192,10 @@ public final class BoardMirror: BoardHost {
     }
 
     private func changed(_ state: EaslConnection.State) {
-        guard state != self.state else { return }
-        self.state = state
+        guard state != linkState else { return }
+        let previous = self.state
+        linkState = state
+        if state != .online { refreshFailure = nil }
         guard board != nil else { return }
         if state != .online {
             stale = true
@@ -201,7 +205,7 @@ public final class BoardMirror: BoardHost {
         if calls != nil {
             if state == .online { attach() } else { attachment = .waiting }
         }
-        onState?(state)
+        if self.state != previous { onState?(self.state) }
         if state == .online, stale { Task { await reread() } }
     }
 
@@ -224,12 +228,16 @@ public final class BoardMirror: BoardHost {
         onRedraw?()
     }
 
-    /// Why the link isn't online, for the user (ssh's reason); nil while online.
-    public var problem: String? { connection.problem }
+    /// Why the board isn't current: a failed refresh, else ssh's reason.
+    public var problem: String? { refreshFailure ?? connection.problem }
 
     /// Tries the host again now (the user started easl there).
     public func reconnect() {
-        connection.reconnect()
+        if linkState == .online, stale {
+            Task { await reread() }
+        } else {
+            connection.reconnect()
+        }
         renders.reconnect()
     }
 
@@ -247,7 +255,7 @@ public final class BoardMirror: BoardHost {
         connection.serve { [weak calls] call in
             await calls?.answer(call) ?? .failure(EaslConnection.Failure("unavailable", "\(call.method): this board's window closed"))
         }
-        if state == .online { attach() } else { attachment = .waiting }
+        if linkState == .online { attach() } else { attachment = .waiting }
     }
 
     /// The user is looking at this board (its window became key): an accepted attach goes again
@@ -282,14 +290,14 @@ public final class BoardMirror: BoardHost {
                 guard number == attaches, attachment == .attaching else { return }
                 let client = reply["client"]?.string ?? "", version = reply["version"]?.int ?? ApiParams.schemaVersion
                 attachment = .attached(client: client, version: version)
-                NSLog("easl: %@ on %@: attached to its easld as %@ (schema version %ld)", boardID, hostName, client, version)
                 if refocused { attach(focused: true) }
             } catch {
                 // A link that dropped refused nothing (the next one attaches); nor did a closed one.
                 guard number == attaches, attachment == .attaching, connection.state == .online else { return }
                 let reason = Self.reason(error)
                 attachment = .refused(reason)
-                NSLog("easl: %@ on %@: its easld refused this viewer as a client: %@", boardID, hostName, reason)
+                let code = (error as? EaslConnection.Failure)?.code ?? "unavailable"
+                NSLog("easl: %@ refused this viewer as a client (%@)", hostName, code)
             }
         }
     }
@@ -366,15 +374,22 @@ public final class BoardMirror: BoardHost {
                 if let current = manifest["board"]?.string, ApiRouter.isBoardID(current) { sessionBoardID = current }
                 mergedBoards = manifest["merged"]?.array?.compactMap(\.string).filter(ApiRouter.isBoardID) ?? []
                 install(objects, on: board)
+                setRefreshFailure(nil)
             } catch {
-                // Down again: the next `online` reads it.
+                setRefreshFailure("Couldn't refresh \(hostName): \(Self.reason(error))")
                 stale = true
             }
-            again = drops != before && state == .online
+            again = drops != before && linkState == .online
         } while again
         reading = nil
         release()
         drawAgainIfDue()
+    }
+
+    private func setRefreshFailure(_ failure: String?) {
+        guard refreshFailure != failure else { return }
+        refreshFailure = failure
+        onState?(state)
     }
 
     /// Applies a read of the whole board: what the read has, unless newer is here already
@@ -402,11 +417,22 @@ public final class BoardMirror: BoardHost {
         for event in waiting { received(event) }
     }
 
-    /// `board.get`'s objects whole: a note it cut at 400 characters is read with `object.get`.
+    /// `board.get` summarizes every HTML page and cuts long notes; read their content whole.
     private func whole(_ objects: JSONValue?) async throws -> [CanvasObject] {
         var result: [CanvasObject] = []
         for value in objects?.array ?? [] {
             var object = try value.decode(CanvasObject.self)
+            if object.type == .html {
+                do {
+                    let full = try await connection.request("object.get", .object(["id": .string(object.id)]))
+                    guard let value = full["object"] else {
+                        throw EaslConnection.Failure("unavailable", "the host returned no HTML object")
+                    }
+                    object = try value.decode(CanvasObject.self)
+                } catch let failure as EaslConnection.Failure where failure.code == "not_found" {
+                    continue
+                }
+            }
             if object.type == .note, let markdown = object.props["markdown"]?.string, markdown.count == 401, markdown.hasSuffix("…"),
                let full = try? await connection.request("object.get", .object(["id": .string(object.id)]))["object"]?.decode(CanvasObject.self) {
                 object = full

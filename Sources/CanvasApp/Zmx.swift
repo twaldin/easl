@@ -12,7 +12,7 @@ enum Zmx {
     static func run(_ arguments: [String], on host: HostRoute? = nil, _ consume: (Data) -> Void) -> Bool {
         let process = Process()
         if let host {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            process.executableURL = URL(fileURLWithPath: host.executable)
             process.arguments = host.ssh(HostedTerminal.zmx(arguments))
             process.standardInput = FileHandle.nullDevice
         } else {

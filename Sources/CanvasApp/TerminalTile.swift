@@ -271,7 +271,7 @@ final class TerminalTile: NSView, TileContent {
         let strip = LoginSession.strippedForTile(ProcessInfo.processInfo.environment, keep: keep).flatMap { ["-u", $0] }
         let attach = HostedTerminal.attach(session: session, home: homeLabel, board: board.id, tile: tile, merged: board.repo?.merged ?? [])
         return ShellWords.quote(["/usr/bin/env"] + strip + ["/bin/sh", "-c", HostedTerminal.attachLoop, "canvas-host",
-                                 "/usr/bin/ssh", route.controlPath, route.target, session, attach])
+                                 route.executable, route.controlPath, route.target, session, attach])
     }
 
     /// `session.spawn`'s params for this hosted terminal, read from the object as it is now (a
@@ -1133,11 +1133,13 @@ final class TerminalTile: NSView, TileContent {
         }
         let forced = terminal.forcingDefaultBrowser || NSApp.currentEvent?.modifierFlags.contains(.option) == true
         guard WebLink.isWeb(url), !forced else {
-            ExternalOpen.open(url, because: "terminal \(objectID) link\(forced ? " (⌥-click)" : "")", naming: !isRemote)
+            ExternalOpen.open(url, because: isRemote ? "remote terminal link" : "terminal \(objectID) link\(forced ? " (⌥-click)" : "")", naming: !isRemote)
             return
         }
         let opened = board.openLink(url, near: objectID, caller: objectID)
-        NSLog("easl: terminal %@ link %@ → %@ %@", objectID, isRemote ? "(remote, not logged)" : text, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
+        if !isRemote {
+            NSLog("easl: terminal %@ link %@ → %@ %@", objectID, text, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
+        }
         onOpenedLink?(opened.object.id)
     }
 

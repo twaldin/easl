@@ -11,6 +11,9 @@ import WebKit
 final class HtmlTile: NSView, TileContent {
     private(set) var object: CanvasObject
     private let board: Board
+    let files: HostFiles?
+    /// Remote documents and every scheme response share this in-memory policy.
+    private(set) var contentSecurityPolicy: String?
     private(set) var webView: WKWebView?
     /// `html.webviews` while `webView` exists; released with it, or with the tile when the tile
     /// goes without a `detach` (deleted from the board).
@@ -43,10 +46,14 @@ final class HtmlTile: NSView, TileContent {
     var onOpenedLink: ((ObjectID) -> Void)?
 
     /// `live: false` builds no web view (a page measured offscreen, `measure`).
-    init(object: CanvasObject, board: Board, live: Bool = true) {
+    init(object: CanvasObject, board: Board, live: Bool = true, files: HostFiles? = nil) {
         self.object = object
         self.board = board
         self.live = live
+        self.files = files
+        contentSecurityPolicy = board.isRemote
+            ? HtmlKit.contentSecurityPolicy(allow: object.props["allowNetwork"]?.array?.compactMap(\.string) ?? [])
+            : nil
         super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
@@ -63,6 +70,11 @@ final class HtmlTile: NSView, TileContent {
     var boardRoot: URL { board.objects[object.id] != nil ? board.linkRoot(of: object) : board.root }
     var html: String { object.props["html"]?.string ?? "" }
     private var allowNetwork: [String] { object.props["allowNetwork"]?.array?.compactMap(\.string) ?? [] }
+    var document: String {
+        HtmlKit.document(html: html, policy: contentSecurityPolicy)
+    }
+    var hostImageSource: HostFileRequest.Source { board.hostSource(props: object.props, objects: false) }
+    var isRemote: Bool { board.isRemote }
     private var pageURL: URL { HtmlKit.pageURL(tile: object.id) }
 
     // MARK: Web view lifecycle
@@ -73,11 +85,16 @@ final class HtmlTile: NSView, TileContent {
         guard live, webView == nil, !building else { return }
         building = true
         let hosts = allowNetwork
+        let remote = board.isRemote
         Task { @MainActor [weak self] in
             let rules: WKContentRuleList?
             var failure: Error?
             do {
-                rules = try await HtmlRuleLists.list(allowing: hosts)
+                if remote {
+                    rules = try await HtmlRuleLists.remote()
+                } else {
+                    rules = try await HtmlRuleLists.list(allowing: hosts)
+                }
             } catch {
                 rules = nil
                 failure = error
@@ -93,14 +110,14 @@ final class HtmlTile: NSView, TileContent {
 
     /// The sandbox every page of this tile runs in: its own data store, the network rules, the
     /// kit scheme, and the validated `canvas` channel.
-    private func configuration(rules: WKContentRuleList) -> WKWebViewConfiguration {
+    private func configuration(rules: WKContentRuleList?) -> WKWebViewConfiguration {
         Self.configuration(rules: rules, scheme: HtmlSchemeHandler(tile: self), channel: HtmlChannelHandler(tile: self))
     }
 
-    static func configuration(rules: WKContentRuleList, scheme: HtmlSchemeHandler, channel: HtmlChannelHandler) -> WKWebViewConfiguration {
+    static func configuration(rules: WKContentRuleList?, scheme: HtmlSchemeHandler, channel: HtmlChannelHandler) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        configuration.userContentController.add(rules)
+        if let rules { configuration.userContentController.add(rules) }
         configuration.setURLSchemeHandler(scheme, forURLScheme: HtmlKit.scheme)
         configuration.userContentController.addScriptMessageHandler(channel, contentWorld: .page, name: "canvas")
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
@@ -108,7 +125,7 @@ final class HtmlTile: NSView, TileContent {
         return configuration
     }
 
-    private func attach(rules: WKContentRuleList) {
+    private func attach(rules: WKContentRuleList?) {
         Metrics.shared.record("html.load")
         webViewCount = GaugeHold("html.webviews")
         let configuration = configuration(rules: rules)
@@ -212,7 +229,7 @@ final class HtmlTile: NSView, TileContent {
             if let y { scrollY = y }
             pageSettled()
         }
-        let result = try await work.perform { [object, board] in try await HtmlChannel.handle(message, tile: object.id, board: board) }
+        let result = try await work.perform { [object, board, files] in try await HtmlChannel.handle(message, tile: object.id, board: board, files: files) }
         if case .openCode = message, let opened = result["tile"]?.string { onOpenedCode?(opened, result["existing"] == .bool(true)) }
         return result
     }
@@ -468,12 +485,16 @@ final class HtmlTile: NSView, TileContent {
     private func loadOffscreen(size: CGSize, appearance: NSAppearance, limit: Duration = .seconds(60), pooled: Bool = false) async -> Result<CGSize, OffscreenFailure> {
         let rules: WKContentRuleList
         do {
-            rules = try await HtmlRuleLists.list(allowing: allowNetwork)
+            if board.isRemote {
+                rules = try await HtmlRuleLists.remote()
+            } else {
+                rules = try await HtmlRuleLists.list(allowing: allowNetwork)
+            }
         } catch {
             return .failure(.rules("network rules failed to compile: \(error)"))
         }
         let web: HtmlWebView
-        if pooled {
+        if pooled, !board.isRemote {
             let page = HtmlMeasurePool.take(for: self, rules: rules)
             measurePage = page
             web = page.web
@@ -518,9 +539,12 @@ final class HtmlTile: NSView, TileContent {
 
     func update(_ object: CanvasObject) {
         let previous = self.object
-        self.object = object
-        guard let web = webView else { return }
         let networkChanged = (object.props["allowNetwork"] ?? .array([])) != (previous.props["allowNetwork"] ?? .array([]))
+        self.object = object
+        if networkChanged, board.isRemote {
+            contentSecurityPolicy = HtmlKit.contentSecurityPolicy(allow: allowNetwork)
+        }
+        guard let web = webView else { return }
         if !live, networkChanged || object.props["html"] != previous.props["html"] {
             // A parked page would load again unseen: release it; the card shows the change.
             detach()
@@ -641,10 +665,12 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     private func followed(_ action: WKNavigationAction, in webView: WKWebView) -> Bool {
         guard let url = action.request.url, WebLink.isWeb(url), let click = (webView as? HtmlWebView)?.recentClick() else { return false }
         if click.union(action.modifierFlags).contains(.option) {
-            ExternalOpen.open(url, because: "html \(object.id) link (⌥-click)")
+            ExternalOpen.open(url, because: board.isRemote ? "remote html link (⌥-click)" : "html \(object.id) link (⌥-click)", naming: !board.isRemote)
         } else {
             let opened = board.openLink(url, near: object.id, caller: nil)
-            NSLog("easl: html %@ link %@ → %@ %@", object.id, url.absoluteString, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
+            if !board.isRemote {
+                NSLog("easl: html %@ link %@ → %@ %@", object.id, url.absoluteString, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
+            }
             onOpenedLink?(opened.object.id)
         }
         return true
