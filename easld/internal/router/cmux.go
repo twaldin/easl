@@ -315,7 +315,7 @@ func (r *Router) browserSurface(id string) (*board.Board, model.Object, error) {
 }
 
 func (r *Router) browserDriver(tile string, browser model.Object, b *board.Board) string {
-	if o, ok := b.Objects()[tile]; ok && o.Type == model.Terminal {
+	if callerBoard, ok := r.reg.Containing(tile); ok && callerBoard.Objects()[tile].Type == model.Terminal {
 		return tile
 	}
 	if browser.CreatedBy.Kind == "agent" {

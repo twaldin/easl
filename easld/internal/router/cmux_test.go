@@ -203,3 +203,48 @@ func TestRestartKeepsTheOwnedCmuxSocket(t *testing.T) {
 		t.Fatalf("restart removed the cmux socket: %v", err)
 	}
 }
+
+func TestCmuxCloseCreditsItsCrossBoardDriverBeforeThePageCreator(t *testing.T) {
+	f, home, _ := owningHome(t)
+	defer f.router.CloseOwnedSockets()
+	driver := idOf(f.result("object.create", map[string]any{
+		"type": "terminal", "props": map[string]any{}, "frame": browserFrame(),
+	}))
+	other, _ := f.openBoard("other")
+	creator := idOf(f.result("object.create", map[string]any{
+		"board": other, "type": "terminal", "props": map[string]any{}, "frame": browserFrame(),
+	}))
+	page := idOf(f.result("object.create", map[string]any{
+		"board": other, "type": "browser", "caller": creator, "props": map[string]any{}, "frame": browserFrame(),
+	}))
+	conn, err := net.Dial("unix", filepath.Join(home, "cmux", driver+".sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"id": "close", "method": "surface.close", "params": map[string]any{"surface_id": page},
+	})
+	if _, err := conn.Write(append(body, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var closed map[string]any
+	if err := json.Unmarshal([]byte(line), &closed); err != nil || closed["ok"] != true {
+		t.Fatalf("close %s", line)
+	}
+	entries := f.result("board.history", map[string]any{"board": other, "kinds": []any{"deleted"}})["entries"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("deletion history %v", entries)
+	}
+	entry := entries[0].(map[string]any)
+	if entry["id"] != page || entry["actor"] != "agent:"+driver {
+		t.Fatalf("cross-board close lost its driver to the creator: %v", entry)
+	}
+}
