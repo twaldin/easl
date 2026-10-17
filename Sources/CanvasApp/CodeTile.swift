@@ -66,7 +66,7 @@ final class CodeTile: NSView, TileContent {
 
     static let flashDuration: TimeInterval = 3
 
-    init(object: CanvasObject, board: Board, git: HostGit? = nil) {
+    init(object: CanvasObject, board: Board, git: HostGit? = nil, languages: LanguageService = CodeNavigation.languages) {
         self.object = object
         self.board = board
         self.git = git
@@ -101,7 +101,7 @@ final class CodeTile: NSView, TileContent {
         refreshHeader()
         resizeSubviews(withOldSize: .zero)
         navigation = CodeNavigation(host: self, board: board, tile: object.id, accessories: header, reservedWidth: CodeHeaderBar.reservedTrailing,
-                                    mode: git == nil ? .local : .remoteUnavailable)
+                                    languages: languages)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -877,7 +877,6 @@ extension CodeTile {
         var warnings = [staleReason.map { "stale: \($0)" }, document?.warning].compactMap { $0 }
         if git != nil, document != nil {
             if case .retained(let message) = hostFailure { warnings.append("host unavailable: \(message)") }
-            warnings.append("code navigation not yet on remote boards")
         }
         let warning = warnings.joined(separator: " · ")
         // A pinned tile, or one reading its ref's objects, has no diff base to pick.
@@ -1324,6 +1323,17 @@ extension CodeTile {
 
 extension CodeTile: CodeNavigationHost {
     var navigationPath: String { showsCurrent ? document?.readPath ?? displayed.path : displayed.path }
+    var navigationText: SideText? { showsCurrent ? document?.text : nil }
+
+    var navigationUnavailableReason: String? {
+        guard git != nil else { return nil }
+        guard showsCurrent, let document else { return "Host code is not loaded for navigation." }
+        if pinnedCommit != nil || document.isPinned || document.diff.state == .pinUnavailable {
+            return "Language actions are unavailable for historical host code. Open a live checkout file."
+        }
+        if case .retained = hostFailure { return "Host code is unavailable for navigation while the host is offline." }
+        return nil
+    }
 
     var navigationView: NSView { rowsView }
 

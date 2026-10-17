@@ -1,6 +1,15 @@
 import Darwin
 import Foundation
 
+struct LSPLaunch: Sendable {
+    var executable: URL
+    var arguments: [String]
+    var environment: [String: String]
+    var directory: URL?
+    var name: String
+    var remote: Bool
+}
+
 /// One language-server process speaking JSON-RPC 2.0 over stdio. Thread-safe: requests may come
 /// from any task; responses arrive on the pipe's reader thread and resume the waiting request.
 final class LSPConnection: @unchecked Sendable {
@@ -11,6 +20,7 @@ final class LSPConnection: @unchecked Sendable {
     static let maxQueuedBytes = 64 << 20
 
     let process = Process()
+    let launch: LSPLaunch
     private let input = Pipe()
     private let output = Pipe()
     private let errors = Pipe()
@@ -24,6 +34,7 @@ final class LSPConnection: @unchecked Sendable {
     private var exitWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     private var exited = false
     private var exitReason = ""
+    private var hostProcess: Int32?
     /// Work-done progress in flight (token → title), e.g. sourcekit-lsp's "Indexing".
     private var progress: [String: String] = [:]
     /// Last bytes of stderr, for the crash message. Only touched on the stderr reader thread and at exit.
@@ -36,12 +47,12 @@ final class LSPConnection: @unchecked Sendable {
     private let writeQueue = DispatchQueue(label: "canvas.lsp.write")
     private var queuedBytes = 0
 
-    init(executable: URL, arguments: [String], environment: [String: String], directory: URL,
-         onExit: @escaping Exit) {
-        process.executableURL = executable
-        process.arguments = arguments
-        process.environment = environment
-        process.currentDirectoryURL = directory
+    fileprivate init(_ launch: LSPLaunch, onExit: @escaping Exit) {
+        self.launch = launch
+        process.executableURL = launch.executable
+        process.arguments = launch.arguments
+        process.environment = launch.environment
+        if let directory = launch.directory { process.currentDirectoryURL = directory }
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
@@ -50,7 +61,9 @@ final class LSPConnection: @unchecked Sendable {
 
     var pid: Int32 { process.processIdentifier }
 
-    func start() throws {
+    var serverPID: Int32? { launch.remote ? lock.withLock { hostProcess } : pid }
+
+    fileprivate func start() throws {
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let chunk = handle.availableData
             guard let self else { return }
@@ -169,6 +182,8 @@ final class LSPConnection: @unchecked Sendable {
                 answer(id: id, method: method, params: message["params"])
             } else if method == "$/progress" {
                 track(message["params"])
+            } else if method == "easl/hostProcess", launch.remote, let pid = message["params"]?["pid"]?.int {
+                lock.withLock { hostProcess = hostProcess ?? Int32(clamping: pid) }
             } else if let id = message["id"]?.int {
                 guard let continuation = take(id) else { continue }
                 if let error = message["error"] {
@@ -253,7 +268,7 @@ final class LSPConnection: @unchecked Sendable {
     }
 
     private func didExit(_ status: Int32) {
-        let name = process.executableURL?.lastPathComponent ?? "language server"
+        let name = launch.name
         let (requests, waiters, reason) = lock.withLock {
             let tail = String(decoding: stderrTail, as: UTF8.self)
             let lastLine = tail.split(whereSeparator: \.isNewline).last.map { ": \($0)" } ?? ""
@@ -270,6 +285,60 @@ final class LSPConnection: @unchecked Sendable {
         for request in requests { request.resume(throwing: LSPError.serverExited(reason)) }
         for waiter in waiters { waiter.resume(returning: true) }
         onExit(self, reason)
+    }
+}
+
+/// Every server process that has been spawned and not yet reaped, reachable without the actors
+/// so app quit can end them.
+final class LiveConnections: @unchecked Sendable {
+    private let source: any LanguageSource
+    private let lock = NSLock()
+    private var connections: [ObjectIdentifier: (connection: LSPConnection, binary: ServerBinary)] = [:]
+    private var closed = false
+
+    init(source: any LanguageSource) {
+        self.source = source
+    }
+
+    /// Admission, spawn and registration share the quit snapshot's lock.
+    func start(_ launch: LSPLaunch, binary: ServerBinary, onExit: @escaping LSPConnection.Exit) throws -> LSPConnection {
+        try lock.withLock {
+            guard !closed else { throw RemoteProcesses.Stopped() }
+            let connection = LSPConnection(launch, onExit: onExit)
+            do {
+                try connection.start()
+            } catch {
+                connection.kill()
+                throw error
+            }
+            connections[ObjectIdentifier(connection)] = (connection, binary)
+            return connection
+        }
+    }
+
+    func remove(_ connection: LSPConnection) {
+        lock.withLock { _ = connections.removeValue(forKey: ObjectIdentifier(connection)) }
+    }
+
+    func terminateAll(grace: Duration) async {
+        let all = lock.withLock {
+            closed = true
+            return Array(connections.values)
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for (connection, binary) in all {
+                group.addTask {
+                    connection.notify("exit", nil)
+                    if connection.launch.remote {
+                        if await !connection.waitForExit(timeout: grace) { await connection.terminate(grace: .seconds(1)) }
+                        if let pid = connection.serverPID { await self.source.reap(pid, binary: binary) }
+                    } else {
+                        await connection.terminate(grace: grace)
+                    }
+                    self.remove(connection)
+                }
+            }
+        }
     }
 }
 

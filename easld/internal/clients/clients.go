@@ -9,6 +9,7 @@
 package clients
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sort"
@@ -26,7 +27,6 @@ import (
 // Delegated are the methods a client can serve (client.attach `serves`).
 var Delegated = []string{"view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "object.measure", "text.measure"}
 
-// Deadlines without a caller's timeoutMs (object.reload and view.render add theirs).
 const (
 	ViewGetDeadline  = 5 * time.Second
 	SnapshotDeadline = 30 * time.Second
@@ -79,6 +79,9 @@ type Client struct {
 	focusedAt  uint64
 	attachedAt uint64
 }
+
+// Done closes when the attached client's connection closes.
+func (c *Client) Done() <-chan struct{} { return c.conn.Done() }
 
 // Name is how messages name the client: `easl 0.2.0 on studio (client cli_…)`.
 func (c *Client) Name() string {
@@ -247,9 +250,11 @@ func (r *Registry) List() []ListedClient {
 	return out
 }
 
-// Call sends method with params to c and waits for its answer: the result, or the client's error,
-// or `unavailable` when it doesn't answer within deadline or disconnects first.
-func (r *Registry) Call(c *Client, method string, params map[string]any, deadline time.Duration) (any, *Failure) {
+// Call sends method with params to c and waits for its answer, cancellation, deadline or disconnect.
+func (r *Registry) Call(ctx context.Context, c *Client, method string, params map[string]any, deadline time.Duration) (any, *Failure) {
+	if ctx.Err() != nil {
+		return nil, &Failure{api.CodeUnavailable, method + " was cancelled"}
+	}
 	r.mu.Lock()
 	r.request++
 	id := requestPrefix + strconv.FormatUint(r.request, 10)
@@ -271,6 +276,8 @@ func (r *Registry) Call(c *Client, method string, params map[string]any, deadlin
 	select {
 	case a := <-pending.done:
 		return a.result, a.failure
+	case <-ctx.Done():
+		return nil, &Failure{api.CodeUnavailable, name + "'s " + method + " was cancelled"}
 	case <-timer.C:
 		return nil, &Failure{api.CodeUnavailable, name + " didn't answer " + method + " within " + seconds(deadline) + " s"}
 	case <-c.conn.Done():
@@ -380,7 +387,7 @@ func (r *Registry) measureByClient(items []measure.TextItem) []measure.TextSize 
 	for i, item := range items {
 		list[i] = ItemJSON(item)
 	}
-	result, failure := r.Call(c, "text.measure", map[string]any{"items": list}, r.MeasureDeadline)
+	result, failure := r.Call(context.Background(), c, "text.measure", map[string]any{"items": list}, r.MeasureDeadline)
 	if failure != nil {
 		return nil
 	}

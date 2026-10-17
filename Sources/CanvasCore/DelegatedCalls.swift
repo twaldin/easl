@@ -30,12 +30,16 @@ public struct ViewerWindow {
     public var block: (ObjectID, _ index: Int) throws -> (command: TerminalCommand, output: String)
     /// A terminal tile's title, last command and focus, as its tile knows them now; nil without it.
     public var status: (ObjectID) -> TerminalStatus?
+    /// The language servers of the board's host, which compute its diagrams (`object.reload`);
+    /// nil once the window is gone.
+    public var languages: () -> LanguageService?
 
     public init(focused: @escaping () -> Bool, viewState: @escaping () -> ViewState?,
                 render: @escaping (RenderRequest, ImageFormat) async throws -> RenderOutput, hostPicture: @escaping (ObjectID) -> Bool,
                 measureHTML: @escaping ObjectMeasure.PageMeasurer, reload: @escaping (ObjectID, ObjectID?, Int) async throws -> JSONValue,
                 submit: @escaping (ObjectID, String) async -> Bool, surfaceTail: @escaping (ObjectID, Int) -> TerminalTail.Tail?,
-                block: @escaping (ObjectID, Int) throws -> (command: TerminalCommand, output: String), status: @escaping (ObjectID) -> TerminalStatus?) {
+                block: @escaping (ObjectID, Int) throws -> (command: TerminalCommand, output: String), status: @escaping (ObjectID) -> TerminalStatus?,
+                languages: @escaping () -> LanguageService?) {
         self.focused = focused
         self.viewState = viewState
         self.render = render
@@ -46,6 +50,7 @@ public struct ViewerWindow {
         self.surfaceTail = surfaceTail
         self.block = block
         self.status = status
+        self.languages = languages
     }
 }
 
@@ -89,8 +94,13 @@ final class DelegatedCalls {
     /// know fails just this call (docs/design/next.md "Versions").
     func answer(_ call: EaslConnection.Call) async -> Result<JSONValue, EaslConnection.Failure> {
         do {
-            try ApiRouter.checkParams(call.method, call.params)
-            let p = call.params
+            var p = call.params
+            var diagram: JSONValue?
+            if call.method == "object.reload", var fields = p.object {
+                diagram = fields.removeValue(forKey: "_diagram")
+                p = .object(fields)
+            }
+            try ApiRouter.checkParams(call.method, p)
             switch call.method {
             case "view.get":
                 guard let state = window.viewState() else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
@@ -100,7 +110,7 @@ final class DelegatedCalls {
             case "text.measure": return .success(try measure(p))
             case "view.render": return .success(try await render(p))
             case "object.measure": return .success(try await measureObject(p))
-            case "object.reload": return .success(try await reload(p))
+            case "object.reload": return .success(try await reload(p, diagram: diagram))
             default: throw ApiRouter.Failure("unsupported", "\(call.method) isn't served by this board's viewer")
             }
         } catch {
@@ -111,11 +121,6 @@ final class DelegatedCalls {
 
     // MARK: view.render, object.measure, object.reload
 
-    /// `view.render` drawn by this Mac and returned in the reply, never as a file: easld writes
-    /// a file its caller asked for on its own machine. A target this Mac has only as the host's
-    /// picture fails the whole call: its asker may be this viewer's own tile (`RenderQueue`),
-    /// which takes whatever image comes back as the host's drawing. Other such tiles in the
-    /// picture are reported failed (`ViewerWindow.render`).
     private func render(_ p: JSONValue) async throws -> JSONValue {
         guard p["inline"]?.bool == true, p["out"] == nil else {
             throw ApiRouter.Failure("invalid_params", "this board's viewer returns a render in its reply: pass inline: true and no out")
@@ -157,12 +162,23 @@ final class DelegatedCalls {
         return .object(["w": .number(size.width), "h": .number(size.height)])
     }
 
-    /// `object.reload` of a browser tile whose page this Mac runs. A remote board's browsers show
-    /// the host's page and its diagrams are computed there: they fail `unavailable`, and nothing
-    /// here asks the host.
-    private func reload(_ p: JSONValue) async throws -> JSONValue {
+    private func reload(_ p: JSONValue, diagram: JSONValue?) async throws -> JSONValue {
         let id = p["id"]?.string ?? ""
+        if let diagram {
+            guard let object = try? diagram.decode(CanvasObject.self), object.id == id, object.type == .diagram else {
+                throw ApiRouter.Failure("invalid_params", "_diagram isn't diagram \(id)")
+            }
+            guard let languages = window.languages() else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
+            let graph = try await DiagramRefresh.compute(object, on: board, languages: languages)
+            var result = DiagramRefresh.summary(id, graph: graph, computed: true).object ?? [:]
+            result["graph"] = graph.json
+            result["rev"] = .number(Double(object.rev))
+            return .object(result)
+        }
         guard let object = board.objects[id] else { throw ApiRouter.Failure("not_found", "object \(id) isn't on this board's viewer") }
+        guard object.type != .diagram else {
+            throw ApiRouter.Failure("unavailable", "diagram \(id) is computed by this viewer only from easld's copy of it (_diagram)")
+        }
         guard object.type == .browser else {
             throw ApiRouter.Failure("unavailable", "\(object.type.rawValue) tile \(id) isn't reloaded by this viewer: it reloads only a browser tile whose page it runs")
         }

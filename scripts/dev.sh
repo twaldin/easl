@@ -106,6 +106,10 @@ launch() {
   [ -z "${EASL_DEV_DOWNLOADS:-}" ] || set -- "$@" EASL_DEV_DOWNLOADS="$EASL_DEV_DOWNLOADS"
   [ -z "${EASL_DEV_SSH:-}" ] || set -- "$@" EASL_DEV_SSH="$EASL_DEV_SSH"
   [ -z "${EASL_DEV_REMOTE_HOME:-}" ] || set -- "$@" EASL_DEV_REMOTE_HOME="$EASL_DEV_REMOTE_HOME"
+  for name in EASL_LSP_SWIFT EASL_LSP_PYTHON EASL_LSP_TYPESCRIPT EASL_LSP_GO EASL_LSP_RUST; do
+    value="$(printenv "$name" || true)"
+    [ -z "$value" ] || set -- "$@" "$name=$value"
+  done
   # EASL_DEV_FRAME="x y w h" sets explicit window geometry in AppKit screen coordinates.
   [ -z "${EASL_DEV_FRAME:-}" ] || set -- "$@" EASL_DEV_FRAME="$EASL_DEV_FRAME"
   # EASL_UPDATE_URL: the latest.json easl › Check for Updates… reads instead of easl.sh's, e.g. a

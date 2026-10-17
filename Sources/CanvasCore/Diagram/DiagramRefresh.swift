@@ -2,33 +2,57 @@ import Foundation
 
 /// Computes a diagram tile's graph from the code and writes it back as `props.graph`
 /// (bookkeeping: no rev, no undo step), for the tile (on creation, a file change, a click that
-/// expands a node) and for `object.reload`.
+/// expands a node) and for `object.reload`. A remote board's graph is its host's to write: the
+/// host computes it, or easld asks a viewer (`compute`, `DelegatedCalls`) and writes the answer.
 @MainActor
 public enum DiagramRefresh {
     /// The graph written, or nil when the object is gone or was re-aimed, re-expanded, or
     /// re-scoped while this ran (the refresh that change started writes instead).
     public static func run(_ id: ObjectID, on board: Board, languages: LanguageService) async throws -> DiagramGraph? {
         guard let object = board.objects[id], object.type == .diagram else { return nil }
-        let spec = DiagramSpec(object.props)
-        let previous = DiagramGraph(object.props["graph"])
-        let graph: DiagramGraph
-        switch spec.kind {
-        case .calls: graph = try await CallGraphBuilder.build(spec, boardRoot: board.root, scope: scope(of: object, on: board), previous: previous, languages: languages)
-        }
-        guard let now = board.objects[id], DiagramSpec(now.props) == spec else { return nil }
+        let graph = try await compute(object, on: board, languages: languages)
+        guard let now = board.objects[id], DiagramSpec(now.props) == DiagramSpec(object.props) else { return nil }
         try board.writeBookkeeping(id, props: .object(["graph": graph.json]))
         return graph
     }
 
-    /// The checkout a diagram is of (`CallGraphBuilder.build`'s `scope`): the one its root's file
-    /// lies in (`path`, else the root node it last found), else the checkout of the agent that
-    /// made it, else the one the user opened the board from (`Board.workingRoot`).
-    static func scope(of diagram: CanvasObject, on board: Board) -> URL {
+    static func compute(_ diagram: CanvasObject, on board: Board, languages: LanguageService) async throws -> DiagramGraph {
+        let spec = DiagramSpec(diagram.props)
+        let previous = DiagramGraph(diagram.props["graph"])
+        do {
+            let scope = try await scope(of: diagram, on: board, languages: languages)
+            switch spec.kind {
+            case .calls: return try await CallGraphBuilder.build(spec, boardRoot: board.root, scope: scope, previous: previous, languages: languages)
+            }
+        } catch let error as HostFileError {
+            return CallGraphBuilder.failed(spec.aim, previous: previous?.aim == spec.aim ? previous : nil, reason: HostGit.refusal(error))
+        }
+    }
+
+    static func scope(of diagram: CanvasObject, on board: Board, languages: LanguageService) async throws -> URL {
         let spec = DiagramSpec(diagram.props)
         let graph = DiagramGraph(diagram.props["graph"])
-        if let path = spec.path ?? graph?.root.flatMap({ graph?.node($0)?.path }) { return board.checkoutRoot(of: path) }
-        if case .agent(let tile) = diagram.createdBy, let checkout = board.callerCheckout(for: tile) { return URL(fileURLWithPath: checkout) }
-        return board.workingRoot
+        let path = spec.path ?? graph?.root.flatMap { graph?.node($0)?.path }
+        var agent: ObjectID?
+        if case .agent(let tile) = diagram.createdBy, board.objects[tile]?.type == .terminal { agent = tile }
+        guard board.isRemote else {
+            if let path { return board.checkoutRoot(of: path) }
+            if let checkout = board.callerCheckout(for: agent) { return URL(fileURLWithPath: checkout) }
+            return board.workingRoot
+        }
+        if let path { return try await languages.checkoutRoot(file: board.absoluteURL(path), boardRoot: board.root) }
+        if let agent { return try await languages.checkoutRoot(file: URL(fileURLWithPath: board.workingDirectory(of: agent), isDirectory: true), boardRoot: board.root) }
+        return board.root
+    }
+
+    /// What a remote diagram tile polls on its host (`HostGit.stamp`): the metadata of the files
+    /// its graph shows and of its `path`, in one host process. Nil without a file to watch.
+    public static func hostProbe(of diagram: CanvasObject, on board: Board) -> HostGitProbe? {
+        var paths = Set(DiagramGraph(diagram.props["graph"])?.nodes.map(\.path) ?? [])
+        if let path = DiagramSpec(diagram.props).path { paths.insert(path) }
+        guard !paths.isEmpty else { return nil }
+        let files = paths.map { board.absoluteURL($0).path }.sorted()
+        return HostGitProbe(boardRoot: board.root.path, spec: .object(["dir": .string(board.root.path), "files": .array(files.map(JSONValue.string))]))
     }
 
     /// What `object.reload` answers for a diagram: counts, not the graph (`object.get` has it).

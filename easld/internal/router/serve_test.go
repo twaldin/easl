@@ -411,33 +411,6 @@ func jpegBytes(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-func TestReloadForwardsBrowsersAndRefusesDiagrams(t *testing.T) {
-	f := newFixture(t)
-	web := idOf(f.result("object.create", map[string]any{
-		"type": "browser", "props": map[string]any{"url": "https://example.com/"},
-		"frame": map[string]any{"x": 0.0, "y": 0.0, "w": 600.0, "h": 400.0},
-	}))
-	diagram := idOf(f.result("object.create", map[string]any{
-		"type": "diagram", "props": map[string]any{"kind": "calls", "symbol": "main"},
-		"frame": map[string]any{"x": 700.0, "y": 0.0, "w": 600.0, "h": 400.0},
-	}))
-	app := &scriptedClient{router: f.router, replies: []map[string]any{
-		{"ok": true, "result": map[string]any{"id": web, "loaded": true, "url": "https://example.com/"}},
-	}}
-	attachApp(f, app, map[string]any{"serves": []any{"object.reload"}, "focused": f.board.ID()})
-	code, message := errorOf(f.call("object.reload", map[string]any{"id": diagram}))
-	if code != "unavailable" || message != "object.reload computes the diagram through its language servers" || len(app.asked) != 0 {
-		t.Fatalf("diagram: %s %s asked %d", code, message, len(app.asked))
-	}
-	got := f.result("object.reload", map[string]any{"id": web, "timeoutMs": 1000.0})
-	if got["loaded"] != true || got["url"] != "https://example.com/" {
-		t.Fatalf("browser = %v", got)
-	}
-	if app.asked[0]["method"] != "object.reload" || askedParams(app)[0]["id"] != web {
-		t.Fatalf("browser forward = %#v", app.asked[0])
-	}
-}
-
 func TestClientListReportsAttachedClients(t *testing.T) {
 	f := newFixture(t)
 	if got := f.result("client.list", map[string]any{}); len(got["clients"].([]any)) != 0 {

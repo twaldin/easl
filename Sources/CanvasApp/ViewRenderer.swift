@@ -185,12 +185,9 @@ extension CanvasView {
         return TileJob(object: object, content: tile.content, request: request, refused: refused)
     }
 
-    /// Whether the tile of `id` shows only its host's picture of the object (a remote board's
-    /// code, changes and diagram tiles, `RemoteImageTile`, and its browsers, `RemoteBrowserTile`)
-    /// rather than drawing its content here.
     func showsHostPicture(_ id: ObjectID) -> Bool {
         guard let content = tiles[id]?.content else { return false }
-        return content is RemoteImageTile || content is RemoteBrowserTile
+        return content is RemoteBrowserTile
     }
 
     /// Renders tiles concurrently (interleaved on the main actor); one that misses the deadline

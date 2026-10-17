@@ -28,7 +28,6 @@ final class DelegatedCallsTests {
     var page: (JSONValue, CGFloat) -> CGSize = { _, width in CGSize(width: width, height: 900.2) }
     /// The widths the window laid pages out at, in order.
     var laidOut: [CGFloat] = []
-    var reloaded: [ObjectID] = []
 
     init() throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -54,10 +53,7 @@ final class DelegatedCallsTests {
                 laidOut.append(width)
                 return page(props, width)
             },
-            reload: { [unowned self] id, _, _ in
-                reloaded.append(id)
-                return .object(["id": .string(id), "loaded": .bool(true)])
-            },
+            reload: { id, _, _ in .object(["id": .string(id), "loaded": .bool(true)]) },
             submit: { [unowned self] id, text in
                 guard surface, id == terminal else { return false }
                 screen += ["> \(text)"] + reply
@@ -70,7 +66,8 @@ final class DelegatedCallsTests {
                 return tail.finish()
             },
             block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") },
-            status: { _ in TerminalStatus(title: "omp") }))
+            status: { _ in TerminalStatus(title: "omp") },
+            languages: { nil }))
     }
 
     @discardableResult
@@ -181,18 +178,13 @@ final class DelegatedCallsTests {
         ]))
     }
 
-    /// RenderQueue would otherwise take the returned stand-in as its own host picture.
-    @Test func whatOnlyTheHostDrawsIsNeverDrawnOrReloadedHere() async throws {
+    @Test func aHostBrowserPictureCannotBeRenderedByTheViewer() async throws {
         tile("obj_note", .note, at: 0)
-        tile("obj_code", .code, at: 400)
-        tile("obj_diagram", .diagram, at: 800)
-        hostPictures = ["obj_code", "obj_diagram"]
+        tile("obj_browser", .browser, at: 400)
+        hostPictures = ["obj_browser"]
         let calls = delegated()
-        let named = await answer(calls, "view.render", .object(["board": "brd_host", "target": ["obj_note", "obj_code"], "inline": .bool(true)]))
+        let named = await answer(calls, "view.render", .object(["board": "brd_host", "target": ["obj_note", "obj_browser"], "inline": .bool(true)]))
         #expect(code(named) == "unavailable")
-        #expect(drawn.isEmpty)
-        #expect(code(await answer(calls, "object.reload", .object(["id": "obj_diagram"]))) == "unavailable")
-        #expect(reloaded.isEmpty)
     }
 
     @Test func aViewerRefusesFileDelivery() async throws {

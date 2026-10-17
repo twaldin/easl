@@ -255,15 +255,16 @@ struct WorktreeTests {
         let (repo, worktree) = try await fixture()
         let board = BoardRegistry(store: BoardStore(directory: URL(fileURLWithPath: repo.root.path + "-boards"), debounce: 60)).open(root: repo.root)
         let fees = agent(on: board, in: worktree)
-        func scope(_ props: JSONValue, caller: ObjectID? = nil) -> String {
-            DiagramRefresh.scope(of: board.create(type: .diagram, props: props, caller: caller), on: board).path
+        let languages = LanguageService(configs: [])
+        func scope(_ props: JSONValue, caller: ObjectID? = nil) async throws -> String {
+            try await DiagramRefresh.scope(of: board.create(type: .diagram, props: props, caller: caller), on: board, languages: languages).path
         }
-        #expect(scope(.object(["symbol": .string("fee"), "path": .string(worktree.appendingPathComponent("src/fees.ts").path)])) == worktree.path)
-        #expect(scope(.object(["symbol": .string("fee"), "path": .string("src/fees.ts")])) == board.root.path)
-        #expect(scope(.object(["symbol": .string("fee")]), caller: fees.id) == worktree.path, "a bare symbol: where its agent works")
-        #expect(scope(.object(["symbol": .string("fee")])) == board.root.path)
+        #expect(try await scope(.object(["symbol": .string("fee"), "path": .string(worktree.appendingPathComponent("src/fees.ts").path)])) == worktree.path)
+        #expect(try await scope(.object(["symbol": .string("fee"), "path": .string("src/fees.ts")])) == board.root.path)
+        #expect(try await scope(.object(["symbol": .string("fee")]), caller: fees.id) == worktree.path, "a bare symbol: where its agent works")
+        #expect(try await scope(.object(["symbol": .string("fee")])) == board.root.path)
         board.opened(from: try #require(GitWorktree.containing(worktree.path)))
         #expect(board.workingRoot.path == worktree.path)
-        #expect(scope(.object(["symbol": .string("fee")])) == worktree.path, "the user's: the checkout they opened")
+        #expect(try await scope(.object(["symbol": .string("fee")])) == worktree.path, "the user's: the checkout they opened")
     }
 }
