@@ -172,6 +172,11 @@ enum DevInput {
             window.performClose(nil)
             return
         }
+        if fields["kind"] == "reopen" {
+            let visible = NSApp.windows.contains { $0.isVisible }
+            _ = (NSApp.delegate as? AppDelegate)?.applicationShouldHandleReopen(NSApp, hasVisibleWindows: visible)
+            return
+        }
         if fields["kind"] == "mainmenu" {
             return performMenu(NSApp.mainMenu, path: fields["path"] ?? "")
         }

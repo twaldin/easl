@@ -1378,6 +1378,7 @@ final class CanvasWindow: NSWindow {
         if let controller = windowController as? CanvasWindowController, controller.remote != nil, controller.closing == nil {
             controller.closing = (tabGroup?.windows.count ?? 1) > 1 ? .tab : .window
         }
+        if let controller = windowController as? CanvasWindowController, app?.prepareNativeClose(controller) == false { return }
         guard app?.holdNativeClose(self) != true else { return }
         super.close()
         app?.releaseHeldCloses()

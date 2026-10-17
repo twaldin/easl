@@ -6,6 +6,7 @@
 //   dev-input <pid> menu <x> <y> "<item>/<submenu item>"  perform a context-menu item without opening the menu
 //   dev-input <pid> mainmenu "<menu>/<item>"          perform a menu-bar item (e.g. "Edit/Send Mentions To/codex")
 //   dev-input <pid> close <window id>                 close that instance's window through its native delegate
+//   dev-input <pid> reopen                            replay the native Dock reopen callback without activating
 //   dev-input <pid> drag <x> <y> <toX> <toY> [--mods …] [--hold] [--middle]   --hold: no mouse-up (shoot mid-drag);
 //                                                    --middle: with the middle button
 //   dev-input <pid> release <x> <y> [--middle]       the mouse-up ending a held drag
@@ -70,6 +71,8 @@ case "mainmenu":
 case "close":
     guard let number = rest.first, Int(number) != nil else { exit(2) }
     info["window"] = number
+case "reopen":
+    guard rest.isEmpty else { exit(2) }
 case "drag":
     guard rest.count >= 4 else { exit(2) }
     info["x"] = rest[0]; info["y"] = rest[1]; info["toX"] = rest[2]; info["toY"] = rest[3]

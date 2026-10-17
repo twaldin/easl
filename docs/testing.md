@@ -116,6 +116,7 @@ scripts/dev.sh input menu <x> <y> "Content Zoom/150%"   # performs that context-
 scripts/dev.sh input mainmenu "Edit/Send Mentions To/codex"   # performs that menu-bar item (menus AppKit fills as they open are filled first)
 scripts/dev.sh input flags <x> <y> --mods hyper     # hold Hyper over x,y (hover outline); omit --mods to release
 scripts/dev.sh input close <window id>              # native close of this instance's window, without activation
+scripts/dev.sh input reopen                         # replay the native reopen callback without Dock input or activation
 scripts/dev.sh input move <x> <y>                   # pointer move over tracking areas: moved, entered and exited (code navigation hover, a tile's − % + control)
 scripts/dev.sh input text "hello"                   # insert into the first responder
 scripts/dev.sh input command insertNewline:
