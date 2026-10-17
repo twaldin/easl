@@ -298,20 +298,21 @@ final class QuestionTests {
         let own = try ask(on: hosted, ["archiveAfter": 5]), historical = try ask(on: hosted, ["archiveAfter": 10])
         let kept = try ask(on: hosted, ["keep": .bool(true)]), cleared = try ask(on: hosted, ["archiveAfter": .null])
         let unnamed = try ask(on: hosted)
-        let ownAt = try hosted.answerQuestion(own, option: "now", note: nil).updatedAt
-        try hosted.answerQuestion(existing, option: "now", note: nil)
-        let historicalAt = try hosted.answerQuestion(historical, option: "now", note: nil).updatedAt
-        try hosted.answerQuestion(kept, option: "now", note: nil)
-        try hosted.answerQuestion(cleared, option: "now", note: nil)
-        let unnamedAt = try hosted.answerQuestion(unnamed, option: "now", note: nil).updatedAt
+        for id in [own, existing, historical, kept, cleared, unnamed] {
+            try hosted.answerQuestion(id, option: "now", note: nil)
+        }
+        let at = Date(timeIntervalSince1970: 1_800_000_000)
+        var snapshot = hosted.snapshot
+        for index in snapshot.objects.indices { snapshot.objects[index].updatedAt = at }
+        let clocked = Board(snapshot: snapshot)
 
-        #expect(hosted.archiveQuestions(now: ownAt.addingTimeInterval(4)) == [])
-        #expect(hosted.archiveQuestions(now: ownAt.addingTimeInterval(5)) == [own], "its own delay")
-        #expect(hosted.archiveQuestions(now: historicalAt.addingTimeInterval(9)) == [])
-        #expect(hosted.archiveQuestions(now: historicalAt.addingTimeInterval(10)) == [existing, historical].sorted(), "existing implicit 10 and explicit 10, not the host's 30")
-        #expect(hosted.archiveQuestions(now: unnamedAt.addingTimeInterval(29)) == [])
-        #expect(hosted.archiveQuestions(now: unnamedAt.addingTimeInterval(30)) == [cleared, unnamed].sorted(), "none or null: the host's 30")
-        #expect(hosted.archiveQuestions(now: .distantFuture) == [], "keep still exempts a question")
+        #expect(clocked.archiveQuestions(now: at.addingTimeInterval(4.999)) == [])
+        #expect(clocked.archiveQuestions(now: at.addingTimeInterval(5)) == [own], "its own delay")
+        #expect(clocked.archiveQuestions(now: at.addingTimeInterval(9.999)) == [])
+        #expect(clocked.archiveQuestions(now: at.addingTimeInterval(10)) == [existing, historical].sorted(), "existing implicit 10 and explicit 10, not the host's 30")
+        #expect(clocked.archiveQuestions(now: at.addingTimeInterval(29.999)) == [])
+        #expect(clocked.archiveQuestions(now: at.addingTimeInterval(30)) == [cleared, unnamed].sorted(), "none or null: the host's 30")
+        #expect(clocked.archiveQuestions(now: .distantFuture) == [], "keep still exempts a question")
     }
 
     /// The question once the board's own timer archived it, or as it is after 15 seconds.
