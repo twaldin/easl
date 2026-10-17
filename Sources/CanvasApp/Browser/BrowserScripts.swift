@@ -451,7 +451,7 @@ enum BrowserScripts {
 
       // MARK: a page another Mac streams (BrowserSurface)
 
-      // The selected text, for the viewer's explicit copy or cut: a text field's own selection
+      // The selected text for the viewer's explicit copy: a text field's own selection
       // isn't in the document's, and a password field's is never copied.
       function selectedText() {
         const el = document.activeElement;
