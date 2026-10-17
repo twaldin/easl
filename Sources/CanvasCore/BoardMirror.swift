@@ -506,6 +506,10 @@ public final class BoardMirror: BoardHost {
                 pendingAttention.removeValue(forKey: local)
             }
         }
+        if matches, event.name == "composer.returned" || event.name == "composer.submitted" {
+            applyComposerReceipt(event.data, event: event.name)
+            return
+        }
         if matches, event.name == "board.closed" {
             guard lastHostAvailability != .closed else { return }
             markClosed()
@@ -548,8 +552,6 @@ public final class BoardMirror: BoardHost {
                 marker = nil
             }
             board?.applyHostAttention(marker, on: id)
-        case "composer.returned", "composer.submitted":
-            applyComposerReceipt(event.data, event: event.name)
         default:
             break
         }
@@ -915,9 +917,13 @@ public final class BoardMirror: BoardHost {
             if let rev { params["rev"] = .number(Double(rev)) }
             if let marker { params["marker"] = marker.json }
             do {
-                _ = try await connection.request("view.seen", .object(params))
+                let result = try await connection.request("view.seen", .object(params))
                 try requireCurrent(generation)
                 if pendingAttention[id] == marker { pendingAttention.removeValue(forKey: id) }
+                if let object = try result["object"]?.decode(CanvasObject.self) {
+                    learn(object)
+                    return (target, object.rev)
+                }
             } catch {
                 guard !ended, generation == self.generation else { return (target, nil) }
                 discardSeen(write, restoringMarker: (error as? EaslConnection.Failure)?.code != "not_found")
@@ -1040,8 +1046,13 @@ public final class BoardMirror: BoardHost {
         guard !ended, availability == .open, linkState == .online, !stale else { return .refused("Couldn't \(verb): \(hostName) is offline") }
         guard reading == nil else { return .refused("Couldn't \(verb) while \(hostName)'s board is read again") }
         if let recovery = step.noteRecoveries.first {
-            guard let id = target(recovery.objectID), let current = known[id],
-                  current.type == .note, current.props["markdown"]?.string == (redo ? recovery.yours : recovery.theirs) else {
+            guard let id = target(recovery.objectID), let current = known[id], current.type == .note else {
+                return .refused("Couldn't \(verb): the note changed on \(hostName) since the text was saved")
+            }
+            let wanted = redo ? recovery.theirs : recovery.yours
+            let text = current.props["markdown"]?.string ?? ""
+            if text == wanted { return .applied(ViewerReplay(step: step.id, pushed: true)) }
+            guard text == (redo ? recovery.yours : recovery.theirs) else {
                 return .refused("Couldn't \(verb): the note changed on \(hostName) since the text was saved")
             }
             let generation = generation
@@ -1050,7 +1061,7 @@ public final class BoardMirror: BoardHost {
             do {
                 let object = try await request("object.update", [
                     "id": .string(id), "rev": .number(Double(current.rev)),
-                    "props": .object(["markdown": .string(redo ? recovery.theirs : recovery.yours)]),
+                    "props": .object(["markdown": .string(wanted)]),
                 ], generation: generation)
                 if object.rev == current.rev + 1 { replays.rebase(id, from: current.rev, to: object.rev, target: target) }
                 if replayEvents?.contains(id) != true { learn(object) }
