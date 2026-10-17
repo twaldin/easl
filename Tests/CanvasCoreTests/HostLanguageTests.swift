@@ -162,7 +162,6 @@ struct HostLanguageTests {
             #expect(message.contains(missing.command))
             #expect(message.contains("fixture"))
         }
-        #expect(service.liveProcessCount == 0)
     }
 
     @Test func resolvedHostLocationsStayRelativeToTheBoardsRootSpelling() async throws {
@@ -317,6 +316,7 @@ struct HostLanguageTests {
         await service.terminateAll(grace: .milliseconds(50))
         try FileManager.default.removeItem(at: host.holdCommands)
         await #expect(throws: LSPError.self) { try await request.value }
+        #expect(!FileManager.default.fileExists(atPath: host.record.path))
         await service.stopAll()
     }
 
@@ -335,7 +335,6 @@ struct HostLanguageTests {
                 await service.stopAll()
             }
             #expect(await eventually(3) { kill(pid, 0) != 0 }, "ended on its host, not only its ssh here")
-            #expect(service.liveProcessCount == 0)
         }
     }
 

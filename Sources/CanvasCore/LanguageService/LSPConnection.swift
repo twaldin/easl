@@ -47,7 +47,7 @@ final class LSPConnection: @unchecked Sendable {
     private let writeQueue = DispatchQueue(label: "canvas.lsp.write")
     private var queuedBytes = 0
 
-    init(_ launch: LSPLaunch, onExit: @escaping Exit) {
+    fileprivate init(_ launch: LSPLaunch, onExit: @escaping Exit) {
         self.launch = launch
         process.executableURL = launch.executable
         process.arguments = launch.arguments
@@ -63,7 +63,7 @@ final class LSPConnection: @unchecked Sendable {
 
     var serverPID: Int32? { launch.remote ? lock.withLock { hostProcess } : pid }
 
-    func start() throws {
+    fileprivate func start() throws {
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let chunk = handle.availableData
             guard let self else { return }
@@ -285,6 +285,60 @@ final class LSPConnection: @unchecked Sendable {
         for request in requests { request.resume(throwing: LSPError.serverExited(reason)) }
         for waiter in waiters { waiter.resume(returning: true) }
         onExit(self, reason)
+    }
+}
+
+/// Every server process that has been spawned and not yet reaped, reachable without the actors
+/// so app quit can end them.
+final class LiveConnections: @unchecked Sendable {
+    private let source: any LanguageSource
+    private let lock = NSLock()
+    private var connections: [ObjectIdentifier: (connection: LSPConnection, binary: ServerBinary)] = [:]
+    private var closed = false
+
+    init(source: any LanguageSource) {
+        self.source = source
+    }
+
+    /// Admission, spawn and registration share the quit snapshot's lock.
+    func start(_ launch: LSPLaunch, binary: ServerBinary, onExit: @escaping LSPConnection.Exit) throws -> LSPConnection {
+        try lock.withLock {
+            guard !closed else { throw RemoteProcesses.Stopped() }
+            let connection = LSPConnection(launch, onExit: onExit)
+            do {
+                try connection.start()
+            } catch {
+                connection.kill()
+                throw error
+            }
+            connections[ObjectIdentifier(connection)] = (connection, binary)
+            return connection
+        }
+    }
+
+    func remove(_ connection: LSPConnection) {
+        lock.withLock { _ = connections.removeValue(forKey: ObjectIdentifier(connection)) }
+    }
+
+    func terminateAll(grace: Duration) async {
+        let all = lock.withLock {
+            closed = true
+            return Array(connections.values)
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for (connection, binary) in all {
+                group.addTask {
+                    connection.notify("exit", nil)
+                    if connection.launch.remote {
+                        if await !connection.waitForExit(timeout: grace) { await connection.terminate(grace: .seconds(1)) }
+                        if let pid = connection.serverPID { await self.source.reap(pid, binary: binary) }
+                    } else {
+                        await connection.terminate(grace: grace)
+                    }
+                    self.remove(connection)
+                }
+            }
+        }
     }
 }
 

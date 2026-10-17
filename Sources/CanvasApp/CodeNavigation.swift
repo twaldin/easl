@@ -37,11 +37,10 @@ final class CodeNavigation: NSObject {
     /// Shared by every code view in the app (one server per language and project root).
     nonisolated static let languages = LanguageService()
 
-    /// App quit waits for the language servers to be gone (SIGKILL after 2 s), so none outlives
-    /// the app. Returns `.terminateLater` while they're ending and replies when they have.
+    /// Closes every service, including one still finding its server, then waits for its processes.
+    /// Always defers quit so closing admission never blocks the main thread on a spawn.
     static func terminateServers() -> NSApplication.TerminateReply {
         let services = [languages] + RemoteSource.languageServices
-        guard services.contains(where: { $0.liveProcessCount > 0 }) else { return .terminateNow }
         Task.detached {
             await withTaskGroup(of: Void.self) { group in
                 for service in services {

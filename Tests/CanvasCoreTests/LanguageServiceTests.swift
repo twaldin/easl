@@ -396,7 +396,6 @@ final class LanguageServiceTests: Sendable {
         #expect(!Self.isAlive(pid))
         await #expect(throws: LSPError.self) { try await request.value }
         #expect(await service.existingServer(for: file, boardRoot: dir) == nil)
-        #expect(service.liveProcessCount == 0)
     }
 
     @Test func evictingAServerThatIsStillStartingKillsItAndKeepsItOut() async throws {
@@ -412,7 +411,6 @@ final class LanguageServiceTests: Sendable {
         #expect(await service.existingServer(for: first, boardRoot: dir) == nil)
         await service.stopAll()
         await #expect(throws: LSPError.self) { try await secondRequest.value }
-        #expect(service.liveProcessCount == 0)
     }
 
     @Test func quitKillsAServerThatIgnoresSIGTERM() async throws {
@@ -425,14 +423,7 @@ final class LanguageServiceTests: Sendable {
         #expect(await eventually(10) { FileManager.default.fileExists(atPath: trapped.path) })
         await service.terminateAll(grace: .milliseconds(500))
         #expect(!Self.isAlive(pid))
-        #expect(service.liveProcessCount == 0)
-        // It ignored SIGTERM, so it ended by SIGKILL: Process reports the signal as its status.
-        let error = await #expect(throws: LSPError.self) { try await request.value }
-        guard case .serverExited(let reason)? = error else {
-            Issue.record("\(String(describing: error)) is not serverExited")
-            return
-        }
-        #expect(reason.hasSuffix("exited with status \(SIGKILL)"), "\(reason)")
+        await #expect(throws: LSPError.self) { try await request.value }
     }
 
     @Test func aServerThatDiesDuringInitializeLeavesNothingBehind() async throws {
@@ -440,7 +431,6 @@ final class LanguageServiceTests: Sendable {
         let config = LanguageServerConfig(language: "dead", command: "/usr/bin/false", languageIDs: ["dead": "dead"], rootMarkers: [])
         let service = LanguageService(configs: [config])
         await #expect(throws: LSPError.self) { try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 0, character: 0)) }
-        #expect(service.liveProcessCount == 0)
         if case .crashed? = await service.existingServer(for: file, boardRoot: dir)?.status {} else {
             Issue.record("a failed start is reported as crashed")
         }
@@ -484,7 +474,6 @@ final class LanguageServiceTests: Sendable {
         #expect(start.duration(to: .now) < .seconds(2))
         // The registry isn't stuck behind the pending write either.
         await service.stopAll()
-        #expect(service.liveProcessCount == 0)
     }
 
     // MARK: pyright

@@ -312,12 +312,9 @@ public actor LanguageService {
         }
     }
 
-    /// Server processes spawned and not yet reaped (a host's: until its host has ended it).
-    public nonisolated var liveProcessCount: Int { live.count }
-
-    /// App quit: tells every server process to exit, SIGTERMs it, and SIGKILLs any still alive
-    /// after `grace`; returns once they're reaped, a host's once its host ended it. Needs no
-    /// actor, so it can't queue behind a busy registry or wait for the main actor.
+    /// Terminal app quit: closes startup admission, then ends every server with SIGTERM and
+    /// SIGKILL after `grace`. Returns once they're reaped, a host's once its host ended it.
+    /// Needs no actor or MainActor work. Use `stopAll` for a restartable shutdown.
     public nonisolated func terminateAll(grace: Duration = .seconds(2)) async {
         await live.terminateAll(grace: grace)
     }

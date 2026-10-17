@@ -281,15 +281,14 @@ public actor LanguageServer {
         let launched = generation
         let launch = try await source.launch(binary, config: config, project: root)
         guard launched == generation else { throw LSPError.serverExited("\(config.command) was stopped while starting") }
-        let connection = LSPConnection(launch) { [weak self] connection, reason in
-            Task { await self?.exited(connection, generation: launched, reason: reason) }
-        }
+        let connection: LSPConnection
         do {
-            try connection.start()
+            connection = try live.start(launch, binary: binary) { [weak self] connection, reason in
+                Task { await self?.exited(connection, generation: launched, reason: reason) }
+            }
         } catch {
             throw LSPError.startFailed("\(binary.path)\(source.hostName.map { " on \($0)" } ?? ""): \(error.localizedDescription)")
         }
-        live.insert(connection, binary: binary)
         launching = connection
         defer { if launching === connection { launching = nil } }
         let initialized: JSONValue
@@ -389,45 +388,5 @@ public actor LanguageServer {
         ]
         if let options = config.initializationOptions { params["initializationOptions"] = options }
         return .object(params)
-    }
-}
-
-/// Every server process that has been spawned and not yet reaped, reachable without the actors
-/// so app quit can end them.
-final class LiveConnections: @unchecked Sendable {
-    private let source: any LanguageSource
-    private let lock = NSLock()
-    private var connections: [ObjectIdentifier: (connection: LSPConnection, binary: ServerBinary)] = [:]
-
-    init(source: any LanguageSource) {
-        self.source = source
-    }
-
-    var count: Int { lock.withLock { connections.count } }
-
-    func insert(_ connection: LSPConnection, binary: ServerBinary) {
-        lock.withLock { connections[ObjectIdentifier(connection)] = (connection, binary) }
-    }
-
-    func remove(_ connection: LSPConnection) {
-        lock.withLock { _ = connections.removeValue(forKey: ObjectIdentifier(connection)) }
-    }
-
-    func terminateAll(grace: Duration) async {
-        let all = lock.withLock { Array(connections.values) }
-        await withTaskGroup(of: Void.self) { group in
-            for (connection, binary) in all {
-                group.addTask {
-                    connection.notify("exit", nil)
-                    if connection.launch.remote {
-                        if await !connection.waitForExit(timeout: grace) { await connection.terminate(grace: .seconds(1)) }
-                        if let pid = connection.serverPID { await self.source.reap(pid, binary: binary) }
-                    } else {
-                        await connection.terminate(grace: grace)
-                    }
-                    self.remove(connection)
-                }
-            }
-        }
     }
 }
