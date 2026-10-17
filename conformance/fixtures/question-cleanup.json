@@ -1,7 +1,7 @@
 {
   "scenario": "question-cleanup",
   "description": "The host archives closed questions after a delay, sends the same updates to two subscribers, retains status and answer for reads and list, and leaves keep:true questions visible. Retention can change after closure.",
-  "recordedOn": "scratch easld lane/easl-ask-cleanup-1, provisional Linux recording",
+  "recordedOn": "Mac dev 6aa77fbf8c4e566825022c42fdd48e2915dcf1e9, isolated easl-ask-cleanup-1",
   "steps": [
     {
       "step": "board.open",

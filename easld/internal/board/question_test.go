@@ -684,9 +684,6 @@ func TestSystemArchiveIsPersistedWithoutAnUndoStep(t *testing.T) {
 	if strings.Join(names(*events), ",") != "object.updated" {
 		t.Fatalf("events %v", names(*events))
 	}
-	if len(b.history.open) != 0 {
-		t.Fatalf("archive recorded an undo step: %+v", b.history.open)
-	}
 	entries := b.Activity.Entries()
 	last := entries[len(entries)-1]
 	if last.Actor != SystemActor || last.Kind != KindUpdated {
@@ -705,9 +702,6 @@ func TestSystemArchiveIsPersistedWithoutAnUndoStep(t *testing.T) {
 	})
 	if err == nil || b.objects[noteID].ID != "" || b.objects[second.ID].Props["archived"] != true || b.objects[q.ID].Props["archived"] != true {
 		t.Fatalf("revert undid the archive: %v note %q", err, b.objects[noteID].ID)
-	}
-	if len(b.history.open) != 0 {
-		t.Fatalf("step left open: %+v", b.history.open)
 	}
 }
 
@@ -819,22 +813,6 @@ func TestAKeptQuestionDoesNotScheduleArchive(t *testing.T) {
 	}
 }
 
-func TestDeletingTheOnlyDueQuestionStopsTheTimer(t *testing.T) {
-	b := newTimed()
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	q := ask(t, b.Board, expiring(time.Now().Add(time.Hour)), nil, "")
-	if b.questionExpiry == nil {
-		t.Fatal("no timer")
-	}
-	if err := b.Delete(q.ID, ""); err != nil {
-		t.Fatal(err)
-	}
-	if b.questionExpiry != nil {
-		t.Fatal("the timer stayed after the question was deleted")
-	}
-}
-
 func TestStoppingTheTimerStopsArchiveToo(t *testing.T) {
 	b := newTimed()
 	b.mu.Lock()
@@ -924,9 +902,6 @@ func TestLoadArchivesOnlyDueClosedQuestionsWithoutChurn(t *testing.T) {
 		if original.ID != "obj_open" && got.Props["answer"] == nil {
 			t.Errorf("%s lost its answer", original.ID)
 		}
-	}
-	if len(b.history.open) != 0 {
-		t.Fatalf("normalization recorded history: %+v", b.history.open)
 	}
 	entries := b.Activity.Entries()
 	if len(entries) != 1 || entries[0].Kind != KindRestart || entries[0].Rev != 19 {

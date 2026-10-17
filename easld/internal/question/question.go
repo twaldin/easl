@@ -224,24 +224,11 @@ func effectiveArchiveAfter(v any) float64 {
 
 // archiveDelay is QuestionSpec.archiveDelay: a finite number of seconds within 0...86400.
 func archiveDelay(v any) (float64, bool) {
-	n, ok := asFloat(v)
+	n, ok := v.(float64)
 	if !ok || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > MaxArchiveAfter {
 		return 0, false
 	}
 	return n, true
-}
-
-func asFloat(v any) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case int:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	default:
-		return 0, false
-	}
 }
 
 // --- validation ---

@@ -791,9 +791,6 @@ func (b *Board) Delete(id, caller string) error {
 			_, _ = b.write(terminal.ID, nil, nil, nil, map[string]any{"follow": false}, caller, actor, "its follow tile was closed", nil, false)
 		}
 	}
-	if removed.Type == model.Question {
-		b.ScheduleQuestionExpiry()
-	}
 	return nil
 }
 

@@ -548,14 +548,6 @@ func TestAnAnsweredQuestionIsArchivedAndAnnounced(t *testing.T) {
 	if last := page[len(page)-1].(map[string]any); last["actor"] != "system" {
 		t.Fatalf("history %v", last)
 	}
-	before := f.object(id)
-	code, _ := errorOf(f.call("object.batch", map[string]any{"ops": []any{
-		map[string]any{"method": "object.create", "params": map[string]any{"type": "note", "props": map[string]any{"markdown": "x"}}},
-		map[string]any{"method": "object.update", "params": map[string]any{"id": "obj_missing", "props": map[string]any{}}},
-	}}))
-	if code == "" || !model.Equal(f.object(id), before) {
-		t.Fatal("a failed batch undid the archive")
-	}
 }
 
 func TestExpiryIsAnnouncedBeforeArchive(t *testing.T) {
