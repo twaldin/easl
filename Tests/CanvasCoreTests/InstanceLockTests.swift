@@ -40,28 +40,8 @@ final class InstanceLockTests {
     }
 
     @Test func programsTheHolderStartsDontInheritTheLock() async throws {
-        if !CommandLine.arguments.contains("--no-parallel") {
-            // This spawn deliberately inherits descriptors, so keep it away from the other fixtures.
-            let executable = CommandLine.arguments[0]
-            let result = await offPool {
-                Result {
-                    let process = Process()
-                    process.executableURL = URL(fileURLWithPath: executable)
-                    process.arguments = ["--filter", "programsTheHolderStartsDontInheritTheLock", "--no-parallel"]
-                    process.standardInput = FileHandle.nullDevice
-                    let output = Pipe()
-                    process.standardOutput = output
-                    process.standardError = output
-                    try process.run()
-                    let data = output.fileHandleForReading.readDataToEndOfFile()
-                    process.waitUntilExit()
-                    return (process.terminationStatus, String(decoding: data, as: UTF8.self))
-                }
-            }
-            let (status, output) = try result.get()
-            #expect(status == 0, "\(output)")
-            return
-        }
+        let isolated = try await runIsolatedTestIfParallel("programsTheHolderStartsDontInheritTheLock")
+        if isolated { return }
         // A terminal's zmx attach outlives a crashed app; holding the lock, it would block every
         // next launch. Spawned keeping every descriptor not marked close-on-exec, as a plain fork
         // and exec does (Foundation's Process closes them all, so it can't tell).
