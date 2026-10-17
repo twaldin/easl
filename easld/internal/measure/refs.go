@@ -215,8 +215,10 @@ func mergeCommit(sha, branch, dir string) (string, bool) {
 // LinkReading is where a note's (or HTML tile's) referenced files are read (Board.linkSource).
 type LinkReading struct {
 	Root string
-	Ref  *RefSource
-	// FailedRef is a ref that can't be read; its fences read at the ref's name and fail.
+	// Board is the authorization root. Root resolves relative paths and is not itself a grant:
+	// a source override or ref root outside the board's areas reads nothing.
+	Board     string
+	Ref       *RefSource
 	FailedRef string
 }
 
@@ -224,14 +226,14 @@ type LinkReading struct {
 func ReadingFor(props map[string]any, boardRoot string) LinkReading {
 	ref := RefOf(props)
 	if ref == "" {
-		return LinkReading{Root: LinkRoot(props, boardRoot)}
+		return LinkReading{Root: LinkRoot(props, boardRoot), Board: boardRoot}
 	}
 	refSha, _ := props["refSha"].(string)
 	source, err := ResolveRef(ref, refSha, boardRoot)
 	if err != nil {
-		return LinkReading{Root: boardRoot, FailedRef: ref}
+		return LinkReading{Root: boardRoot, Board: boardRoot, FailedRef: ref}
 	}
-	return LinkReading{Root: source.Root, Ref: source}
+	return LinkReading{Root: source.Root, Board: boardRoot, Ref: source}
 }
 
 // LinkRoot is Board.linkRoot(props:).
@@ -274,13 +276,18 @@ func (r LinkReading) Fence(f Fence) Fence {
 	return f
 }
 
-// Read is LinkReading.read: the text of path as read here.
+// Read is LinkReading.read: the text of path as read here. The board areas authorize it;
+// Root is not a second root.
 func (r LinkReading) Read(path string) (string, error) {
+	areas := boardAreas(r.Board)
+	if areaOf(areas, r.Root) == nil {
+		return "", &SourceError{Kind: "refused"}
+	}
 	file := path
 	if strings.HasPrefix(path, "/") && r.Ref != nil {
 		file = r.Ref.URLFor(path)
 	}
-	return ReadSource(file, r.Commit(), r.Root)
+	return readNoteFile(file, r.Commit(), r.Root, areas)
 }
 
 // CodeExcerptSource is the code tile's range read as object.get's rangeStatus reads it: through

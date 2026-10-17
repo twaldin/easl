@@ -1046,7 +1046,7 @@ func contains(list []string, s string) bool {
 }
 
 // anchored is params with a note's markdown anchored the way its tile writes it back
-// (NoteMarkdown.anchoringRanges), so the result's rev is the one the next update needs.
+// (NoteMarkdown.anchoringRanges(_:reading:within:captured:)), so the result's rev is the one the next update needs.
 func (r *Router) anchored(method string, p map[string]any, pending map[int]map[string]any) (map[string]any, error) {
 	props, ok := p["props"].(map[string]any)
 	if !ok {
@@ -1098,13 +1098,7 @@ func (r *Router) anchored(method string, p map[string]any, pending map[int]map[s
 			merged = model.Merge(note.Props, props).(map[string]any)
 		}
 	}
-	linkRoot := b.LinkRoot(merged)
-	var reading measure.LinkReading
-	if _, hasRef := board.RefOf(merged); hasRef {
-		reading = measure.ReadingFor(merged, b.Root())
-	} else {
-		reading = measure.LinkReading{Root: linkRoot}
-	}
+	reading := measure.ReadingFor(merged, b.Root())
 	text := mention.AnchoringRanges(markdown, reading)
 	if text == markdown {
 		return p, nil

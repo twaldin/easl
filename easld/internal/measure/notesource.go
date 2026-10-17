@@ -58,7 +58,7 @@ func (e Excerpt) StatusJSON() map[string]any {
 
 // SourceError is a NoteSourceError, or a file read failure.
 type SourceError struct {
-	// Kind: "invalidRevision", "unknownCommit", "notAtCommit", "noSuchFile", "unreadable".
+	// Kind: "invalidRevision", "unknownCommit", "notAtCommit", "noSuchFile", "unreadable", "refused".
 	Kind   string
 	Commit string
 }
@@ -86,14 +86,22 @@ func ExcerptFor(fence Fence, root string, captured []string, body []string) Exce
 		symbol := ""
 		return Excerpt{Lines: orEmpty(captured), Status: stale("symbol " + symbol + " not found in the workspace")}
 	}
+	text, err := ReadSource(path, fence.Commit, root)
+	if err != nil {
+		return excerptFailure(path, fence.Commit, captured, err)
+	}
+	return interpretExcerpt(fence, path, text, captured, body)
+}
+
+func excerptFailure(path string, commit *string, captured []string, err error) Excerpt {
 	failed := func(reason string, missing bool) Excerpt {
 		return Excerpt{Path: path, Lines: orEmpty(captured), Status: stale(reason), Missing: missing}
 	}
-	text, err := ReadSource(path, fence.Commit, root)
-	if err != nil {
-		var se *SourceError
-		errors.As(err, &se)
+	var se *SourceError
+	if errors.As(err, &se) {
 		switch se.Kind {
+		case "refused":
+			return failed(pathRefused, false)
 		case "invalidRevision":
 			return failed("\""+se.Commit+"\" is not a commit", false)
 		case "unknownCommit":
@@ -103,12 +111,15 @@ func ExcerptFor(fence Fence, root string, captured []string, body []string) Exce
 		case "noSuchFile":
 			return failed("no file "+path, true)
 		}
-		place := path
-		if fence.Commit != nil {
-			place = path + " at " + *fence.Commit
-		}
-		return failed("cannot read "+place, false)
 	}
+	place := path
+	if commit != nil {
+		place = path + " at " + *commit
+	}
+	return failed("cannot read "+place, false)
+}
+
+func interpretExcerpt(fence Fence, path, text string, captured, body []string) Excerpt {
 	source := NoteLines(text)
 	resolution := ResolveAnchor(fence, source, captured, body)
 	var shown []string
@@ -237,18 +248,10 @@ func IsRevision(text string) bool {
 
 // locateSymbol is NoteSource.locate: the first tracked file declaring symbol's last component.
 func locateSymbol(symbol, root string) (string, bool) {
-	parts := SplitLFOmittingEmpty(strings.ReplaceAll(symbol, ".", "\n"))
-	if len(parts) == 0 {
+	pattern, ok := symbolGrepPattern(symbol)
+	if !ok {
 		return "", false
 	}
-	name := parts[len(parts)-1]
-	for _, r := range name {
-		if !(unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_' || r == '$') {
-			return "", false
-		}
-	}
-	pattern := "(^|[^[:alnum:]_.$])(" + keywordAlternation(declarationKinds, regexp.QuoteMeta) + ")[[:space:]]+([(][^)]*[)][[:space:]]*)?" +
-		strings.ReplaceAll(name, "$", "\\$") + "([^[:alnum:]_$]|$)"
 	data, err := RunGit([]string{"grep", "-l", "-I", "-E", "-e", pattern}, root, []int{0, 1}, sourceMaxOutput, sourceTimeout)
 	if err != nil || !utf8.Valid(data) {
 		return "", false
@@ -263,4 +266,20 @@ func locateSymbol(symbol, root string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func symbolGrepPattern(symbol string) (string, bool) {
+	parts := SplitLFOmittingEmpty(strings.ReplaceAll(symbol, ".", "\n"))
+	if len(parts) == 0 {
+		return "", false
+	}
+	name := parts[len(parts)-1]
+	for _, r := range name {
+		if !(unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_' || r == '$') {
+			return "", false
+		}
+	}
+	pattern := "(^|[^[:alnum:]_.$])(" + keywordAlternation(declarationKinds, regexp.QuoteMeta) + ")[[:space:]]+([(][^)]*[)][[:space:]]*)?" +
+		strings.ReplaceAll(name, "$", "\\$") + "([^[:alnum:]_$]|$)"
+	return pattern, true
 }

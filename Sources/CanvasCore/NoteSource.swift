@@ -21,6 +21,9 @@ public struct NoteExcerpt: Equatable, Sendable {
     /// A proposal whose text the file already reads (`NoteAnchor.applied`): `range` is where,
     /// `lines` the file's, and there is no diff.
     public var applied = false
+    /// Not read: the file lies outside the board's areas (`BoardAreas`), for metadata the app
+    /// writes or reports itself. Stale with `NoteSource.refusal`.
+    public var refused = false
 
     public init(path: String, range: LineRange?, lines: [String], status: NoteAnchor.Status, diff: [NoteDiff.Line]? = nil,
                 fileLineCount: Int = 0, missing: Bool = false, applied: Bool = false) {
@@ -86,9 +89,12 @@ public struct NoteExcerpt: Equatable, Sendable {
 public enum NoteSource {
     /// Resolve a fence against disk (or `git show` for a pinned commit). `captured` is the text the
     /// range showed when first resolved; it re-finds the range when lines move and stands in when
-    /// the anchor is lost. `body` is the fence's own text (see `NoteAnchor.resolve`).
+    /// the anchor is lost. `body` is the fence's own text (see `NoteAnchor.resolve`). With `areas`,
+    /// for metadata the app writes or reports itself, `root` and the file must lie inside them
+    /// (`BoardAreas`), else the fence is `refused`.
     @concurrent
-    public static func excerpt(for fence: NoteFence, root: URL, captured: [String]?, body: [String] = []) async -> NoteExcerpt {
+    public static func excerpt(for fence: NoteFence, root: URL, captured: [String]?, body: [String] = [], within areas: BoardAreas? = nil) async -> NoteExcerpt {
+        if let areas, !areas.permits(root: root) { return refused(fence.path ?? "") }
         var path = fence.path
         if path == nil, let symbol = fence.symbol {
             path = await locate(symbol: symbol, root: root)
@@ -101,7 +107,13 @@ public enum NoteSource {
             NoteExcerpt(path: path, range: nil, lines: captured ?? [], status: .stale(reason), missing: missing)
         }
         do {
-            text = try await read(path, commit: fence.commit, root: root)
+            if let areas {
+                text = try await areas.read(path, commit: fence.commit, root: root)
+            } else {
+                text = try await read(path, commit: fence.commit, root: root)
+            }
+        } catch NoteSourceError.refused {
+            return refused(path)
         } catch NoteSourceError.invalidRevision(let commit) {
             return failed("\"\(commit)\" is not a commit", missing: false)
         } catch NoteSourceError.unknownCommit(let commit) {
@@ -138,32 +150,52 @@ public enum NoteSource {
         return NoteExcerpt(path: path, range: range, lines: shown, status: resolution.status, diff: diff, fileLineCount: source.count)
     }
 
-    /// A note's anchored fences resolved in turn (`excerpt`), by key, each with the text it
-    /// `captured` (by key); fewer when the task is cancelled on the way.
-    public static func excerpts(for fences: [NoteMarkdown.AnchoredFence], root: URL, captured: [String: [String]] = [:]) async -> [String: NoteExcerpt] {
+    /// A note's anchored fences resolved in turn (`excerpt`, inside `areas` when given), by key,
+    /// each with the text it `captured` (by key); fewer when the task is cancelled on the way.
+    public static func excerpts(for fences: [NoteMarkdown.AnchoredFence], root: URL, captured: [String: [String]] = [:], within areas: BoardAreas? = nil) async -> [String: NoteExcerpt] {
         var results: [String: NoteExcerpt] = [:]
         for fence in fences {
-            results[fence.key] = await excerpt(for: fence.fence, root: root, captured: captured[fence.key], body: fence.body)
+            results[fence.key] = await excerpt(for: fence.fence, root: root, captured: captured[fence.key], body: fence.body, within: areas)
             if Task.isCancelled { break }
         }
         return results
     }
 
-    /// File text; a pinned commit reads through `git show` (see `showCommand`). A failed show
-    /// tells a commit that lacks the file from one that doesn't exist.
+    /// The reason a fence outside the board's areas is stale, as the API reports it.
+    public static let refusal = "path refused"
+
+    /// A fence whose file the board's areas don't permit: nothing read, nothing shown.
+    static func refused(_ path: String) -> NoteExcerpt {
+        var excerpt = NoteExcerpt(path: path, range: nil, lines: [], status: .stale(refusal))
+        excerpt.refused = true
+        return excerpt
+    }
+
+    /// File text; a pinned commit reads through `git show` (see `showCommand`).
     static func read(_ path: String, commit: String?, root: URL) async throws -> String {
         let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)
         guard let commit else { return try await offPool { Result { try String(contentsOf: url, encoding: .utf8) } }.get() }
-        let show = try showCommand(path, commit: commit, root: root)
+        let command = try showCommand(path, commit: commit, root: root)
+        return try await show(command.arguments, commit: commit, in: command.directory)
+    }
+
+    /// A pinned file's text from `git show`. A failed show tells a commit that lacks the file
+    /// from one that doesn't exist.
+    static func show(_ arguments: [String], commit: String, in directory: URL) async throws -> String {
         let data: Data
         do {
-            data = try await GitRunner.shared.run(show.arguments, in: show.directory, maxOutput: maxOutput, timeout: timeout)
+            data = try await GitRunner.shared.run(arguments, in: directory, maxOutput: maxOutput, timeout: timeout)
         } catch GitError.failed {
-            let exists = try? await GitRunner.shared.run(["rev-parse", "--verify", "--quiet", "--end-of-options", "\(commit)^{commit}"], in: show.directory, timeout: timeout)
-            throw exists == nil ? NoteSourceError.unknownCommit(commit) : NoteSourceError.notAtCommit(commit)
+            throw await missing(commit, in: directory)
         }
         guard let text = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
         return text
+    }
+
+    /// Why git found no file at `commit`: the commit doesn't exist, or it lacks the file.
+    static func missing(_ commit: String, in directory: URL) async -> NoteSourceError {
+        let exists = try? await GitRunner.shared.run(["rev-parse", "--verify", "--quiet", "--end-of-options", "\(commit)^{commit}"], in: directory, timeout: timeout)
+        return exists == nil ? .unknownCommit(commit) : .notAtCommit(commit)
     }
 
     /// `git show --end-of-options <commit>:./<path>` and where to run it. A path under the board
@@ -232,4 +264,6 @@ public enum NoteSourceError: Error, Equatable {
     case unknownCommit(String)
     /// The commit exists but has no file at the path (or the path is in no repository).
     case notAtCommit(String)
+    /// Outside the board's areas, or a symlink in the commit's tree (`BoardAreas.read`).
+    case refused
 }
