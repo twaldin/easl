@@ -72,6 +72,10 @@ type Step struct {
 	Shape string `json:"shape,omitempty"`
 	// Drop the step's events (a step whose events depend on timing the scenario can't control).
 	NoEvents bool `json:"noEvents,omitempty"`
+	// Expectations are checked before recording too, so failures cannot become golden output.
+	Expect map[string]any `json:"expect,omitempty"`
+	// Paths whose values must fit a named schema definition, without masking their fields.
+	ExpectShape map[string]string `json:"expectShape,omitempty"`
 	// Replies make the step's connection a scripted client (the client protocol, client.attach):
 	// the answers it gives to the requests the server sends it, by method, in order, added to the
 	// ones it has left. They are in place before the step's call goes out. Templates expand now.

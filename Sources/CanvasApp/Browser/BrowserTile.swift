@@ -47,8 +47,15 @@ final class BrowserTile: NSView, TileContent {
     private var cachedImage: NSImage?
     private var isLive = true
     private var releaseTimer: Timer?
-    /// Set while an agent drives the page; fires `drivenIdle` after the last command.
-    private var drivenTimer: Timer?
+    private enum Drive {
+        case idle, agent(Timer), surface
+
+        var active: Bool {
+            if case .idle = self { return false }
+            return true
+        }
+    }
+    private var drive: Drive = .idle
     private var observations: [NSKeyValueObservation] = []
     private var refreshScheduled = false
     /// Whether the current document reports activity (`setPageActivity`); each starts without.
@@ -105,6 +112,10 @@ final class BrowserTile: NSView, TileContent {
     /// canvas's answer, selected or holding the keyboard).
     private var popupOpener: ObjectID?
     var hasAttention: ((ObjectID) -> Bool)?
+    /// The viewers streaming this page from another Mac (`BrowserSurface`), while any do: its
+    /// dialogs go to them and what they can't answer is refused rather than asked here.
+    weak var surface: BrowserSurface?
+    private var isDriven: Bool { drive.active || surface != nil }
     /// The profile the web view was built with (`BrowserProfile`); a changed `props.profile`
     /// rebuilds it.
     private var webViewProfile: String?
@@ -294,8 +305,8 @@ final class BrowserTile: NSView, TileContent {
         // its Develop menu on.
         Self.enablePrivatePreference("developerExtrasEnabled", on: configuration.preferences)
         Self.enablePrivatePreference("hiddenPageDOMTimerThrottlingAutoIncreases", on: configuration.preferences)
-        // A video's or game's fullscreen button: WebKit's own fullscreen window, Esc leaves it.
-        configuration.preferences.isElementFullscreenEnabled = true
+        // A streamed page must never open a fullscreen window on this Mac.
+        configuration.preferences.isElementFullscreenEnabled = surface == nil
         WebMentions.install(on: configuration)
         let controller = configuration.userContentController
         controller.addUserScript(WKUserScript(source: BrowserScripts.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: BrowserScripts.world))
@@ -303,6 +314,10 @@ final class BrowserTile: NSView, TileContent {
             guard let kind = message.body as? String else { return }
             self?.pageMessage(kind)
         }, contentWorld: BrowserScripts.world, name: BrowserScripts.messageName)
+        controller.add(PageMessages { [weak self] message in
+            guard let self, message.frameInfo.isMainFrame else { return }
+            self.surface?.selectRequested(message.body, origin: Self.host(of: message.frameInfo.securityOrigin))
+        }, contentWorld: BrowserScripts.world, name: BrowserScripts.selectMessageName)
         // The page's console, errors and requests from its first line on (`PageLog`).
         controller.addUserScript(WKUserScript(source: PageCapture.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
         controller.add(PageMessages { [weak self] message in
@@ -313,11 +328,12 @@ final class BrowserTile: NSView, TileContent {
             self.problemsChanged()
         }, contentWorld: .page, name: PageCapture.messageName)
         let view = BrowserWebView(frame: webViewFrame, configuration: configuration)
-        view.onUserInput = { [weak self] in
+        view.onUserInput = { [weak self] event in
             guard let self else { return }
             self.credit.user()
             self.closeProblems()
             BrowserExtensions.activated(self)
+            if !SurfaceEventQueue.isSynthesized(event) { self.surface?.remoteDownAt = nil }
         }
         view.autoresizingMask = [.width, .height]
         view.navigationDelegate = self
@@ -401,7 +417,7 @@ final class BrowserTile: NSView, TileContent {
     private func placePage() {
         guard let webView else { return }
         let shown = isLive && window?.isVisible == true
-        if drivenTimer != nil, !shown {
+        if isDriven, !shown {
             releaseTimer?.invalidate()
             releaseTimer = nil
             webView.isHidden = false
@@ -415,7 +431,7 @@ final class BrowserTile: NSView, TileContent {
             if isLive {
                 releaseTimer?.invalidate()
                 releaseTimer = nil
-            } else if releaseTimer == nil, drivenTimer == nil {
+            } else if releaseTimer == nil, !isDriven {
                 scheduleRelease()
             }
         }
@@ -464,8 +480,7 @@ final class BrowserTile: NSView, TileContent {
     private func release() {
         releaseTimer?.invalidate()
         releaseTimer = nil
-        drivenTimer?.invalidate()
-        drivenTimer = nil
+        setDrive(.idle)
         // A failed page stays failed until the web view comes back and tries again.
         retryTask?.cancel()
         retryTask = nil
@@ -510,7 +525,7 @@ final class BrowserTile: NSView, TileContent {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.releaseTimer = nil
-                guard !self.isLive, self.drivenTimer == nil else { return }
+                guard !self.isLive, !self.isDriven else { return }
                 self.release()
             }
         }
@@ -528,16 +543,42 @@ final class BrowserTile: NSView, TileContent {
     func markDriven() async {
         let webView = ensureWebView()
         let wasVisible = pageOnScreen
-        let starting = drivenTimer == nil
-        drivenTimer?.invalidate()
-        drivenTimer = Timer.scheduledTimer(withTimeInterval: Self.drivenIdle, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.endDriven() }
-        }
+        let starting = !drive.active
+        if surface != nil { setDrive(.surface) } else { driveUntilIdle() }
         placePage()
         guard starting else { return }
         WebStage.setOcclusionDetection(false, on: webView)
         if window?.occlusionState.contains(.visible) == false { refreshOcclusion(webView) }
         if !wasVisible { await presented(webView, within: Self.revealWait) }
+    }
+
+    func beginSurfaceDrive() {
+        guard surface != nil, let webView else { return }
+        let starting = !drive.active
+        setDrive(.surface)
+        placePage()
+        if starting {
+            WebStage.setOcclusionDetection(false, on: webView)
+            if window?.occlusionState.contains(.visible) == false { refreshOcclusion(webView) }
+        }
+    }
+
+    func endSurfaceDrive() {
+        guard surface == nil, let webView, window != nil else { return }
+        driveUntilIdle()
+        WebStage.setOcclusionDetection(false, on: webView)
+        placePage()
+    }
+
+    private func setDrive(_ next: Drive) {
+        if case .agent(let timer) = drive { timer.invalidate() }
+        drive = next
+    }
+
+    private func driveUntilIdle() {
+        setDrive(.agent(Timer.scheduledTimer(withTimeInterval: Self.drivenIdle, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endDriven() }
+        }))
     }
 
     /// Until the page's next frame is on screen, or `limit` passes.
@@ -556,7 +597,11 @@ final class BrowserTile: NSView, TileContent {
     }
 
     private func endDriven() {
-        drivenTimer = nil
+        if surface != nil {
+            setDrive(.surface)
+            return
+        }
+        setDrive(.idle)
         guard let webView else { return }
         WebStage.setOcclusionDetection(true, on: webView)
         // Back from the stage into its tile, or hidden there when nobody can see it.
@@ -800,6 +845,7 @@ final class BrowserTile: NSView, TileContent {
         if kind == "ready" {
             pageActivity = false
             setPageActivity(pageOnScreen)
+            surface?.pageReady()
         }
         if kind != "ready" { scheduleSnapshotRefresh() }
     }
@@ -1147,6 +1193,7 @@ final class BrowserTile: NSView, TileContent {
     /// The address bar's download pill (`BrowserDownloads`).
     func showDownload(_ status: BrowserDownloads.Status) {
         chrome.download = status
+        surface?.downloadChanged(status)
     }
 
     /// The pill clicked: a finished download shown in Finder; a failed one's pill goes.
@@ -1192,6 +1239,10 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         let scheme = url.scheme?.lowercased() ?? ""
         let web = scheme == "http" || scheme == "https"
         if navigationAction.navigationType == .linkActivated, web, navigationAction.modifierFlags.contains(.option) {
+            if let surface {
+                surface.refuse("external link")
+                return decisionHandler(.cancel)
+            }
             ExternalOpen.open(url, because: "browser \(objectID) link (⌥-click)")
             return decisionHandler(.cancel)
         }
@@ -1286,6 +1337,10 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         if navigationAction.navigationType == .linkActivated, let url {
             let scheme = url.scheme?.lowercased()
             if navigationAction.modifierFlags.contains(.option), scheme == "http" || scheme == "https" {
+                if let surface {
+                    surface.refuse("external link")
+                    return nil
+                }
                 ExternalOpen.open(url, because: "browser \(objectID) link (⌥-click)")
             } else {
                 openTile(url)
@@ -1318,7 +1373,9 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 /// window isn't key, as the canvas's own gestures do; WebKit alone only activates the window.
 /// Clicks and key presses are the user acting on the page (`NavigationCredit`).
 final class BrowserWebView: WKWebView {
-    var onUserInput: (() -> Void)?
+    /// A click or key press reached the page: this Mac's user's, or a viewer's streamed one
+    /// (`SurfaceEventQueue.isSynthesized`).
+    var onUserInput: ((NSEvent) -> Void)?
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -1329,12 +1386,12 @@ final class BrowserWebView: WKWebView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        onUserInput?()
+        onUserInput?(event)
         super.mouseDown(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
-        onUserInput?()
+        onUserInput?(event)
         super.keyDown(with: event)
     }
 }
@@ -1356,7 +1413,7 @@ private final class PageMessages: NSObject, WKScriptMessageHandler {
 
 /// Back, forward, reload, and the address field.
 @MainActor
-private final class BrowserChrome: NSView, NSTextFieldDelegate {
+final class BrowserChrome: NSView, NSTextFieldDelegate {
     var onBack: (() -> Void)?
     var onForward: (() -> Void)?
     var onReload: (() -> Void)?
@@ -1633,7 +1690,7 @@ extension BrowserTile {
     var visibility: PageReport.Visibility {
         guard webView != nil else { return .released }
         if pageOnScreen { return .visible }
-        return drivenTimer != nil ? .driven : .hidden
+        return isDriven ? .driven : .hidden
     }
 
     fileprivate func toggleProblems() {

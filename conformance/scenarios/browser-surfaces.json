@@ -1,0 +1,171 @@
+{
+  "description": "Swift-host browser surface lifecycle on the existing about:blank page. Validate before mutation, require same-connection subscription and stream ownership, hold initial credit until ack0, deliver fenced full images, deduplicate input and stop without deleting the page.",
+  "serve": {
+    "/dialog": "<!doctype html><script>document.title=confirm('Surface dialog without a listener')?'Unexpected host answer':'Surface dialog dismissed'</script>",
+    "/selection": "<!doctype html><body>Surface selection survives native keys<script>const r=document.createRange();r.selectNodeContents(document.body.firstChild);const s=getSelection();s.removeAllRanges();s.addRange(r);document.addEventListener('keydown',e=>e.preventDefault());document.title='Selection ready'</script>"
+  },
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {"board": "{{board}}", "type": "browser", "props": {"url": "about:blank"}, "frame": {"x": 50000, "y": 50000, "w": 640, "h": 480}},
+      "save": "browser", "expect": {"response.ok": true}, "settleMs": 1500
+    },
+    {
+      "call": "events.subscribe", "conn": "owner",
+      "params": {"board": "{{board}}", "events": ["surface.notice"]},
+      "expect": {"response.ok": true, "eventCount": 0}
+    },
+    {
+      "call": "surface.stream", "conn": "owner", "params": {"id": "{{browser.object.id}}"},
+      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0},
+      "note": "Subscribing to notices is not permission to receive frames."
+    },
+    {
+      "call": "events.subscribe", "conn": "owner",
+      "params": {"board": "{{board}}", "events": ["surface.frame", "surface.dialog", "surface.notice"]},
+      "expect": {"response.ok": true, "eventCount": 0}
+    },
+    {
+      "call": "events.subscribe", "conn": "observer",
+      "params": {"board": "{{board}}", "events": ["surface.frame", "surface.dialog", "surface.notice"]},
+      "expect": {"response.ok": true, "eventCount": 0}
+    },
+    {
+      "call": "surface.stream", "conn": "owner", "params": {"id": "{{browser.object.id}}", "scale": 0},
+      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0}
+    },
+    {
+      "call": "surface.stream", "conn": "owner", "params": {"id": "{{browser.object.id}}", "format": "gif"},
+      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0}
+    },
+    {
+      "call": "surface.stream", "conn": "owner", "params": {"id": "{{browser.object.id}}", "scale": 1, "format": "png"},
+      "save": "stream", "expect": {"response.ok": true, "response.result.scale": 1, "eventCount": 0},
+      "note": "Stream creation reserves frame0 but cannot push before ack0."
+    },
+    {
+      "call": "surface.ack", "conn": "observer", "params": {"stream": "{{stream.stream}}", "frame": 0},
+      "expect": {"response.ok": false, "response.error.code": "not_found", "eventCount": 0}
+    },
+    {
+      "call": "surface.input", "conn": "observer", "params": {"stream": "{{stream.stream}}", "events": [{"kind": "focus", "seq": 1, "on": true}]},
+      "expect": {"response.ok": false, "response.error.code": "not_found", "eventCount": 0}
+    },
+    {
+      "call": "surface.answer", "conn": "observer", "params": {"stream": "{{stream.stream}}", "dialog": "dlg_missing", "accept": false},
+      "expect": {"response.ok": false, "response.error.code": "not_found", "eventCount": 0}
+    },
+    {
+      "call": "surface.stop", "conn": "observer", "params": {"stream": "{{stream.stream}}"},
+      "expect": {"response.ok": false, "response.error.code": "not_found", "eventCount": 0}
+    },
+    {
+      "call": "surface.ack", "conn": "owner", "params": {"stream": "{{stream.stream}}", "frame": 1},
+      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0}
+    },
+    {
+      "call": "surface.ack", "conn": "owner", "params": {"stream": "{{stream.stream}}", "frame": 0}, "settleMs": 1500,
+      "expect": {"response.ok": true, "eventCount": 1, "events.0.event": "surface.frame", "events.0.conn": "owner", "events.0.board": "{{board}}", "events.0.data.stream": "{{stream.stream}}", "events.0.data.seq": 1, "events.0.data.input": 0, "events.0.data.format": "png", "events.0.data.size": "{{stream.size}}", "events.0.data.scale": 1},
+      "expectShape": {"events.0.data": "SurfaceFrame"},
+      "mask": {"events.*.data.data": {"match": "^[A-Za-z0-9+/]+={0,2}$", "as": "<image-base64>", "why": "Native raster bytes vary; preserve the frame event, dimensions, format, credit, ownership and input fence."}}
+    },
+    {
+      "call": "surface.input", "conn": "owner", "params": {"stream": "{{stream.stream}}", "events": [{"kind": "focus", "seq": 1, "on": true}, {"kind": "text", "seq": 2, "text": "invalid batch", "extra": true}]},
+      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0}
+    },
+    {
+      "call": "surface.input", "conn": "owner", "params": {"stream": "{{stream.stream}}", "events": [{"kind": "focus", "seq": 2, "on": true}, {"kind": "focus", "seq": 1, "on": false}]},
+      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0}
+    },
+    {
+      "call": "surface.input", "conn": "owner", "params": {"stream": "{{stream.stream}}", "events": []},
+      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0}
+    },
+    {
+      "call": "surface.input", "conn": "owner", "params": {"stream": "{{stream.stream}}", "events": [{"kind": "key", "seq": 1, "action": "down", "code": 65536, "chars": "", "plain": ""}]},
+      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0}
+    },
+    {
+      "call": "surface.input", "conn": "owner", "params": {"stream": "{{stream.stream}}", "events": [{"kind": "focus", "seq": 1, "on": true}, {"kind": "mouse", "seq": 2, "action": "down", "x": 20, "y": 20}, {"kind": "mouse", "seq": 3, "action": "up", "x": 20, "y": 20}, {"kind": "scroll", "seq": 4, "x": 20, "y": 20, "dx": 0, "dy": -20}, {"kind": "text", "seq": 5, "text": "surface text"}]},
+      "expect": {"response.ok": true, "response.result.accepted": 5, "eventCount": 0},
+      "note": "All five seq values remain available after the rejected batch. Input does not grant image credit."
+    },
+    {
+      "call": "surface.input", "conn": "owner", "params": {"stream": "{{stream.stream}}", "events": [{"kind": "text", "seq": 5, "text": "surface text"}]},
+      "expect": {"response.ok": true, "response.result.accepted": 0, "eventCount": 0}
+    },
+    {
+      "call": "surface.ack", "conn": "owner", "params": {"stream": "{{stream.stream}}", "frame": 0},
+      "expect": {"response.ok": true, "eventCount": 0}, "note": "An older ack cannot accumulate credits."
+    },
+    {
+      "call": "surface.ack", "conn": "owner", "params": {"stream": "{{stream.stream}}", "frame": 1}, "settleMs": 1500,
+      "expect": {"response.ok": true, "eventCount": 1, "events.0.event": "surface.frame", "events.0.conn": "owner", "events.0.board": "{{board}}", "events.0.data.stream": "{{stream.stream}}", "events.0.data.seq": 2, "events.0.data.input": 5, "events.0.data.format": "png", "events.0.data.size": "{{stream.size}}", "events.0.data.scale": 1},
+      "expectShape": {"events.0.data": "SurfaceFrame"},
+      "mask": {"events.*.data.data": {"match": "^[A-Za-z0-9+/]+={0,2}$", "as": "<image-base64>", "why": "Only raster bytes are nondeterministic; retain every metadata field and behavior."}}
+    },
+    {
+      "call": "surface.answer", "conn": "owner", "params": {"stream": "{{stream.stream}}", "dialog": "dlg_missing", "accept": false},
+      "expect": {"response.ok": false, "response.error.code": "not_found", "eventCount": 0}
+    },
+    {
+      "call": "surface.stop", "conn": "owner", "params": {"stream": "{{stream.stream}}"},
+      "expect": {"response.ok": true, "response.result.stopped": true}
+    },
+    {
+      "call": "surface.ack", "conn": "owner", "params": {"stream": "{{stream.stream}}", "frame": 2},
+      "expect": {"response.ok": false, "response.error.code": "not_found", "eventCount": 0}
+    },
+    {
+      "call": "object.get", "params": {"id": "{{browser.object.id}}"},
+      "expect": {"response.ok": true, "response.result.object.id": "{{browser.object.id}}", "response.result.object.type": "browser", "response.result.page.loaded": true, "eventCount": 0},
+      "ignore": {"response.result.page.cursor": "The browser log's per-navigation cursor is not the surface lease or ownership contract.", "response.result.page.vitals": "Page load timing is unrelated to preserving the streamed page."},
+      "note": "Stopping a stream leaves the same host page and tile alive."
+    },
+    {
+      "call": "events.subscribe", "conn": "frameOnly",
+      "params": {"board": "{{board}}", "events": ["surface.frame"]},
+      "expect": {"response.ok": true, "eventCount": 0}
+    },
+    {
+      "call": "surface.stream", "conn": "frameOnly", "params": {"id": "{{browser.object.id}}"},
+      "save": "silentStream", "expect": {"response.ok": true, "eventCount": 0}
+    },
+    {
+      "call": "object.update", "params": {"id": "{{browser.object.id}}", "frame": {"x": 0, "y": 0}},
+      "expect": {"response.ok": true}, "noEvents": true,
+      "note": "Show the page in the host window. Ordinary board-update timing is not the dialog contract."
+    },
+    {
+      "call": "surface.input", "conn": "frameOnly", "params": {"stream": "{{silentStream.stream}}", "events": [{"kind": "navigate", "seq": 1, "url": "http://{{httpHost}}/dialog"}]},
+      "settleMs": 1500, "noEvents": true,
+      "expect": {"response.ok": true, "response.result.accepted": 1},
+      "note": "The only live stream has no dialog listener. The page must continue without a host sheet; ordinary URL/title events are not compared here."
+    },
+    {
+      "call": "object.get", "params": {"id": "{{browser.object.id}}"},
+      "expect": {"response.ok": true, "response.result.object.props.pageTitle": "Surface dialog dismissed", "response.result.page.loaded": true},
+      "ignore": {"response.result.page.cursor": "The browser log cursor is per-navigation runtime state.", "response.result.page.vitals": "Page load timing is unrelated to dialog dismissal."}
+    },
+    {
+      "call": "surface.input", "conn": "frameOnly", "params": {"stream": "{{silentStream.stream}}", "events": [{"kind": "navigate", "seq": 2, "url": "http://{{httpHost}}/selection"}]},
+      "settleMs": 1500, "noEvents": true,
+      "expect": {"response.ok": true, "response.result.accepted": 1}
+    },
+    {
+      "call": "object.get", "params": {"id": "{{browser.object.id}}"},
+      "expect": {"response.ok": true, "response.result.object.props.pageTitle": "Selection ready", "response.result.page.loaded": true},
+      "ignore": {"response.result.page.cursor": "The browser log cursor is per-navigation runtime state.", "response.result.page.vitals": "Page load timing is unrelated to selection copy."}
+    },
+    {
+      "call": "surface.input", "conn": "frameOnly",
+      "params": {"stream": "{{silentStream.stream}}", "events": [{"kind": "focus", "seq": 3, "on": true}, {"kind": "key", "seq": 4, "action": "down", "code": 0, "chars": "a", "plain": "a"}, {"kind": "key", "seq": 5, "action": "up", "code": 0, "chars": "a", "plain": "a"}, {"kind": "command", "seq": 6, "name": "copy"}]},
+      "expect": {"response.ok": true, "response.result.accepted": 4, "response.result.text": "Surface selection survives native keys", "eventCount": 0},
+      "note": "Native key telemetry may be unavailable on this WebKit. It must not permanently disable bounded selection reads or falsely confirm the frame watermark."
+    },
+    {
+      "call": "surface.stop", "conn": "frameOnly", "params": {"stream": "{{silentStream.stream}}"},
+      "expect": {"response.ok": true, "response.result.stopped": true}
+    }
+  ]
+}

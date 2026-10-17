@@ -5,9 +5,14 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 1
-    static let schemaHash = "05b93bfd3d850025"
+    static let schemaHash = "4433373c28128273"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
+        "surface.stream": (["id", "scale", "format"], ["id"]),
+        "surface.ack": (["stream", "frame"], ["stream", "frame"]),
+        "surface.input": (["stream", "events"], ["stream", "events"]),
+        "surface.answer": (["stream", "dialog", "accept", "text", "user", "password", "choice"], ["stream", "dialog", "accept"]),
+        "surface.stop": (["stream"], ["stream"]),
         "system.ping": ([], []),
         "app.metrics": (["reset", "watch"], []),
         "board.get": (["board", "since", "branch"], []),

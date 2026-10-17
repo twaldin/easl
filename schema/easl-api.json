@@ -20,6 +20,118 @@
     "ambiguous": "an address (a terminal's name, `name@board`, a board's name, `board.open_remote`'s host name) matches more than one terminal, open board or host; the message lists each candidate (a terminal as `name@board (tile id)`, a host by its ssh target), so the caller can name one"
   },
   "definitions": {
+    "SurfaceStream": { "type": "string", "pattern": "^str_[0-9A-Za-z]+$", "description": "A session owned only by the connection that opened it; never transferable between connections or reconnected clients." },
+    "SurfaceSize": {
+      "type": "object", "required": ["w", "h"],
+      "properties": { "w": { "type": "number", "exclusiveMinimum": 0 }, "h": { "type": "number", "exclusiveMinimum": 0 } },
+      "additionalProperties": false,
+      "description": "Host WKWebView bounds in points, top-left origin. Input uses these points, not CSS pixels or encoded image pixels."
+    },
+    "SurfaceInputEvent": {
+      "description": "Closed native-input union. Positive seq values increase strictly within each batch. Previously accepted seq values are ignored; callers never automatically resend input after reconnect. Raw mods are NSEvent modifier flags. Context menus are viewer-local.",
+      "oneOf": [
+        {
+          "type": "object", "required": ["kind", "seq", "action", "x", "y"],
+          "properties": {
+            "kind": { "const": "mouse" }, "seq": { "type": "integer", "minimum": 1 },
+            "action": { "enum": ["down", "up", "drag", "move"] }, "x": { "type": "number" }, "y": { "type": "number" },
+            "button": { "const": "left", "default": "left" }, "clicks": { "type": "integer", "minimum": 1, "default": 1 },
+            "mods": { "type": "integer", "minimum": 0, "maximum": 4294967295, "default": 0 }
+          }, "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["kind", "seq", "x", "y", "dx", "dy"],
+          "properties": {
+            "kind": { "const": "scroll" }, "seq": { "type": "integer", "minimum": 1 },
+            "x": { "type": "number" }, "y": { "type": "number" }, "dx": { "type": "number" }, "dy": { "type": "number" },
+            "precise": { "type": "boolean", "default": true }, "phase": { "type": "integer", "minimum": 0, "default": 0, "description": "Raw NSEvent phase." },
+            "momentum": { "type": "integer", "minimum": 0, "default": 0 }, "mods": { "type": "integer", "minimum": 0, "maximum": 4294967295, "default": 0 }
+          }, "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["kind", "seq", "action", "code", "chars", "plain"],
+          "properties": {
+            "kind": { "const": "key" }, "seq": { "type": "integer", "minimum": 1 },
+            "action": { "enum": ["down", "up"] }, "code": { "type": "integer", "minimum": 0, "maximum": 65535 },
+            "chars": { "type": "string" }, "plain": { "type": "string" }, "repeat": { "type": "boolean", "default": false },
+            "mods": { "type": "integer", "minimum": 0, "maximum": 4294967295, "default": 0 }
+          }, "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["kind", "seq", "text"],
+          "properties": { "kind": { "const": "text" }, "seq": { "type": "integer", "minimum": 1 }, "text": { "type": "string", "description": "Committed text." } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["kind", "seq", "text", "start", "length"],
+          "properties": { "kind": { "const": "compose" }, "seq": { "type": "integer", "minimum": 1 }, "text": { "type": "string" }, "start": { "type": "integer", "minimum": 0 }, "length": { "type": "integer", "minimum": 0 } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["kind", "seq"],
+          "properties": { "kind": { "const": "unmark" }, "seq": { "type": "integer", "minimum": 1 } }, "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["kind", "seq", "on"],
+          "properties": { "kind": { "const": "focus" }, "seq": { "type": "integer", "minimum": 1 }, "on": { "type": "boolean" } }, "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["kind", "seq", "name"],
+          "properties": {
+            "kind": { "const": "command" }, "seq": { "type": "integer", "minimum": 1 },
+            "name": { "enum": ["copy", "selectAll", "back", "forward", "reload", "stop"] }
+          }, "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["kind", "seq", "name", "text"],
+          "properties": {
+            "kind": { "const": "command" }, "seq": { "type": "integer", "minimum": 1 }, "name": { "const": "paste" },
+            "text": { "type": "string", "description": "Explicit paste payload; never mutates the host clipboard." }
+          }, "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["kind", "seq", "url"],
+          "properties": { "kind": { "const": "navigate" }, "seq": { "type": "integer", "minimum": 1 }, "url": { "type": "string" } }, "additionalProperties": false
+        }
+      ]
+    },
+    "SurfaceFrame": {
+      "type": "object", "required": ["stream", "seq", "input", "size", "scale", "format", "data", "width", "height", "back", "forward", "loading"],
+      "properties": {
+        "stream": { "$ref": "#/definitions/SurfaceStream" }, "seq": { "type": "integer", "minimum": 1 },
+        "input": { "type": "integer", "minimum": 0, "description": "Conservative host app-queue watermark. Pending mouse/key processing checks hold it back until confirmed, and missing checks leave it unconfirmed. Direct text, scroll and commands have no WebKit processing check; this field does not guarantee their effects are visible in the image." },
+        "size": { "$ref": "#/definitions/SurfaceSize" }, "scale": { "type": "number", "exclusiveMinimum": 0 },
+        "format": { "enum": ["jpeg", "png"] }, "data": { "type": "string", "minLength": 1, "contentEncoding": "base64" },
+        "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 },
+        "back": { "type": "boolean" }, "forward": { "type": "boolean" }, "loading": { "type": "boolean" }
+      }, "additionalProperties": false,
+      "description": "surface.frame data. Full current page image held in memory, never a profile, cookie jar, page source, dirty rectangle or image-less acknowledgement. Only the subscribed owning connection receives it."
+    },
+    "SurfaceDialog": {
+      "type": "object", "required": ["stream", "dialog", "kind", "origin"],
+      "properties": {
+        "stream": { "$ref": "#/definitions/SurfaceStream" }, "dialog": { "type": "string" },
+        "kind": { "enum": ["alert", "confirm", "prompt", "login", "select"] }, "origin": { "type": "string" },
+        "message": { "type": "string" }, "text": { "type": "string" }, "choices": { "type": "array", "items": { "type": "string" } }, "selected": { "type": "integer", "minimum": 0 }
+      }, "additionalProperties": false,
+      "description": "surface.dialog data, private to the subscribed owning connection. Completed once by surface.answer, safely dismissed when the connection or stream closes."
+    },
+    "SurfaceNotice": {
+      "type": "object", "required": ["stream", "kind"],
+      "properties": {
+        "stream": { "$ref": "#/definitions/SurfaceStream" }, "kind": { "enum": ["closed", "download", "refused"] },
+        "reason": { "type": "string" }, "name": { "type": "string" }, "state": { "type": "string" }
+      }, "additionalProperties": false,
+      "description": "surface.notice data, private to the subscribed owning connection. Downloads remain host files. File uploads are refused, not silently accepted."
+    },
+    "SurfaceEvent": {
+      "description": "Private pushed events, never board broadcasts. Canonical board id and matching subscription are required on the owning connection.",
+      "oneOf": [
+        { "type": "object", "required": ["event", "board", "data"], "properties": { "event": { "const": "surface.frame" }, "board": { "$ref": "#/definitions/Id" }, "data": { "$ref": "#/definitions/SurfaceFrame" } }, "additionalProperties": false },
+        { "type": "object", "required": ["event", "board", "data"], "properties": { "event": { "const": "surface.dialog" }, "board": { "$ref": "#/definitions/Id" }, "data": { "$ref": "#/definitions/SurfaceDialog" } }, "additionalProperties": false },
+        { "type": "object", "required": ["event", "board", "data"], "properties": { "event": { "const": "surface.notice" }, "board": { "$ref": "#/definitions/Id" }, "data": { "$ref": "#/definitions/SurfaceNotice" } }, "additionalProperties": false }
+      ]
+    },
     "Id": { "type": "string", "pattern": "^[a-z]+_[0-9A-Za-z]+$", "description": "Prefixed id, e.g. obj_01H…, men_…" },
     "MessageId": { "type": "string", "pattern": "^msg_[A-Za-z0-9_-]{8,64}$", "description": "A message's id: `msg_` and 8 to 64 letters, digits, `_` or `-`; easl's own (`msg_` and a ULID) or the one its sender gave (agent.prompt `message`)" },
     "Frame": {
@@ -826,6 +938,41 @@
     }
   },
   "methods": {
+    "surface.stream": {
+      "description": "Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Currently served by the Swift app only; easld relay is not implemented.",
+      "params": {
+        "type": "object", "required": ["id"],
+        "properties": { "id": { "type": "string", "pattern": "^obj_[0-9A-Za-z]+$" }, "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 2, "default": 1 }, "format": { "enum": ["jpeg", "png"], "default": "jpeg" } },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object", "required": ["stream", "size", "scale"],
+        "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "size": { "$ref": "#/definitions/SurfaceSize" }, "scale": { "type": "number", "exclusiveMinimum": 0 } }, "additionalProperties": false
+      }
+    },
+    "surface.ack": {
+      "description": "On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging.",
+      "params": { "type": "object", "required": ["stream", "frame"], "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "frame": { "type": "integer", "minimum": 0 } }, "additionalProperties": false },
+      "result": { "type": "object", "properties": {}, "additionalProperties": false }
+    },
+    "surface.input": {
+      "description": "Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation.",
+      "params": { "type": "object", "required": ["stream", "events"], "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "events": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/definitions/SurfaceInputEvent" } } }, "additionalProperties": false },
+      "result": { "type": "object", "required": ["accepted"], "properties": { "accepted": { "type": "integer", "minimum": 0, "description": "Count of newly queued events in this batch; duplicates contribute zero. Not a delivery or presentation acknowledgement." }, "text": { "type": "string" } }, "additionalProperties": false }
+    },
+    "surface.answer": {
+      "description": "Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords are transient request data, never logged or read from the viewer's keychain.",
+      "params": {
+        "type": "object", "required": ["stream", "dialog", "accept"],
+        "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "dialog": { "type": "string" }, "accept": { "type": "boolean" }, "text": { "type": "string" }, "user": { "type": "string" }, "password": { "type": "string" }, "choice": { "type": "integer", "minimum": 0 } }, "additionalProperties": false
+      },
+      "result": { "type": "object", "properties": {}, "additionalProperties": false }
+    },
+    "surface.stop": {
+      "description": "Stop the opening connection's stream and cancel its capture work. Never delete or release the host page; its existing driven-lease policy takes over. Another connection cannot control this stream.",
+      "params": { "type": "object", "required": ["stream"], "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" } }, "additionalProperties": false },
+      "result": { "type": "object", "required": ["stopped"], "properties": { "stopped": { "type": "boolean" } }, "additionalProperties": false }
+    },
     "system.ping": {
       "description": "Liveness and schema version.",
       "params": { "type": "object", "properties": {}, "additionalProperties": false },
@@ -1872,7 +2019,7 @@
       }
     },
     "events.subscribe": {
-      "description": "Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}).",
+      "description": "Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}). Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers.",
       "params": {
         "type": "object",
         "properties": { "board": { "$ref": "#/definitions/Id" }, "events": { "type": "array", "items": { "type": "string" } } },

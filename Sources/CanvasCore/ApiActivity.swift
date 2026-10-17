@@ -20,7 +20,10 @@ public final class ApiActivity {
     /// How long the activity is held after the last call.
     public static let holdAfter: TimeInterval = 2
     /// Methods that wait (on an agent, a page, a render) rather than work: they don't make a burst.
-    static let waits: Set<String> = ["agent.wait", "agent.inbox", "agent.prompt", "agent.read", "view.render", "view.snapshot", "object.reload", "tray.drain", "events.subscribe"]
+    /// A streamed browser's acks and input (`surface.*`) arrive at frame rate for as long as it is
+    /// watched, and would keep the API from ever going quiet.
+    static let waits: Set<String> = ["agent.wait", "agent.inbox", "agent.prompt", "agent.read", "view.render", "view.snapshot", "object.reload", "tray.drain", "events.subscribe",
+                                     "surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"]
 
     private var inFlight = 0
     private var lastEnded = -Double.infinity

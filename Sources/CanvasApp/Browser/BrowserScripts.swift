@@ -7,6 +7,8 @@ enum BrowserScripts {
     static let world = WKContentWorld.world(name: "canvas-cmux")
     /// Message handler (in `world`) for page activity: `changed`, `ready`, `load`.
     static let messageName = "canvasBrowser"
+    /// Message handler (in `world`) for a select menu a streamed page relays (`BrowserSurface`).
+    static let selectMessageName = "canvasSelect"
 
     /// Prefix for calls into the helper: installs it first on documents that loaded before the
     /// user script could run (the initial about:blank, pages restored from the back cache).
@@ -447,12 +449,58 @@ enum BrowserScripts {
         return {};
       }
 
+      // MARK: a page another Mac streams (BrowserSurface)
+
+      // The selected text for the viewer's explicit copy: a text field's own selection
+      // isn't in the document's, and a password field's is never copied.
+      function selectedText() {
+        const el = document.activeElement;
+        if (el && isTextField(el)) {
+          if (el.type === 'password') return '';
+          try { if (el.selectionStart !== null) return el.value.slice(el.selectionStart, el.selectionEnd); } catch {}
+          return '';
+        }
+        return getSelection()?.toString() ?? '';
+      }
+
+      // A select's menu would open on this Mac, where nobody sees it and its tracking holds the
+      // app's event queue: while streamed, the choices go to the viewer, and the choice it makes
+      // reaches the page as untrusted input and change events.
+      let selectRelay = false, relayed = null, relayToken = 0;
+      const relayable = (el) => el instanceof HTMLSelectElement && !el.multiple && el.size <= 1 && !el.disabled;
+      const menuKeys = new Set([' ', 'ArrowUp', 'ArrowDown']);
+      function relaySelect(event) {
+        const el = event.target;
+        if (!selectRelay || !relayable(el)) return;
+        if (event.type === 'mousedown' ? event.button !== 0 : !menuKeys.has(event.key)) return;
+        event.preventDefault();
+        el.focus({ preventScroll: true });
+        relayed = { token: ++relayToken, element: new WeakRef(el) };
+        try {
+          window.webkit.messageHandlers.canvasSelect.postMessage({ token: relayToken, choices: [...el.options].map((option) => option.label), selected: el.selectedIndex });
+        } catch {}
+      }
+      addEventListener('mousedown', relaySelect, true);
+      addEventListener('keydown', relaySelect, true);
+      function setSelectRelay(on) {
+        selectRelay = on;
+        if (!on) relayed = null;
+        return {};
+      }
+      function chooseSelect(token, index) {
+        const el = relayed?.token === token ? relayed.element.deref() : null;
+        relayed = null;
+        if (!el || !el.isConnected || !relayable(el) || index < 0 || index >= el.options.length || el.options[index].disabled) return false;
+        if (el.selectedIndex !== index) { el.selectedIndex = index; fire(el, 'input'); fire(el, 'change'); }
+        return true;
+      }
+
       // Load milestones wake automation waits whether or not the tile is visible.
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => post('ready'), { once: true });
       else post('ready');
       if (document.readyState !== 'complete') addEventListener('load', () => post('load'), { once: true });
 
-      window.__canvasCmux = { snapshot, act, press, waitFor, setActivity,
+      window.__canvasCmux = { snapshot, act, press, waitFor, setActivity, selectedText, setSelectRelay, chooseSelect,
         scroll(dx, dy) { scrollBy(dx, dy); return { scroll_x: scrollX, scroll_y: scrollY }; } };
     })();
     """#

@@ -2,6 +2,133 @@
 
 export const SCHEMA_VERSION = 1;
 
+/** A session owned only by the connection that opened it; never transferable between connections or reconnected clients. */
+export type SurfaceStream = string;
+
+/** Host WKWebView bounds in points, top-left origin. Input uses these points, not CSS pixels or encoded image pixels. */
+export type SurfaceSize = {
+  w: number;
+  h: number;
+};
+
+/** Closed native-input union. Positive seq values increase strictly within each batch. Previously accepted seq values are ignored; callers never automatically resend input after reconnect. Raw mods are NSEvent modifier flags. Context menus are viewer-local. */
+export type SurfaceInputEvent = {
+  kind: "mouse";
+  seq: number;
+  action: "down" | "up" | "drag" | "move";
+  x: number;
+  y: number;
+  button?: "left";
+  clicks?: number;
+  mods?: number;
+} | {
+  kind: "scroll";
+  seq: number;
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  precise?: boolean;
+  /** Raw NSEvent phase. */
+  phase?: number;
+  momentum?: number;
+  mods?: number;
+} | {
+  kind: "key";
+  seq: number;
+  action: "down" | "up";
+  code: number;
+  chars: string;
+  plain: string;
+  repeat?: boolean;
+  mods?: number;
+} | {
+  kind: "text";
+  seq: number;
+  /** Committed text. */
+  text: string;
+} | {
+  kind: "compose";
+  seq: number;
+  text: string;
+  start: number;
+  length: number;
+} | {
+  kind: "unmark";
+  seq: number;
+} | {
+  kind: "focus";
+  seq: number;
+  on: boolean;
+} | {
+  kind: "command";
+  seq: number;
+  name: "copy" | "selectAll" | "back" | "forward" | "reload" | "stop";
+} | {
+  kind: "command";
+  seq: number;
+  name: "paste";
+  /** Explicit paste payload; never mutates the host clipboard. */
+  text: string;
+} | {
+  kind: "navigate";
+  seq: number;
+  url: string;
+};
+
+/** surface.frame data. Full current page image held in memory, never a profile, cookie jar, page source, dirty rectangle or image-less acknowledgement. Only the subscribed owning connection receives it. */
+export type SurfaceFrame = {
+  stream: SurfaceStream;
+  seq: number;
+  /** Conservative host app-queue watermark. Pending mouse/key processing checks hold it back until confirmed, and missing checks leave it unconfirmed. Direct text, scroll and commands have no WebKit processing check; this field does not guarantee their effects are visible in the image. */
+  input: number;
+  size: SurfaceSize;
+  scale: number;
+  format: "jpeg" | "png";
+  data: string;
+  width: number;
+  height: number;
+  back: boolean;
+  forward: boolean;
+  loading: boolean;
+};
+
+/** surface.dialog data, private to the subscribed owning connection. Completed once by surface.answer, safely dismissed when the connection or stream closes. */
+export type SurfaceDialog = {
+  stream: SurfaceStream;
+  dialog: string;
+  kind: "alert" | "confirm" | "prompt" | "login" | "select";
+  origin: string;
+  message?: string;
+  text?: string;
+  choices?: string[];
+  selected?: number;
+};
+
+/** surface.notice data, private to the subscribed owning connection. Downloads remain host files. File uploads are refused, not silently accepted. */
+export type SurfaceNotice = {
+  stream: SurfaceStream;
+  kind: "closed" | "download" | "refused";
+  reason?: string;
+  name?: string;
+  state?: string;
+};
+
+/** Private pushed events, never board broadcasts. Canonical board id and matching subscription are required on the owning connection. */
+export type SurfaceEvent = {
+  event: "surface.frame";
+  board: Id;
+  data: SurfaceFrame;
+} | {
+  event: "surface.dialog";
+  board: Id;
+  data: SurfaceDialog;
+} | {
+  event: "surface.notice";
+  board: Id;
+  data: SurfaceNotice;
+};
+
 /** Prefixed id, e.g. obj_01H…, men_… */
 export type Id = string;
 
@@ -792,6 +919,51 @@ export type MetricsCounter = {
   total: MetricsTally;
   last60s: MetricsTally;
   last10m: MetricsTally;
+};
+
+export type SurfaceStreamParams = {
+  id: string;
+  scale?: number;
+  format?: "jpeg" | "png";
+};
+export type SurfaceStreamResult = {
+  stream: SurfaceStream;
+  size: SurfaceSize;
+  scale: number;
+};
+
+export type SurfaceAckParams = {
+  stream: SurfaceStream;
+  frame: number;
+};
+export type SurfaceAckResult = Record<string, unknown>;
+
+export type SurfaceInputParams = {
+  stream: SurfaceStream;
+  events: SurfaceInputEvent[];
+};
+export type SurfaceInputResult = {
+  /** Count of newly queued events in this batch; duplicates contribute zero. Not a delivery or presentation acknowledgement. */
+  accepted: number;
+  text?: string;
+};
+
+export type SurfaceAnswerParams = {
+  stream: SurfaceStream;
+  dialog: string;
+  accept: boolean;
+  text?: string;
+  user?: string;
+  password?: string;
+  choice?: number;
+};
+export type SurfaceAnswerResult = Record<string, unknown>;
+
+export type SurfaceStopParams = {
+  stream: SurfaceStream;
+};
+export type SurfaceStopResult = {
+  stopped: boolean;
 };
 
 export type SystemPingParams = Record<string, unknown>;
@@ -1810,6 +1982,18 @@ export type TextMeasureResult = {
 
 /** Every API method, grouped by namespace (`api.board.get(...)`). */
 export interface CanvasApi {
+  surface: {
+    /** Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Currently served by the Swift app only; easld relay is not implemented. */
+    stream(params: SurfaceStreamParams): Promise<SurfaceStreamResult>;
+    /** On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging. */
+    ack(params: SurfaceAckParams): Promise<SurfaceAckResult>;
+    /** Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation. */
+    input(params: SurfaceInputParams): Promise<SurfaceInputResult>;
+    /** Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords are transient request data, never logged or read from the viewer's keychain. */
+    answer(params: SurfaceAnswerParams): Promise<SurfaceAnswerResult>;
+    /** Stop the opening connection's stream and cancel its capture work. Never delete or release the host page; its existing driven-lease policy takes over. Another connection cannot control this stream. */
+    stop(params: SurfaceStopParams): Promise<SurfaceStopResult>;
+  };
   system: {
     /** Liveness and schema version. */
     ping(params?: SystemPingParams): Promise<SystemPingResult>;
@@ -1927,7 +2111,7 @@ export interface CanvasApi {
     open(params: RelayOpenParams): Promise<RelayOpenResult>;
   };
   events: {
-    /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}). */
+    /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}). Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers. */
     subscribe(params?: EventsSubscribeParams): Promise<EventsSubscribeResult>;
   };
   client: {
@@ -1946,6 +2130,13 @@ export const ENV_DEFAULTS: Record<string, string> = {"caller":"EASL_TILE_ID","bo
 /** `call` receives the method's auto-filled param names (keys of ENV_DEFAULTS it accepts). */
 export function bindMethods(call: (method: string, params: object, envKeys: string[]) => Promise<unknown>): CanvasApi {
   return {
+    surface: {
+      stream: (params: SurfaceStreamParams) => call("surface.stream", params ?? {}, []) as Promise<SurfaceStreamResult>,
+      ack: (params: SurfaceAckParams) => call("surface.ack", params ?? {}, []) as Promise<SurfaceAckResult>,
+      input: (params: SurfaceInputParams) => call("surface.input", params ?? {}, []) as Promise<SurfaceInputResult>,
+      answer: (params: SurfaceAnswerParams) => call("surface.answer", params ?? {}, []) as Promise<SurfaceAnswerResult>,
+      stop: (params: SurfaceStopParams) => call("surface.stop", params ?? {}, []) as Promise<SurfaceStopResult>,
+    },
     system: {
       ping: (params?: SystemPingParams) => call("system.ping", params ?? {}, []) as Promise<SystemPingResult>,
     },
@@ -2027,7 +2218,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"] as const;
+export const METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

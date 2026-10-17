@@ -24,6 +24,10 @@ final class CanvasApplication: NSApplication {
     /// (`CanvasWindow`'s navigation shortcuts, then its views), then the main menu, then keyDown
     /// to the first responder.
     override func sendEvent(_ event: NSEvent) {
+        // A streamed page's input runs from its marker (`SurfaceEventQueue`). A key that page
+        // didn't handle comes back here from WebKit; it is the viewer's, and would otherwise
+        // reach this Mac's canvas (Delete deletes tiles) or its menus (⌘W, ⌘Q).
+        if SurfaceEventQueue.consumes(event) { return }
         if DevInput.enabled, keyWindow == nil, event.type == .keyDown || event.type == .keyUp,
            let window = event.window, window.windowController is CanvasWindowController {
             if event.type == .keyDown, window.performKeyEquivalent(with: event) || mainMenu?.performKeyEquivalent(with: event) == true { return }

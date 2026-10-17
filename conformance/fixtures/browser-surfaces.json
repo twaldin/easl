@@ -1,0 +1,959 @@
+{
+  "scenario": "browser-surfaces",
+  "description": "Swift-host browser surface lifecycle on the existing about:blank page. Validate before mutation, require same-connection subscription and stream ownership, hold initial credit until ack0, deliver fenced full images, deduplicate input and stop without deleting the page.",
+  "recordedOn": "Swift 6.3.3 macOS26.6, product0cec6fc, real WKWebView including native-key copy regression, 2026-10-17",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 480,
+          "w": 640,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "url": "about:blank"
+        },
+        "type": "browser"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 640,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "url": "about:blank"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 640,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "url": "about:blank"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "owner",
+      "request": {
+        "board": "<board>",
+        "events": [
+          "surface.notice"
+        ]
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "surface.stream",
+      "method": "surface.stream",
+      "conn": "owner",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "subscribe this connection to surface.frame on board <board> (events.subscribe) before surface.stream"
+        },
+        "id": "r2",
+        "ok": false
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "owner",
+      "request": {
+        "board": "<board>",
+        "events": [
+          "surface.frame",
+          "surface.dialog",
+          "surface.notice"
+        ]
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "observer",
+      "request": {
+        "board": "<board>",
+        "events": [
+          "surface.frame",
+          "surface.dialog",
+          "surface.notice"
+        ]
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "surface.stream",
+      "method": "surface.stream",
+      "conn": "owner",
+      "request": {
+        "id": "<obj:1>",
+        "scale": 0
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "scale must be above 0 and at most 2.0"
+        },
+        "id": "r4",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.stream",
+      "method": "surface.stream",
+      "conn": "owner",
+      "request": {
+        "format": "gif",
+        "id": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "format must be jpeg or png"
+        },
+        "id": "r5",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.stream",
+      "method": "surface.stream",
+      "conn": "owner",
+      "request": {
+        "format": "png",
+        "id": "<obj:1>",
+        "scale": 1
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "scale": 1,
+          "size": {
+            "h": 422,
+            "w": 640
+          },
+          "stream": "<str:1>"
+        }
+      }
+    },
+    {
+      "step": "surface.ack",
+      "method": "surface.ack",
+      "conn": "observer",
+      "request": {
+        "frame": 0,
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:1> is not open on this connection"
+        },
+        "id": "r2",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "observer",
+      "request": {
+        "events": [
+          {
+            "kind": "focus",
+            "on": true,
+            "seq": 1
+          }
+        ],
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:1> is not open on this connection"
+        },
+        "id": "r3",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.answer",
+      "method": "surface.answer",
+      "conn": "observer",
+      "request": {
+        "accept": false,
+        "dialog": "dlg_missing",
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:1> is not open on this connection"
+        },
+        "id": "r4",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.stop",
+      "method": "surface.stop",
+      "conn": "observer",
+      "request": {
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:1> is not open on this connection"
+        },
+        "id": "r5",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.ack",
+      "method": "surface.ack",
+      "conn": "owner",
+      "request": {
+        "frame": 1,
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "frame 1 wasn't sent; the latest is 0"
+        },
+        "id": "r7",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.ack",
+      "method": "surface.ack",
+      "conn": "owner",
+      "request": {
+        "frame": 0,
+        "stream": "<str:1>"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "conn": "owner",
+          "data": {
+            "back": false,
+            "data": "<image-base64>",
+            "format": "png",
+            "forward": false,
+            "height": 422,
+            "input": 0,
+            "loading": false,
+            "scale": 1,
+            "seq": 1,
+            "size": {
+              "h": 422,
+              "w": 640
+            },
+            "stream": "<str:1>",
+            "width": 640
+          },
+          "event": "surface.frame"
+        }
+      ],
+      "masked": {
+        "events.*.data.data": "Native raster bytes vary; preserve the frame event, dimensions, format, credit, ownership and input fence."
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "owner",
+      "request": {
+        "events": [
+          {
+            "kind": "focus",
+            "on": true,
+            "seq": 1
+          },
+          {
+            "extra": true,
+            "kind": "text",
+            "seq": 2,
+            "text": "invalid batch"
+          }
+        ],
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "events[1]: unknown field extra"
+        },
+        "id": "r9",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "owner",
+      "request": {
+        "events": [
+          {
+            "kind": "focus",
+            "on": true,
+            "seq": 2
+          },
+          {
+            "kind": "focus",
+            "on": false,
+            "seq": 1
+          }
+        ],
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "events[1].seq 1 must be above the previous event's 2"
+        },
+        "id": "r10",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "owner",
+      "request": {
+        "events": [],
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "events must hold 1 to 128 events"
+        },
+        "id": "r11",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "owner",
+      "request": {
+        "events": [
+          {
+            "action": "down",
+            "chars": "",
+            "code": 65536,
+            "kind": "key",
+            "plain": "",
+            "seq": 1
+          }
+        ],
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "events[0]: code must be an integer from 0 to 65535"
+        },
+        "id": "r12",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "owner",
+      "request": {
+        "events": [
+          {
+            "kind": "focus",
+            "on": true,
+            "seq": 1
+          },
+          {
+            "action": "down",
+            "kind": "mouse",
+            "seq": 2,
+            "x": 20,
+            "y": 20
+          },
+          {
+            "action": "up",
+            "kind": "mouse",
+            "seq": 3,
+            "x": 20,
+            "y": 20
+          },
+          {
+            "dx": 0,
+            "dy": -20,
+            "kind": "scroll",
+            "seq": 4,
+            "x": 20,
+            "y": 20
+          },
+          {
+            "kind": "text",
+            "seq": 5,
+            "text": "surface text"
+          }
+        ],
+        "stream": "<str:1>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "accepted": 5
+        }
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "owner",
+      "request": {
+        "events": [
+          {
+            "kind": "text",
+            "seq": 5,
+            "text": "surface text"
+          }
+        ],
+        "stream": "<str:1>"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "accepted": 0
+        }
+      }
+    },
+    {
+      "step": "surface.ack",
+      "method": "surface.ack",
+      "conn": "owner",
+      "request": {
+        "frame": 0,
+        "stream": "<str:1>"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "surface.ack",
+      "method": "surface.ack",
+      "conn": "owner",
+      "request": {
+        "frame": 1,
+        "stream": "<str:1>"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "conn": "owner",
+          "data": {
+            "back": false,
+            "data": "<image-base64>",
+            "format": "png",
+            "forward": false,
+            "height": 422,
+            "input": 5,
+            "loading": false,
+            "scale": 1,
+            "seq": 2,
+            "size": {
+              "h": 422,
+              "w": 640
+            },
+            "stream": "<str:1>",
+            "width": 640
+          },
+          "event": "surface.frame"
+        }
+      ],
+      "masked": {
+        "events.*.data.data": "Only raster bytes are nondeterministic; retain every metadata field and behavior."
+      }
+    },
+    {
+      "step": "surface.answer",
+      "method": "surface.answer",
+      "conn": "owner",
+      "request": {
+        "accept": false,
+        "dialog": "dlg_missing",
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "dialog dlg_missing is not open on stream <str:1>"
+        },
+        "id": "r17",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.stop",
+      "method": "surface.stop",
+      "conn": "owner",
+      "request": {
+        "stream": "<str:1>"
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "stopped": true
+        }
+      }
+    },
+    {
+      "step": "surface.ack",
+      "method": "surface.ack",
+      "conn": "owner",
+      "request": {
+        "frame": 2,
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:1> is not open on this connection"
+        },
+        "id": "r19",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 640,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "url": "about:blank"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "page": {
+            "entries": [],
+            "errors": 0,
+            "loaded": true,
+            "url": "about:blank",
+            "visibility": "driven",
+            "warnings": 0
+          }
+        }
+      },
+      "ignored": {
+        "response.result.page.cursor": "The browser log's per-navigation cursor is not the surface lease or ownership contract.",
+        "response.result.page.vitals": "Page load timing is unrelated to preserving the streamed page."
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "frameOnly",
+      "request": {
+        "board": "<board>",
+        "events": [
+          "surface.frame"
+        ]
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "surface.stream",
+      "method": "surface.stream",
+      "conn": "frameOnly",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "scale": 1,
+          "size": {
+            "h": 422,
+            "w": 640
+          },
+          "stream": "<str:2>"
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "x": 0,
+          "y": 0
+        },
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "url": "about:blank"
+            },
+            "rev": "<rev:2>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "frameOnly",
+      "request": {
+        "events": [
+          {
+            "kind": "navigate",
+            "seq": 1,
+            "url": "http://<http-host>/dialog"
+          }
+        ],
+        "stream": "<str:2>"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "accepted": 1
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "pageTitle": "Surface dialog dismissed",
+              "url": "http://<http-host>/dialog"
+            },
+            "rev": "<rev:3>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "page": {
+            "entries": [],
+            "errors": 0,
+            "loaded": true,
+            "url": "http://<http-host>/dialog",
+            "visibility": "driven",
+            "warnings": 0
+          }
+        }
+      },
+      "ignored": {
+        "response.result.page.cursor": "The browser log cursor is per-navigation runtime state.",
+        "response.result.page.vitals": "Page load timing is unrelated to dialog dismissal."
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "frameOnly",
+      "request": {
+        "events": [
+          {
+            "kind": "navigate",
+            "seq": 2,
+            "url": "http://<http-host>/selection"
+          }
+        ],
+        "stream": "<str:2>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "accepted": 1
+        }
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "pageTitle": "Selection ready",
+              "url": "http://<http-host>/selection"
+            },
+            "rev": "<rev:4>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "page": {
+            "entries": [],
+            "errors": 0,
+            "loaded": true,
+            "url": "http://<http-host>/selection",
+            "visibility": "driven",
+            "warnings": 0
+          }
+        }
+      },
+      "ignored": {
+        "response.result.page.cursor": "The browser log cursor is per-navigation runtime state.",
+        "response.result.page.vitals": "Page load timing is unrelated to selection copy."
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "frameOnly",
+      "request": {
+        "events": [
+          {
+            "kind": "focus",
+            "on": true,
+            "seq": 3
+          },
+          {
+            "action": "down",
+            "chars": "a",
+            "code": 0,
+            "kind": "key",
+            "plain": "a",
+            "seq": 4
+          },
+          {
+            "action": "up",
+            "chars": "a",
+            "code": 0,
+            "kind": "key",
+            "plain": "a",
+            "seq": 5
+          },
+          {
+            "kind": "command",
+            "name": "copy",
+            "seq": 6
+          }
+        ],
+        "stream": "<str:2>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "accepted": 4,
+          "text": "Surface selection survives native keys"
+        }
+      }
+    },
+    {
+      "step": "surface.stop",
+      "method": "surface.stop",
+      "conn": "frameOnly",
+      "request": {
+        "stream": "<str:2>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "stopped": true
+        }
+      }
+    }
+  ]
+}

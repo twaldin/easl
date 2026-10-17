@@ -8,6 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var server: SocketServer?
     private var cmuxServer: SocketServer?
     private lazy var cmux = CmuxRouter(registry: registry, password: AppPaths.cmuxPassword)
+    /// Browser tiles another Mac's viewer streams (`surface.*`).
+    private lazy var surfaces = BrowserSurfaceHost(registry: registry) { [weak self] board, tile in
+        self?.content(of: tile, on: board) as? BrowserTile
+    }
     private var controllers: [BoardID: CanvasWindowController] = [:]
     /// The boards in the order they were first opened, which orders windows that aren't tabs of
     /// one another (`openBoardsInOrder`): a board's id, or a remote board's `remoteKey`.
@@ -149,6 +153,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch let error as CmuxError {
                 throw ApiRouter.Failure(error.code, error.message)
             }
+        }
+        router.surface = { [weak self] request, connection in
+            guard let self else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
+            return try await self.surfaces.handle(request, from: connection)
         }
         router.refreshDiagram = { [weak self] board, tile in
             // A board without a window still gets its graph, just without the tile's progress.
