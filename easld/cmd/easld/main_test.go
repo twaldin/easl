@@ -355,3 +355,26 @@ func TestOwnedBoardsComeBackAfterARestartAndAReboot(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
 }
+
+func TestQuestionArchiveAfterFlag(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(file, "home")
+	for _, value := range []string{"0", "86400", "0.5"} {
+		args := []string{"--home", home, "--question-archive-after", value}
+		var stderr bytes.Buffer
+		code := run(args, &stderr)
+		if code != 1 {
+			t.Errorf("%q exit %d, want startup past the flag: %s", args, code, stderr.String())
+		}
+	}
+	for _, arg := range []string{"-1", "86400.1", "NaN", "Inf", "soon"} {
+		var stderr bytes.Buffer
+		code := run([]string{"--question-archive-after", arg}, &stderr)
+		if code != 2 {
+			t.Errorf("%q exit %d: %s", arg, code, stderr.String())
+		}
+	}
+}

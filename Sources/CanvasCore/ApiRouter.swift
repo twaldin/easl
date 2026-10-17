@@ -29,10 +29,14 @@ public final class BoardRegistry {
     public var drawingMachine: DrawingMachine? {
         didSet { for board in boards.values { board.hostMachine = drawingMachine } }
     }
+    /// The host's `archiveAfter` for new questions that name none, on every board it opens
+    /// (`Board.defaultQuestionArchiveAfter`): the app's `UISettings.questionArchiveAfter`.
+    private let defaultQuestionArchiveAfter: TimeInterval
 
-    public init(store: BoardStore = BoardStore(), agentReports: URL? = nil) {
+    public init(store: BoardStore = BoardStore(), agentReports: URL? = nil, defaultQuestionArchiveAfter: TimeInterval = QuestionSpec.defaultArchiveAfter) {
         self.store = store
         self.agentReports = agentReports
+        self.defaultQuestionArchiveAfter = defaultQuestionArchiveAfter
     }
 
     /// The board for a directory: its repository's board (rooted at the repository's canonical
@@ -66,12 +70,14 @@ public final class BoardRegistry {
             self.messagesBounced?(board, bounce)
         }
         board.hostMachine = drawingMachine
+        board.defaultQuestionArchiveAfter = defaultQuestionArchiveAfter
         boards[id] = board
         board.activity.record(.restart, actor: .system, rev: board.revision,
                               summary: "easl started (pid \(ProcessInfo.processInfo.processIdentifier)); board opened with \(board.objects.count) objects")
         frontmost = frontmost ?? id
         replayAgentReports(on: board)
-        // Questions that expired while the board was closed expire now.
+        // Questions that expired while the board was closed expire now; closed ones archive once
+        // what is left of their delay runs out (`BoardStore.load` archived those already past it).
         board.scheduleQuestionExpiry()
         broadcast("board.opened", data: .object([:]), board: board.id)
         return board

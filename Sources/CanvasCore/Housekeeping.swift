@@ -25,8 +25,9 @@ public enum Housekeeping {
     /// Renders and snapshots written without `out` (`ApiRouter.scratchImages`) are kept this long.
     public static let renderAge: TimeInterval = 24 * 60 * 60
 
-    /// zmx's log of an easl tile's session (`canvas-obj_<id>.log`, `<session>.log`), in
-    /// `$XDG_STATE_HOME/zmx/logs` (default `~/.local/state/zmx/logs`).
+    /// zmx's log of an easl tile's session (`canvas-obj_<id>.log`, `<session>.log`):
+    /// `$ZMX_DIR/logs` when `ZMX_DIR` is set, else `$XDG_STATE_HOME/zmx/logs`, else
+    /// `~/.local/state/zmx/logs`.
     public static func sessionLog(session: String) -> String { session + ".log" }
 
     /// The session names in `zmx list` output (`name=<session>\t…` per line, the current one

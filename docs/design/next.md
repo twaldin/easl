@@ -42,7 +42,7 @@ How a Mac client attaches to easld and answers calls that need its drawing or ap
 
 HTML measurement uses `object.measure` on a client serving the board. The viewer lays the page out through the existing offscreen WebKit path, with host-file reads and the same title-bar, zoom and height-cap arithmetic as a local tile. Exact answers omit `approximate`. A fallback answer marked `approximate:true` retains that field in both measurement and fitted-write results. With no capable client, HTML remains unavailable rather than using an invented size.
 
-Background attach is on by default under easl › Keep Remote Boards Attached. The app retains a closed sole-tab easld controller and serves its canvas without showing a window. `remote-boards.json` records only host and board addresses. A manually closed tab or `board.close` removes its entry. Turning the setting off releases hidden attachments but keeps the addresses; turning it on restores them offscreen. Quit ends the connections. A drawing Mac's browser commands and reload use this same retained canvas and local profile.
+Background attach is on by default under easl › Keep Remote Boards Attached. The app retains a closed sole-tab easld controller and serves its canvas without showing a window. `remote-boards.json` records the SSH target, server home and board id, so restoration reaches the same easld after restart. A manually closed tab or `board.close` removes its entry. Turning the setting off releases hidden attachments but keeps the addresses; turning it on restores them offscreen. Quit ends the connections. A drawing Mac's browser commands and reload use this same retained canvas and local profile.
 
 ### Getting there without breaking anything
 

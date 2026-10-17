@@ -5,14 +5,17 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/board"
+	"github.com/twaldin/easl/easld/internal/question"
 	"github.com/twaldin/easl/easld/internal/relay"
 	"github.com/twaldin/easl/easld/internal/router"
 	"github.com/twaldin/easl/easld/internal/server"
@@ -39,6 +42,15 @@ func defaultHome() string {
 	return filepath.Join(user, ".local", "state", "easl")
 }
 
+// ParseFloat accepts NaN, which bounds comparisons alone do not reject.
+func parseQuestionArchiveAfter(s string) (float64, error) {
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(n) || n < 0 || n > question.MaxArchiveAfter {
+		return 0, fmt.Errorf("a finite number of seconds from 0 to 86400")
+	}
+	return n, nil
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stderr))
 }
@@ -54,6 +66,15 @@ func run(args []string, stderr io.Writer) int {
 	zmx := flags.String("zmx", "", "zmx binary for hosted terminals' sessions (default: zmx on PATH, else ~/.local/bin/zmx)")
 	// Off by default: on a Mac the app runs its terminals, and an easld there must not compete.
 	own := flags.Bool("own-terminals", false, "start and end the sessions of the terminals on its boards that have no props.host (a machine whose boards run wholly here)")
+	archiveAfter := question.DefaultArchiveAfter
+	flags.Func("question-archive-after", "seconds a new question with no archiveAfter waits after closing before it archives (default 10; finite, 0...86400)", func(s string) error {
+		n, err := parseQuestionArchiveAfter(s)
+		if err != nil {
+			return err
+		}
+		archiveAfter = n
+		return nil
+	})
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -82,6 +103,7 @@ func run(args []string, stderr io.Writer) int {
 	defer stopPasteMaintenance()
 	// Integrations spool undelivered reports in `agent-reports/` beside the socket.
 	reg := board.NewRegistry(filepath.Join(*home, "boards"), store.DefaultDebounce, filepath.Join(filepath.Dir(path), "agent-reports"))
+	reg.DefaultQuestionArchiveAfter = archiveAfter
 	r := router.New(reg)
 	// Hosted and owned terminals' sessions keep their zmx sockets and logs in `<home>/zmx`, the
 	// user's own.

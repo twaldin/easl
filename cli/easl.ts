@@ -66,7 +66,7 @@ const SPAWN_TIMEOUT_MS = 120_000;
 const SPAWN_RETRY_MS = 1000;
 
 const ASK_FORMS = [
-  'easl ask "question" --option id=label[:why] ... [--recommend id] [--context obj_…|url|path[:a[-b]]] ... [--asker name[@host]] [--expires 30m|2h|1d|45s|ISO] [--board brd_…] [--wait]',
+  'easl ask "question" --option id=label[:why] ... [--recommend id] [--context obj_…|url|path[:a[-b]]] ... [--asker name[@host]] [--expires 30m|2h|1d|45s|ISO] [--keep] [--board brd_…] [--wait]',
   "easl ask --json '{...}' | --json @file | --json @-   (question, options, recommended, … as props; the flags add to them)",
   "easl ask list [--open] [--board brd_…]",
   "easl ask get <id> | cancel <id> | wait <id>",
@@ -77,6 +77,8 @@ const ASK_HELP = [
   "--asker defaults to the asking terminal tile; outside a tile, to <user>@<short hostname>. --expires takes 45s, 30m, 2h, 1d or an ISO 8601 date-time.",
   "--wait blocks until the user answers: the answer {id, option, label, note, at, by} prints as JSON, exit 0. Cancelled, expired or deleted: why on stderr, exit 2.",
   "`ask wait <id>` does the same for a question already posted; `ask cancel <id>` withdraws one; `ask list --open` lists the open ones.",
+  "Closed questions leave the board after 10 seconds by default. --keep leaves the tile on the board. ask get and ask list still return archived questions.",
+  "The host can set the default delay. --json '{\"archiveAfter\":30}' overrides it for one question.",
 ];
 
 function usage(help = false): never {
@@ -554,7 +556,7 @@ if (argv[0] === "metrics") {
 
 /** The flags of each `easl ask` form: [those that take a value (repeating one adds), bare ones]. */
 const ASK_FLAGS = {
-  create: [["json", "option", "recommend", "context", "asker", "expires", "board"], ["wait"]],
+  create: [["json", "option", "recommend", "context", "asker", "expires", "board"], ["wait", "keep"]],
   list: [["board"], ["open"]],
   get: [[], []],
   cancel: [[], []],
@@ -673,6 +675,7 @@ function questionProps(positional: string[], flags: Map<string, string[]>): Reco
   if (recommend !== undefined) props.recommended = recommend;
   const expires = flags.get("expires")?.at(-1);
   if (expires !== undefined) props.expiresAt = parseExpires(expires);
+  if (flags.has("keep")) props.keep = true;
   const asker = flags.get("asker")?.at(-1);
   if (asker !== undefined) props.asker = parseAsker(asker);
   else if (props.asker === undefined && !process.env.EASL_TILE_ID) props.asker = defaultAsker();

@@ -10,6 +10,7 @@ import (
 
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/store"
 )
 
 func questionProps(extra map[string]any) map[string]any {
@@ -82,7 +83,7 @@ func TestAQuestionIsCreatedOpenAskedByItsCallerAndSizedByItsProps(t *testing.T) 
 		t.Errorf("framed %v", got)
 	}
 	odd := f.result("object.create", map[string]any{"type": "question", "props": questionProps(map[string]any{"volume": 11.0})})
-	if w, _ := odd["warnings"].([]any); len(w) != 1 || !strings.Contains(w[0].(string), `unknown prop "volume" for question`) || !strings.Contains(w[0].(string), "question props: answer, archived, asker, context, expiresAt, key, options, question, recommended, status, zoom") {
+	if w, _ := odd["warnings"].([]any); len(w) != 1 || !strings.Contains(w[0].(string), `unknown prop "volume" for question`) || !strings.Contains(w[0].(string), "question props: answer, archiveAfter, archived, asker, context, expiresAt, keep, key, options, question, recommended, status, zoom") {
 		t.Errorf("warnings %v", odd["warnings"])
 	}
 }
@@ -128,11 +129,11 @@ func TestUpdatingAQuestionAnswersItStampedAndShrunk(t *testing.T) {
 		t.Errorf("closed size %v (a note makes it 40 taller)", got)
 	}
 
-	if got := f.refused("object.update", map[string]any{"id": id, "props": map[string]any{"question": "again?"}}); got != "question "+id+" is answered: only archived can change" {
-		t.Errorf("edit: %s", got)
-	}
-	if got := f.refused("object.update", map[string]any{"id": id, "props": map[string]any{"status": "open"}}); got != "question "+id+" is answered: only archived can change" {
-		t.Errorf("reopen: %s", got)
+	beforeEdit := f.object(id)
+	f.refused("object.update", map[string]any{"id": id, "props": map[string]any{"question": "again?"}})
+	f.refused("object.update", map[string]any{"id": id, "props": map[string]any{"status": "open"}})
+	if !model.Equal(f.object(id), beforeEdit) {
+		t.Errorf("refused updates changed the question")
 	}
 	archived := f.result("object.update", map[string]any{"id": id, "props": map[string]any{"archived": true}})["object"].(map[string]any)
 	if props := propsOf(archived); props["archived"] != true || props["status"] != "answered" {
@@ -179,8 +180,10 @@ func TestQuestionRulesApplyToUpsertAndBatchToo(t *testing.T) {
 	if answered["created"] != false || idOf(answered) != id || propsOf(answered["object"].(map[string]any))["answer"].(map[string]any)["at"] == nil {
 		t.Errorf("upsert update %v", answered)
 	}
-	if got := f.refused("object.upsert", map[string]any{"key": "ASK-1", "type": "question", "props": map[string]any{"question": "changed"}}); got != "question "+id+" is answered: only archived can change" {
-		t.Errorf("upsert of a closed question: %s", got)
+	beforeUpsert := f.object(id)
+	f.refused("object.upsert", map[string]any{"key": "ASK-1", "type": "question", "props": map[string]any{"question": "changed"}})
+	if !model.Equal(f.object(id), beforeUpsert) {
+		t.Errorf("upsert changed a closed question")
 	}
 
 	// A batch applies them in order and as a whole.
@@ -192,15 +195,16 @@ func TestQuestionRulesApplyToUpsertAndBatchToo(t *testing.T) {
 	if propsOf(second)["status"] != "cancelled" || sizeOf(second)[1] != 148 {
 		t.Errorf("batch: %v", second)
 	}
-	before := len(f.board.Objects())
-	got := f.refused("object.batch", map[string]any{"ops": []any{
+	beforeN := len(f.board.Objects())
+	beforeQ := f.object(id)
+	code, _ := errorOf(f.call("object.batch", map[string]any{"ops": []any{
 		map[string]any{"method": "object.create", "params": map[string]any{"type": "question", "props": questionProps(nil)}},
 		map[string]any{"method": "object.update", "params": map[string]any{"id": id, "props": map[string]any{"question": "changed"}}},
-	}})
-	if got != "op 1 (object.update): question "+id+" is answered: only archived can change" || len(f.board.Objects()) != before {
-		t.Errorf("failed batch: %s (%d objects, was %d)", got, len(f.board.Objects()), before)
+	}}))
+	if code != "invalid_params" || len(f.board.Objects()) != beforeN || !model.Equal(f.object(id), beforeQ) {
+		t.Errorf("failed batch changed the board (%d objects, was %d)", len(f.board.Objects()), beforeN)
 	}
-	got = f.refused("object.batch", map[string]any{"ops": []any{
+	got := f.refused("object.batch", map[string]any{"ops": []any{
 		map[string]any{"method": "object.create", "params": map[string]any{"type": "question", "props": map[string]any{"question": "q", "asker": map[string]any{"name": "cos"}}}},
 	}})
 	if got != "op 0 (object.create): a question needs props.options, an array of {id, label, why?}" {
@@ -471,7 +475,168 @@ func TestAPastDueQuestionIsExpiredAndAnnouncedAfterItsWrite(t *testing.T) {
 	if last := page[len(page)-1].(map[string]any); last["actor"] != "system" || !strings.HasPrefix(last["summary"].(string), `question "Ship it?": `) {
 		t.Errorf("history %v", last)
 	}
-	if got := f.refused("object.update", map[string]any{"id": id, "props": map[string]any{"status": "open"}}); got != "question "+id+" is expired: only archived can change" {
-		t.Errorf("reopen: %s", got)
+	beforeReopen := f.object(id)
+	f.refused("object.update", map[string]any{"id": id, "props": map[string]any{"status": "open"}})
+	if !model.Equal(f.object(id), beforeReopen) {
+		t.Errorf("reopen changed the question")
+	}
+}
+
+func (f *fixture) waitProps(id string, within time.Duration, match func(map[string]any) bool) (map[string]any, bool) {
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		for _, m := range f.conn.messages() {
+			data, _ := m["data"].(map[string]any)
+			if m["event"] != "object.updated" || data["id"] != id {
+				continue
+			}
+			props, _ := data["props"].(map[string]any)
+			if match(props) {
+				return m, true
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return nil, false
+}
+
+func TestAClosedQuestionCanChangeRetention(t *testing.T) {
+	f := newFixture(t)
+	q := f.ask(nil)
+	id := q["id"].(string)
+	f.result("object.update", map[string]any{"id": id, "props": map[string]any{"status": "answered", "answer": map[string]any{"option": "a"}}})
+	kept := f.result("object.update", map[string]any{"id": id, "props": map[string]any{"keep": true, "archiveAfter": 30.0}})["object"].(map[string]any)
+	props := propsOf(kept)
+	if props["keep"] != true || props["archiveAfter"] != 30.0 || props["status"] != "answered" || props["answer"] == nil {
+		t.Fatalf("retention %v", props)
+	}
+	cleared := f.result("object.update", map[string]any{"id": id, "props": map[string]any{"keep": nil, "archiveAfter": nil}})["object"].(map[string]any)
+	if props := propsOf(cleared); props["keep"] != nil || props["archiveAfter"] != nil || props["status"] != "answered" {
+		t.Fatalf("cleared %v", props)
+	}
+	f.refused("object.update", map[string]any{"id": id, "props": map[string]any{"keep": "yes"}})
+	f.refused("object.update", map[string]any{"id": id, "props": map[string]any{"archiveAfter": -1.0}})
+	f.refused("object.update", map[string]any{"id": id, "props": map[string]any{"archiveAfter": 86400.1}})
+	if props := propsOf(f.object(id)); props["status"] != "answered" || props["keep"] != nil {
+		t.Fatalf("bad retention changed %v", props)
+	}
+}
+
+func TestAnAnsweredQuestionIsArchivedAndAnnounced(t *testing.T) {
+	f := newFixture(t)
+	f.call("events.subscribe", map[string]any{"events": []any{"object.updated"}})
+	q := f.ask(map[string]any{"archiveAfter": 0.2})
+	id := q["id"].(string)
+	answered := f.result("object.update", map[string]any{"id": id, "props": map[string]any{"status": "answered", "answer": map[string]any{"option": "a", "note": "go"}}})["object"].(map[string]any)
+	if propsOf(answered)["archived"] == true {
+		t.Fatal("archived inside the answer")
+	}
+	event, ok := f.waitProps(id, 3*time.Second, func(props map[string]any) bool { return props["archived"] == true })
+	if !ok {
+		t.Fatal("no object.updated announcing the archive")
+	}
+	data := event["data"].(map[string]any)
+	props := propsOf(data)
+	if event["board"] != f.board.ID() || props["status"] != "answered" || props["answer"] == nil || !model.Equal(data["frame"], answered["frame"]) {
+		t.Fatalf("event %v", event)
+	}
+	o := f.object(id)
+	if propsOf(o)["archived"] != true || o["rev"] == answered["rev"] || !model.Equal(o["updatedBy"], map[string]any{"kind": "user"}) || !model.Equal(o["frame"], answered["frame"]) {
+		t.Fatalf("after %v", o)
+	}
+	page := f.result("board.history", map[string]any{"kinds": []any{"updated"}})["entries"].([]any)
+	if last := page[len(page)-1].(map[string]any); last["actor"] != "system" {
+		t.Fatalf("history %v", last)
+	}
+}
+
+func TestExpiryIsAnnouncedBeforeArchive(t *testing.T) {
+	f := newFixture(t)
+	f.call("events.subscribe", map[string]any{"events": []any{"object.updated"}})
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	q := f.ask(map[string]any{"expiresAt": past, "archiveAfter": 0.0})
+	id := q["id"].(string)
+	if _, ok := f.waitProps(id, 3*time.Second, func(props map[string]any) bool {
+		return props["archived"] == true && props["status"] == "expired"
+	}); !ok {
+		t.Fatal("expiry did not archive")
+	}
+	var sawExpired bool
+	for _, m := range f.conn.messages() {
+		data, _ := m["data"].(map[string]any)
+		if m["event"] != "object.updated" || data["id"] != id {
+			continue
+		}
+		props := propsOf(data)
+		if props["status"] == "expired" && props["archived"] != true {
+			sawExpired = true
+		}
+		if props["archived"] == true && !sawExpired {
+			t.Fatal("archived before it expired")
+		}
+	}
+	if !sawExpired {
+		t.Fatal("no expiry event before the archive")
+	}
+	o := f.object(id)
+	if propsOf(o)["status"] != "expired" || propsOf(o)["archived"] != true || sizeOf(o)[1] != 148 {
+		t.Fatalf("after %v", o)
+	}
+}
+
+func TestOpeningABoardArchivesDueQuestionsWithoutARevisionChange(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reg := board.NewRegistry(filepath.Join(dir, "boards"), time.Hour, "")
+	f := &fixture{t: t, router: New(reg), conn: &conn{}}
+	id := store.PathID(root)
+	format := store.Format
+	old := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	recent := time.Now().UTC().Truncate(time.Second).Add(-2 * time.Second)
+	question := func(oid string, at time.Time, extra map[string]any) model.Object {
+		props := map[string]any{
+			"question": "Ship it?",
+			"options":  []any{map[string]any{"id": "a", "label": "Yes"}},
+			"asker":    map[string]any{"name": "cos"},
+			"status":   "answered",
+			"answer":   map[string]any{"option": "a"},
+		}
+		for k, v := range extra {
+			props[k] = v
+		}
+		return model.Object{
+			ID: oid, Type: model.Question, Rev: 4,
+			CreatedAt: old, UpdatedAt: at, CreatedBy: model.Actor{Kind: "user"},
+			Frame: model.Frame{W: 460, H: 148}, Props: props,
+		}
+	}
+	snap := &store.Snapshot{Format: &format, ID: id, Root: root, Revision: 11, Objects: []model.Object{
+		question("obj_due", old, nil),
+		question("obj_recent", recent, map[string]any{"keep": true}),
+	}}
+	if err := reg.Store.Write(snap); err != nil {
+		t.Fatal(err)
+	}
+	f.result("board.open", map[string]any{"root": root})
+	due := f.object("obj_due")
+	recentObj := f.object("obj_recent")
+	if propsOf(due)["archived"] != true || due["rev"] != 4.0 || propsOf(due)["status"] != "answered" || propsOf(due)["answer"] == nil {
+		t.Fatalf("due %v", due)
+	}
+	if propsOf(recentObj)["archived"] == true || recentObj["rev"] != 4.0 || propsOf(recentObj)["keep"] != true {
+		t.Fatalf("recent %v", recentObj)
+	}
+	boardObj := f.result("board.get", map[string]any{})
+	if boardObj["revision"] != 11.0 {
+		t.Fatalf("revision %v", boardObj["revision"])
+	}
+	f.result("board.close", map[string]any{"board": id})
+	f.result("board.open", map[string]any{"root": root})
+	again := f.object("obj_due")
+	if again["rev"] != 4.0 || propsOf(again)["archived"] != true {
+		t.Fatalf("reopen %v", again)
 	}
 }

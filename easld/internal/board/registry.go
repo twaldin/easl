@@ -15,6 +15,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/metrics"
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/question"
 	"github.com/twaldin/easl/easld/internal/store"
 )
 
@@ -54,12 +55,16 @@ type Registry struct {
 	// Texts measures text the app lays out (arrow captions, for routing) on every board opened
 	// from now on. Nil: arrows route without their labels.
 	Texts measure.Texts
-	pid   int
+	// DefaultQuestionArchiveAfter is the host delay for a new question that names none,
+	// copied onto each board as it opens. Not saved. Zero is a real delay, so this starts
+	// at the historical 10 rather than the zero value.
+	DefaultQuestionArchiveAfter float64
+	pid                         int
 }
 
 // NewRegistry opens a registry over the boards stored in dir, saving debounce after changes.
 func NewRegistry(dir string, debounce time.Duration, agentReports string) *Registry {
-	r := &Registry{boards: map[string]*Board{}, AgentReports: agentReports, pid: os.Getpid()}
+	r := &Registry{boards: map[string]*Board{}, AgentReports: agentReports, DefaultQuestionArchiveAfter: question.DefaultArchiveAfter, pid: os.Getpid()}
 	r.Store = store.New(dir, debounce, &r.Mu)
 	return r
 }
@@ -107,6 +112,7 @@ func (r *Registry) Open(root string) (*Board, error) {
 		b.OpenedFrom(*worktree)
 	}
 	b.Texts = r.Texts
+	b.defaultQuestionArchiveAfter = r.DefaultQuestionArchiveAfter
 	b.OnEvent = func(e model.Event) {
 		if r.Hook != nil {
 			r.Hook(b, e)
@@ -129,7 +135,8 @@ func (r *Registry) Open(root string) (*Board, error) {
 		r.Frontmost = id
 	}
 	r.replayAgentReports(b)
-	// Questions that expired while the board was closed expire now.
+	// Questions that expired while the board was closed expire now. Closed ones already past
+	// their archive delay were archived while loading, with no revision change.
 	b.ScheduleQuestionExpiry()
 	if r.Opened != nil {
 		r.Opened(b, root)
@@ -150,7 +157,11 @@ func (r *Registry) load(root, id, commonDir string) (*Board, error) {
 	var b *Board
 	if snap != nil {
 		snap.Root = root
-		if scrubSnapshotAnchors(snap) {
+		changed := scrubSnapshotAnchors(snap)
+		if scrubDueQuestions(snap, time.Now()) {
+			changed = true
+		}
+		if changed {
 			if err := r.Store.Write(snap); err != nil {
 				return nil, fmt.Errorf("save normalized board %s: %w", id, err)
 			}

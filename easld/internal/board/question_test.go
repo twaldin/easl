@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/store"
 )
 
 var answeredAt = time.Date(2026, 10, 5, 17, 0, 2, 500_000_000, time.UTC)
@@ -182,17 +183,16 @@ func TestAQuestionMovesOpenToAnsweredCancelledOrExpiredAndNoFurther(t *testing.T
 			"an option":   {"recommended": "b"},
 			"expiry":      {"expiresAt": "2026-10-05T17:00:00Z"},
 		} {
+			beforeRev := b.Objects()[q.ID].Rev
 			_, err := writeErr(b, q.ID, change, nil, "")
-			want := "question " + q.ID + " is " + status + ": only archived can change"
 			if status == "cancelled" && name == "another end" {
-				want = "" // the same status again is no change
-			}
-			if want == "" {
 				if err != nil {
 					t.Errorf("%s then %s: %v", status, name, err)
 				}
-			} else if err == nil || err.Error() != want {
-				t.Errorf("%s then %s: %v, want %s", status, name, err, want)
+				continue
+			}
+			if err == nil || b.Objects()[q.ID].Rev != beforeRev || b.Objects()[q.ID].Props["status"] != status {
+				t.Errorf("%s then %s: %v", status, name, err)
 			}
 		}
 		// Archived, key and zoom still go; archive is not a status.
@@ -563,4 +563,459 @@ func TestQuestionsPastDueWhenABoardOpensExpireThen(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("not expired when the board opened")
+}
+
+func closedQuestion(t *testing.T, b *Board, extra map[string]any, updated time.Time) model.Object {
+	t.Helper()
+	props := askProps(map[string]any{"asker": map[string]any{"name": "cos"}})
+	for k, v := range extra {
+		props[k] = v
+	}
+	o := ask(t, b, props, frame(0, 0, 460, 294), "")
+	closed := write(t, b, o.ID, map[string]any{"status": "answered", "answer": map[string]any{"option": "a", "note": "go"}}, nil, "")
+	stored := b.objects[closed.ID]
+	stored.UpdatedAt = updated
+	b.objects[closed.ID] = stored
+	return stored
+}
+
+func TestArchiveQuestionsHonorsEligibilityBoundaries(t *testing.T) {
+	b := New("brd", "/r")
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	open := ask(t, b, askProps(map[string]any{"asker": map[string]any{"name": "cos"}, "archiveAfter": 0.0}), nil, "")
+	back := b.objects[open.ID]
+	back.UpdatedAt = now.Add(-time.Hour)
+	b.objects[open.ID] = back
+	kept := closedQuestion(t, b, map[string]any{"keep": true, "archiveAfter": 0.0}, now.Add(-time.Hour))
+	already := closedQuestion(t, b, nil, now.Add(-time.Hour))
+	write(t, b, already.ID, map[string]any{"archived": true}, nil, "")
+	already = b.objects[already.ID]
+	already.UpdatedAt = now.Add(-time.Hour)
+	b.objects[already.ID] = already
+	due := closedQuestion(t, b, nil, now.Add(-10*time.Second))
+	notYet := closedQuestion(t, b, nil, now.Add(-10*time.Second+time.Nanosecond))
+	zero := closedQuestion(t, b, map[string]any{"archiveAfter": 0.0}, now)
+	zeroLater := closedQuestion(t, b, map[string]any{"archiveAfter": 0.0}, now.Add(time.Millisecond))
+	halfMinute := closedQuestion(t, b, map[string]any{"archiveAfter": 30.0}, now.Add(-30*time.Second))
+	halfMinuteEarly := closedQuestion(t, b, map[string]any{"archiveAfter": 30.0}, now.Add(-30*time.Second+time.Nanosecond))
+	garbage := closedQuestion(t, b, nil, now.Add(-10*time.Second))
+	tooBig := closedQuestion(t, b, nil, now.Add(-9*time.Second))
+	for id, delay := range map[string]any{garbage.ID: "soon", tooBig.ID: 90000.0} {
+		stored := b.objects[id]
+		stored.Props["archiveAfter"] = delay
+		b.objects[id] = stored
+	}
+	note := b.Create(model.Note, map[string]any{"markdown": "x"}, frame(0, 9000, 100, 100), "", "")
+
+	got := b.ArchiveQuestions(now)
+	want := map[string]bool{due.ID: true, zero.ID: true, halfMinute.ID: true, garbage.ID: true}
+	if len(got) != len(want) {
+		t.Fatalf("archived %v", got)
+	}
+	for _, id := range got {
+		if !want[id] {
+			t.Errorf("archived %s", id)
+		}
+		o := b.Objects()[id]
+		if o.Props["archived"] != true || o.Props["status"] != "answered" || o.Props["answer"] == nil || o.Frame != due.Frame && id == due.ID {
+			t.Errorf("%s %+v", id, o)
+		}
+	}
+	for _, id := range []string{open.ID, kept.ID, already.ID, notYet.ID, zeroLater.ID, halfMinuteEarly.ID, tooBig.ID, note.ID} {
+		if b.Objects()[id].Props["archived"] == true && id != already.ID {
+			t.Errorf("%s was archived", id)
+		}
+	}
+	if again := b.ArchiveQuestions(now); len(again) != 0 {
+		t.Errorf("archived twice: %v", again)
+	}
+}
+
+func TestChangingRetentionAfterClosureRestartsTheGrace(t *testing.T) {
+	b := New("brd", "/r")
+	q := closedQuestion(t, b, nil, time.Now().Add(-time.Hour))
+	frame, answer := q.Frame, q.Props["answer"]
+	kept := write(t, b, q.ID, map[string]any{"keep": true, "archiveAfter": 30.0}, nil, "")
+	if kept.Props["keep"] != true || kept.Props["archiveAfter"] != 30.0 || kept.Props["status"] != "answered" || kept.Frame != frame {
+		t.Fatalf("retention write %v", kept.Props)
+	}
+	if got := b.ArchiveQuestions(time.Now()); len(got) != 0 {
+		t.Fatalf("keep did not exempt: %v", got)
+	}
+	explicit := write(t, b, q.ID, map[string]any{"archived": true}, nil, "")
+	if explicit.Props["archived"] != true || explicit.Props["keep"] != true {
+		t.Fatalf("explicit archive %v", explicit.Props)
+	}
+	back := write(t, b, q.ID, map[string]any{"archived": nil, "keep": nil}, nil, "")
+	if back.Props["archived"] != nil || back.Props["keep"] != nil || back.Props["archiveAfter"] != 30.0 || back.Frame != frame || !jsonEq(back.Props["answer"], answer) {
+		t.Fatalf("brought back %v", back.Props)
+	}
+	if got := b.ArchiveQuestions(time.Now().Add(29 * time.Second)); len(got) != 0 {
+		t.Fatalf("clearing keep restarted from the old close: %v", got)
+	}
+	if got := b.ArchiveQuestions(back.UpdatedAt.Add(30 * time.Second)); len(got) != 1 || got[0] != q.ID {
+		t.Fatalf("new deadline: %v", got)
+	}
+	rev := b.Objects()[q.ID].Rev
+	if _, err := writeErr(b, q.ID, map[string]any{"question": "other?"}, nil, ""); err == nil || b.Objects()[q.ID].Rev != rev {
+		t.Fatalf("closed text change: %v", err)
+	}
+}
+
+func TestSystemArchiveIsPersistedWithoutAnUndoStep(t *testing.T) {
+	b := New("brd", "/r")
+	events := recorder(b)
+	saves := 0
+	b.OnChange = func() { saves++ }
+	q := closedQuestion(t, b, nil, time.Now().Add(-time.Minute))
+	frame, answer, status := q.Frame, q.Props["answer"], q.Props["status"]
+	*events = nil
+	saves = 0
+	if got := b.ArchiveQuestions(time.Now()); len(got) != 1 || got[0] != q.ID {
+		t.Fatalf("archived %v", got)
+	}
+	after := b.Objects()[q.ID]
+	if after.Props["archived"] != true || after.Props["status"] != status || !jsonEq(after.Props["answer"], answer) || after.Frame != frame {
+		t.Fatalf("archive changed the question: %+v", after)
+	}
+	if after.UpdatedBy == nil || after.UpdatedBy.Kind != "user" || saves == 0 {
+		t.Fatalf("updatedBy %v saves %d", after.UpdatedBy, saves)
+	}
+	if strings.Join(names(*events), ",") != "object.updated" {
+		t.Fatalf("events %v", names(*events))
+	}
+	entries := b.Activity.Entries()
+	last := entries[len(entries)-1]
+	if last.Actor != SystemActor || last.Kind != KindUpdated {
+		t.Fatalf("activity %+v", last)
+	}
+
+	second := closedQuestion(t, b, nil, time.Now().Add(-time.Minute))
+	var noteID string
+	err := b.Atomically(func() error {
+		note := b.Create(model.Note, map[string]any{"markdown": "x"}, &frame, "", "")
+		noteID = note.ID
+		if got := b.ArchiveQuestions(time.Now()); len(got) != 1 || got[0] != second.ID {
+			t.Fatalf("archived inside the step: %v", got)
+		}
+		return InvalidParams("boom")
+	})
+	if err == nil || b.objects[noteID].ID != "" || b.objects[second.ID].Props["archived"] != true || b.objects[q.ID].Props["archived"] != true {
+		t.Fatalf("revert undid the archive: %v note %q", err, b.objects[noteID].ID)
+	}
+}
+
+func (b *timed) waitArchived(t *testing.T, id string, within time.Duration) []model.Event {
+	t.Helper()
+	var got []model.Event
+	deadline := time.After(within)
+	for {
+		select {
+		case e := <-b.events:
+			got = append(got, e)
+			data, _ := e.Data.(map[string]any)
+			props, _ := data["props"].(map[string]any)
+			if e.Name == EventObjectUpdated && data["id"] == id && props["archived"] == true {
+				return got
+			}
+		case <-deadline:
+			t.Fatalf("%s not archived within %v", id, within)
+		}
+	}
+}
+
+func (b *timed) quietArchived(id string, d time.Duration) bool {
+	deadline := time.After(d)
+	for {
+		select {
+		case e := <-b.events:
+			data, _ := e.Data.(map[string]any)
+			props, _ := data["props"].(map[string]any)
+			if e.Name == EventObjectUpdated && data["id"] == id && props["archived"] == true {
+				return false
+			}
+		case <-deadline:
+			return true
+		}
+	}
+}
+
+func TestAClosedQuestionArchivesWhenItsDelayElapses(t *testing.T) {
+	b := newTimed()
+	b.mu.Lock()
+	q := ask(t, b.Board, askProps(map[string]any{"asker": map[string]any{"name": "cos"}, "archiveAfter": 0.25}), nil, "")
+	closed := write(t, b.Board, q.ID, map[string]any{"status": "cancelled"}, nil, "")
+	b.mu.Unlock()
+	if !b.quietArchived(q.ID, 80*time.Millisecond) {
+		t.Fatal("archived early")
+	}
+	b.waitArchived(t, q.ID, 3*time.Second)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	o := b.Objects()[q.ID]
+	if o.Props["status"] != "cancelled" || o.Props["archived"] != true || o.Frame != closed.Frame {
+		t.Fatalf("after: %+v", o)
+	}
+}
+
+func TestExpiryThenArchiveUsesOneTimer(t *testing.T) {
+	b := newTimed()
+	b.mu.Lock()
+	later := ask(t, b.Board, expiring(time.Now().Add(time.Hour)), nil, "")
+	q := ask(t, b.Board, askProps(map[string]any{
+		"asker": map[string]any{"name": "cos"}, "expiresAt": iso(time.Now().Add(200 * time.Millisecond)), "archiveAfter": 0.0,
+	}), nil, "")
+	if b.questionExpiry == nil {
+		t.Fatal("no timer")
+	}
+	b.mu.Unlock()
+	events := b.waitArchived(t, q.ID, 3*time.Second)
+	var sawExpired bool
+	for _, e := range events {
+		data, _ := e.Data.(map[string]any)
+		props, _ := data["props"].(map[string]any)
+		if e.Name != EventObjectUpdated || data["id"] != q.ID {
+			continue
+		}
+		if props["status"] == "expired" && props["archived"] != true {
+			sawExpired = true
+		}
+		if props["archived"] == true && !sawExpired {
+			t.Fatal("archived before it expired")
+		}
+	}
+	if !sawExpired {
+		t.Fatal("no expiry before the archive")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	defer b.StopQuestionExpiry()
+	o := b.Objects()[q.ID]
+	if o.Props["status"] != "expired" || o.Props["archived"] != true || o.Frame.H != 148 {
+		t.Fatalf("after: %+v", o)
+	}
+	if statusOf(b.Board, later.ID) != "open" {
+		t.Fatal("the later question was closed with it")
+	}
+}
+
+func TestAKeptQuestionDoesNotScheduleArchive(t *testing.T) {
+	b := newTimed()
+	b.mu.Lock()
+	q := ask(t, b.Board, askProps(map[string]any{"asker": map[string]any{"name": "cos"}, "keep": true, "archiveAfter": 0.0}), nil, "")
+	write(t, b.Board, q.ID, map[string]any{"status": "cancelled"}, nil, "")
+	if b.questionExpiry != nil {
+		t.Fatal("a kept question scheduled a timer")
+	}
+	b.mu.Unlock()
+	if !b.quietArchived(q.ID, 300*time.Millisecond) || b.status(q.ID) != "cancelled" {
+		t.Fatal("a kept question archived")
+	}
+}
+
+func TestStoppingTheTimerStopsArchiveToo(t *testing.T) {
+	b := newTimed()
+	b.mu.Lock()
+	q := ask(t, b.Board, askProps(map[string]any{"asker": map[string]any{"name": "cos"}, "archiveAfter": 0.15}), nil, "")
+	write(t, b.Board, q.ID, map[string]any{"status": "cancelled"}, nil, "")
+	b.StopQuestionExpiry()
+	b.mu.Unlock()
+	if !b.quietArchived(q.ID, 400*time.Millisecond) || b.status(q.ID) != "cancelled" {
+		t.Fatal("archived after the timer was stopped")
+	}
+}
+
+func TestLoadArchivesOnlyDueClosedQuestionsWithoutChurn(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(filepath.Join(dir, "boards"), time.Hour, "")
+	id := store.PathID(root)
+	t.Cleanup(func() {
+		reg.Mu.Lock()
+		defer reg.Mu.Unlock()
+		_ = reg.Close(id, nil)
+	})
+	format := store.Format
+	old := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	recent := time.Now().UTC().Truncate(time.Second).Add(-2 * time.Second)
+	asker := map[string]any{"name": "cos"}
+	answer := map[string]any{"option": "a", "note": "go"}
+	q := func(oid string, at time.Time, extra map[string]any) model.Object {
+		props := map[string]any{
+			"question": "Ship it?",
+			"options":  []any{map[string]any{"id": "a", "label": "Yes"}},
+			"asker":    asker,
+			"status":   "answered",
+			"answer":   answer,
+		}
+		for k, v := range extra {
+			props[k] = v
+		}
+		return model.Object{
+			ID: oid, Type: model.Question, Rev: 7,
+			CreatedAt: old, UpdatedAt: at, CreatedBy: model.Actor{Kind: "user"},
+			Frame: model.Frame{X: 10, Y: 20, W: 460, H: 188}, Props: props,
+		}
+	}
+	objects := []model.Object{
+		q("obj_due", old, nil),
+		q("obj_kept", old, map[string]any{"keep": true}),
+		q("obj_recent", recent, map[string]any{"archiveAfter": 86400.0}),
+		q("obj_open", old, map[string]any{"status": "open"}),
+		q("obj_garbage", old, map[string]any{"archiveAfter": "soon"}),
+		q("obj_long", recent, map[string]any{"archiveAfter": 90000.0}),
+		q("obj_zero", recent, map[string]any{"archiveAfter": 0.0}),
+	}
+	delete(objects[3].Props, "answer")
+	snap := &store.Snapshot{Format: &format, ID: id, Root: root, Revision: 19, Objects: objects}
+	if err := reg.Store.Write(snap); err != nil {
+		t.Fatal(err)
+	}
+	opened := false
+	reg.Opened = func(b *Board, _ string) {
+		opened = true
+		if b.objects["obj_due"].Props["archived"] != true || b.objects["obj_recent"].Props["archived"] == true {
+			t.Error("opened callback saw the wrong archive flags")
+		}
+	}
+	reg.Mu.Lock()
+	b, err := reg.Open(root)
+	reg.Mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opened || b.Revision() != 19 {
+		t.Fatalf("open = %v, revision = %d", opened, b.Revision())
+	}
+	wantArchived := map[string]bool{"obj_due": true, "obj_garbage": true, "obj_zero": true}
+	for _, original := range objects {
+		got := b.objects[original.ID]
+		if got.Rev != 7 || !got.UpdatedAt.Equal(original.UpdatedAt) || got.Frame != original.Frame {
+			t.Errorf("%s churned: rev %d updated %v frame %v", original.ID, got.Rev, got.UpdatedAt, got.Frame)
+		}
+		if (got.Props["archived"] == true) != wantArchived[original.ID] {
+			t.Errorf("%s archived=%v", original.ID, got.Props["archived"])
+		}
+		if original.ID != "obj_open" && got.Props["answer"] == nil {
+			t.Errorf("%s lost its answer", original.ID)
+		}
+	}
+	entries := b.Activity.Entries()
+	if len(entries) != 1 || entries[0].Kind != KindRestart || entries[0].Rev != 19 {
+		t.Fatalf("normalization recorded activity: %+v", entries)
+	}
+	disk, err := reg.Store.Read(id)
+	if err != nil || disk == nil || disk.Revision != 19 {
+		t.Fatalf("disk: %v rev %v", err, disk)
+	}
+	if scrubDueQuestions(disk, time.Now()) {
+		t.Fatal("a second scrub changed normalized questions")
+	}
+	reg.Mu.Lock()
+	if err := reg.Close(id, nil); err != nil {
+		reg.Mu.Unlock()
+		t.Fatal(err)
+	}
+	again, err := reg.Open(root)
+	reg.Mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Revision() != 19 || again.objects["obj_due"].Rev != 7 || again.objects["obj_due"].Props["archived"] != true || again.objects["obj_recent"].Props["archived"] == true {
+		t.Fatalf("reopen churned revision %d due %+v recent %+v", again.Revision(), again.objects["obj_due"], again.objects["obj_recent"])
+	}
+}
+
+func TestAHostsDefaultDelayArchivesOnlyQuestionsThatNameNoDelayOfTheirOwn(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "thirty")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(filepath.Join(dir, "thirty-boards"), time.Hour, "")
+	reg.DefaultQuestionArchiveAfter = 30
+	boardID := store.PathID(root)
+	format := store.Format
+	storedAt := time.Now().UTC().Add(time.Hour)
+	asker := map[string]any{"name": "cos"}
+	snap := &store.Snapshot{Format: &format, ID: boardID, Root: root, Revision: 4, Objects: []model.Object{{
+		ID: "obj_stored", Type: model.Question, Rev: 2,
+		CreatedAt: storedAt, UpdatedAt: storedAt, CreatedBy: model.Actor{Kind: "user"},
+		Frame: model.Frame{X: 10, Y: 20, W: 460, H: 188},
+		Props: map[string]any{
+			"question": "Ship it?",
+			"options":  []any{map[string]any{"id": "a", "label": "Yes"}},
+			"asker":    asker,
+			"status":   "answered",
+			"answer":   map[string]any{"option": "a", "note": "go"},
+		},
+	}}}
+	if err := reg.Store.Write(snap); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		reg.Mu.Lock()
+		defer reg.Mu.Unlock()
+		_ = reg.Close(boardID, nil)
+	})
+	reg.Mu.Lock()
+	b, err := reg.Open(root)
+	if err != nil {
+		reg.Mu.Unlock()
+		t.Fatal(err)
+	}
+	b.StopQuestionExpiry()
+	b.Lock = nil
+	reg.Mu.Unlock()
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	stored := b.objects["obj_stored"]
+	stored.UpdatedAt = now
+	b.objects["obj_stored"] = stored
+	if _, err := b.QuestionToCreate(askProps(map[string]any{"asker": asker, "archiveAfter": -1.0}), ""); err == nil {
+		t.Fatal("invalid explicit delay was replaced by the host default")
+	}
+	own := closedQuestion(t, b, map[string]any{"archiveAfter": 5.0}, now)
+	historical := closedQuestion(t, b, map[string]any{"archiveAfter": 10.0}, now)
+	kept := closedQuestion(t, b, map[string]any{"keep": true}, now)
+	cleared := closedQuestion(t, b, map[string]any{"archiveAfter": nil}, now)
+	unnamed := closedQuestion(t, b, nil, now)
+
+	if got := b.ArchiveQuestions(now.Add(5*time.Second - time.Nanosecond)); len(got) != 0 {
+		t.Fatalf("before the explicit delay: %v", got)
+	}
+	if got := b.ArchiveQuestions(now.Add(5 * time.Second)); len(got) != 1 || got[0] != own.ID {
+		t.Fatalf("explicit delay: %v", got)
+	}
+	if got := b.ArchiveQuestions(now.Add(10*time.Second - time.Nanosecond)); len(got) != 0 {
+		t.Fatalf("before 10s: %v", got)
+	}
+	got := b.ArchiveQuestions(now.Add(10 * time.Second))
+	want := map[string]bool{stored.ID: true, historical.ID: true}
+	if len(got) != len(want) {
+		t.Fatalf("stored implicit 10 and explicit 10: %v", got)
+	}
+	for _, id := range got {
+		if !want[id] {
+			t.Fatalf("stored implicit 10 and explicit 10: %v", got)
+		}
+	}
+	if got := b.ArchiveQuestions(now.Add(30*time.Second - time.Nanosecond)); len(got) != 0 {
+		t.Fatalf("before the host default: %v", got)
+	}
+	got = b.ArchiveQuestions(now.Add(30 * time.Second))
+	want = map[string]bool{cleared.ID: true, unnamed.ID: true}
+	if len(got) != len(want) {
+		t.Fatalf("omitted and null: %v", got)
+	}
+	for _, id := range got {
+		if !want[id] {
+			t.Fatalf("omitted and null: %v", got)
+		}
+	}
+	if got := b.ArchiveQuestions(now.Add(24 * time.Hour)); len(got) != 0 || b.Objects()[kept.ID].Props["archived"] == true {
+		t.Fatalf("keep archived: %v", got)
+	}
 }

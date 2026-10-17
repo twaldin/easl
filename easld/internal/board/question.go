@@ -7,15 +7,21 @@ import (
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/question"
+	"github.com/twaldin/easl/easld/internal/store"
 )
 
 // maxExpiryWait is the longest the expiry timer sleeps; it checks again after.
 const maxExpiryWait = 24 * time.Hour
 
 // QuestionToCreate is Board.questionToCreate: `object.create` props for a question:
-// question.Creating, then validated.
+// question.Creating, the host delay when that is not the historical 10 and the call
+// gave no archiveAfter, then validated. An explicit value, valid or not, is left for validation.
 func (b *Board) QuestionToCreate(props map[string]any, caller string) (map[string]any, error) {
 	props = question.Creating(props, caller)
+	// A host default of 10 stays absent so a new question matches the historical implicit delay.
+	if b.defaultQuestionArchiveAfter != question.DefaultArchiveAfter && props["archiveAfter"] == nil {
+		props["archiveAfter"] = b.defaultQuestionArchiveAfter
+	}
 	if problem, bad := question.Problem(props, nil); bad {
 		return nil, InvalidParams("%s", problem)
 	}
@@ -163,10 +169,34 @@ func (b *Board) ExpireQuestions(now time.Time) []string {
 	return due
 }
 
-// ScheduleQuestionExpiry is Board.scheduleQuestionExpiry: sets the board's expiry timer for its
-// earliest open `expiresAt` (at most a day out, then again); a question already past it expires
-// on the next turn (the timer takes the board's Lock, so after the request that made it due).
-// Called when the board opens and whenever a question is stored.
+// ArchiveQuestions is Board.archiveQuestions: closed questions whose archive deadline is at or
+// before now become archived. Status, answer and frame stay. Written by the app itself (no undo
+// step). Returns their ids.
+func (b *Board) ArchiveQuestions(now time.Time) []string {
+	var due []string
+	for id, o := range b.objects {
+		if o.Type != model.Question {
+			continue
+		}
+		if at, ok := question.Read(o.Props).ArchiveAt(o.UpdatedAt); ok && !at.After(now) {
+			due = append(due, id)
+		}
+	}
+	sort.Strings(due)
+	for _, id := range due {
+		if _, ok := b.objects[id]; !ok {
+			continue
+		}
+		_, _ = b.Update(id, nil, nil, nil, map[string]any{"archived": true}, "", SystemActor)
+	}
+	return due
+}
+
+// ScheduleQuestionExpiry is Board.scheduleQuestionExpiry: sets the board's question timer for
+// its earliest open `expiresAt` or closed archive deadline (at most a day out, then again). A
+// question already past it expires, or archives, on the next turn, expiries first (the timer
+// takes the board's Lock, so after the request that made it due). Called when the board opens
+// and whenever a question is stored.
 func (b *Board) ScheduleQuestionExpiry() { b.scheduleQuestionExpiry(time.Now()) }
 
 func (b *Board) scheduleQuestionExpiry(now time.Time) {
@@ -181,8 +211,17 @@ func (b *Board) scheduleQuestionExpiry(now time.Time) {
 			continue
 		}
 		spec := question.Read(o.Props)
-		if spec.Status == question.Open && spec.ExpiresAt != nil && (!found || spec.ExpiresAt.Before(next)) {
-			next, found = *spec.ExpiresAt, true
+		var at time.Time
+		var due bool
+		if spec.Status == question.Open {
+			if spec.ExpiresAt != nil {
+				at, due = *spec.ExpiresAt, true
+			}
+		} else {
+			at, due = spec.ArchiveAt(o.UpdatedAt)
+		}
+		if due && (!found || at.Before(next)) {
+			next, found = at, true
 		}
 	}
 	if !found || b.Lock == nil {
@@ -198,6 +237,7 @@ func (b *Board) scheduleQuestionExpiry(now time.Time) {
 		}
 		b.questionExpiry = nil
 		b.ExpireQuestions(time.Now())
+		b.ArchiveQuestions(time.Now())
 		b.ScheduleQuestionExpiry()
 	})
 }
@@ -210,4 +250,23 @@ func (b *Board) StopQuestionExpiry() {
 		b.questionExpiry.Stop()
 		b.questionExpiry = nil
 	}
+}
+
+// scrubDueQuestions archives stored closed questions already past their archive deadline, before
+// a live board or its history exists. Only the flag changes.
+func scrubDueQuestions(snapshot *store.Snapshot, now time.Time) bool {
+	changed := false
+	for i := range snapshot.Objects {
+		object := &snapshot.Objects[i]
+		if object.Type != model.Question {
+			continue
+		}
+		at, ok := question.Read(object.Props).ArchiveAt(object.UpdatedAt)
+		if !ok || at.After(now) {
+			continue
+		}
+		object.Props["archived"] = true
+		changed = true
+	}
+	return changed
 }

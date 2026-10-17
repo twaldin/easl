@@ -44,15 +44,14 @@ enum AppPaths {
     /// The remote easld boards background attach attaches again (`RemoteReopen`): how to reach each
     /// one, never what it holds.
     static let remoteBoards = support.appendingPathComponent("remote-boards.json")
-    /// Testing only: the easl support directory to use on every remote host instead of its own
-    /// (a development instance there, docs/testing.md).
+    /// Testing only: the home for new remote hosts and legacy saved addresses. Fully saved
+    /// addresses keep their home; the host's default server is refused while this is set.
     static let devRemoteHome: String? = ProcessInfo.processInfo.environment["EASL_DEV_REMOTE_HOME"].flatMap { $0.isEmpty ? nil : $0 }
     /// Where this client left each board's view (`SavedViewport`), one `<boardId>.json` per board.
     /// Client state, not the board's: a board is shared by every client that opens it.
     static func viewport(of board: BoardID) -> URL {
         support.appendingPathComponent("viewport", isDirectory: true).appendingPathComponent("\(board).json")
     }
-    /// The app's own settings (`UISettings`): the chrome text scale and background attach.
     static let uiSettings = support.appendingPathComponent("ui-settings.json")
     static let clientID = support.appendingPathComponent("client-id")
     /// easl › Check for Updates…'s downloads (`Updater`): one folder per version with the zip,
@@ -86,9 +85,16 @@ enum AppPaths {
         return (["/opt/homebrew/bin/zmx", "/usr/local/bin/zmx"] + path).first { FileManager.default.isExecutableFile(atPath: $0) }
     }()
 
-    /// Where zmx writes each session's log (`<session>.log`): `$XDG_STATE_HOME/zmx/logs`, else
-    /// `~/.local/state/zmx/logs`. easl deletes its sessions' logs (`Housekeeping`).
+    /// This development home's zmx socket directory. Nil for the installed app.
+    static let devZmxDir: String? = {
+        guard let home = ProcessInfo.processInfo.environment["EASL_HOME"] else { return nil }
+        return ZmxIsolation.layout(home: home)?.zmxDir
+    }()
+
+    /// Development logs follow the forced zmx namespace. Installed launches keep
+    /// the account's XDG state location, as their tile attach strips inherited ZMX_DIR.
     static let zmxLogs: URL = {
+        if let forced = devZmxDir { return URL(fileURLWithPath: forced, isDirectory: true).appendingPathComponent("logs", isDirectory: true) }
         let state = ProcessInfo.processInfo.environment["XDG_STATE_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state", isDirectory: true)
         return state.appendingPathComponent("zmx/logs", isDirectory: true)

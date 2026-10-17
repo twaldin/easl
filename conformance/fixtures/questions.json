@@ -1,7 +1,7 @@
 {
   "scenario": "questions",
   "description": "Question objects: create (asker defaulting to the calling terminal, sized by its options, size fit), each validation rule's invalid_params, object.find by type and status, answering through object.update (answer stamped, tile shrunk, the answer handed to the asking terminal's next drain), a closed question taking only archived, cancel, and expiry (a question created or updated past its expiresAt expires right after, announced as object.updated).",
-  "recordedOn": "easl question/tile (07d309a+#24 e07d9dd + question lane), dev instance",
+  "recordedOn": "Mac dev 6aa77fbf8c4e566825022c42fdd48e2915dcf1e9, isolated easl-ask-cleanup-1",
   "steps": [
     {
       "step": "board.open",
@@ -1192,7 +1192,7 @@
       "response": {
         "error": {
           "code": "invalid_params",
-          "message": "question <obj:2> is answered: only archived can change"
+          "message": "question <obj:2> is answered: only archived, keep, and archiveAfter can change"
         },
         "id": "r26",
         "ok": false
@@ -1463,7 +1463,7 @@
       "response": {
         "error": {
           "code": "invalid_params",
-          "message": "question <obj:3> is cancelled: only archived can change"
+          "message": "question <obj:3> is cancelled: only archived, keep, and archiveAfter can change"
         },
         "id": "r29",
         "ok": false

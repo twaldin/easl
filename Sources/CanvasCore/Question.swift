@@ -8,8 +8,9 @@ import Foundation
 /// a mention on its next prompt (`Board.questionWritten`).
 ///
 /// Lifecycle: open → answered | cancelled | expired, each final. Archiving is not a status:
-/// `archived: true` on a closed question hides its tile and keeps how it ended. Validation
-/// (`problem`) is the one rule both servers apply, messages included (easld mirrors it).
+/// `archived: true` on a closed question hides its tile and keeps how it ended. A closed question
+/// archives itself `archiveAfter` seconds after its last write unless `keep` (`archiveAt`).
+/// Validation (`problem`) is the one rule both servers apply, messages included (easld mirrors it).
 public struct QuestionSpec: Equatable, Sendable {
     public enum Status: String, Sendable, CaseIterable {
         case open, answered, cancelled, expired
@@ -72,6 +73,10 @@ public struct QuestionSpec: Equatable, Sendable {
     public var expiresAt: Date?
     public var answer: Answer?
     public var archived: Bool
+    /// Never archived by the app (`archiveAt`); expiry and an explicit archive still apply.
+    public var keep: Bool
+    /// Seconds a closed question stays in view after its last write (`archiveAt`).
+    public var archiveAfter: TimeInterval
 
     /// Reads props as stored (validated on the way in); anything unreadable is left out.
     public init(_ props: JSONValue) {
@@ -93,6 +98,8 @@ public struct QuestionSpec: Equatable, Sendable {
                           at: props["answer"]?["at"]?.string.flatMap(Self.date), by: by)
         }
         archived = props["archived"]?.bool == true
+        keep = props["keep"]?.bool == true
+        archiveAfter = props["archiveAfter"].flatMap(Self.archiveDelay) ?? Self.defaultArchiveAfter
     }
 
     /// `props.status`; a question without a status it knows is open.
@@ -105,6 +112,22 @@ public struct QuestionSpec: Equatable, Sendable {
         status == .open && (expiresAt.map { $0 > now } ?? true)
     }
 
+    /// When the app archives this question: `archiveAfter` past `updatedAt`, its last write. Nil
+    /// while it is open, once archived, and when kept.
+    public func archiveAt(_ updatedAt: Date) -> Date? {
+        guard status != .open, !archived, !keep else { return nil }
+        return updatedAt.addingTimeInterval(archiveAfter)
+    }
+
+    public static let defaultArchiveAfter: TimeInterval = 10
+    static let archiveAfterRange: ClosedRange<TimeInterval> = 0...86_400
+
+    /// `props.archiveAfter` as a delay: a number of seconds within `archiveAfterRange`; nil otherwise.
+    static func archiveDelay(_ value: JSONValue) -> TimeInterval? {
+        guard let seconds = value.number, archiveAfterRange.contains(seconds) else { return nil }
+        return seconds
+    }
+
     public func option(_ id: String?) -> Option? {
         id.flatMap { id in options.first { $0.id == id } }
     }
@@ -115,17 +138,22 @@ public struct QuestionSpec: Equatable, Sendable {
     private static let contextKeys: Set<String> = ["object", "url", "path", "lines"]
     private static let askerKeys: Set<String> = ["tile", "name", "host"]
     /// What a closed question still takes.
-    private static let closedKeys: Set<String> = ["archived", "key", "zoom"]
+    private static let closedKeys: Set<String> = ["archived", "keep", "archiveAfter", "key", "zoom"]
 
     static let optionsShape = "an array of {id, label, why?}"
     static let answerShape = "an answered question needs answer: {option, note?} or {note}"
 
-    /// `object.create` props of a question as stored: `status` open and, when the call has a
-    /// caller and names no asker, the calling terminal as `asker`.
-    public static func creating(_ props: JSONValue, caller: ObjectID?) -> JSONValue {
+    /// `object.create` props of a question as stored: `status` open; when the call has a caller
+    /// and names no asker, the calling terminal as `asker`; when it names no `archiveAfter` (or
+    /// null), the host's `defaultDelay` (`Board.defaultQuestionArchiveAfter`) unless that is the
+    /// historical 10, so boards without a host setting store their questions as before.
+    public static func creating(_ props: JSONValue, caller: ObjectID?, defaultDelay: TimeInterval) -> JSONValue {
         var fields = props.object ?? [:]
         if fields["status"] == nil || fields["status"] == .null { fields["status"] = .string(Status.open.rawValue) }
         if fields["asker"] == nil || fields["asker"] == .null, let caller { fields["asker"] = .object(["tile": .string(caller)]) }
+        if defaultDelay != defaultArchiveAfter, fields["archiveAfter"] == nil || fields["archiveAfter"] == .null {
+            fields["archiveAfter"] = .number(defaultDelay)
+        }
         return .object(fields)
     }
 
@@ -139,7 +167,7 @@ public struct QuestionSpec: Equatable, Sendable {
                 for key in keys.sorted() where !closedKeys.contains(key) {
                     let value = patch[key] ?? .null
                     let same = value == .null ? before.props[key] == nil : before.props[key] == value
-                    if !same { return "question \(before.id) is \(old): only archived can change" }
+                    if !same { return "question \(before.id) is \(old): only archived, keep, and archiveAfter can change" }
                 }
             }
         }
@@ -203,6 +231,8 @@ public struct QuestionSpec: Equatable, Sendable {
             guard let flag = archived.bool else { return "archived must be true or false" }
             if flag, status == .open { return "an open question can't be archived: answer or cancel it first" }
         }
+        if let keep = given("keep"), keep.bool == nil { return "keep must be true or false" }
+        if let delay = given("archiveAfter"), archiveDelay(delay) == nil { return "archiveAfter must be a number of seconds from 0 to 86400" }
         return nil
     }
 
@@ -330,9 +360,10 @@ public struct QuestionSpec: Equatable, Sendable {
 }
 
 extension Board {
-    /// `object.create` props for a question: `QuestionSpec.creating`, then validated.
+    /// `object.create` props for a question: `QuestionSpec.creating` with this board's default
+    /// delay, then validated.
     public func questionToCreate(_ props: JSONValue, caller: ObjectID?) throws -> JSONValue {
-        let props = QuestionSpec.creating(props, caller: caller)
+        let props = QuestionSpec.creating(props, caller: caller, defaultDelay: defaultQuestionArchiveAfter)
         if let problem = QuestionSpec.problem(props, before: nil) { throw BoardError.invalidParams(problem) }
         return props
     }
@@ -449,9 +480,27 @@ extension Board {
         return due
     }
 
-    /// Sets the board's expiry timer for its earliest open `expiresAt` (at most a day out, then
-    /// again); a question already past it expires on the next turn. Called when the board opens
-    /// and whenever a question changes. None on a remote board: its host's timer expires them.
+    /// Closed questions whose `archiveAt` is at or before `now` become archived, status, answer and
+    /// frame kept, written by the app itself (no undo step). Returns their ids. A remote board's
+    /// questions archive on their host.
+    @discardableResult
+    public func archiveQuestions(now: Date = Date()) -> [ObjectID] {
+        guard !isRemote, !isClosed else { return [] }
+        let due = objects.values.compactMap { object -> ObjectID? in
+            guard object.type == .question,
+                  QuestionSpec(object.props).archiveAt(object.updatedAt).map({ $0 <= now }) == true else { return nil }
+            return object.id
+        }.sorted()
+        for id in due {
+            _ = try? update(id, props: .object(["archived": .bool(true)]), actor: .system)
+        }
+        return due
+    }
+
+    /// Sets the board's question timer for its earliest open `expiresAt` or closed `archiveAt`
+    /// (at most a day out, then again); a question already past it expires, or archives, on the
+    /// next turn, expiries first. Called when the board opens and whenever a question changes.
+    /// None on a remote board: its host's timer runs them.
     public func scheduleQuestionExpiry(now: Date = Date()) {
         questionExpiry?.cancel()
         questionExpiry = nil
@@ -459,7 +508,7 @@ extension Board {
         let next = objects.values.compactMap { object -> Date? in
             guard object.type == .question else { return nil }
             let spec = QuestionSpec(object.props)
-            return spec.status == .open ? spec.expiresAt : nil
+            return spec.status == .open ? spec.expiresAt : spec.archiveAt(object.updatedAt)
         }.min()
         guard let next else { return }
         let work = DispatchWorkItem { [weak self] in
@@ -467,6 +516,7 @@ extension Board {
                 guard let self else { return }
                 self.questionExpiry = nil
                 self.expireQuestions()
+                self.archiveQuestions()
                 self.scheduleQuestionExpiry()
             }
         }
@@ -478,5 +528,21 @@ extension Board {
     public func waitingQuestions(at now: Date = Date()) -> [CanvasObject] {
         objects.values.filter { $0.type == .question && QuestionSpec($0.props).isWaiting(at: now) }
             .sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+    }
+}
+
+extension BoardSnapshot {
+    /// Archives the stored closed questions already past their `archiveAt` before a board is
+    /// built from them (`BoardStore.load`). Only the flag changes: their `rev` and `updatedAt` and
+    /// the board's revision stay, so a load is no write anyone sees and no undo step. True when
+    /// any changed.
+    mutating func archiveDueQuestions(now: Date) -> Bool {
+        var changed = false
+        for index in objects.indices where objects[index].type == .question {
+            guard let due = QuestionSpec(objects[index].props).archiveAt(objects[index].updatedAt), due <= now else { continue }
+            objects[index].props = objects[index].props.merging(.object(["archived": .bool(true)]))
+            changed = true
+        }
+        return changed
     }
 }

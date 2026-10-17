@@ -163,15 +163,18 @@ type Board struct {
 	settled *route.Result
 
 	// Lock is what serialises this board's work with everyone else's (the registry's Mu); the
-	// question expiry timer takes it to expire questions as a request would. A board without
-	// one (outside a registry) sets no timer: ExpireQuestions is the caller's.
+	// question timer takes it to expire or archive questions as a request would. A board without
+	// one (outside a registry) sets no timer: ExpireQuestions and ArchiveQuestions are the caller's.
 	Lock sync.Locker
-	// questionExpiry is the pending check for the earliest open question's expiresAt
-	// (Board.questionExpiry); expirySeq tells a timer that was replaced.
+	// questionExpiry is the pending check for the earliest open expiresAt or closed archive
+	// deadline (Board.questionExpiry); expirySeq tells a timer that was replaced.
 	questionExpiry    *time.Timer
 	expirySeq         int
 	composerExpiry    *time.Timer
 	composerExpirySeq int
+	// defaultQuestionArchiveAfter is the host delay for a new question that names none.
+	// The registry copies it on open; a standalone board is the historical 10. Not saved.
+	defaultQuestionArchiveAfter float64
 }
 
 // New is an empty board.
@@ -186,6 +189,7 @@ func New(id, root string) *Board {
 		pendingApprovals: map[string][]approval{}, relaunchedAgents: map[string]bool{}, restartingAgents: map[string]bool{}, revHighWater: map[string]int{}, history: newHistory(),
 		Activity: NewActivityLog(DefaultActivityCapacity, nil), replayActor: UserActor, cascades: map[string]cascade{}, cascadeRev: -1,
 		workingDirectories: map[string]string{}, promptTarget: store.PromptTargetState{FocusOrder: []string{}}, viewers: map[string]*viewerHistory{},
+		defaultQuestionArchiveAfter: question.DefaultArchiveAfter,
 	}
 }
 
