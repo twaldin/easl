@@ -226,6 +226,8 @@ final class CodeTile: NSView, TileContent {
         var pinned: String?
         var ref: String?
 
+        func sameText(as other: Source) -> Bool { pinned == other.pinned && ref == other.ref }
+
         /// Where the file is read from: `url` (the path on the board), or for a ref the file in the
         /// worktree that has it checked out, else in the board's checkout at the ref's commit.
         struct Located: Sendable {
@@ -652,7 +654,7 @@ final class CodeTile: NSView, TileContent {
 
     /// Local relocation also applies to display-only files whose metadata cannot be persisted.
     private var localRange: LineRange? {
-        guard let anchored, anchored.path == displayed.path, anchored.source == source,
+        guard let anchored, anchored.path == displayed.path, anchored.source.sameText(as: source),
               anchored.written == displayed.range || anchored.range == displayed.range else { return displayed.range }
         return anchored.range
     }
@@ -668,6 +670,7 @@ final class CodeTile: NSView, TileContent {
             if staleReason != wasStale || localRange != wasRange {
                 refreshPainter(keepSelection: true)
                 refreshHeader()
+                if localRange != wasRange { showRange() }
             }
         }
         guard let document, showsCurrent, document.side == .new, document.text.lineCount > 0,
@@ -677,7 +680,7 @@ final class CodeTile: NSView, TileContent {
         }
         let source = NoteSource.lines(of: document.text.text)
         let captured = anchored.flatMap {
-            $0.path == displayed.path && $0.source == self.source && ($0.written == written || $0.range == written) ? $0.lines : nil
+            $0.path == displayed.path && $0.source.sameText(as: self.source) && ($0.written == written || $0.range == written) ? $0.lines : nil
         }
         if git == nil, !board.isRemote {
             anchorTask = Task { [board, id = object.id] in
@@ -709,7 +712,7 @@ final class CodeTile: NSView, TileContent {
         }
         let source = NoteSource.lines(of: document.text.text)
         let captured = anchored.flatMap {
-            $0.path == path && $0.source == self.source && ($0.written == written || $0.range == written) ? $0.lines : nil
+            $0.path == path && $0.source.sameText(as: self.source) && ($0.written == written || $0.range == written) ? $0.lines : nil
         }
         let resolution = NoteAnchor.resolve(fence, in: source, captured: captured)
         let lines = resolution.range.map { Array(source[($0.start - 1)..<$0.end]) } ?? []
@@ -950,7 +953,7 @@ extension CodeTile {
     private func editHere(at point: NSPoint) {
         guard git == nil, let document, showsCurrent, document.side == .new, !document.isPinned else { return }
         board.keepCode(object.id)
-        let line = displayedLine(atY: point.y) ?? displayed.range?.start ?? 1
+        let line = displayedLine(atY: point.y) ?? localRange?.start ?? 1
         let path = document.readPath
         Task { [weak self] in
             // The login shell is a blocking subprocess (once, then cached).
@@ -1093,7 +1096,7 @@ extension CodeTile {
     func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? {
         guard let document, showsCurrent, let painter = rowsView.painter else { return nil }
         if let selected = rowsView.selectedEntries { return target(entries: selected, painter: painter, document: document) }
-        guard hasKeyboard, let range = displayed.range, let lines = document.lines(for: range) else { return nil }
+        guard hasKeyboard, let range = localRange, let lines = document.lines(for: range) else { return nil }
         return code(LineRange(start: lines.lowerBound, end: lines.upperBound), side: document.side, in: document)
     }
 
@@ -1205,8 +1208,8 @@ extension CodeTile {
             let shown = painter.visibleRows(rowsView.bounds).compactMap { row -> Int? in
                 if case .line(let line)? = painter.rows.row(row) { line } else { nil }
             }
-            if let anchor = displayed.range?.start ?? shown.min(),
-               let found = CodeSubject.first(from: anchor, through: max(displayed.range?.end ?? anchor, shown.max() ?? anchor), line: { document.text(of: .line($0)) }) {
+            if let anchor = localRange?.start ?? shown.min(),
+               let found = CodeSubject.first(from: anchor, through: max(localRange?.end ?? anchor, shown.max() ?? anchor), line: { document.text(of: .line($0)) }) {
                 subject = (found.line, found.character)
             }
         }
