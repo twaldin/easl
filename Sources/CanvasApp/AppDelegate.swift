@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Tab switches waiting for their tab group's Space to be the active one (`selectTab`), by
     /// tab group.
     private var heldTabs: [ObjectIdentifier: HeldTab] = [:]
+    private var heldCloses: [CanvasWindowController] = []
+    private var releasingCloses = false
     private var terminationSignal: DispatchSourceSignal?
     private var pasteMaintenance: TerminalPaste.Maintenance?
     private let notifier = AgentNotifier()
@@ -74,9 +76,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // object.measure, size: "fit", and layout.check lay HTML pages out in WebKit.
         ObjectMeasure.html = { props, width, root in try await HtmlTile.measure(props: props, width: width, root: root) }
         notifier.onOpen = { [weak self] board, tile in
-            guard let controller = self?.controllers[board] else { return }
-            NSApp.activate(ignoringOtherApps: true)
-            controller.showWindow(nil)
+            guard let self, var controller = self.controllers[board] else { return }
+            if !controller.isBoardOpen {
+                let reopened = self.open(root: controller.board.root, select: false)
+                guard let open = self.controllers[reopened.id] else { return }
+                controller = open
+            }
+            guard let window = controller.window, self.bringForward(window) else { return }
+            if !CanvasApplication.neverActivate {
+                NSApp.activate(ignoringOtherApps: true)
+            }
             controller.canvas.focus(tile: tile)
         }
         notifier.install()
@@ -218,6 +227,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Before boards open, so their pages load with the extensions' content scripts.
         BrowserExtensions.start()
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(showHeldTabs), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(showHeldTabs), name: NSWindow.didDeminiaturizeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(showHeldTabs), name: NSWindow.didChangeOcclusionStateNotification, object: nil)
         let initial = open(root: Self.initialRoot())
         // The other boards that were open as tabs come back behind the initial one (one tab per
         // board: two saved worktrees of one repository are one board).
@@ -236,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // last update's leftovers, then a check a minute from now and daily (`Updater`).
         Updater.shared.start()
         // Testing on a shared machine: EASL_NO_ACTIVATE=1 keeps the app from taking focus.
-        if ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] != "1" {
+        if !CanvasApplication.neverActivate, controllers[initial.id]?.window?.isOnActiveSpace == true {
             NSApp.activate(ignoringOtherApps: true)
         }
     }
@@ -288,6 +299,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func open(root: URL, select: Bool = true) -> Board {
         let board = registry.open(root: root)
         let controller = controllers[board.id] ?? CanvasWindowController(board: board, registry: registry)
+        if let window = controller.window { cancelHeldManualClose(window) }
         controller.isBoardOpen = true
         controllers[board.id] = controller
         if !openedOrder.contains(board.id) { openedOrder.append(board.id) }
@@ -301,13 +313,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onClose = { [weak self, weak controller] in self?.saveOpenBoards(closing: controller?.window) }
         guard let window = controller.window else { return board }
         defer { saveOpenBoards() }
-        let noActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
+        let noActivate = CanvasApplication.neverActivate
         if !isShown(window), let host = tabHost(excluding: window) {
-            let front = host.tabGroup?.selectedWindow ?? host
-            // `addTabbedWindow` onto a minimized window shows the new one by itself on the
-            // current Space; the group takes it as a hidden tab.
-            if host.isMiniaturized, let group = host.tabGroup { group.addWindow(window) } else { host.addTabbedWindow(window, ordered: .above) }
-            if !select { window.tabGroup?.selectedWindow = front }
+            addTab(window, to: host)
         } else if !isShown(window) {
             if noActivate { window.orderBack(nil) } else { controller.showWindow(nil) }
             return board
@@ -416,8 +424,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let controller = target.controller {
             controller.onClose = nil
-            controller.window?.close()
+            controller.isBoardOpen = false
             controller.discard()
+            controller.window?.isExcludedFromWindowsMenu = true
+            controller.window?.close()
         }
         return result
     }
@@ -426,21 +436,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let folders = terminals.map { AppPaths.agentReports.appendingPathComponent($0.id, isDirectory: true) }
         Task.detached { for folder in folders { try? FileManager.default.removeItem(at: folder) } }
     }
-
-    /// Brings `window`'s tab, or the window, forward. Selecting a tab of a minimized group also
-    /// detaches it onto the current Space: bring the group back first (the user asked to see
-    /// this board). An instance that never activates leaves the tab waiting in the minimized
-    /// group. A tab whose group is on another Space comes forward once that Space is active
-    /// (`selectTab`); activating brings the group's shown tab forward meanwhile, and macOS
-    /// switches to its Space.
-    private func bringForward(_ window: NSWindow) {
-        let noActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
-        if let minimized = window.tabGroup?.windows.first(where: \.isMiniaturized) {
-            if noActivate { return }
-            minimized.deminiaturize(nil)
+    // AppKit orders a selected tab's replacement onto the active Space, even without activation.
+    // Keep that native window as the group's anchor until a close cannot promote an off-Space tab.
+    func holdNativeClose(_ window: NSWindow) -> Bool {
+        if terminating { return false }
+        releaseHeldCloses(excluding: window)
+        guard shouldHoldNativeClose(window),
+              let controller = window.windowController as? CanvasWindowController else {
+            heldCloses.removeAll { $0.window === window }
+            return false
         }
-        let shown = selectTab(window) ? window : window.tabGroup?.selectedWindow ?? window
-        if !noActivate { shown.makeKeyAndOrderFront(nil) }
+        if !heldCloses.contains(where: { $0 === controller }) { heldCloses.append(controller) }
+        return true
+    }
+
+    private func shouldHoldNativeClose(_ window: NSWindow) -> Bool {
+        guard let group = window.tabGroup, group.windows.count > 1, group.selectedWindow === window else { return false }
+        return !canPresentTab(window)
+    }
+
+    private func canPresentTab(_ window: NSWindow) -> Bool {
+        window.isVisible && window.isOnActiveSpace
+            && window.tabGroup?.windows.contains(where: \.isMiniaturized) != true
+    }
+
+    func isHoldingClose(_ window: NSWindow) -> Bool {
+        heldCloses.contains { $0.window === window }
+    }
+
+    private func cancelHeldManualClose(_ window: NSWindow) {
+        heldCloses.removeAll { $0.window === window && $0.isBoardOpen }
+    }
+
+    func releaseHeldCloses(excluding excluded: NSWindow? = nil) {
+        guard !terminating, !heldCloses.isEmpty, !releasingCloses else { return }
+        releasingCloses = true
+        defer { releasingCloses = false }
+        while !terminating, let index = heldCloses.firstIndex(where: {
+            $0.window.map { $0 !== excluded && !shouldHoldNativeClose($0) } ?? true
+        }) {
+            let controller = heldCloses.remove(at: index)
+            controller.window?.close()
+        }
+    }
+
+    /// Selects the board only where its group already lives. Minimized groups wait for the user
+    /// to restore them; selecting or restoring one from another Space can detach its tab there.
+    @discardableResult
+    private func bringForward(_ window: NSWindow) -> Bool {
+        guard (window.windowController as? CanvasWindowController)?.isBoardOpen == true else { return false }
+        guard selectTab(window), canPresentTab(window) else { return false }
+        if !CanvasApplication.neverActivate { window.makeKeyAndOrderFront(nil) }
+        return true
     }
 
     /// A board window's tab brought forward from outside the app delegate (a web extension's
@@ -461,7 +508,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let key = ObjectIdentifier(group)
         // `isOnActiveSpace` of a window that isn't on screen says where it would be ordered in,
         // not where its group is: only a shown tab tells.
-        if let shown = group.selectedWindow, shown !== window, shown.isVisible, !shown.isOnActiveSpace {
+        guard let shown = group.selectedWindow else { return false }
+        if shown === window {
+            heldTabs[key] = nil
+            return true
+        }
+        if !canPresentTab(shown) {
             heldTabs[key] = HeldTab(group: group, window: window, shown: shown)
             return false
         }
@@ -470,24 +522,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// The active Space changed: shows each held tab whose group is now on it. A request goes
-    /// unshown when the group's tab changed since (the user, or a web extension, picked another
-    /// one: the newer choice stands), or the group was put away (minimized, the app hidden),
-    /// where selecting a tab would bring it out on the current Space.
+    /// Releases presentation changes only after the user visits or restores the group's Space.
     @objc private func showHeldTabs() {
+        guard !heldTabs.isEmpty || !heldCloses.isEmpty else { return }
         for (key, held) in heldTabs {
             guard let group = held.group, let window = held.window, window.tabGroup === group,
-                  let shown = group.selectedWindow, shown === held.shown, shown.isVisible,
-                  !group.windows.contains(where: \.isMiniaturized) else {
+                  (window.windowController as? CanvasWindowController)?.isBoardOpen == true,
+                  let shown = group.selectedWindow, shown === held.shown else {
                 heldTabs[key] = nil
                 continue
             }
-            guard shown.isOnActiveSpace else { continue }
+            guard canPresentTab(shown) else { continue }
             heldTabs[key] = nil
             let wasKey = shown.isKeyWindow
             group.selectedWindow = window
-            if wasKey { window.makeKeyAndOrderFront(nil) }
+            if wasKey && !CanvasApplication.neverActivate { window.makeKeyAndOrderFront(nil) }
         }
+        releaseHeldCloses()
     }
 
     /// The open boards (shown, minimized or a tab) in tab/window order: a tab group's boards
@@ -511,12 +562,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.remote.map { Self.remoteKey($0.host.sshTarget, controller.board.id) } ?? controller.board.id
     }
 
-    /// ⌘J, Go to Next Needs-You, on `current`, the board the user is on: the next thing that needs
-    /// them there (blocked agents first, then markers, then agents that finished unseen, each in
-    /// reading order: `NeedsYouItem`), and once it has nothing after the item visited last, the
-    /// first on the next open board that has anything, in tab/window order and around (`NeedsYouTour`),
-    /// remote boards' windows included. That board's tab or window comes forward and the item is
-    /// framed, selected and focused like Go to; a notice says when no board needs the user.
+    /// ⌘J follows needs-you items across open local and remote boards in tab order.
+    /// An off-Space or minimized target waits without acknowledging an unseen item.
     func goToNextNeedsYou(from current: CanvasWindowController) {
         let boards = openBoardsInOrder()
         let entries = boards.map { NeedsYouTour.Entry(board: tourKey($0), items: $0.canvas.needsYouItems) }
@@ -524,8 +571,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return current.canvas.showNotice("Nothing needs you")
         }
         guard let target = boards.first(where: { tourKey($0) == stop.board }) else { return }
-        if let window = target.window, target !== current {
-            bringForward(window)
+        guard let window = target.window,
+              target === current ? canPresentTab(window) : bringForward(window) else {
+            return current.canvas.showNotice("Show “\(target.board.root.lastPathComponent)” on its Space to continue")
+        }
+        if target !== current {
             // A tab never shown has not been laid out: the item is framed in the view's real size.
             window.contentView?.layoutSubtreeIfNeeded()
         }
@@ -605,6 +655,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The open window of the remote board `key`, its tab brought forward when `select`.
     private func shownRemote(_ key: String, select: Bool) -> CanvasWindowController? {
         guard let open = remoteControllers[key], let window = open.window else { return nil }
+        cancelHeldManualClose(window)
         if select { bringForward(window) }
         return open
     }
@@ -645,15 +696,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// leaves it, and a window of its own is ordered in behind the others, never made key.
     private func show(_ controller: CanvasWindowController, select: Bool) {
         guard let window = controller.window else { return }
-        let noActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
+        let noActivate = CanvasApplication.neverActivate
         if let host = tabHost(excluding: window) {
-            let front = host.tabGroup?.selectedWindow ?? host
-            if host.isMiniaturized, let group = host.tabGroup { group.addWindow(window) } else { host.addTabbedWindow(window, ordered: .above) }
-            if select { bringForward(window) } else { window.tabGroup?.selectedWindow = front }
+            addTab(window, to: host)
+            if select { bringForward(window) }
         } else if noActivate || !select {
             window.orderBack(nil)
         } else {
             controller.showWindow(nil)
+        }
+    }
+
+    // Group bookkeeping must not order a newly added tab onto the active Space.
+    private func addTab(_ window: NSWindow, to host: NSWindow) {
+        if let group = host.tabGroup {
+            group.insertWindow(window, at: group.windows.firstIndex(of: host)! + 1)
+        } else {
+            let group = NSWindowTabGroup()
+            group.addWindow(host)
+            group.addWindow(window)
         }
     }
 
@@ -663,12 +724,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.isVisible || window.isMiniaturized || (window.tabGroup?.windows.count ?? 0) > 1
     }
 
-    /// The board window new boards join as tabs: the key one, else any on screen, else a
-    /// minimized one (a board opened while the window is in the Dock joins it there rather than
-    /// opening a window of its own on the user's current Space). Remote boards' windows count.
+    /// New tabs join a live board's selected native window: key first, otherwise prefer visible.
+    /// Hidden and minimized groups remain hosts instead of spawning a window on the current Space.
     private func tabHost(excluding window: NSWindow) -> NSWindow? {
-        let windows = (Array(controllers.values) + remoteControllers.values).compactMap(\.window).filter { $0 !== window && ($0.isVisible || $0.isMiniaturized) }
-        return windows.first(where: \.isKeyWindow) ?? windows.first(where: \.isVisible) ?? windows.first
+        var preferred: NSWindow?
+        func consider(_ controller: CanvasWindowController) -> NSWindow? {
+            guard controller.isBoardOpen, let member = controller.window, member !== window else { return nil }
+            let host = member.tabGroup?.selectedWindow ?? member
+            guard host !== window else { return nil }
+            if host.isKeyWindow { return host }
+            if preferred == nil || (host.isVisible && preferred?.isVisible != true) { preferred = host }
+            return nil
+        }
+        for controller in controllers.values {
+            if let key = consider(controller) { return key }
+        }
+        for controller in remoteControllers.values {
+            if let key = consider(controller) { return key }
+        }
+        return preferred
     }
 
     /// Records the shown boards' roots in tab order (AppPaths.openBoards) for the next launch.
