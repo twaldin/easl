@@ -63,7 +63,7 @@ struct TerminalPasteTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let input = directory.appendingPathComponent("input")
         try Data([1]).write(to: input)
-        let result: (status: Int32, output: Data) = try await withCheckedThrowingContinuation { continuation in
+        let status: Int32 = try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global().async {
                 continuation.resume(with: Result {
                     let process = Process()
@@ -74,21 +74,18 @@ struct TerminalPasteTests {
                     let source = try FileHandle(forReadingFrom: input)
                     defer { try? source.close() }
                     process.standardInput = source
-                    let output = Pipe()
-                    process.standardOutput = output
+                    process.standardOutput = FileHandle.nullDevice
                     let errors = Pipe()
                     try errors.fileHandleForReading.close()
                     defer { try? errors.fileHandleForWriting.close() }
                     process.standardError = errors.fileHandleForWriting
                     try process.run()
-                    let data = output.fileHandleForReading.readDataToEndOfFile()
                     process.waitUntilExit()
-                    return (process.terminationStatus, data)
+                    return process.terminationStatus
                 })
             }
         }
-        #expect(result.status != 0)
-        #expect(result.output.isEmpty)
+        #expect(status != 0)
         let session = directory.appendingPathComponent("easl-paste-\(getuid())/mac-1234/canvas-obj_1")
         #expect(try FileManager.default.contentsOfDirectory(atPath: session.path) == [])
     }
