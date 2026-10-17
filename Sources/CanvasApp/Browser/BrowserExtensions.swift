@@ -49,6 +49,11 @@ enum BrowserExtensions {
         ExtensionHost.shared.close(tile, windowIsClosing: false)
     }
 
+    static func closedWindow(_ board: CanvasWindowController) {
+        guard #available(macOS 15.4, *) else { return }
+        ExtensionHost.shared.close(board)
+    }
+
     /// The user acted in the tile's page: it is its window's active tab.
     static func activated(_ tile: BrowserTile) {
         guard #available(macOS 15.4, *) else { return }
@@ -545,7 +550,8 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
 
     /// The board window's adapter, made (and announced) the first time it's needed.
     func window(of tile: BrowserTile) -> ExtensionWindow? {
-        (tile.window?.windowController as? CanvasWindowController).map(window(for:))
+        guard let board = tile.window?.windowController as? CanvasWindowController, board.isBoardOpen else { return nil }
+        return window(for: board)
     }
 
     func window(for board: CanvasWindowController) -> ExtensionWindow {
@@ -567,15 +573,22 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
 
     /// Board windows front to back, the one the user is on first.
     private var boardWindows: [ExtensionWindow] {
-        let ordered = NSApp.orderedWindows.compactMap { $0.windowController as? CanvasWindowController }
+        let ordered = NSApp.orderedWindows.compactMap { window -> CanvasWindowController? in
+            guard let board = window.windowController as? CanvasWindowController, board.isBoardOpen else { return nil }
+            return board
+        }
         let front = CanvasWindowController.frontmost
         return ([front].compactMap { $0 } + ordered.filter { $0 !== front }).map(window(for:))
     }
 
     @objc private func windowWillClose(_ note: Notification) {
         pageWindows.removeAll { $0.window === note.object as? NSWindow }
-        guard let board = (note.object as? NSWindow)?.windowController as? CanvasWindowController,
-              let window = windows.removeValue(forKey: ObjectIdentifier(board)) else { return }
+        guard let board = (note.object as? NSWindow)?.windowController as? CanvasWindowController else { return }
+        close(board)
+    }
+
+    func close(_ board: CanvasWindowController) {
+        guard let window = windows.removeValue(forKey: ObjectIdentifier(board)) else { return }
         for (key, tab) in tabs where tab.tile?.window === board.window {
             tabs[key] = nil
             controller.didCloseTab(tab, windowIsClosing: true)
@@ -584,7 +597,7 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
     }
 
     @objc private func windowBecameKey(_ note: Notification) {
-        guard let board = (note.object as? NSWindow)?.windowController as? CanvasWindowController else { return }
+        guard let board = (note.object as? NSWindow)?.windowController as? CanvasWindowController, board.isBoardOpen else { return }
         controller.didFocusWindow(window(for: board))
     }
 

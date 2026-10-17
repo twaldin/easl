@@ -30,11 +30,12 @@ do {
 }
 
 // One instance per support directory: a second would take over the first's sockets. It hands the
-// root it was asked to open to the running instance, brings that one forward, and exits. After the
+// root it was asked to open to the running instance, and exits. After the
 // migration, which may move another support directory to this one's place.
 guard let instanceLock = InstanceLock.acquire(at: AppPaths.instanceLock) else {
     let holder = InstanceLock.holder(at: AppPaths.instanceLock)
-    if let root = AppDelegate.requestedRoot() {
+    let requestedRoot = AppDelegate.requestedRoot()
+    if let root = requestedRoot {
         do {
             let reply = try InstanceLock.forward(root: root.standardizedFileURL.path, to: AppPaths.apiSocket)
             if reply["ok"]?.bool != true { NSLog("easl: the running instance could not open %@: %@", root.path, "\(reply)") }
@@ -43,7 +44,7 @@ guard let instanceLock = InstanceLock.acquire(at: AppPaths.instanceLock) else {
         }
     }
     // Only a running easl: the pid may be a previous holder's, reused since (`holder`).
-    if ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] != "1", let holder, let running = NSRunningApplication(processIdentifier: holder),
+    if requestedRoot == nil, !CanvasApplication.neverActivate, let holder, let running = NSRunningApplication(processIdentifier: holder),
        running.executableURL?.lastPathComponent == Bundle.main.executableURL?.lastPathComponent {
         running.activate()
     }

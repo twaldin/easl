@@ -169,7 +169,7 @@ final class CanvasView: NSScrollView {
     /// first turn would record the unplaced view over the real one.
     private var viewPlaced = false
     private var viewportSave: DispatchWorkItem?
-    private var discarded = false
+    private(set) var discarded = false
     /// The saved view this board opened with, held until the user first moves the view: the
     /// window can still change size after the board opens (a tab joining the group, the saved
     /// frame, a hidden tab shown), and the view shows that centre through it, not the corner

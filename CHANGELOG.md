@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - **Remote image tiles draw on the viewing Mac.** Both easld and Mac-hosted boards use the real image tile, with host bytes held only in memory. A live tile polls host metadata every two seconds and reloads when the file changes. Paths outside the board root, escaping symlinks and files over 4 MiB show a refusal in the tile. Code, changes, browser and diagram tiles remain host-drawn pictures.
+- **Board tabs stay on their Space.** Opening, closing or reopening a board no longer brings a replacement tab onto the Space you're using. Selecting a board on another Space, or in a minimized window, waits until you visit or restore its window instead of switching Spaces. Opening a folder through another easl launch follows the same rule. API close still discards the board's live surfaces immediately; an off-Space native tab finishes closing when its replacement can appear safely. ⌘J skips boards it cannot show and leaves their unseen attention markers untouched.
 
 ## 0.2.7
 
