@@ -34,6 +34,9 @@ public enum ObjectMeasure {
     /// of an HTML tile's page with these props laid out `width` points wide, `<canvas-code>`
     /// excerpts read against `root`. Nil in CanvasCore alone, where HTML is `unsupported`.
     public static var html: ((_ props: JSONValue, _ width: CGFloat, _ root: URL) async throws -> CGSize)?
+    /// What lays an HTML tile's page out: the document extent of the page with these props laid
+    /// out `width` points wide (`html` reading one root, or a remote board's viewer reading its host).
+    public typealias PageMeasurer = (_ props: JSONValue, _ width: CGFloat) async throws -> CGSize
 
     /// `width` wraps notes and text (a note defaults to a new note's width; text defaults to
     /// one unwrapped line per paragraph); for code it is the widest the frame may get (default
@@ -57,9 +60,7 @@ public enum ObjectMeasure {
             guard let spec = ShapeSpec(props) else { throw Failure.invalidParams("shape props need a kind") }
             return try shape(spec, width: width.map { CGFloat($0) })
         case .html:
-            // `width` wide (what the page wraps at), as tall as the document up to the cap.
-            let extent = try await htmlExtent(props, width: width, root: root)
-            return CGSize(width: CGFloat(width ?? Board.defaultSize(.html).w), height: min(extent.height, CGFloat(maxHtmlFitHeight)))
+            return try await htmlSize(props, width: width, page: page(root: root))
         case .changes:
             // The rows of every changed file, as wide as the longest line up to `width`.
             let set = await ChangeSet.load(root: root, spec: ChangesSpec(props), highlight: false)
@@ -90,15 +91,31 @@ public enum ObjectMeasure {
         return ObjectZoom.zoomed(size, zoom: zoom)
     }
 
+    /// An HTML tile's frame: `width` wide (what the page wraps at; default a new HTML tile's), as
+    /// tall as `htmlExtent` up to `maxHtmlFitHeight`.
+    public static func htmlSize(_ props: JSONValue, width: Double?, page: PageMeasurer) async throws -> CGSize {
+        let extent = try await htmlExtent(props, width: width, page: page)
+        return CGSize(width: CGFloat(width ?? Board.defaultSize(.html).w), height: min(extent.height, CGFloat(maxHtmlFitHeight)))
+    }
+
     /// The frame an HTML tile needs to show its whole document with the page laid out `width`
     /// canvas points wide (default a new HTML tile's width) at `width / zoom`: as wide as that or
     /// the document's scroll width, as tall as the title bar plus the document, uncapped.
     public static func htmlExtent(_ props: JSONValue, width: Double?, root: URL) async throws -> CGSize {
-        guard let html else { throw Failure.unsupported("html objects are measured by the app's WebKit") }
+        try await htmlExtent(props, width: width, page: page(root: root))
+    }
+
+    private static func htmlExtent(_ props: JSONValue, width: Double?, page: PageMeasurer) async throws -> CGSize {
         let zoom = ObjectZoom.of(props)
         let natural = CGFloat(width ?? Board.defaultSize(.html).w) / zoom
-        let document = try await html(props, natural, root)
+        let document = try await page(props, natural)
         return ObjectZoom.zoomed(CGSize(width: max(natural, document.width.rounded(.up)), height: CGFloat(RenderMath.tileTitleHeight) + document.height.rounded(.up)), zoom: zoom)
+    }
+
+    /// `html` reading `root`.
+    private static func page(root: URL) throws -> PageMeasurer {
+        guard let html else { throw Failure.unsupported("html objects are measured by the app's WebKit") }
+        return { props, width in try await html(props, width, root) }
     }
 
     /// The lines a code tile shows fitted: its `range` (what the tile scrolls to and tints; a

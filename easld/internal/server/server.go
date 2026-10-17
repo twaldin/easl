@@ -38,7 +38,11 @@ type limits struct {
 	inbox, inboxBytes int
 }
 
-var defaultLimits = limits{pending: 32 << 20, line: 64 << 20, inbox: 256, inboxBytes: 64 << 20}
+// MaxPendingOutput bounds a connection's queued output, including JSON escaping and newlines.
+// A single response must fit this budget even when the caller is keeping up.
+const MaxPendingOutput = 32 << 20
+
+var defaultLimits = limits{pending: MaxPendingOutput, line: 64 << 20, inbox: 256, inboxBytes: 64 << 20}
 
 // drainTimeout bounds how long a closing connection spends flushing what was already queued
 // to it.

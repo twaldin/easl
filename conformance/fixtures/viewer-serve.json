@@ -1,0 +1,999 @@
+{
+  "scenario": "viewer-serve",
+  "description": "A scripted Mac client serves object.measure, view.render and browser object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a host-picture refusal is the caller's. client.list names attached clients. easld only.",
+  "recordedOn": "easld remote-host-language 367d87b plus current main integration",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "html": "<p>Hi</p>"
+        },
+        "type": "html"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "an html page is measured by the app"
+        },
+        "id": "r2",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "html": "<p>Hi</p>"
+        },
+        "size": "fit",
+        "type": "html"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "an html page is measured by the app"
+        },
+        "id": "r3",
+        "ok": false
+      }
+    },
+    {
+      "step": "client.list",
+      "method": "client.list",
+      "request": {},
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "clients": []
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 280,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "draw"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "draw"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "draw"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 400,
+          "y": 0
+        },
+        "props": {
+          "url": "https://example.com/"
+        },
+        "type": "browser"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "url": "https://example.com/"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 300,
+          "w": 400,
+          "x": 0,
+          "y": 400
+        },
+        "props": {
+          "html": "<p>Page</p>"
+        },
+        "type": "html"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 300,
+              "w": 400,
+              "x": 0,
+              "y": 400
+            },
+            "id": "<obj:3>",
+            "props": {
+              "html": "<p>Page</p>"
+            },
+            "rev": "<rev:1>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 300,
+              "w": 400,
+              "x": 0,
+              "y": 400
+            },
+            "id": "<obj:3>",
+            "props": {
+              "html": "<p>Page</p>"
+            },
+            "rev": "<rev:1>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "app",
+      "request": {
+        "app": "0.2.0",
+        "boards": [
+          "<board>"
+        ],
+        "focused": "<board>",
+        "host": "studio",
+        "serves": [
+          "object.measure",
+          "view.render",
+          "object.reload"
+        ],
+        "version": 1
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:1>",
+          "version": 1
+        }
+      },
+      "ignored": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "mini",
+      "request": {
+        "boards": [
+          "<board>"
+        ],
+        "serves": [
+          "object.measure"
+        ],
+        "version": 1
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:2>",
+          "version": 1
+        }
+      },
+      "ignored": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "client.list",
+      "method": "client.list",
+      "request": {},
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "clients": [
+            {
+              "app": "0.2.0",
+              "boards": [
+                "<board>"
+              ],
+              "focused": "<board>",
+              "host": "studio",
+              "id": "<cli:1>",
+              "serves": [
+                "object.measure",
+                "object.reload",
+                "view.render"
+              ]
+            },
+            {
+              "boards": [
+                "<board>"
+              ],
+              "id": "<cli:2>",
+              "serves": [
+                "object.measure"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "html": "<p>Hi</p>",
+          "root": "sub",
+          "zoom": 2
+        },
+        "type": "html",
+        "width": 800
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "h": 210,
+          "w": 800
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "object.measure",
+          "params": {
+            "board": "<board>",
+            "props": {
+              "html": "<p>Hi</p>",
+              "root": "<root>/sub",
+              "zoom": 2
+            },
+            "type": "html",
+            "width": 800
+          }
+        }
+      ]
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "html": "<p>Approx</p>"
+        },
+        "type": "html"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "approximate": true,
+          "h": 100,
+          "w": 640
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "object.measure",
+          "params": {
+            "board": "<board>",
+            "props": {
+              "html": "<p>Approx</p>",
+              "root": "<root>"
+            },
+            "type": "html"
+          }
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "w": 500,
+          "x": 0,
+          "y": 800
+        },
+        "props": {
+          "html": "<p>Fit</p>"
+        },
+        "size": "fit",
+        "type": "html"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 140,
+              "w": 500,
+              "x": 0,
+              "y": 800
+            },
+            "id": "<obj:4>",
+            "props": {
+              "html": "<p>Fit</p>"
+            },
+            "rev": "<rev:1>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 140,
+              "w": 500,
+              "x": 0,
+              "y": 800
+            },
+            "id": "<obj:4>",
+            "props": {
+              "html": "<p>Fit</p>"
+            },
+            "rev": "<rev:1>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "z": 4
+          },
+          "event": "object.created"
+        }
+      ],
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "object.measure",
+          "params": {
+            "board": "<board>",
+            "props": {
+              "html": "<p>Fit</p>",
+              "root": "<root>"
+            },
+            "type": "html",
+            "width": 500
+          }
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "w": 500,
+          "x": 0,
+          "y": 400
+        },
+        "id": "<obj:3>",
+        "size": "fit"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 90,
+              "w": 500,
+              "x": 0,
+              "y": 400
+            },
+            "id": "<obj:3>",
+            "props": {
+              "html": "<p>Page</p>"
+            },
+            "rev": "<rev:2>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 90,
+              "w": 500,
+              "x": 0,
+              "y": 400
+            },
+            "id": "<obj:3>",
+            "props": {
+              "html": "<p>Page</p>"
+            },
+            "rev": "<rev:2>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ],
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "object.measure",
+          "params": {
+            "board": "<board>",
+            "props": {
+              "html": "<p>Page</p>",
+              "root": "<root>"
+            },
+            "type": "html",
+            "width": 500
+          }
+        }
+      ]
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "w": 640,
+          "x": 0,
+          "y": 1600
+        },
+        "key": "page",
+        "props": {
+          "html": "<p>Upsert</p>"
+        },
+        "size": "fit",
+        "type": "html"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "created": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 80,
+              "w": 640,
+              "x": 0,
+              "y": 1600
+            },
+            "id": "<obj:5>",
+            "props": {
+              "html": "<p>Upsert</p>",
+              "key": "page"
+            },
+            "rev": "<rev:1>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "z": 5
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 80,
+              "w": 640,
+              "x": 0,
+              "y": 1600
+            },
+            "id": "<obj:5>",
+            "props": {
+              "html": "<p>Upsert</p>",
+              "key": "page"
+            },
+            "rev": "<rev:1>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "z": 5
+          },
+          "event": "object.created"
+        }
+      ],
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "object.measure",
+          "params": {
+            "board": "<board>",
+            "props": {
+              "html": "<p>Upsert</p>",
+              "key": "page",
+              "root": "<root>"
+            },
+            "type": "html",
+            "width": 640
+          }
+        }
+      ]
+    },
+    {
+      "step": "object.batch",
+      "method": "object.batch",
+      "request": {
+        "board": "<board>",
+        "ops": [
+          {
+            "method": "object.create",
+            "params": {
+              "frame": {
+                "h": 200,
+                "w": 320,
+                "x": 0,
+                "y": 2000
+              },
+              "props": {
+                "html": "<p>pending</p>"
+              },
+              "type": "html"
+            }
+          },
+          {
+            "method": "object.update",
+            "params": {
+              "frame": {
+                "x": 0,
+                "y": 2000
+              },
+              "id": "$0",
+              "size": "fit"
+            }
+          }
+        ]
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "results": [
+            {
+              "object": {
+                "createdAt": "<time:number>",
+                "createdBy": {
+                  "kind": "user"
+                },
+                "frame": {
+                  "h": 200,
+                  "w": 320,
+                  "x": 0,
+                  "y": 2000
+                },
+                "id": "<obj:6>",
+                "props": {
+                  "html": "<p>pending</p>"
+                },
+                "rev": "<rev:1>",
+                "type": "html",
+                "updatedAt": "<time:number>",
+                "z": 6
+              }
+            },
+            {
+              "object": {
+                "createdAt": "<time:number>",
+                "createdBy": {
+                  "kind": "user"
+                },
+                "frame": {
+                  "h": 70,
+                  "w": 320,
+                  "x": 0,
+                  "y": 2000
+                },
+                "id": "<obj:6>",
+                "props": {
+                  "html": "<p>pending</p>"
+                },
+                "rev": "<rev:2>",
+                "type": "html",
+                "updatedAt": "<time:number>",
+                "updatedBy": {
+                  "kind": "user"
+                },
+                "z": 6
+              }
+            }
+          ],
+          "revision": "<board:1>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 320,
+              "x": 0,
+              "y": 2000
+            },
+            "id": "<obj:6>",
+            "props": {
+              "html": "<p>pending</p>"
+            },
+            "rev": "<rev:1>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "z": 6
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 70,
+              "w": 320,
+              "x": 0,
+              "y": 2000
+            },
+            "id": "<obj:6>",
+            "props": {
+              "html": "<p>pending</p>"
+            },
+            "rev": "<rev:2>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          },
+          "event": "object.updated"
+        }
+      ],
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "object.measure",
+          "params": {
+            "board": "<board>",
+            "props": {
+              "html": "<p>pending</p>",
+              "root": "<root>"
+            },
+            "type": "html",
+            "width": 320
+          }
+        }
+      ]
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "inline": true,
+        "target": "<obj:1>"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+          "format": "png",
+          "height": 1,
+          "objects": [],
+          "scale": 1,
+          "width": 1
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "view.render",
+          "params": {
+            "board": "<board>",
+            "format": "png",
+            "inline": true,
+            "target": "<obj:1>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "out": "<root>/shot.png",
+        "target": "<obj:1>"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "format": "png",
+          "height": 1,
+          "objects": [],
+          "path": "<root>/shot.png",
+          "scale": 1,
+          "width": 1
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "view.render",
+          "params": {
+            "board": "<board>",
+            "format": "png",
+            "inline": true,
+            "target": "<obj:1>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "inline": true,
+        "target": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "<obj:1> is only a host picture: view.render cannot draw it"
+        },
+        "id": "r17",
+        "ok": false
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "view.render",
+          "params": {
+            "board": "<board>",
+            "format": "png",
+            "inline": true,
+            "target": "<obj:1>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "object.reload",
+      "method": "object.reload",
+      "request": {
+        "id": "<obj:2>",
+        "timeoutMs": 1000
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "id": "<obj:2>",
+          "loaded": true,
+          "url": "https://example.com/"
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "object.reload",
+          "params": {
+            "id": "<obj:2>",
+            "timeoutMs": 1000
+          }
+        }
+      ]
+    }
+  ]
+}

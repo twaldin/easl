@@ -595,6 +595,11 @@ final class ApiRouterTests {
         #expect(opened.count == 2)
     }
 
+    @Test func attachedClientsAreOnlyListedByEasld() async throws {
+        let reply = try await call(try connect(), "client.list", [:])
+        #expect(reply["error"]?["code"] == .string("unsupported"))
+    }
+
     @Test func openRemoteChecksItsParamsAndAnswersWithThePickersFailures() async throws {
         let client = try connect()
         client.send(#"{"id":"u","method":"board.open_remote","params":{"host":"twaldin-work","board":"brd_7f94"}}"#)

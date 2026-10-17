@@ -7,9 +7,9 @@ public enum HtmlChannel {
     public static let maxStateBytes = 256 * 1024
 
     /// A page's paths resolve against its tile's link root (`Board.linkRoot`). `tile` need only
-    /// be on `board` for state messages: a page measured before its tile exists
+    /// be on `board` for state messages: a local page measured before its tile exists
     /// (`HtmlTile.measure`, on a scratch board rooted at the page's link root) reads excerpts
-    /// against the board's root.
+    /// against the board's root; a remote one is on a scratch board of its own (`Board.measuring`).
     /// A page with a `ref` reads its excerpts where the ref is now (`Board.linkSource`): the live
     /// worktree, else git objects at the ref's commit.
     public static func handle(_ message: HtmlMessage, tile: ObjectID, board: Board, files: HostFiles? = nil) async throws -> JSONValue {
@@ -148,5 +148,18 @@ public enum HtmlChannel {
     static func openCode(path: String, range: LineRange?, symbol: String?, ref: String?, beside tile: ObjectID, on board: Board) -> JSONValue {
         let opened = board.openForNavigation(CodeAim(path: path, range: range, symbol: symbol, ref: ref), from: tile)
         return .object(["tile": .string(opened.id), "created": .bool(opened.created), "existing": .bool(opened.existing)])
+    }
+}
+
+extension Board {
+    /// Where `page`, an HTML page measured before its tile exists on remote board `board`, runs:
+    /// a remote board of its own, rooted where `board` is and holding just `page`, so the page
+    /// reads `board`'s host files under its own `root`, `ref` and `refSha` as its tile will. A
+    /// page measured offscreen never writes (`HtmlTile.handle`); whatever this board would send
+    /// its host goes nowhere, never to `board`'s.
+    public static func measuring(_ page: CanvasObject, on board: Board) -> Board {
+        let scratch = Board(remote: IDs.make("brd"), root: board.root, host: nil)
+        scratch.applyHost(page)
+        return scratch
     }
 }

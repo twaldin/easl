@@ -25,17 +25,21 @@ import (
 )
 
 // Delegated are the methods a client can serve (client.attach `serves`).
-var Delegated = []string{"view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "text.measure"}
+var Delegated = []string{"view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "object.measure", "text.measure"}
 
 const (
-	ViewGetDeadline    = 5 * time.Second
-	SnapshotDeadline   = 30 * time.Second
-	TerminalDeadline   = 10 * time.Second
-	MeasureDeadline    = 2 * time.Second
-	ReloadGrace        = 5 * time.Second
-	RenderGrace        = 30 * time.Second
-	labelCacheCapacity = 10_000
-	requestPrefix      = "easld-"
+	ViewGetDeadline  = 5 * time.Second
+	SnapshotDeadline = 30 * time.Second
+	TerminalDeadline = 10 * time.Second
+	MeasureDeadline  = 2 * time.Second
+	// HTMLMeasureDeadline is how long an html object.measure waits. The client reads
+	// excerpts and images from the host, which needs 20s, plus the 5s grace object.reload
+	// gives an answer already in flight.
+	HTMLMeasureDeadline = 25 * time.Second
+	ReloadGrace         = 5 * time.Second
+	RenderGrace         = 30 * time.Second
+	labelCacheCapacity  = 10_000
+	requestPrefix       = "easld-"
 )
 
 // Conn is a client's connection.
@@ -212,6 +216,38 @@ func (r *Registry) Clients() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.clients)
+}
+
+// ListedClient is one attached client as client.list reports it. Focused is the board
+// its user focused last, empty when it never has. Boards and Serves are sorted.
+type ListedClient struct {
+	ID, App, Host, Focused string
+	Boards, Serves         []string
+}
+
+// List is a stable snapshot of the attached clients, sorted by id.
+func (r *Registry) List() []ListedClient {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]ListedClient, 0, len(r.clients))
+	for _, c := range r.clients {
+		item := ListedClient{
+			ID: c.ID, App: c.app, Host: c.host, Focused: c.focused,
+			Boards: make([]string, 0, len(c.boards)),
+			Serves: make([]string, 0, len(c.serves)),
+		}
+		for id := range c.boards {
+			item.Boards = append(item.Boards, id)
+		}
+		for method := range c.serves {
+			item.Serves = append(item.Serves, method)
+		}
+		sort.Strings(item.Boards)
+		sort.Strings(item.Serves)
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 // Call sends method with params to c and waits for its answer, cancellation, deadline or disconnect.

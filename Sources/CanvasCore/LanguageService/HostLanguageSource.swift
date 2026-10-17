@@ -158,7 +158,7 @@ final class HostLanguageSource: LanguageSource {
     }
 
     func locate(symbol: String, boardRoot: URL, scope: URL) async throws -> String? {
-        guard let pattern = NoteSource.declarationPattern(symbol) else { return nil }
+        guard let pattern = NoteSource.symbolPattern(symbol) else { return nil }
         var candidates = try await grep(pattern, mode: "declared", boardRoot: boardRoot, scope: scope, limit: Self.maxCandidates)[...]
         while !candidates.isEmpty {
             let batch = Array(candidates.prefix(Self.readBatch))

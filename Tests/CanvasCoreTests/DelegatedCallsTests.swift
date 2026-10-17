@@ -5,7 +5,8 @@ import Testing
 
 /// A remote board's window answering its easld's delegated calls (`DelegatedCalls`). Its
 /// terminal's surface is `screen`: a prompt goes onto it as the agent's input line, and the
-/// agent's `reply` follows.
+/// agent's `reply` follows. It draws renders as `drawing`, its tiles of `hostPictures` show only
+/// the host's picture, and its WebKit lays a page out as `page` lays it out.
 @MainActor
 final class DelegatedCallsTests {
     final class NoHost: BoardHost {
@@ -19,6 +20,14 @@ final class DelegatedCallsTests {
     var screen = ["$ omp", "> ready"]
     var reply: [String] = []
     var view: ViewState?
+    var hostPictures: Set<ObjectID> = []
+    var drawing = RenderOutput(image: Data([0x89, 0x50, 0x4E, 0x47]), format: .png, width: 40, height: 30,
+                               canvasRect: Frame(x: 0, y: 0, w: 20, h: 15), scale: 2, objects: [])
+    /// What the window was asked to draw, in order.
+    var drawn: [RenderTarget] = []
+    var page: (JSONValue, CGFloat) -> CGSize = { _, width in CGSize(width: width, height: 900.2) }
+    /// The widths the window laid pages out at, in order.
+    var laidOut: [CGFloat] = []
 
     init() throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -33,6 +42,18 @@ final class DelegatedCallsTests {
         DelegatedCalls(board: board, window: ViewerWindow(
             focused: { false },
             viewState: { [unowned self] in view },
+            render: { [unowned self] request, format in
+                drawn.append(request.target)
+                var output = drawing
+                output.format = format
+                return output
+            },
+            hostPicture: { [unowned self] id in hostPictures.contains(id) },
+            measureHTML: { [unowned self] props, width in
+                laidOut.append(width)
+                return page(props, width)
+            },
+            reload: { id, _, _ in .object(["id": .string(id), "loaded": .bool(true)]) },
             submit: { [unowned self] id, text in
                 guard surface, id == terminal else { return false }
                 screen += ["> \(text)"] + reply
@@ -47,6 +68,13 @@ final class DelegatedCallsTests {
             block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") },
             status: { _ in TerminalStatus(title: "omp") },
             languages: { nil }))
+    }
+
+    @discardableResult
+    func tile(_ id: ObjectID, _ type: ObjectType, at x: Double) -> CanvasObject {
+        let object = CanvasObject(id: id, type: type, frame: Frame(x: x, y: 500, w: 300, h: 200), z: 1, createdBy: .user, createdAt: Date(), props: .object([:]))
+        board.applyHost(object)
+        return object
     }
 
     func answer(_ calls: DelegatedCalls, _ method: String, _ params: JSONValue) async -> Result<JSONValue, EaslConnection.Failure> {
@@ -139,7 +167,6 @@ final class DelegatedCallsTests {
         let calls = delegated()
         #expect(code(await answer(calls, "view.get", .object(["board": "brd_host", "zoom": 2]))) == "invalid_params")
         #expect(code(await answer(calls, "text.measure", .object(["items": [.object(["kind": "label", "text": "x", "font": "Menlo"])]]))) == "invalid_params")
-        #expect(code(await answer(calls, "view.render", .object(["board": "brd_host", "target": .string(terminal)]))) == "unsupported")
         #expect(code(await answer(calls, "view.snapshot", .object(["board": "brd_host"]))) == "unsupported")
         let output = dir.appendingPathComponent("shot.png")
         #expect(code(await answer(calls, "view.snapshot", .object(["board": "brd_host", "out": .string(output.path)]))) == "unsupported")
@@ -149,5 +176,52 @@ final class DelegatedCallsTests {
             "board": "brd_host", "viewport": .object(["rect": .object(["x": 0, "y": 0, "w": 1200, "h": 800]), "zoom": 1]),
             "selection": ["obj_note"], "visible": .bool(true), "appearance": "dark", "promptTarget": .string(terminal),
         ]))
+    }
+
+    @Test func aHostBrowserPictureCannotBeRenderedByTheViewer() async throws {
+        tile("obj_note", .note, at: 0)
+        tile("obj_browser", .browser, at: 400)
+        hostPictures = ["obj_browser"]
+        let calls = delegated()
+        let named = await answer(calls, "view.render", .object(["board": "brd_host", "target": ["obj_note", "obj_browser"], "inline": .bool(true)]))
+        #expect(code(named) == "unavailable")
+    }
+
+    @Test func aViewerRefusesFileDelivery() async throws {
+        tile("obj_note", .note, at: 0)
+        let calls = delegated()
+        let out = dir.appendingPathComponent("render.png")
+        #expect(code(await answer(calls, "view.render", .object(["board": "brd_host", "target": "obj_note"]))) == "invalid_params")
+        #expect(code(await answer(calls, "view.render", .object(["board": "brd_host", "target": "obj_note", "inline": .bool(true), "out": .string(out.path)]))) == "invalid_params")
+        #expect(drawn.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: out.path))
+    }
+
+    /// easld closes a link whose line runs past 64 MiB, failing every call on it, so a render
+    /// that long fails by itself. 25 MiB of 0xFF is 33 MiB of base64, every character a `/`,
+    /// which the reply writes as two bytes.
+    @Test func aRenderTooLongForEasldsLineFailsByItself() async throws {
+        tile("obj_note", .note, at: 0)
+        drawing.image = Data(repeating: 0xFF, count: 25 << 20)
+        let calls = delegated()
+        #expect(code(await answer(calls, "view.render", .object(["board": "brd_host", "target": "obj_note", "inline": .bool(true)]))) == "invalid_params")
+    }
+
+    /// An HTML page measures as the whole frame its tile needs, framed as the app frames it: laid
+    /// out at the width over its zoom (default 640), the 26-pt title bar at 1× over the zoomed
+    /// document, at most 4000 tall. Other types are easld's to measure.
+    @Test func anHtmlPageMeasuresAsItsTilesWholeFrame() async throws {
+        let calls = delegated()
+        func measure(_ props: JSONValue, width: Double? = nil) async throws -> JSONValue {
+            var params: [String: JSONValue] = ["board": "brd_host", "type": "html", "props": props]
+            if let width { params["width"] = .number(width) }
+            return try await answer(calls, "object.measure", .object(params)).get()
+        }
+        #expect(try await measure(.object(["html": "<p>hi</p>"])) == .object(["w": 640, "h": 927]))
+        #expect(try await measure(.object(["html": "<p>hi</p>", "zoom": 2]), width: 500) == .object(["w": 500, "h": 1828]))
+        #expect(laidOut == [640, 250])
+        page = { _, width in CGSize(width: width, height: 9000) }
+        #expect(try await measure(.object(["html": "<p>long</p>"])) == .object(["w": 640, "h": 4000]))
+        #expect(code(await answer(calls, "object.measure", .object(["board": "brd_host", "type": "note", "props": .object(["markdown": "hi"])]))) == "unsupported")
     }
 }

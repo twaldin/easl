@@ -9,6 +9,16 @@ public struct ViewerWindow {
     public var focused: () -> Bool
     /// What the window shows (`view.get`); nil once it is gone.
     public var viewState: () -> ViewState?
+    /// Part of the board drawn offscreen by this Mac (`view.render`), in memory; a tile that shows
+    /// only the host's picture of its object is reported failed, never drawn from that picture.
+    public var render: (RenderRequest, ImageFormat) async throws -> RenderOutput
+    /// The object's tile shows only the host's picture of it, which this Mac can't draw itself.
+    public var hostPicture: (ObjectID) -> Bool
+    /// An HTML page laid out by this Mac's WebKit, its excerpts and images read on the board's host.
+    public var measureHTML: ObjectMeasure.PageMeasurer
+    /// A browser tile's page loaded again, when this Mac runs the page (`object.reload`, credited to
+    /// the caller); throws `Failure` for a tile showing the host's page.
+    public var reload: (ObjectID, _ caller: ObjectID?, _ timeoutMs: Int) async throws -> JSONValue
     /// Types text into a terminal tile's surface (bracketed paste) and presses Enter once the paste
     /// landed; false when the tile has no surface.
     public var submit: (ObjectID, _ text: String) async -> Bool
@@ -25,11 +35,17 @@ public struct ViewerWindow {
     public var languages: () -> LanguageService?
 
     public init(focused: @escaping () -> Bool, viewState: @escaping () -> ViewState?,
+                render: @escaping (RenderRequest, ImageFormat) async throws -> RenderOutput, hostPicture: @escaping (ObjectID) -> Bool,
+                measureHTML: @escaping ObjectMeasure.PageMeasurer, reload: @escaping (ObjectID, ObjectID?, Int) async throws -> JSONValue,
                 submit: @escaping (ObjectID, String) async -> Bool, surfaceTail: @escaping (ObjectID, Int) -> TerminalTail.Tail?,
                 block: @escaping (ObjectID, Int) throws -> (command: TerminalCommand, output: String), status: @escaping (ObjectID) -> TerminalStatus?,
                 languages: @escaping () -> LanguageService?) {
         self.focused = focused
         self.viewState = viewState
+        self.render = render
+        self.hostPicture = hostPicture
+        self.measureHTML = measureHTML
+        self.reload = reload
         self.submit = submit
         self.surfaceTail = surfaceTail
         self.block = block
@@ -57,9 +73,12 @@ public struct ClientIdentity: Equatable, Sendable {
 /// itself on that link, or come straight back here (the composer's own prompt).
 @MainActor
 final class DelegatedCalls {
-    /// Drawings would recurse to the host; snapshots would persist content on the viewer's disk.
-    /// Neither is a capability of this remote-board window.
-    static let served = ["view.get", "agent.prompt", "agent.read", "object.reload", "text.measure"]
+    /// A snapshot would put the window's picture on the viewer's disk: not a capability of a
+    /// remote board's viewer.
+    static let served = ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure"]
+    /// The longest line easld reads from a client (`easld/internal/server`, `defaultLimits`): past
+    /// it easld closes the link, failing every call on it.
+    static let maxReply = 64 << 20
 
     let board: Board
     let window: ViewerWindow
@@ -89,6 +108,8 @@ final class DelegatedCalls {
             case "agent.prompt": return .success(try await prompt(p))
             case "agent.read": return .success(try read(p))
             case "text.measure": return .success(try measure(p))
+            case "view.render": return .success(try await render(p))
+            case "object.measure": return .success(try await measureObject(p))
             case "object.reload": return .success(try await reload(p, diagram: diagram))
             default: throw ApiRouter.Failure("unsupported", "\(call.method) isn't served by this board's viewer")
             }
@@ -96,6 +117,49 @@ final class DelegatedCalls {
             let failure = ApiRouter.failure(for: error)
             return .failure(EaslConnection.Failure(failure.code, failure.message))
         }
+    }
+
+    // MARK: view.render, object.measure, object.reload
+
+    private func render(_ p: JSONValue) async throws -> JSONValue {
+        guard p["inline"]?.bool == true, p["out"] == nil else {
+            throw ApiRouter.Failure("invalid_params", "this board's viewer returns a render in its reply: pass inline: true and no out")
+        }
+        let (_, request) = try ApiRouter.renderRequest(p) { _ in board }
+        let format = try ApiRouter.imageFormat(p)
+        if case .objects(let ids) = request.target, let id = ids.first(where: window.hostPicture), let object = board.objects[id] {
+            throw ApiRouter.Failure("unavailable", "\(object.type.rawValue) tile \(id) isn't drawn by this viewer: it shows the host's picture of it")
+        }
+        let output = try await window.render(request, format)
+        let result = ApiRouter.rendered(output, ApiRouter.inlined(output))
+        try Self.checkReplySize(result)
+        return result
+    }
+
+    /// A reply easld would read as one line longer than `maxReply` fails instead of dropping the
+    /// link. Counted as the answer line carries it: the base64 with each `/` escaped
+    /// (`JSONEncoder`), the rest of the result, and room for the answer's id and keys.
+    private static func checkReplySize(_ result: JSONValue) throws {
+        guard var fields = result.object, let data = fields.removeValue(forKey: "data")?.string else { return }
+        let slash = UInt8(ascii: "/")
+        let image = data.utf8.reduce(0) { $0 + ($1 == slash ? 2 : 1) }
+        let rest = (try? JSONEncoder().encode(JSONValue.object(fields)).count) ?? 0
+        let bytes = image + rest + 1024
+        guard bytes > maxReply else { return }
+        throw ApiRouter.Failure("invalid_params", "the render takes \(bytes >> 20) MiB in a reply, over the \(maxReply >> 20) MiB easld reads from its viewer: render a smaller target, a lower scale, or format jpeg")
+    }
+
+    /// `object.measure` of an HTML page, laid out by this Mac's WebKit with its excerpts and images
+    /// read on the board's host, framed as the app frames one (`ObjectMeasure.htmlSize`). easld
+    /// measures every other type itself, where their files are.
+    private func measureObject(_ p: JSONValue) async throws -> JSONValue {
+        guard p["type"]?.string == ObjectType.html.rawValue else {
+            throw ApiRouter.Failure("unsupported", "this board's viewer measures html objects only; easld measures \(p["type"]?.string ?? "the others") itself")
+        }
+        try ApiRouter.checkProps(p)
+        guard let props = p["props"], props.object != nil else { throw ApiRouter.Failure("invalid_params", "props must be an object") }
+        let size = try await ObjectMeasure.htmlSize(props, width: p["width"]?.number, page: window.measureHTML)
+        return .object(["w": .number(size.width), "h": .number(size.height)])
     }
 
     private func reload(_ p: JSONValue, diagram: JSONValue?) async throws -> JSONValue {
@@ -115,7 +179,12 @@ final class DelegatedCalls {
         guard object.type != .diagram else {
             throw ApiRouter.Failure("unavailable", "diagram \(id) is computed by this viewer only from easld's copy of it (_diagram)")
         }
-        throw ApiRouter.Failure("unavailable", "\(object.type.rawValue) tile \(id) isn't reloaded by this viewer: it computes only diagrams")
+        guard object.type == .browser else {
+            throw ApiRouter.Failure("unavailable", "\(object.type.rawValue) tile \(id) isn't reloaded by this viewer: it reloads only a browser tile whose page it runs")
+        }
+        let timeout = p["timeoutMs"]?.int ?? ApiRouter.reloadTimeoutMs
+        guard timeout >= 0 else { throw ApiRouter.Failure("invalid_params", "timeoutMs must be 0 or more") }
+        return try await window.reload(id, p["caller"]?.string, timeout)
     }
 
     /// Types the prompt into the terminal's surface, as the app's own `agent.prompt` does once its

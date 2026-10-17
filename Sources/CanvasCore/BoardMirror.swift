@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 /// A user's write to a remote board, already applied there as a preview, for its host.
@@ -123,20 +122,13 @@ public final class BoardMirror: BoardHost {
     /// How many times the link went down after the board loaded (a read that spans one reads again).
     private var drops = 0
     private var listeners: [Task<Void, Never>] = []
-    /// The tiles' asks for the host's drawings, sent on `renders` one request at a time.
-    private lazy var queue = RenderQueue(link: renders, board: boardID, hostName: hostName, timeout: renderTimeout) { [weak self] in
-        (self?.board?.objects.mapValues(\.frame) ?? [:], self?.board?.viewport())
-    }
-    /// How long a `view.render` may take, from when it is sent, before it fails `timeout`.
-    private let renderTimeout: Duration
 
-    public init(hostName: String, board: BoardID, connection: EaslConnection, renders: EaslConnection, renderTimeout: Duration = .seconds(30)) {
+    public init(hostName: String, board: BoardID, connection: EaslConnection, renders: EaslConnection) {
         self.hostName = hostName
         boardID = board
         sessionBoardID = board
         self.connection = connection
         self.renders = renders
-        self.renderTimeout = renderTimeout
     }
 
     /// Subscribes, reads the board and returns it; throws the host's failure (`not_found`: no such
@@ -165,8 +157,7 @@ public final class BoardMirror: BoardHost {
         return board
     }
 
-    /// Ends both links, and with the board's link this viewer's attachment; the board stays as
-    /// last seen. Asks for drawings not sent yet are answered `unavailable`.
+    /// Ends both links and this viewer's attachment; the board stays as last seen.
     public func close() {
         for task in listeners { task.cancel() }
         listeners = []
@@ -174,7 +165,6 @@ public final class BoardMirror: BoardHost {
         attachment = nil
         connection.close()
         renders.close()
-        queue.close()
     }
 
     private func listen() {
@@ -619,26 +609,6 @@ public final class BoardMirror: BoardHost {
         }
         return result
     }
-
-    /// An object as the host draws it (`view.render` `inline`): its whole frame, title bar on top,
-    /// cut from the host's picture where the host had the object when it drew it (a move here
-    /// meanwhile doesn't change what the image shows), top-left origin.
-    public struct Render {
-        public var image: CGImage
-        /// Pixels per point the host drew at.
-        public var scale: Double
-    }
-
-    /// Asks the host for `id`'s drawing at `scale`; it goes with the other waiting asks nearest
-    /// the view (`RenderQueue`). `wanted`: whether its tile still wants it (is near the view),
-    /// asked before a refused list's asks go again. `answer` is called once, on the main actor,
-    /// unless the ticket is taken back first: the drawing, or why not (offline, the host's refusal,
-    /// a picture this Mac can't read, `RenderTicket.Withdrawn`).
-    public func render(_ id: ObjectID, scale: Double, wanted: @escaping @MainActor () -> Bool,
-                       answer: @escaping @MainActor (Result<Render, Error>) -> Void) -> RenderTicket {
-        queue.add(id, scale: scale, wanted: wanted, answer: answer)
-    }
-
 
     static let diagramReloadDeadline: Duration = .seconds(15)
 

@@ -181,9 +181,9 @@ public struct HostFiles: Sendable {
         var limit: Int?
     }
 
-    private func payload(_ request: HostFileRequest) throws -> Data {
+    func sourcePayload(_ value: HostFileRequest.Source) throws -> [String: JSONValue] {
         var source: [String: JSONValue]
-        switch request.source {
+        switch value {
         case .directory(let root): source = ["kind": .string("directory"), "root": .string(root)]
         case .liveRoot(let ref, let root): source = ["kind": .string("live"), "root": .string(root), "ref": .string(ref)]
         case .ref(let ref, let sha, let root):
@@ -194,6 +194,11 @@ public struct HostFiles: Sendable {
             if source["kind"] == .string("live") { source = ["kind": .string("directory"), "root": source["root"]!] }
             else { throw HostFileError.ref("\"\(ref)\" is not a ref") }
         }
+        return source
+    }
+
+    private func payload(_ request: HostFileRequest) throws -> Data {
+        let source = try sourcePayload(request.source)
         let policy: JSONValue
         switch request.policy {
         case .boardFile(let relative):
@@ -249,6 +254,23 @@ public struct HostFiles: Sendable {
     };
     const text = (dir, args) => git(dir, args)?.toString('utf8').trim() || null;
     const commitOf = (dir, ref) => text(dir, ['rev-parse', '--verify', '--quiet', '--end-of-options', ref + '^{commit}']);
+    function boardAreas(boardRoot) {
+      const lex = path.resolve(boardRoot), areas = [{ lex, real: resolved(lex) }];
+      const top = text(lex, ['rev-parse', '--show-toplevel']);
+      if (!top) return areas;
+      const place = path.relative(real(top) || top, areas[0].real);
+      if (place === '..' || place.startsWith('../') || path.isAbsolute(place)) return areas;
+      for (const block of (text(top, ['worktree', 'list', '--porcelain', '-z']) || '').split('\0\0')) {
+        const lines = block.split('\0'), entry = lines.find(l => l.startsWith('worktree '))?.slice(9);
+        if (!entry || lines.some(l => l.startsWith('prunable')) || !real(entry)) continue;
+        const canonical = path.join(real(entry), place);
+        const aliases = [path.join(entry, place), path.resolve(lex, path.relative(areas[0].real, canonical))];
+        for (const area of aliases) {
+          if (resolved(area) === canonical && !areas.some(a => a.lex === area)) areas.push({ lex: area, real: canonical });
+        }
+      }
+      return areas;
+    }
     function resolveSource(source) {
       const root = path.resolve(source.root);
       if (source.kind === 'directory') return { root };
@@ -265,6 +287,8 @@ public struct HostFiles: Sendable {
         const entry = lines.find(l => l.startsWith('worktree '))?.slice(9);
         if (!entry || lines.some(l => l.startsWith('prunable')) || !real(entry)) continue;
         if (!lines.includes('branch refs/heads/' + branch)) continue;
+        const counterpart = path.join(entry, place);
+        if (resolved(counterpart) !== path.join(real(entry), place)) fail('refused');
         if (source.kind === 'live') return { root: path.join(entry, place) };
         const sha = commitOf(entry, 'HEAD');
         if (sha) return { root: path.join(entry, place), state: 'live', sha, worktree: entry };
@@ -330,7 +354,7 @@ public struct HostFiles: Sendable {
             if limit is not None and st.st_size > limit and (request['bytes'] or request['metadataLimit']):
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
             if not request['bytes'] or request.get('stamp') == stamp:
-                return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'data': ''}
+                return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'size': st.st_size, 'data': ''}
             if budget is not None and st.st_size > budget[0]:
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
             with os.fdopen(fd, 'rb', closefd=False) as stream:
@@ -343,7 +367,7 @@ public struct HostFiles: Sendable {
                 if len(data) > budget[0]:
                     return {'ok': False, 'code': 'too_large', 'limit': limit}
                 budget[0] -= len(data)
-            return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'data': base64.b64encode(data).decode('ascii')}
+            return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'size': len(data), 'data': base64.b64encode(data).decode('ascii')}
         except OSError as error:
             code = 'refused' if error.errno in (errno.ELOOP, errno.ENOTDIR) else 'not_found' if error.errno == errno.ENOENT else 'unreadable'
             return {'ok': False, 'code': code}

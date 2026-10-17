@@ -34,6 +34,12 @@
     clearTimeout(settleTimer);
     settleTimer = setTimeout(() => {
       if (pending > 0) return;
+      // Async components can introduce a font's first use after the initial font load.
+      document.documentElement.getBoundingClientRect();
+      if (document.fonts.status === 'loading') {
+        track(document.fonts.ready);
+        return;
+      }
       if (restoreY !== null) { window.scrollTo(0, restoreY); restoreY = null; }
       post({ type: 'view.rendered', scrollY: Math.max(0, Math.round(window.scrollY)) }).catch(() => {});
     }, 200);
@@ -320,7 +326,23 @@
     return track(mermaidReady.then((mermaid) => mermaid.run({ nodes })).catch((error) => console.error(error)));
   }
 
-  const start = () => { renderMermaid(); settle(); };
+  const start = () => {
+    const images = [...document.images].map((image) => new Promise((resolve) => {
+      const done = () => {
+        image.removeEventListener('load', done);
+        image.removeEventListener('error', done);
+        resolve();
+      };
+      image.addEventListener('load', done, { once: true });
+      image.addEventListener('error', done, { once: true });
+      // Exact offscreen sizes need images even outside the one-point measure viewport.
+      image.loading = 'eager';
+      if (image.complete) done();
+    }));
+    track(Promise.all(images));
+    renderMermaid();
+    settle();
+  };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();
 })();

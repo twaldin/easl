@@ -1,5 +1,5 @@
 {
-  "description": "Three scripted Mac clients (client.attach) show one board. A call goes to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call `unavailable`, naming it, and nothing is retried on another client; the next call goes to the client the choice order picks then. easld only: the app doesn't speak the client protocol yet.",
+  "description": "Three scripted Mac clients (client.attach) show one board. A call goes to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call `unavailable`, naming it, and nothing is retried on another client; the next call goes to the client the choice order picks then. This records easld's protocol with scripted clients.",
   "steps": [
     {
       "call": "object.create",
@@ -20,7 +20,7 @@
       },
       "replies": {
         "object.reload": [{ "silent": true }],
-        "view.render": [{ "result": { "path": "/tmp/easl-render-studio.png", "width": 200, "height": 200, "scale": 2, "objects": [] } }]
+        "view.render": [{ "result": { "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "format": "png", "width": 1, "height": 1, "scale": 2, "objects": [] } }]
       },
       "ignore": {
         "request.schema": "the schema's hash changes with every schema edit",
@@ -95,8 +95,8 @@
     },
     {
       "call": "view.render",
-      "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 } },
-      "note": "laptop is gone: studio, which focused the board, comes before mini, which attached last"
+      "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 }, "inline": true },
+      "note": "laptop is gone: studio, which focused the board, comes before mini, which attached last; easld returns the image inline"
     }
   ]
 }

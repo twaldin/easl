@@ -577,7 +577,11 @@ final class DiagramTests {
         board.applyHost(easlds)
         try board.update(easlds.id, props: .object(["symbol": "Registry.replay"]))
         let calls = DelegatedCalls(board: board, window: ViewerWindow(
-            focused: { false }, viewState: { nil }, submit: { _, _ in false }, surfaceTail: { _, _ in nil },
+            focused: { false }, viewState: { nil },
+            render: { _, _ in throw ApiRouter.Failure("unavailable", "no canvas") }, hostPicture: { _ in false },
+            measureHTML: { _, _ in throw ApiRouter.Failure("unavailable", "no page") },
+            reload: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser") },
+            submit: { _, _ in false }, surfaceTail: { _, _ in nil },
             block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") }, status: { _ in nil }, languages: { [service] in service }))
 
         let answer = try await calls.answer(EaslConnection.Call(method: "object.reload", params: .object(["id": "obj_calls", "_diagram": try JSONValue.encode(easlds)]))).get()
@@ -587,7 +591,8 @@ final class DiagramTests {
         #expect(graph.nodes.filter { $0.level == -1 }.map(\.id) == [Self.replay, Self.relaunch, Self.warm])
 
         let unsnapshotted = await calls.answer(EaslConnection.Call(method: "object.reload", params: .object(["id": "obj_calls"])))
-        #expect(unsnapshotted == .failure(EaslConnection.Failure("unavailable", "diagram obj_calls is computed by this viewer only from easld's copy of it (_diagram)")))
+        guard case .failure(let failure) = unsnapshotted else { Issue.record("a diagram without the host snapshot was computed"); return }
+        #expect(failure.code == "unavailable")
     }
 }
 

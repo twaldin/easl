@@ -11,8 +11,8 @@ enum ChromeText {
     /// Posted when the scale changes; chrome re-applies its fonts and lays out again.
     static let didChange = Notification.Name("net.waldin.easl.chromeTextScale")
 
-    private static let store = ChromeTextScale.Store(url: AppPaths.uiSettings)
-    private(set) static var scale = store.load()
+    private static let store = UISettings.Store(url: AppPaths.uiSettings)
+    private(set) static var scale = store.load().chromeTextScale
 
     /// `base` points at the current scale.
     static func size(_ base: CGFloat) -> CGFloat { base * CGFloat(scale) }
@@ -42,7 +42,7 @@ enum ChromeText {
     private static func set(_ value: Double) {
         guard value != scale else { return }
         scale = value
-        try? store.save(value)
+        try? store.update { $0.chromeTextScale = value }
         NotificationCenter.default.post(name: didChange, object: nil)
     }
 }
