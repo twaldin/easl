@@ -201,7 +201,8 @@ public enum NoteSource {
     /// with the strongest declaration keywords.
     static func locate(symbol: String, root: URL) async -> String? {
         guard let pattern = symbolPattern(symbol) else { return nil }
-        guard let data = try? await GitRunner.shared.run(["grep", "-l", "-I", "-E", "-e", pattern], in: root, allowedStatus: [0, 1], maxOutput: maxOutput, timeout: timeout),
+        let name = symbol.split(separator: ".").last!.replacingOccurrences(of: "$", with: "\\$")
+        guard let data = try? await GitRunner.shared.run(["grep", "-l", "-I", "-E", "-e", name, "--and", "-e", pattern], in: root, allowedStatus: [0, 1], maxOutput: maxOutput, timeout: timeout),
               let output = String(data: data, encoding: .utf8) else { return nil }
         let candidates = output.split(separator: "\n").map(String.init)
         return await offPool {
