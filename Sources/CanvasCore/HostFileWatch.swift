@@ -4,6 +4,7 @@ import Foundation
 /// metadata-only probe, and `changed` when its observation differs from the one before, starting
 /// from the observation taken with the bytes the tile shows. A failed probe is an observation
 /// too, so the first success after it reloads. Runs until cancelled or dropped.
+/// Probes run off the main actor; change notifications are delivered on it.
 @MainActor
 public final class HostFileWatch {
     private var task: Task<Void, Never>?
@@ -37,7 +38,7 @@ public final class HostFileWatch {
         probe: @escaping @Sendable () async -> Observation?,
         changed: @escaping @MainActor (Observation) -> Void
     ) {
-        task = Task { @MainActor in
+        task = Task.detached(priority: Task.currentPriority) {
             var prior = baseline
             while !Task.isCancelled {
                 do {
@@ -47,7 +48,9 @@ public final class HostFileWatch {
                 }
                 guard let observation = await probe(), !Task.isCancelled else { return }
                 if let prior, prior != observation {
-                    changed(observation)
+                    await MainActor.run {
+                        if !Task.isCancelled { changed(observation) }
+                    }
                 }
                 prior = observation
             }
