@@ -394,6 +394,41 @@ struct HostGitTests {
         #expect(refreshed.set.files.first?.new.text == "after, edited again\n")
     }
 
+    @Test func aWorktreeAppearingDuringRefResolutionIsReadableAndWatched() async throws {
+        let fixture = try HostFileFixture()
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("a.txt", "base\n")
+        try await repo.commit("base")
+        try await repo.git("branch", "feature")
+        let worktree = fixture.directory.appendingPathComponent("feature")
+        let constants = String(decoding: try JSONEncoder().encode([repo.root.path, worktree.path]), as: UTF8.self)
+        let arriving = HostGit(files: try reader(fixture, running: """
+        (() => {
+          const cp = require('node:child_process');
+          const [root, worktree] = \(constants);
+          const execFileSync = cp.execFileSync;
+          let added = false;
+          cp.execFileSync = (file, args, options) => {
+            const out = execFileSync(file, args, options);
+            if (!added && args.includes('worktree') && args.includes('list')) {
+              added = true;
+              execFileSync('git', ['-C', root, 'worktree', 'add', '-q', worktree, 'feature']);
+              require('node:fs').writeFileSync(worktree + '/a.txt', 'arrived\\n');
+            }
+            return out;
+          };
+        })();
+        """))
+        let load = try await arriving.changes(boardRoot: repo.root.path, spec: ChangesSpec(.object(["ref": "feature"])), highlight: false)
+        #expect(load.set.notice == nil && load.set.files.map { $0.new.text } == ["arrived\n"])
+        let probe = try #require(load.probe)
+        let git = HostGit(files: try fixture.reader())
+        #expect(await git.stamp(probe) == load.baseline)
+        try "edited again\n".write(to: worktree.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        #expect(await git.stamp(probe) != load.baseline)
+    }
+
     @Test func anEditWhileTheListingIsReadShowsTheEditedFile() async throws {
         let fixture = try HostFileFixture()
         let git = HostGit(files: try fixture.reader())

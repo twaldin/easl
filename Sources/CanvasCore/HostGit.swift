@@ -823,7 +823,7 @@ extension HostGit {
       readFiles(requests).forEach((reply, j) => { out[slots[j]] = reply.ok ? reply.stamp : reply.code; });
       return paths.map((p, i) => p + ' ' + out[i]);
     }
-    function observe(spec, areas) {
+    function observed(spec, areas) {
       if (typeof spec?.dir !== 'string' || !areaOf(areas, spec.dir)) fail('refused');
       const parts = [];
       const where = run(spec.dir, ['rev-parse', '--path-format=absolute', '--git-dir', '--show-toplevel']);
@@ -851,8 +851,9 @@ extension HostGit {
         }
       }
       if (Array.isArray(spec.files) && spec.files.length) parts.push(...stamps(spec.files, areas));
-      return sha256(parts.join('\0'));
+      return parts;
     }
+    const observe = (spec, areas) => sha256(observed(spec, areas).join('\0'));
     function patches(top, sha, paths) {
       if (!paths.length) return { tree: empty, status: empty, patch: empty, tooLarge: false };
       const tree = output(capture(top, ['--literal-pathspecs', 'ls-tree', '-l', '-z', '--full-tree', sha, '--', ...paths], 64 << 20));
@@ -1053,7 +1054,9 @@ extension HostGit {
       for (let attempt = 0; ; attempt++) {
         budget = limits.total;
         room = limits.reply;
-        baseline = observe(watch, areas);
+        watch.files = [];
+        const before = observed(watch, areas);
+        baseline = sha256(before.join('\0'));
         const base = resolveBase(repo.top, spec.base);
         if (!base.sha) return { ...common, base, notice: { text: base.label } };
         let head = base.sha;
@@ -1070,6 +1073,8 @@ extension HostGit {
         const listing = { ...common, base, head, raw: b64(raw.out), others: b64(others.out), selected: selected.map(e => e.path), omitted: entries.length - selected.length,
           boardPaths: boardPaths(repo.top, selected, areas[0]) };
         if (!selected.length) return listing;
+        watch.files = selected.map(e => absOf(e.path));
+        baseline = sha256([...before, ...stamps(watch.files, areas)].join('\0'));
         const reads = readPaths(selected.map(e => absOf(e.path)), areas, 'bytes', true);
         const refused = new Set(selected.filter((e, i) => reads[i].kind === 'refused' || reads[i].kind === 'unreadable'
           || (e.oldPath && !areaOf(areas, absOf(e.oldPath)))).map(e => e.path));
@@ -1194,7 +1199,7 @@ extension HostGit {
         try {
           if (source.state === 'live') {
             const own = repository(board), live = repository(source.root);
-            return worktreeListing(areas, own && live && own.gitDir === live.gitDir ? board : source.root, spec, { ref });
+            return worktreeListing(areasOf(req.boardRoot), own && live && own.gitDir === live.gitDir ? board : source.root, spec, { ref });
           }
           const gone = source.state === 'merged' ? { merged: source.merge } : source.state === 'missing' ? {} : null;
           return commitsListing(areas, source.sha, spec.ref, spec, gone, { ref });
