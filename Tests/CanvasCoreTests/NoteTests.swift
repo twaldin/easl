@@ -1178,7 +1178,7 @@ final class AnchorStatusApiTests {
 
         // The tile writes the found range back: no new rev, no undo step.
         let steps = board.history.undoSteps.count
-        try board.reanchor(code.id, range: LineRange(start: 8, end: 9), anchor: "def b():")
+        try await board.reanchor(code.id)
         #expect(board.objects[code.id]?.rev == code.rev)
         #expect(board.history.undoSteps.count == steps)
         #expect(try await get(code.id)["rangeStatus"]?["state"] == "live")
@@ -1191,13 +1191,13 @@ final class AnchorStatusApiTests {
         try board.update(code.id, props: .object(["range": LineRange(start: 1, end: 1).json]), caller: "obj_agent")
         #expect(board.objects[code.id]?.props["anchor"] == nil)
         try board.update(code.id, props: .object(["caption": "still b"]), caller: "obj_agent")
-        try board.reanchor(code.id, range: LineRange(start: 1, end: 1), anchor: "import os")
+        try await board.reanchor(code.id)
         try board.update(code.id, props: .object(["caption": "b again"]), caller: "obj_agent")
         #expect(board.objects[code.id]?.props["anchor"] == "import os", "an update that doesn't re-aim keeps it")
 
         // Follow tiles re-aim themselves; they neither anchor nor report a range state.
         let follow = board.create(type: .code, props: .object(["path": "src/a.py", "range": LineRange(start: 1, end: 1).json, "followOf": "obj_t"]))
         #expect(try await get(follow.id)["rangeStatus"] == nil)
-        #expect(throws: BoardError.self) { try board.reanchor(follow.id, range: LineRange(start: 1, end: 1), anchor: nil) }
+        await #expect(throws: BoardError.self) { try await board.reanchor(follow.id) }
     }
 }

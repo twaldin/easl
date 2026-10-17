@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Host-generated code-tile anchors stay inside the board's file policy on easld and Mac hosts, including create, update, and background relocation. Outside paths and escaping symlinks add no source text to `props.anchor`. Inside-board files and permitted worktrees still anchor and relocate. Authored anchors and intentional local display access are unchanged. Code update events precede automatic anchor bookkeeping on both hosts. Requires the host update.
 - **Navigate host code on remote boards.** Definitions, references, hover, Outline, and Go to use the host's checkout and language servers, never a local server against host paths. Missing-server messages name the command and host. Diagram tiles draw live call graphs and reload after host edits. easld persists computed graphs without changing the tile's revision or undo history. On easld, diagram `object.reload` requires an attached Mac viewer. Host text, locations, and graphs stay in the viewer's memory.
 - Quitting while a language server is still being located no longer lets it start after shutdown.
 - Host-generated note anchors stay inside the board's file policy on easld and Mac hosts. Outside paths and escaping symlinks add no source text to markdown and report `path refused`. Registered worktrees, pinned revisions, and permitted source-root overrides still work. Authored markdown and intentional local display access are unchanged. Requires the host update.

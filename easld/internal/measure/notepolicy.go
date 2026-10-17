@@ -15,7 +15,7 @@ import (
 const pathRefused = "path refused"
 
 // NoteExcerpt is a note fence read under the board file policy (HostNotes.noteFile).
-// Code tiles keep ExcerptFor: their local reads are intentionally broader.
+// Code tile display keeps ExcerptFor: its local reads are intentionally broader.
 func (r LinkReading) NoteExcerpt(fence Fence, body []string) Excerpt {
 	fence = r.Fence(fence)
 	areas := boardAreas(r.Board)
