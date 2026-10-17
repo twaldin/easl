@@ -439,11 +439,17 @@ public final class Board {
         commitBookkeeping(before, props: props)
     }
 
-    /// A page's committed URL or title, credited to its driver. Remote reports wait for the
-    /// host's object event rather than creating optimistic board revisions.
+    /// A page's committed URL or title, credited to its driver. Preview remote observations
+    /// without a new object revision so their replies cannot look like new navigation intent.
     public func reportPage(_ id: ObjectID, _ report: BrowserReport) throws {
         if isRemote {
-            _ = try object(id)
+            var shown = try object(id)
+            let props: JSONValue = switch report {
+            case .url(let url, _): .object(["url": .string(url)])
+            case .title(let title): .object(["pageTitle": title.map(JSONValue.string) ?? .null])
+            }
+            shown.props = shown.props.merging(props)
+            applyHost(shown)
             if hostWriteDepth == 0 { host?.send(.page(id, report)) }
             return
         }

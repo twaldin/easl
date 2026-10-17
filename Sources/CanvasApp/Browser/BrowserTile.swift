@@ -63,7 +63,7 @@ final class BrowserTile: NSView, TileContent {
     private var lastRefresh = Date.distantPast
     private var readyWaiters: [@MainActor () -> Void] = []
 
-    /// Navigations this tile started that haven't finished or failed (for load-state waits).
+    /// The tile's latest navigation, until it finishes or fails (for load-state waits).
     var pendingNavigations: [WKNavigation] = []
     /// Navigations (ours or the page's) whose new document hasn't replaced the current one yet;
     /// until then the current document's ready state says nothing about the destination.
@@ -627,6 +627,9 @@ final class BrowserTile: NSView, TileContent {
 
     func track(_ navigation: WKNavigation?) {
         guard let navigation else { return }
+        // WebKit can omit callbacks for superseded requests that never start.
+        pendingNavigations.removeAll(keepingCapacity: true)
+        uncommittedNavigations.removeAll(keepingCapacity: true)
         pendingNavigations.append(navigation)
         uncommittedNavigations.append(navigation)
     }

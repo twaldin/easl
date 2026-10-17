@@ -1296,10 +1296,8 @@ final class BoardMirrorTests {
         try board.reportPage(page, .url("https://b.example/", by: .user))
         try board.reportPage(page, .url("https://c.example/", by: .system))
         try board.reportPage(page, .url("https://d.example/", by: .agent(agent)))
-        #expect(board.objects[page]?.props["url"] == "https://a.example/")
         try await eventually { host.objects[page]?.props["url"] == "https://d.example/" }
         try await eventually { board.objects[page] == host.objects[page] }
-        #expect(host.objects[page]?.props["url"] == "https://d.example/")
         #expect(host.objects[page]?.updatedBy == .agent(tile: agent))
     }
 
