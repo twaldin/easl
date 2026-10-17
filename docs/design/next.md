@@ -73,7 +73,7 @@ Shipped on the Swift app (docs/design.md "Client mode (remote boards)", docs/con
 - **Undo** on a remote board (Edit › Undo is disabled there), and **restacking** (the API has no `z`).
 - Public HTML `allowNetwork` requests use the viewer's network. The host's localhost and private names are not forwarded.
 - Attention markers raised before the window opened aren't shown (`board.get` has none); markers the viewer clears and agents it sees (`markSeen`) stay unseen on the host.
-- Host-generated note anchors can carry outside-board file text in markdown before the viewer's host-file reader refuses the fence ([#127](https://github.com/twaldin/easl/issues/127)). Fix the producer or its remote metadata boundary without removing intentional local note path access.
+- Host-generated code-tile anchors can still copy outside-board source text into shared props ([#132](https://github.com/twaldin/easl/issues/132)). Note `anchor=` production is bounded; code-tile anchor producers need their own boundary. Local note display and measurement retain their existing file access.
 - On easld with a client attached, the composer sends through that client's terminal surface. Its `agent.prompt` `composer` mentions are still queued as hand-offs, not as the composer's own (easld's `prompt` queues before forwarding). This unit does not change that queue.
 - Browser relay through easld (unit4b), forwarding the unchanged `surface.*` envelope to the Mac browser owner rather than executing a browser on the viewer. The shipped browser path is Mac host to Mac viewer.
 - Machine switching (unit5), including ownership transfer. Disconnect and reconnect do not migrate browser execution or replay input.

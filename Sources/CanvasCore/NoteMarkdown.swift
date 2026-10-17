@@ -73,30 +73,23 @@ public enum NoteMarkdown {
         fence.fence.lines != nil && fence.fence.anchor == nil && fence.fence.symbol == nil && fence.fence.commit == nil
     }
 
-    /// `markdown` with each fence that `needsAnchor` anchored at its resolved first line
-    /// (`results` by fence key; exact resolutions only). Fences that can't hold it are skipped.
-    public static func anchoringRanges(_ markdown: String, fences: [AnchoredFence], results: [String: NoteExcerpt]) -> String {
+    /// `markdown` with each fence that `needsAnchor` anchored at its resolved first line (exact
+    /// resolutions only; fences that can't hold it are skipped), as the app writes them back: the
+    /// note tile once it shows them, and the API on storing a note, so a note an agent just wrote
+    /// isn't rewritten under it (a new `rev`) a moment later. Files are read as `reading` says (a
+    /// `ref`), with the tile's `captured` text by fence key, and only inside `areas`: an anchor
+    /// never carries text from outside the board, whatever the tile may show.
+    public static func anchoringRanges(_ markdown: String, reading: LinkReading, within areas: BoardAreas, captured: [String: [String]] = [:]) async -> String {
+        let fences = anchoredFences(in: parse(markdown)).filter(needsAnchor)
+        guard !fences.isEmpty else { return markdown }
+        let results = await NoteSource.excerpts(for: reading.fences(fences), root: reading.root, captured: captured, within: areas)
         var text = markdown
-        for fence in fences where needsAnchor(fence) {
+        for fence in fences {
             guard let excerpt = results[fence.key], excerpt.status == .exact, let first = excerpt.lines.first,
                   let anchored = anchoring(text, fenceLines: fence.lines, anchor: first) else { continue }
             text = anchored
         }
         return text
-    }
-
-    /// `markdown` with its unanchored line-range fences resolved against `root` and anchored, as
-    /// the note tile would write them back once it shows them. The API stores notes this way, so
-    /// a note an agent just wrote isn't rewritten under it (a new `rev`) a moment later.
-    public static func anchoringRanges(_ markdown: String, root: URL) async -> String {
-        await anchoringRanges(markdown, reading: LinkReading(root: root))
-    }
-
-    /// `anchoringRanges(_:root:)` for a note whose files are read as `reading` says (a `ref`).
-    public static func anchoringRanges(_ markdown: String, reading: LinkReading) async -> String {
-        let fences = anchoredFences(in: parse(markdown)).filter(needsAnchor)
-        guard !fences.isEmpty else { return markdown }
-        return anchoringRanges(markdown, fences: fences, results: await NoteSource.excerpts(for: reading.fences(fences), root: reading.root))
     }
 
     /// `object.get`'s `fences` for a note: each anchored fence as written (its info string, the
