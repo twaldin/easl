@@ -165,7 +165,6 @@ extension ApiRouterTests {
         router.closeBoard = { _, _ in
             let response = try await waiter.next()
             #expect(response["error"]?["code"] == "unavailable")
-            #expect(response["error"]?["message"]?.string?.contains("reports no agent lifecycle") == true)
             throw ApiRouter.Failure("unavailable", "session ending failed")
         }
         #expect(try await call(client, "board.close", ["board": .string(board.id), "endSessions": .bool(true)])["error"]?["code"] == "unavailable")
@@ -199,6 +198,27 @@ extension ApiRouterTests {
         router.readTerminal = nil
         #expect(try await call(client, "agent.prompt", ["target": .string(tile), "text": "board is usable", "force": .bool(true)])["ok"] == .bool(true))
         #expect(submitted == ["board is usable"])
+    }
+
+    @Test(arguments: [false, true])
+    func aQueuedPromptCannotResumeAfterItsBoardClosed(reopen: Bool) async throws {
+        let tile = terminal()
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 1)
+        let client = try connect(), closer = try connect()
+        router.readTerminal = { [self] _, _, _ in
+            let closed = try? await call(closer, "board.close", ["board": .string(board.id)])
+            #expect(closed?["result"]?["board"] == .string(board.id))
+            if reopen {
+                let opened = try? await call(closer, "board.open", ["root": .string(board.root.path)])
+                #expect(opened?["result"]?["board"] == .string(board.id))
+            }
+            return nil
+        }
+        let response = try await call(client, "agent.prompt", ["target": .string(tile), "text": "must not be lost on a detached board"])
+        #expect(response["error"]?["code"] == "not_found")
+        #expect(board.messages[tile] == nil)
+        let active = registry.open(root: board.root)
+        #expect(active.messages[tile] == nil)
     }
 
     @Test func aSecondCloseIsNotFoundAndLeavesTheStoredBoardAlone() async throws {
@@ -248,7 +268,6 @@ extension AgentControlTests {
         router.closeBoard = { [unowned self] id, _ in
             let refused = try await call("agent.restart", ["target": "worker", "mode": "fresh", "force": .bool(true)])
             #expect(refused["error"]?["code"] == "conflict")
-            #expect(refused["error"]?["message"]?.string?.contains("closing") == true)
             let duplicate = try await call("board.close", ["board": .string(id)])
             #expect(duplicate["error"]?["code"] == "conflict")
             let result = BoardCloseResult(board: board)

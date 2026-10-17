@@ -2440,6 +2440,7 @@ public final class ApiRouter {
 
     @discardableResult
     private func available(_ board: Board) throws -> Board {
+        guard !board.isClosed else { throw Failure("not_found", "board \(board.id) was closed while the request was pending") }
         guard !closingBoards.contains(board.id) else { throw Failure("conflict", "board \(board.id) is closing") }
         return board
     }
