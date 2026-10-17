@@ -1,7 +1,7 @@
 {
   "scenario": "code-tiles",
   "description": "Code tiles in a git repository: ranges, anchors, symbols, paths relative and absolute, a range re-aimed drops its anchor; object.measure of code.",
-  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "recordedOn": "Mac dev d351f7e; authorized code anchors",
   "steps": [
     {
       "step": "board.open",
@@ -355,7 +355,6 @@
             },
             "id": "<obj:1>",
             "props": {
-              "anchor": "export function greet(name: string): string {",
               "path": "src/app.ts",
               "range": {
                 "end": 3,
@@ -387,6 +386,7 @@
             },
             "id": "<obj:1>",
             "props": {
+              "anchor": "export function greet(name: string): string {",
               "path": "src/app.ts",
               "range": {
                 "end": 3,
@@ -468,7 +468,6 @@
             },
             "id": "<obj:1>",
             "props": {
-              "anchor": "export const answer = 42;",
               "caption": "the answer",
               "path": "src/app.ts",
               "range": {
@@ -501,6 +500,7 @@
             },
             "id": "<obj:1>",
             "props": {
+              "anchor": "export const answer = 42;",
               "caption": "the answer",
               "path": "src/app.ts",
               "range": {
@@ -858,10 +858,9 @@
             },
             "id": "<obj:4>",
             "props": {
-              "anchor": "export function add(a: number, b: number): number {",
               "path": "src/app.ts",
               "range": {
-                "end": 9,
+                "end": 10,
                 "start": 5
               }
             },
@@ -890,9 +889,10 @@
             },
             "id": "<obj:4>",
             "props": {
+              "anchor": "export function add(a: number, b: number): number {",
               "path": "src/app.ts",
               "range": {
-                "end": 10,
+                "end": 9,
                 "start": 5
               }
             },

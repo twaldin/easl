@@ -6,6 +6,8 @@ import CanvasCore
 protocol CodeNavigationHost: AnyObject {
     /// Board-relative path of the file shown.
     var navigationPath: String { get }
+    var navigationUnavailableReason: String? { get }
+    var navigationText: SideText? { get }
     /// The view showing the code; hover, ⌘-click, and right-click are handled over it.
     var navigationView: NSView { get }
     /// Height of one row, so panels open just below the hovered line.
@@ -19,7 +21,6 @@ protocol CodeNavigationHost: AnyObject {
     func reveal(line: Int)
 }
 
-enum CodeNavigationMode { case local, remoteUnavailable }
 
 /// Language features for one code view, answered by the app's shared language servers:
 ///  - hover (pointer still for ~500 ms) shows the server's hover docs; moving cancels the request
@@ -36,12 +37,16 @@ final class CodeNavigation: NSObject {
     /// Shared by every code view in the app (one server per language and project root).
     nonisolated static let languages = LanguageService()
 
-    /// App quit waits for the language servers to be gone (SIGKILL after 2 s), so none outlives
-    /// the app. Returns `.terminateLater` while they're ending and replies when they have.
+    /// Closes every service, including one still finding its server, then waits for its processes.
+    /// Always defers quit so closing admission never blocks the main thread on a spawn.
     static func terminateServers() -> NSApplication.TerminateReply {
-        guard languages.liveProcessCount > 0 else { return .terminateNow }
+        let services = [languages] + RemoteSource.languageServices
         Task.detached {
-            await languages.terminateAll(grace: .seconds(2))
+            await withTaskGroup(of: Void.self) { group in
+                for service in services {
+                    group.addTask { await service.terminateAll(grace: .seconds(2)) }
+                }
+            }
             // While termination is deferred the main run loop runs only in the modal-panel mode,
             // which doesn't service the main queue (so not MainActor jobs either).
             RunLoop.main.perform(inModes: [.modalPanel, .default]) {
@@ -79,15 +84,15 @@ final class CodeNavigation: NSObject {
     /// Where a context menu was opened, for its actions.
     private var menuContext: (position: (line: Int, character: Int)?, anchor: NSPoint)?
     private var actionTask: Task<Void, Never>?
-    private let mode: CodeNavigationMode
+    private let languages: LanguageService
 
     /// `accessories` is the host's header: the Outline button goes at its top right, inside the
     /// trailing `reservedWidth` points the host keeps free.
-    init(host: CodeNavigationHost, board: Board, tile: ObjectID, accessories: NSView, reservedWidth: CGFloat, mode: CodeNavigationMode = .local) {
+    init(host: CodeNavigationHost, board: Board, tile: ObjectID, accessories: NSView, reservedWidth: CGFloat, languages: LanguageService = CodeNavigation.languages) {
         self.host = host
         self.board = board
         self.tile = tile
-        self.mode = mode
+        self.languages = languages
         let codeView = host.navigationView
         self.codeView = codeView
         super.init()
@@ -104,7 +109,6 @@ final class CodeNavigation: NSObject {
     func setActive(_ active: Bool) {
         guard active != (hoverArea != nil), let codeView else { return }
         if active {
-            guard mode == .local else { return }
             let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
             codeView.addTrackingArea(area)
             hoverArea = area
@@ -178,22 +182,27 @@ final class CodeNavigation: NSObject {
             return
         }
         hoverScheduled = false
-        guard let pointer, let codeView, let file, let position = position(atWindowPoint: pointer) else { return }
+        guard let pointer, let codeView, let file, host?.navigationUnavailableReason == nil, let position = position(atWindowPoint: pointer) else { return }
         let anchor = codeView.convert(pointer, from: nil)
         let root = board.root
         lease(file)
         let generation = hoverGeneration
-        hoverTask = Task { [weak self] in
-            let hover = try? await Self.languages.hover(file: file, boardRoot: root, at: position)
-            guard let self, let hover, !Task.isCancelled, self.hoverGeneration == generation else { return }
-            self.showHover(hover, at: position, anchor: anchor)
+        hoverTask = Task { [weak self, languages] in
+            do {
+                let hover = try await languages.hover(file: file, boardRoot: root, at: position)
+                guard let self, let hover, !Task.isCancelled, self.hoverGeneration == generation else { return }
+                self.showHover(hover.markdown, range: hover.range, at: position, anchor: anchor)
+            } catch {
+                guard let self, languages.hostName != nil, !Task.isCancelled, self.hoverGeneration == generation else { return }
+                self.showHover((error as? LocalizedError)?.errorDescription ?? "\(error)", range: nil, at: position, anchor: anchor)
+            }
         }
     }
 
     /// Shows hover docs for `position` below `anchor` (in the text view's coordinates).
-    private func showHover(_ hover: LSPHover, at position: LSPPosition, anchor: NSPoint) {
+    private func showHover(_ markdown: String, range: LSPRange?, at position: LSPPosition, anchor: NSPoint) {
         guard let codeView else { return }
-        let panel = NavigationPanel.hover(hover.markdown)
+        let panel = NavigationPanel.hover(markdown)
         panel.onPointerExit = { [weak self, weak panel] in
             guard let self, let panel, self.hoverPanel === panel else { return }
             self.dismissHover()
@@ -201,7 +210,7 @@ final class CodeNavigation: NSObject {
         panel.show(below: anchor, lineHeight: lineHeight, in: codeView)
         observeTileFrame(codeView)
         hoverPanel = panel
-        hoverShown = (position, hover.range)
+        hoverShown = (position, range)
     }
 
     private func dismissHover() {
@@ -235,14 +244,15 @@ final class CodeNavigation: NSObject {
 
     func goToDefinition(at position: (line: Int, character: Int), anchor: NSPoint, newTile: Bool) {
         run(anchor: anchor) { [weak self] file, root in
-            guard let locations = try await Self.serverAnswer({
-                try await Self.languages.definition(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
-            }, else: { try await self?.textDefinition(at: position, file: file, root: root, anchor: anchor, newTile: newTile, reason: $0) }), let self else { return }
+            guard let self else { return }
+            guard let locations = try await self.serverAnswer({
+                try await self.languages.definition(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
+            }, else: { try await self.textDefinition(at: position, file: file, root: root, anchor: anchor, newTile: newTile, reason: $0) }) else { return }
             switch locations.count {
             case 0: await self.showEmpty("No definition found", file: file, root: root, anchor: anchor)
             case 1: self.open(locations[0], newTile: newTile)
             default:
-                let lines = await Self.languages.lineTexts(locations)
+                let lines = await self.languages.lineTexts(locations, boardRoot: root)
                 self.showLocations("\(locations.count) definitions", locations, lines: lines, anchor: anchor, newTile: newTile)
             }
         }
@@ -253,14 +263,18 @@ final class CodeNavigation: NSObject {
     func findReferences(at position: (line: Int, character: Int), anchor: NSPoint) {
         showMessage("Finding references…", anchor: anchor)
         run(anchor: anchor) { [weak self] file, root in
-            guard let answer = try await Self.serverAnswer({
-                try await Self.languages.references(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
-            }, else: { try await self?.textReferences(at: position, file: file, root: root, anchor: anchor, reason: $0) }), let self else { return }
+            guard let self else { return }
+            guard let answer = try await self.serverAnswer({
+                try await self.languages.references(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
+            }, else: { try await self.textReferences(at: position, file: file, root: root, anchor: anchor, reason: $0) }) else { return }
             var seen = Set<String>()
-            let locations = answer.filter { seen.insert("\($0.url.resolvingSymlinksInPath().path):\($0.range.start.line)").inserted }
+            let locations = answer.filter {
+                let path = self.languages.hostName == nil ? $0.url.resolvingSymlinksInPath().path : $0.url.standardizedFileURL.path
+                return seen.insert("\(path):\($0.range.start.line)").inserted
+            }
             guard !locations.isEmpty else { return await self.showEmpty("No references found", file: file, root: root, anchor: anchor) }
-            let lines = await Self.languages.lineTexts(locations)
-            let name = await self.identifier(at: position, file: file)
+            let lines = await self.languages.lineTexts(locations, boardRoot: root)
+            let name = self.identifier(at: position)
             let title = locations.count == 1 ? "1 reference" : "\(locations.count) references"
             self.showLocations(title, locations, lines: lines, anchor: anchor, newTile: false,
                                openAll: ("Open All ⌘↩", { [weak self] in self?.openAll(locations, name: name) }))
@@ -270,7 +284,7 @@ final class CodeNavigation: NSObject {
     private func showLocations(_ title: String, _ locations: [LSPLocation], lines: [String], anchor: NSPoint, newTile: Bool,
                                openAll: (title: String, run: @MainActor () -> Void)? = nil, note: String? = nil) {
         let rows = zip(locations, lines).map { location, line in
-            NavigationPanel.Row(title: "\(board.relativePath(location.url.path)):\(location.range.start.line + 1)", detail: line) { [weak self] in
+            NavigationPanel.Row(title: "\(languages.relativePath(location.url.path, boardRoot: board.root)):\(location.range.start.line + 1)", detail: line) { [weak self] in
                 NavigationPanel.current?.dismiss()
                 self?.open(location, newTile: newTile)
             }
@@ -283,10 +297,11 @@ final class CodeNavigation: NSObject {
     /// `request`'s answer; nil after `fallback` ran with the one-line reason when the language's
     /// server can't answer: it isn't installed, has no configuration, failed to start, or exited.
     /// Anything else (a timeout, the server's own error) is thrown, to be shown as it is.
-    private static func serverAnswer<T>(_ request: () async throws -> T, else fallback: (String) async throws -> Void) async throws -> T? {
+    private func serverAnswer<T>(_ request: () async throws -> T, else fallback: (String) async throws -> Void) async throws -> T? {
         do {
             return try await request()
         } catch let error as LSPError {
+            guard languages.hostName == nil else { throw error }
             switch error {
             case .unavailable, .unsupportedLanguage, .startFailed, .serverExited:
                 try await fallback(error.errorDescription ?? "")
@@ -296,9 +311,9 @@ final class CodeNavigation: NSObject {
         }
     }
 
-    /// The name under the cursor (the file read off the main actor), or nil when there is none.
-    private func identifier(at position: (line: Int, character: Int), file: URL) async -> String? {
-        await offPool { Self.identifier(in: file, line: position.line, character: position.character) }
+    private func identifier(at position: (line: Int, character: Int)) -> String? {
+        guard let text = host?.navigationText, position.line > 0, position.line <= text.lineCount else { return nil }
+        return Self.identifier(in: text.line(position.line), character: position.character)
     }
 
     /// Where a text search's match is, as a location the lists and Open All take.
@@ -311,7 +326,7 @@ final class CodeNavigation: NSObject {
     /// cursor (`TextNavigation.declarations`), this file's first; one opens, several list, each
     /// labelled as a text search with the server's hint as a note.
     private func textDefinition(at position: (line: Int, character: Int), file: URL, root: URL, anchor: NSPoint, newTile: Bool, reason: String) async throws {
-        guard let name = await identifier(at: position, file: file) else { return showMessage(reason, anchor: anchor) }
+        guard let name = identifier(at: position) else { return showMessage(reason, anchor: anchor) }
         let searchRoot = TextNavigation.searchRoot(for: file, boardRoot: root)
         let relative = String(file.resolvingSymlinksInPath().path.dropFirst(searchRoot.path.count + 1))
         let found = try await TextNavigation.declarations(of: name, in: searchRoot, preferring: relative)
@@ -329,7 +344,7 @@ final class CodeNavigation: NSObject {
     /// Find References without a language server: the lines of the root's files with the name as
     /// a whole word (`TextNavigation.wordMatches`), labelled text matches, with Open All.
     private func textReferences(at position: (line: Int, character: Int), file: URL, root: URL, anchor: NSPoint, reason: String) async throws {
-        guard let name = await identifier(at: position, file: file) else { return showMessage(reason, anchor: anchor) }
+        guard let name = identifier(at: position) else { return showMessage(reason, anchor: anchor) }
         let searchRoot = TextNavigation.searchRoot(for: file, boardRoot: root)
         let (matches, truncated) = try await TextNavigation.wordMatches(name, in: searchRoot)
         try Task.checkCancellation()
@@ -345,10 +360,8 @@ final class CodeNavigation: NSObject {
     /// ones by pattern (`TextNavigation.outline`).
     private func textOutline(file: URL, anchor: NSPoint, reason: String) async {
         let path = file.path
-        let entries = await offPool { () -> [TextNavigation.OutlineEntry] in
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
-            return TextNavigation.outline(of: text, path: path)
-        }
+        guard let text = host?.navigationText?.text else { return }
+        let entries = await offPool { TextNavigation.outline(of: text, path: path) }
         guard !Task.isCancelled else { return }
         guard !entries.isEmpty else { return showMessage("No symbols found without a language server. \(reason)", anchor: anchor) }
         showOutline("Outline · from syntax, no language server", entries.map { ($0.name, $0.kind, $0.line, $0.depth) }, anchor: anchor, note: reason)
@@ -375,22 +388,34 @@ final class CodeNavigation: NSObject {
     private func openAll(_ locations: [LSPLocation], name: String?) {
         NavigationPanel.current?.dismiss()
         let root = board.root
-        let entries = locations.map { (path: board.relativePath($0.url.path), line: $0.range.start.line + 1, url: $0.url) }
+        let languages = languages
+        let entries = locations.map { (path: languages.relativePath($0.url.path, boardRoot: root), line: $0.range.start.line + 1, url: $0.url) }
         let subject = name.map { " to `\($0)`" } ?? ""
         Task { [weak self] in
-            let urls = Array(Set(entries.map(\.url)))
-            let lineCounts = await offPool {
-                Dictionary(uniqueKeysWithValues: urls.map { url in
-                    (url, (try? String(contentsOf: url, encoding: .utf8)).map { $0.split(separator: "\n", omittingEmptySubsequences: false).count } ?? Int.max)
-                })
+            let urls = Set(entries.map(\.url))
+            var texts: [URL: [String]] = [:]
+            for url in urls {
+                do {
+                    let text = try await languages.text(file: url, boardRoot: root)
+                    texts[url] = text.components(separatedBy: "\n")
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    guard languages.hostName != nil else { continue }
+                    self?.showMessage((error as? LocalizedError)?.errorDescription ?? "\(error)", anchor: .zero)
+                    return
+                }
             }
+            guard !Task.isCancelled else { return }
             var excerpts: [CodeExcerpt] = []
             for (index, entry) in entries.enumerated() {
-                let last = max(entry.line, lineCounts[entry.url] ?? Int.max)
+                let text = texts[entry.url]
+                let last = max(entry.line, text?.count ?? Int.max)
                 let lines = LineRange(start: max(1, entry.line - Self.referenceContext), end: min(last, entry.line + Self.referenceContext))
                 let caption = "Reference \(index + 1) of \(entries.count)\(subject) · L\(entry.line)"
-                let props: JSONValue = .object(["path": .string(entry.path), "caption": .string(caption), "range": lines.json])
-                let size = (try? await ObjectMeasure.size(type: .code, props: props, width: nil, root: root)) ?? CGSize(width: Board.defaultSize(.code).w, height: 220)
+                let size = text.map {
+                    ObjectMeasure.code(lines: Array($0.dropFirst(lines.start - 1).prefix(lines.end - lines.start + 1)), fileLineCount: $0.count,
+                                       caption: caption, follow: false, maxWidth: CodeMetrics.defaultFitWidth)
+                } ?? CGSize(width: Board.defaultSize(.code).w, height: 220)
                 excerpts.append(CodeExcerpt(path: entry.path, lines: lines, caption: caption, size: size))
             }
             let title = "\(entries.count == 1 ? "1 reference" : "\(entries.count) references")\(name.map { " to \($0)" } ?? "")"
@@ -405,13 +430,8 @@ final class CodeNavigation: NSObject {
         }
     }
 
-    /// The identifier at a 1-based line and UTF-16 column of a file, for titles. Blocking: call
-    /// through `offPool`.
-    nonisolated private static func identifier(in file: URL, line: Int, character: Int) -> String? {
-        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        guard lines.indices.contains(line - 1) else { return nil }
-        let units = Array(lines[line - 1].utf16)
+    nonisolated private static func identifier(in line: String, character: Int) -> String? {
+        let units = Array(line.utf16)
         func isWord(_ unit: UInt16) -> Bool {
             guard let scalar = Unicode.Scalar(unit) else { return false }
             return scalar == "_" || CharacterSet.alphanumerics.contains(scalar)
@@ -427,7 +447,7 @@ final class CodeNavigation: NSObject {
     /// answers from fallback settings and an empty index until then) says so, instead of
     /// claiming there is nothing.
     private func showEmpty(_ text: String, file: URL, root: URL, anchor: NSPoint) async {
-        let server = await Self.languages.existingServer(for: file, boardRoot: root)
+        let server = await languages.existingServer(for: file, boardRoot: root)
         let busy = await server?.activity ?? []
         if !busy.isEmpty { return showMessage("\(text) yet — \(busy.joined(separator: ", ")) in progress", anchor: anchor) }
         showMessage([text, server?.config.emptyResultHint].compactMap { $0 }.joined(separator: ". "), anchor: anchor)
@@ -440,7 +460,8 @@ final class CodeNavigation: NSObject {
     /// that file, else a new tile beside this one, shown with the least pan that keeps this one
     /// in view. `newTile` (⌥⌘) always opens a new tile. One step of Navigate Back.
     private func open(_ location: LSPLocation, newTile: Bool) {
-        let aim = CodeAim(path: board.relativePath(location.url.path), range: location.range.lines)
+        guard !Task.isCancelled else { return }
+        let aim = CodeAim(path: languages.relativePath(location.url.path, boardRoot: board.root), range: location.range.lines)
         let board = board, tile = tile
         let go = { [weak self] () -> CodeReaim? in
             var opened = CodeOpened(id: tile, created: false, reaim: nil)
@@ -495,18 +516,20 @@ final class CodeNavigation: NSObject {
     /// Top-level symbols and the members of types (not locals), filtered as the user types.
     func showOutline(anchor: NSPoint) {
         run(anchor: anchor) { [weak self] file, root in
-            guard let answer = try await Self.serverAnswer({ try await Self.languages.documentSymbols(file: file, boardRoot: root) },
-                                                           else: { await self?.textOutline(file: file, anchor: anchor, reason: $0) }), let self else { return }
+            guard let self else { return }
+            guard let answer = try await self.serverAnswer({ try await self.languages.documentSymbols(file: file, boardRoot: root) },
+                                                           else: { await self.textOutline(file: file, anchor: anchor, reason: $0) }) else { return }
             let symbols = LSPSymbol.outline(answer)
             guard !symbols.isEmpty else { return self.showMessage("No symbols", anchor: anchor) }
             // LSP has no macro, trait or impl kinds: rust-analyzer sends `macro_rules!` as a
             // function, a trait as an interface and an impl block as an object. The declaring
             // line names them as the text outline does.
-            let lines = await offPool { (try? String(contentsOf: file, encoding: .utf8)).map { $0.split(separator: "\n", omittingEmptySubsequences: false) } ?? [] }
+            let text = self.host?.navigationText
             let precise = ["function": "macro", "interface": "trait", "object": "impl"]
             func kind(_ symbol: LSPSymbol) -> String {
-                let line = symbol.selectionRange.start.line
-                guard let exact = precise[symbol.kindName], lines.indices.contains(line), DeclarationKeywords.kind(declaredBy: String(lines[line])) == exact else { return symbol.kindName }
+                let line = symbol.selectionRange.start.line + 1
+                guard let exact = precise[symbol.kindName], let text, line > 0, line <= text.lineCount,
+                      DeclarationKeywords.kind(declaredBy: text.line(line)) == exact else { return symbol.kindName }
                 return exact
             }
             self.showOutline("Outline", symbols.map { ($0.symbol.name, kind($0.symbol), $0.symbol.selectionRange.start.line + 1, $0.depth) }, anchor: anchor)
@@ -577,7 +600,7 @@ final class CodeNavigation: NSObject {
     private func run(anchor: NSPoint, _ action: @escaping @MainActor (URL, URL) async throws -> Void) {
         cancelPendingHover()
         dismissHover()
-        guard mode == .local else { return showMessage("not yet on remote boards", anchor: anchor) }
+        if let reason = host?.navigationUnavailableReason { return showMessage(reason, anchor: anchor) }
         guard let file else { return }
         let root = board.root
         lease(file)
@@ -599,7 +622,7 @@ final class CodeNavigation: NSObject {
 
     /// Shows `panel` below `anchor`. A list takes the keyboard until it closes: the user asked for it.
     private func present(_ panel: NavigationPanel, anchor: NSPoint) {
-        guard let codeView else { return }
+        guard !Task.isCancelled, let codeView else { return }
         panel.show(below: anchor, lineHeight: lineHeight, in: codeView)
         observeTileFrame(codeView)
         self.panel = panel
@@ -619,7 +642,7 @@ final class CodeNavigation: NSObject {
     /// this view shows it.
     private func lease(_ file: URL) {
         guard lease?.file != file else { return }
-        lease = DocumentLease(file: file, root: board.root)
+        lease = DocumentLease(file: file, root: board.root, languages: languages)
     }
 
     /// The http(s) URL written under a click.
@@ -714,28 +737,30 @@ private final class OutlineButton: NSButton {
 private final class DocumentLease: Sendable {
     let file: URL
     let root: URL
+    let languages: LanguageService
 
-    private static let changes: AsyncStream<(retain: Bool, file: URL, root: URL)>.Continuation = {
-        let (stream, continuation) = AsyncStream.makeStream(of: (retain: Bool, file: URL, root: URL).self)
+    private static let changes: AsyncStream<(retain: Bool, file: URL, root: URL, languages: LanguageService)>.Continuation = {
+        let (stream, continuation) = AsyncStream.makeStream(of: (retain: Bool, file: URL, root: URL, languages: LanguageService).self)
         Task {
             for await change in stream {
                 if change.retain {
-                    await CodeNavigation.languages.retain(file: change.file, boardRoot: change.root)
+                    await change.languages.retain(file: change.file, boardRoot: change.root)
                 } else {
-                    await CodeNavigation.languages.release(file: change.file, boardRoot: change.root)
+                    await change.languages.release(file: change.file, boardRoot: change.root)
                 }
             }
         }
         return continuation
     }()
 
-    init(file: URL, root: URL) {
+    init(file: URL, root: URL, languages: LanguageService) {
         self.file = file
         self.root = root
-        Self.changes.yield((true, file, root))
+        self.languages = languages
+        Self.changes.yield((true, file, root, languages))
     }
 
     deinit {
-        Self.changes.yield((false, file, root))
+        Self.changes.yield((false, file, root, languages))
     }
 }

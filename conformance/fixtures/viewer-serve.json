@@ -1,6 +1,6 @@
 {
   "scenario": "viewer-serve",
-  "description": "A scripted Mac client serves object.measure, view.render and object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a host-picture refusal is the caller's. client.list names attached clients. A diagram reload stays unavailable and is not forwarded. easld only.",
+  "description": "A scripted Mac client serves object.measure, view.render and browser object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a host-picture refusal is the caller's. client.list names attached clients. easld only.",
   "recordedOn": "easld browser-machine lane",
   "steps": [
     {
@@ -227,78 +227,6 @@
       "request": {
         "board": "<board>",
         "frame": {
-          "h": 400,
-          "w": 600,
-          "x": 1100,
-          "y": 0
-        },
-        "props": {
-          "kind": "calls",
-          "symbol": "main"
-        },
-        "type": "diagram"
-      },
-      "response": {
-        "id": "r7",
-        "ok": true,
-        "result": {
-          "object": {
-            "createdAt": "<time:number>",
-            "createdBy": {
-              "kind": "user"
-            },
-            "frame": {
-              "h": 400,
-              "w": 600,
-              "x": 1100,
-              "y": 0
-            },
-            "id": "<obj:3>",
-            "props": {
-              "kind": "calls",
-              "symbol": "main"
-            },
-            "rev": "<rev:1>",
-            "type": "diagram",
-            "updatedAt": "<time:number>",
-            "z": 3
-          }
-        }
-      },
-      "events": [
-        {
-          "board": "<board>",
-          "data": {
-            "createdAt": "<time:number>",
-            "createdBy": {
-              "kind": "user"
-            },
-            "frame": {
-              "h": 400,
-              "w": 600,
-              "x": 1100,
-              "y": 0
-            },
-            "id": "<obj:3>",
-            "props": {
-              "kind": "calls",
-              "symbol": "main"
-            },
-            "rev": "<rev:1>",
-            "type": "diagram",
-            "updatedAt": "<time:number>",
-            "z": 3
-          },
-          "event": "object.created"
-        }
-      ]
-    },
-    {
-      "step": "object.create",
-      "method": "object.create",
-      "request": {
-        "board": "<board>",
-        "frame": {
           "h": 300,
           "w": 400,
           "x": 0,
@@ -310,7 +238,7 @@
         "type": "html"
       },
       "response": {
-        "id": "r8",
+        "id": "r7",
         "ok": true,
         "result": {
           "object": {
@@ -324,14 +252,14 @@
               "x": 0,
               "y": 400
             },
-            "id": "<obj:4>",
+            "id": "<obj:3>",
             "props": {
               "html": "<p>Page</p>"
             },
             "rev": "<rev:1>",
             "type": "html",
             "updatedAt": "<time:number>",
-            "z": 4
+            "z": 3
           }
         }
       },
@@ -349,14 +277,14 @@
               "x": 0,
               "y": 400
             },
-            "id": "<obj:4>",
+            "id": "<obj:3>",
             "props": {
               "html": "<p>Page</p>"
             },
             "rev": "<rev:1>",
             "type": "html",
             "updatedAt": "<time:number>",
-            "z": 4
+            "z": 3
           },
           "event": "object.created"
         }
@@ -515,7 +443,7 @@
       "method": "client.list",
       "request": {},
       "response": {
-        "id": "r9",
+        "id": "r8",
         "ok": true,
         "result": {
           "clients": [
@@ -562,7 +490,7 @@
         "width": 800
       },
       "response": {
-        "id": "r10",
+        "id": "r9",
         "ok": true,
         "result": {
           "h": 210,
@@ -597,7 +525,7 @@
         "type": "html"
       },
       "response": {
-        "id": "r11",
+        "id": "r10",
         "ok": true,
         "result": {
           "approximate": true,
@@ -637,7 +565,7 @@
         "type": "html"
       },
       "response": {
-        "id": "r12",
+        "id": "r11",
         "ok": true,
         "result": {
           "object": {
@@ -651,14 +579,14 @@
               "x": 0,
               "y": 800
             },
-            "id": "<obj:5>",
+            "id": "<obj:4>",
             "props": {
               "html": "<p>Fit</p>"
             },
             "rev": "<rev:1>",
             "type": "html",
             "updatedAt": "<time:number>",
-            "z": 5
+            "z": 4
           }
         }
       },
@@ -676,14 +604,14 @@
               "x": 0,
               "y": 800
             },
-            "id": "<obj:5>",
+            "id": "<obj:4>",
             "props": {
               "html": "<p>Fit</p>"
             },
             "rev": "<rev:1>",
             "type": "html",
             "updatedAt": "<time:number>",
-            "z": 5
+            "z": 4
           },
           "event": "object.created"
         }
@@ -713,11 +641,11 @@
           "x": 0,
           "y": 400
         },
-        "id": "<obj:4>",
+        "id": "<obj:3>",
         "size": "fit"
       },
       "response": {
-        "id": "r13",
+        "id": "r12",
         "ok": true,
         "result": {
           "object": {
@@ -731,7 +659,7 @@
               "x": 0,
               "y": 400
             },
-            "id": "<obj:4>",
+            "id": "<obj:3>",
             "props": {
               "html": "<p>Page</p>"
             },
@@ -741,7 +669,7 @@
             "updatedBy": {
               "kind": "user"
             },
-            "z": 4
+            "z": 3
           }
         }
       },
@@ -759,7 +687,7 @@
               "x": 0,
               "y": 400
             },
-            "id": "<obj:4>",
+            "id": "<obj:3>",
             "props": {
               "html": "<p>Page</p>"
             },
@@ -769,7 +697,7 @@
             "updatedBy": {
               "kind": "user"
             },
-            "z": 4
+            "z": 3
           },
           "event": "object.updated"
         }
@@ -808,7 +736,7 @@
         "type": "html"
       },
       "response": {
-        "id": "r14",
+        "id": "r13",
         "ok": true,
         "result": {
           "created": true,
@@ -823,7 +751,7 @@
               "x": 0,
               "y": 1600
             },
-            "id": "<obj:6>",
+            "id": "<obj:5>",
             "props": {
               "html": "<p>Upsert</p>",
               "key": "page"
@@ -831,7 +759,7 @@
             "rev": "<rev:1>",
             "type": "html",
             "updatedAt": "<time:number>",
-            "z": 6
+            "z": 5
           }
         }
       },
@@ -849,7 +777,7 @@
               "x": 0,
               "y": 1600
             },
-            "id": "<obj:6>",
+            "id": "<obj:5>",
             "props": {
               "html": "<p>Upsert</p>",
               "key": "page"
@@ -857,7 +785,7 @@
             "rev": "<rev:1>",
             "type": "html",
             "updatedAt": "<time:number>",
-            "z": 6
+            "z": 5
           },
           "event": "object.created"
         }
@@ -914,7 +842,7 @@
         ]
       },
       "response": {
-        "id": "r15",
+        "id": "r14",
         "ok": true,
         "result": {
           "results": [
@@ -930,14 +858,14 @@
                   "x": 0,
                   "y": 2000
                 },
-                "id": "<obj:7>",
+                "id": "<obj:6>",
                 "props": {
                   "html": "<p>pending</p>"
                 },
                 "rev": "<rev:1>",
                 "type": "html",
                 "updatedAt": "<time:number>",
-                "z": 7
+                "z": 6
               }
             },
             {
@@ -952,7 +880,7 @@
                   "x": 0,
                   "y": 2000
                 },
-                "id": "<obj:7>",
+                "id": "<obj:6>",
                 "props": {
                   "html": "<p>pending</p>"
                 },
@@ -962,7 +890,7 @@
                 "updatedBy": {
                   "kind": "user"
                 },
-                "z": 7
+                "z": 6
               }
             }
           ],
@@ -983,14 +911,14 @@
               "x": 0,
               "y": 2000
             },
-            "id": "<obj:7>",
+            "id": "<obj:6>",
             "props": {
               "html": "<p>pending</p>"
             },
             "rev": "<rev:1>",
             "type": "html",
             "updatedAt": "<time:number>",
-            "z": 7
+            "z": 6
           },
           "event": "object.created"
         },
@@ -1007,7 +935,7 @@
               "x": 0,
               "y": 2000
             },
-            "id": "<obj:7>",
+            "id": "<obj:6>",
             "props": {
               "html": "<p>pending</p>"
             },
@@ -1017,7 +945,7 @@
             "updatedBy": {
               "kind": "user"
             },
-            "z": 7
+            "z": 6
           },
           "event": "object.updated"
         }
@@ -1047,7 +975,7 @@
         "target": "<obj:1>"
       },
       "response": {
-        "id": "r16",
+        "id": "r15",
         "ok": true,
         "result": {
           "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
@@ -1080,7 +1008,7 @@
         "target": "<obj:1>"
       },
       "response": {
-        "id": "r17",
+        "id": "r16",
         "ok": true,
         "result": {
           "format": "png",
@@ -1117,7 +1045,7 @@
           "code": "unavailable",
           "message": "<obj:1> is only a host picture: view.render cannot draw it"
         },
-        "id": "r18",
+        "id": "r17",
         "ok": false
       },
       "forwarded": [
@@ -1137,26 +1065,11 @@
       "step": "object.reload",
       "method": "object.reload",
       "request": {
-        "id": "<obj:3>"
-      },
-      "response": {
-        "error": {
-          "code": "unavailable",
-          "message": "object.reload computes the diagram through its language servers"
-        },
-        "id": "r19",
-        "ok": false
-      }
-    },
-    {
-      "step": "object.reload",
-      "method": "object.reload",
-      "request": {
         "id": "<obj:2>",
         "timeoutMs": 1000
       },
       "response": {
-        "id": "r20",
+        "id": "r18",
         "ok": true,
         "result": {
           "id": "<obj:2>",

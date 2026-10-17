@@ -84,6 +84,16 @@ extension HostFileError {
     }
 }
 
+struct HostProgram: Sendable {
+    fileprivate let frame: Data
+
+    init(_ source: String) {
+        var frame = try! JSONEncoder().encode(source)
+        frame.append(0x0a)
+        self.frame = frame
+    }
+}
+
 public struct HostFiles: Sendable {
     public let hostName: String
     public let temps: [String]
@@ -104,9 +114,12 @@ public struct HostFiles: Sendable {
         master = nil
     }
 
+    /// This host without its master, for cleanup while easl quits: nothing it runs waits for
+    /// the master, a file-session slot or the main actor.
+    var cleanup: HostFiles { HostFiles(hostName: hostName, route: route, temps: temps) }
+
     public func read(_ request: HostFileRequest) async throws -> HostFile {
-        let payload = try payload(request)
-        let output = try await execute([Self.script, payload], what: "host file reader")
+        let output = try await execute(Self.program, request: payload(request), what: "host file reader")
         guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(output.utf8)) else {
             throw HostFileError.unavailable("invalid host file reply")
         }
@@ -119,7 +132,7 @@ public struct HostFiles: Sendable {
         return HostFile(root: root, path: reply.path, commit: reply.commit, data: bytes, stamp: reply.stamp)
     }
 
-    func execute(_ arguments: [String], input: Data? = nil, timeout: TimeInterval = 20, what: String) async throws -> String {
+    func execute(_ program: HostProgram, request: Data, timeout: TimeInterval = 20, what: String) async throws -> String {
         do {
             if let master {
                 try await master.ready()
@@ -128,11 +141,11 @@ public struct HostFiles: Sendable {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw HostFileError.unavailable(String(describing: error))
+            throw HostFileError.unavailable((error as? LocalizedError)?.errorDescription ?? String(describing: error))
         }
         let result: (status: Int32, output: String, errors: String)
         do {
-            result = try await RemoteHost.run(route.executable, route.ssh(HostedTerminal.remote(Self.launcher, arguments)), input: input, timeout: timeout)
+            result = try await RemoteHost.run(route.executable, route.ssh(Self.command), input: program.frame + request, timeout: timeout)
         } catch {
             if let master { await master.endFileSession() }
             throw error
@@ -143,6 +156,17 @@ public struct HostFiles: Sendable {
             throw HostFileError.unavailable(RemoteHost.lastLine(result.errors) ?? "\(what) exited with status \(result.status)")
         }
         return result.output
+    }
+
+    func channel(_ script: String, _ arguments: [String]) async throws -> (executable: String, arguments: [String]) {
+        do {
+            try await master?.ready()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw HostFileError.unavailable((error as? LocalizedError)?.errorDescription ?? String(describing: error))
+        }
+        return (route.executable, route.ssh(HostedTerminal.remote(script, arguments)))
     }
 
     private struct Reply: Decodable {
@@ -173,7 +197,7 @@ public struct HostFiles: Sendable {
         return source
     }
 
-    private func payload(_ request: HostFileRequest) throws -> String {
+    private func payload(_ request: HostFileRequest) throws -> Data {
         let source = try sourcePayload(request.source)
         let policy: JSONValue
         switch request.policy {
@@ -186,16 +210,22 @@ public struct HostFiles: Sendable {
                               "absolute": absolute.map(JSONValue.string) ?? .null, "temps": .array(temps.map(JSONValue.string))])
         }
         let value = JSONValue.object(["source": .object(source), "policy": policy, "bytes": .bool(request.bytes)])
-        return String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
+        return try JSONEncoder().encode(value)
     }
 
-    static let launcher = #"""
+    private static let launcher = #"""
     for b in "$(command -v bun)" "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do
-      if [ -n "$b" ] && [ -x "$b" ]; then exec "$b" -e "$1" -- "$2"; fi
+      if [ -n "$b" ] && [ -x "$b" ]; then exec "$b" -e "$1"; fi
     done
     echo "bun isn't installed on the host" >&2
     exit 127
     """#
+
+    /// Every program runs through this one short command, reading itself and its request from
+    /// stdin: a long command fails over the ssh master (`mm_send_fd: sendmsg(2): Message too long`).
+    private static let command = HostedTerminal.remote(launcher, [loader])
+
+    private static let loader = #"const frame = await Bun.stdin.text(); const split = frame.indexOf("\n"); const req = JSON.parse(frame.slice(split + 1)); const script = JSON.parse(frame.slice(0, split)); await new (Object.getPrototypeOf(async function(){}).constructor)("req", "require", script)(req, require);"#
 
     static let prelude = #"""
     const fs = require('node:fs');
@@ -323,7 +353,7 @@ public struct HostFiles: Sendable {
             limit = request['limit']
             if limit is not None and st.st_size > limit and (request['bytes'] or request['metadataLimit']):
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
-            if not request['bytes']:
+            if not request['bytes'] or request.get('stamp') == stamp:
                 return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'size': st.st_size, 'data': ''}
             if budget is not None and st.st_size > budget[0]:
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
@@ -369,8 +399,7 @@ public struct HostFiles: Sendable {
 
     """#
 
-    private static let script = prelude + #"""
-    const req = JSON.parse(process.argv.at(-1));
+    private static let program = HostProgram(prelude + #"""
     const source = req.source, policy = req.policy;
     function readRegular(p, root, roots, limit) {
       return { root, ...readFiles([{ path: p, roots, bytes: req.bytes, limit, metadataLimit: policy.kind === 'boardImage' }])[0] };
@@ -437,5 +466,5 @@ public struct HostFiles: Sendable {
     try { reply = read(); }
     catch (e) { reply = { ok: false, code: e.code || 'unreadable', message: e.message, commit: e.commit, limit: e.limit }; }
     process.stdout.write(JSON.stringify(reply));
-    """#
+    """#)
 }

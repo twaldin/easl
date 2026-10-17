@@ -23,14 +23,37 @@ struct HostFileWatchTests {
     private func recordedReader(_ fixture: HostFileFixture) throws -> (HostFiles, URL) {
         let log = fixture.directory.appendingPathComponent("completed-requests")
         let files = try fixture.reader(body: """
-        eval "set -- $command"
-        payload=$6
-        /bin/sh -c "$command"
+        frame=$(cat)
+        printf '%s' "$frame" | /bin/sh -c "$command"
         result=$?
-        printf '%s\\n' "$payload" >> \(RemoteHost.quote(log.path))
+        printf '%s\\n' "$frame" | sed 1d >> \(RemoteHost.quote(log.path))
         exit "$result"
         """)
         return (files, log)
+    }
+
+    @Test func pollingContinuesWhileTheMainActorIsBusyAndCancellationDropsChanges() async throws {
+        let isolated = try await runIsolatedTestIfParallel("pollingContinuesWhileTheMainActorIsBusyAndCancellationDropsChanges")
+        if isolated { return }
+        let third = DispatchSemaphore(value: 0)
+        let probes = Locked(0)
+        var changes: [Int] = []
+        let completed = await MainActor.run {
+            let watch = HostFileWatch(baseline: 0, interval: .milliseconds(20), probe: {
+                let count = probes.withLock { value in
+                    value += 1
+                    return value
+                }
+                if count == 3 { third.signal() }
+                return count >= 3 ? 1 : 0
+            }, changed: { changes.append($0) })
+            let completed = third.wait(timeout: .now() + 1)
+            watch.cancel()
+            return completed
+        }
+        try #require(completed == .success)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(changes == [])
     }
 
     @Test func nilBaselineUsesMetadataOnlyAndNotifiesOnceForASameSizeEdit() async throws {

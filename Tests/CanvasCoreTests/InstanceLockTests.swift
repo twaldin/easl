@@ -39,7 +39,9 @@ final class InstanceLockTests {
         next.release()
     }
 
-    @Test func programsTheHolderStartsDontInheritTheLock() throws {
+    @Test func programsTheHolderStartsDontInheritTheLock() async throws {
+        let isolated = try await runIsolatedTestIfParallel("programsTheHolderStartsDontInheritTheLock")
+        if isolated { return }
         // A terminal's zmx attach outlives a crashed app; holding the lock, it would block every
         // next launch. Spawned keeping every descriptor not marked close-on-exec, as a plain fork
         // and exec does (Foundation's Process closes them all, so it can't tell).

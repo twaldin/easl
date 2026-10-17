@@ -321,9 +321,8 @@ public struct HostGit: Sendable {
         }
     }
 
-    private func call<Reply: Decodable>(_ request: Request) async throws -> Reply {
-        let input = try JSONEncoder().encode(request)
-        let output = try await files.execute([Self.script, "-"], input: input, timeout: 60, what: "host git")
+    func call<Reply: Decodable>(_ request: some Encodable, timeout: TimeInterval = 60) async throws -> Reply {
+        let output = try await files.execute(Self.program, request: JSONEncoder().encode(request), timeout: timeout, what: "host git")
         do {
             return try JSONDecoder().decode(Reply.self, from: Data(output.utf8))
         } catch {
@@ -358,7 +357,7 @@ public struct HostGit: Sendable {
         }
     }
 
-    private struct Limits: Encodable {
+    struct Limits: Encodable {
         var file = GitDiffEngine.maxFileSize
         var total = NoteSource.maxOutput
         var reply = 3 * NoteSource.maxOutput
@@ -632,9 +631,8 @@ public enum HostGitStamp: Sendable, Equatable {
 }
 
 extension HostGit {
-    static let script = HostFiles.prelude + #"""
+    static let program = HostProgram(HostFiles.prelude + #"""
     const crypto = require('node:crypto');
-    const req = JSON.parse(fs.readFileSync(0, 'utf8'));
     const limits = req.limits;
     let budget = limits.total, room = limits.reply;
     let watch = null, baseline = null;
@@ -1281,20 +1279,165 @@ extension HostGit {
       if (r.tooLarge) fail('apply', { message: 'git apply printed too much' });
       return { ok: true };
     }
-    const operations = { code, changes, apply, stamp: () => ({ ok: true, digest: observe(req.watch, areasOf(req.boardRoot)) }) };
-    let reply;
-    try {
-      if (!operations[req.op]) fail('unavailable', { message: 'unknown host git operation ' + req.op });
-      reply = operations[req.op]();
-    } catch (e) {
-      const failed = !(e instanceof Error) && !(e instanceof GitFailed) && typeof e?.code === 'string';
-      const message = e instanceof GitFailed ? failure(e.r) : typeof e?.message === 'string' ? e.message : failed ? undefined : String(e);
-      reply = failed ? { ok: false, code: e.code, message, path: e.path, limit: e.limit } : { ok: false, code: 'unavailable', message };
+    function placeFiles() {
+      const areas = areasOf(req.boardRoot);
+      const configs = Array.isArray(req.configs) ? req.configs : [];
+      const places = (Array.isArray(req.files) ? req.files : []).map(p => {
+        if (typeof p !== 'string' || !path.isAbsolute(p) || p.includes('\0')) return { refused: true };
+        const area = areaOf(areas, p);
+        if (!area) return { refused: true };
+        const file = resolved(path.resolve(p));
+        const placed = { file, own: area === areas[0], checkout: area.real };
+        const config = configs.find(c => c.extensions.includes(path.extname(file).slice(1).toLowerCase()));
+        if (!config) return placed;
+        for (let dir = path.dirname(file); inside(area.real, dir); dir = path.dirname(dir)) {
+          if (config.markers.some(m => fs.existsSync(path.join(dir, m)))) return { ...placed, language: config.language, project: dir };
+          if (dir === area.real) break;
+        }
+        return { ...placed, language: config.language, project: area.real };
+      });
+      return { ok: true, root: areas[0].real, places };
     }
-    reply.watch = watch;
-    reply.baseline = baseline;
-    let json = JSON.stringify(reply);
-    if (json.length > limits.reply) json = JSON.stringify({ ok: false, code: 'too_large', ...oversized, watch, baseline });
-    process.stdout.write(json);
-    """#
+    function readDocuments() {
+      const areasByRoot = new Map();
+      const areasFor = root => {
+        if (!areasByRoot.has(root)) areasByRoot.set(root, areasOf(root));
+        return areasByRoot.get(root);
+      };
+      const asked = Array.isArray(req.documents) ? req.documents : [];
+      const requests = [], slots = [];
+      const documents = asked.map((d, i) => {
+        const named = typeof d?.path === 'string' && path.isAbsolute(d.path) && !d.path.includes('\0') && typeof d.boardRoot === 'string';
+        const area = named && areaOf(areasFor(d.boardRoot), d.path);
+        if (!area) return { kind: 'refused' };
+        requests.push({ path: resolved(path.resolve(d.path)), roots: [area.real], bytes: true, stamp: d.stamp, limit: limits.file, metadataLimit: false });
+        slots.push(i);
+        return null;
+      });
+      readFiles(requests, limits.total).forEach((r, j) => {
+        const i = slots[j];
+        if (r.ok) documents[i] = r.stamp === asked[i].stamp ? { kind: 'unchanged' } : { kind: 'text', stamp: r.stamp, data: r.data };
+        else if (r.code === 'unavailable') fail('unavailable', { message: r.message });
+        else documents[i] = { kind: { not_found: 'missing', too_large: 'tooLarge' }[r.code] || r.code };
+      });
+      return { ok: true, documents };
+    }
+    function scopeOf(areas) {
+      const scope = typeof req.scope === 'string' && path.isAbsolute(req.scope) && !req.scope.includes('\0') ? path.resolve(req.scope) : null;
+      if (!scope || !areaOf(areas, scope)) fail('refused');
+      return scope;
+    }
+    function listFiles() {
+      const scope = scopeOf(areasOf(req.boardRoot));
+      const r = run(scope, ['ls-files', '--cached', '--others', '--exclude-standard', '--deduplicate', '-z'], { max: 64 << 20 });
+      if (r.failed) fail('unavailable', { message: r.err || 'git ls-files failed' });
+      if (r.tooLarge) fail('too_large', { limit: 64 << 20 });
+      return { ok: true, paths: r.out.toString('utf8').split('\0').filter(Boolean).slice(0, req.limit) };
+    }
+    function grepFiles() {
+      const scope = scopeOf(areasOf(req.boardRoot));
+      if (typeof req.pattern !== 'string' || !req.pattern || req.pattern.includes('\0')) fail('refused');
+      const declared = req.mode === 'declared';
+      const args = declared ? ['grep', '-l', '-I', '-E', '-e', req.pattern] : ['grep', '-n', '-I', '-w', '-F', '-e', req.pattern];
+      const r = run(scope, args, { max: \#(NoteSource.maxOutput), allowed: [0, 1] });
+      if (r.failed) fail('unavailable', { message: r.err || 'git grep failed' });
+      if (r.tooLarge) fail('too_large', { limit: \#(NoteSource.maxOutput) });
+      const lines = r.out.toString('utf8').split('\n').filter(Boolean);
+      if (declared) return { ok: true, paths: lines.slice(0, req.limit) };
+      const looks = new RegExp('(^|[^\\p{L}\\p{M}\\p{Nd}\\p{Pc}.$])' + req.pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[(<=:]', 'u');
+      const order = [], seen = new Set(), named = new Set();
+      for (const line of lines) {
+        const first = line.indexOf(':'), second = first < 0 ? -1 : line.indexOf(':', first + 1);
+        if (second < 0) continue;
+        const file = line.slice(0, first);
+        if (!seen.has(file)) { seen.add(file); order.push(file); }
+        if (looks.test(line.slice(second + 1))) named.add(file);
+      }
+      return { ok: true, paths: [...order.filter(f => named.has(f)), ...order.filter(f => !named.has(f))].slice(0, req.limit) };
+    }
+    function loginValues(values) {
+      const marker = '__CANVAS_VALUE__', end = '__CANVAS_END__';
+      const script = values.map(v => "printf '\\n" + marker + "%s" + end + "' \"" + v + "\"").join('; ');
+      return new Promise(resolve => {
+        let output = '', settled = false, exited = false, closed = false, child = null, timer = null;
+        const finish = kill => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (kill && child?.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
+          child?.stdout?.destroy();
+          child?.unref();
+          resolve(output.split('\n' + marker).slice(1).map(answer => {
+            const at = answer.indexOf(end);
+            return at < 0 ? '' : answer.slice(0, at).trim();
+          }));
+        };
+        timer = setTimeout(() => { output = ''; finish(true); }, 10000);
+        try {
+          child = cp.spawn(process.env.SHELL || '/bin/sh', ['-lc', script], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+        } catch {
+          return finish(false);
+        }
+        child.stdout.setEncoding('utf8');
+        child.stdout.on('data', chunk => { output += chunk; });
+        child.stdout.on('close', () => { closed = true; if (exited) finish(false); });
+        child.on('error', () => { output = ''; finish(true); });
+        child.on('exit', () => {
+          exited = true;
+          if (closed) finish(false);
+          else setTimeout(() => finish(true), 100);
+        });
+      });
+    }
+    function findServer() {
+      const executable = p => {
+        if (typeof p !== 'string' || !p.startsWith('/')) return null;
+        try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isDirectory() ? null : p; } catch { return null; }
+      };
+      if (typeof req.command !== 'string' || !req.command || !Array.isArray(req.probes) || !Array.isArray(req.directories)) fail('refused');
+      if (req.command.startsWith('/')) return { ok: true, path: executable(req.command), searchPath: process.env.PATH || null };
+      const home = process.env.HOME || '';
+      const probes = req.probes.map(String);
+      return loginValues([...probes, '$PATH']).then(answers => {
+        const answer = i => answers[i] || '';
+        const directories = req.directories.map(d => (String(d).startsWith('~/') ? home + String(d).slice(1) : String(d)) + '/' + req.command);
+        const candidates = [answer(0), answer(1), ...directories, ...probes.slice(2).map((_, i) => answer(i + 2))];
+        return { ok: true, path: candidates.map(executable).find(Boolean) || null, searchPath: answer(probes.length) || process.env.PATH || null };
+      });
+    }
+    function reapServer() {
+      const pid = req.pid;
+      if (!Number.isInteger(pid) || pid <= 1 || typeof req.binary !== 'string' || !req.binary.startsWith('/')) fail('refused');
+      const runs = () => {
+        const r = cp.spawnSync('ps', ['-ww', '-o', 'args=', '-p', String(pid)], { encoding: 'utf8', timeout: 5000 });
+        return r.status === 0 && (' ' + r.stdout.trim() + ' ').includes(' ' + req.binary + ' ');
+      };
+      for (const signal of ['SIGTERM', 'SIGKILL']) {
+        if (!runs()) return { ok: true, alive: false };
+        try { process.kill(pid, signal); } catch {}
+        for (let i = 0; i < 10 && runs(); i++) cp.spawnSync('sleep', ['0.1']);
+      }
+      return { ok: true, alive: runs() };
+    }
+    const operations = {
+      code, changes, apply, stamp: () => ({ ok: true, digest: observe(req.watch, areasOf(req.boardRoot)) }),
+      place: placeFiles, documents: readDocuments, list: listFiles, grep: grepFiles, server: findServer, reap: reapServer
+    };
+    (async () => {
+      let reply;
+      try {
+        if (!operations[req.op]) fail('unavailable', { message: 'unknown host git operation ' + req.op });
+        reply = await operations[req.op]();
+      } catch (e) {
+        const failed = !(e instanceof Error) && !(e instanceof GitFailed) && typeof e?.code === 'string';
+        const message = e instanceof GitFailed ? failure(e.r) : typeof e?.message === 'string' ? e.message : failed ? undefined : String(e);
+        reply = failed ? { ok: false, code: e.code, message, path: e.path, limit: e.limit } : { ok: false, code: 'unavailable', message };
+      }
+      reply.watch = watch;
+      reply.baseline = baseline;
+      let json = JSON.stringify(reply);
+      if (json.length > limits.reply) json = JSON.stringify({ ok: false, code: 'too_large', ...oversized, watch, baseline });
+      process.stdout.write(json);
+    })();
+    """#)
 }

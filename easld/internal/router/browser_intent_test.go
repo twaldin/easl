@@ -238,6 +238,7 @@ func TestBrowserURLRollbackCorrectsDocumentsWithoutPriorIntent(t *testing.T) {
 			id := idOf(f.result("object.create", map[string]any{"type": "browser", "props": props, "frame": browserFrame(), "caller": creator}))
 			events := &conn{}
 			f.on(events, "events.subscribe", map[string]any{"board": f.board.ID(), "events": []any{"object.updated"}})
+			start := len(events.messages())
 			failed := f.call("object.batch", map[string]any{"ops": []any{
 				map[string]any{"method": "object.update", "params": map[string]any{"id": id, "rev": 1.0, "props": map[string]any{"url": test.attempt}}},
 				map[string]any{"method": "object.update", "params": map[string]any{"id": id, "rev": 1.0, "props": map[string]any{"title": "Stale"}}},
@@ -245,7 +246,7 @@ func TestBrowserURLRollbackCorrectsDocumentsWithoutPriorIntent(t *testing.T) {
 			if code, _ := errorOf(failed); code != "conflict" {
 				t.Fatalf("failed batch: %v", failed)
 			}
-			messages := events.messages()
+			messages := events.messages()[start:]
 			if len(messages) != 2 {
 				t.Fatalf("rollback events: %v", messages)
 			}
@@ -269,6 +270,7 @@ func TestBrowserUnrelatedRollbackPreservesRedirectedIntent(t *testing.T) {
 	}
 	events := &conn{}
 	f.on(events, "events.subscribe", map[string]any{"board": f.board.ID(), "events": []any{"object.updated"}})
+	start := len(events.messages())
 	failed := f.call("object.batch", map[string]any{"ops": []any{
 		map[string]any{"method": "object.update", "params": map[string]any{"id": id, "rev": 3.0, "frame": map[string]any{"x": 500.0}, "props": map[string]any{"title": "Temporary"}}},
 		map[string]any{"method": "object.update", "params": map[string]any{"id": id, "rev": 3.0, "props": map[string]any{"title": "Stale"}}},
@@ -276,7 +278,7 @@ func TestBrowserUnrelatedRollbackPreservesRedirectedIntent(t *testing.T) {
 	if code, _ := errorOf(failed); code != "conflict" {
 		t.Fatalf("failed batch: %v", failed)
 	}
-	messages := events.messages()
+	messages := events.messages()[start:]
 	if len(messages) != 2 {
 		t.Fatalf("rollback events: %v", messages)
 	}

@@ -7,12 +7,25 @@ final class RemoteSource {
     let mirror: BoardMirror
     let files: HostFiles
     let git: HostGit
+    let languages: LanguageService
+    private static var languagePool: [(route: HostRoute, service: LanguageService)] = []
+
+    static var languageServices: [LanguageService] { languagePool.map(\.service) }
 
     init(host: RemoteHost, mirror: BoardMirror) {
         self.host = host
         self.mirror = mirror
-        files = HostFiles(host: host, master: .named(host.sshTarget, support: AppPaths.support.path))
+        let master = HostMaster.named(host.sshTarget, support: AppPaths.support.path)
+        let files = HostFiles(host: host, master: master)
+        self.files = files
         git = HostGit(files: files)
+        if let pooled = Self.languagePool.first(where: { $0.route == master.route }) {
+            languages = pooled.service
+        } else {
+            let service = LanguageService(host: files)
+            Self.languagePool.append((master.route, service))
+            languages = service
+        }
     }
 
     /// The window's title: the board's name (its root folder, as a local board's window says it) at the host.
@@ -85,7 +98,8 @@ extension ViewerWindow {
                 return try tile.block(index)
             },
             // Gemini CLI pads its title to a fixed width. The terminal's program and pid are its host's.
-            status: { id in terminal(id).map { TerminalStatus(title: $0.oscTitle?.trimmingCharacters(in: .whitespaces), lastCommand: $0.lastCommand, focused: $0.isWatched) } })
+            status: { id in terminal(id).map { TerminalStatus(title: $0.oscTitle?.trimmingCharacters(in: .whitespaces), lastCommand: $0.lastCommand, focused: $0.isWatched) } },
+            languages: { [weak controller] in controller?.remote?.languages })
     }
 }
 

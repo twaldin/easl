@@ -76,7 +76,7 @@ extension HostFiles {
                               home: HostedTerminal.homeLabel((host.socketPath as NSString).deletingLastPathComponent),
                               zmx: host.zmxBin, zmxDir: host.zmxDir, tmpdir: host.tmpdir,
                               readings: request.candidates.map { Reading(path: $0.reference.path, pytest: $0.reference.test != nil) })
-        let output = try await execute([Self.referenceScript, String(decoding: try JSONEncoder().encode(payload), as: UTF8.self)], what: "host reference resolver")
+        let output = try await execute(Self.referenceProgram, request: JSONEncoder().encode(payload), what: "host reference resolver")
         guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(output.utf8)) else { return .failure(.unavailable) }
         guard reply.ok else { return .failure(HostReferenceOutcome.Failure(rawValue: reply.code ?? "") ?? .unreadable) }
         guard let index = reply.candidate, request.candidates.indices.contains(index), let path = reply.path,
@@ -86,8 +86,7 @@ extension HostFiles {
         return .resolved(.init(candidate: index, path: path, pytestBytes: bytes))
     }
 
-    private static let referenceScript = prelude + #"""
-    const req = JSON.parse(process.argv.at(-1));
+    private static let referenceProgram = HostProgram(prelude + #"""
     const isDir = p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
     function resolve() {
       const areas = boardAreas(req.boardRoot), root = areas[0].lex;
@@ -210,5 +209,5 @@ extension HostFiles {
     try { reply = resolve(); }
     catch (e) { reply = { ok: false, code: e.code === 'too_large' ? 'tooLarge' : e.code || 'unreadable' }; }
     process.stdout.write(JSON.stringify(reply));
-    """#
+    """#)
 }

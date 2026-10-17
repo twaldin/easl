@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -192,7 +193,7 @@ func (r *Router) client(method, board, need string) (*clients.Client, error) {
 // before may have changed when it returns.
 func (r *Router) await(c *clients.Client, method string, params map[string]any, deadline time.Duration) (map[string]any, error) {
 	r.reg.Mu.Unlock()
-	result, failure := r.clients.Call(c, method, params, deadline)
+	result, failure := r.clients.Call(context.Background(), c, method, params, deadline)
 	r.reg.Mu.Lock()
 	if failure != nil {
 		return nil, failure

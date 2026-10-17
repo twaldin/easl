@@ -391,7 +391,7 @@ func (r *Router) openURL(p map[string]any, from Conn) (any, error) {
 const reloadTimeoutMs = 15_000
 const diagramTimeoutMs = 60_000
 
-func (r *Router) reload(p map[string]any) (any, error) {
+func (r *Router) reload(requestID any, p map[string]any) (any, error) {
 	id, err := str(p, "id")
 	if err != nil {
 		return nil, err
@@ -418,11 +418,7 @@ func (r *Router) reload(p map[string]any) (any, error) {
 		return nil, invalid("timeoutMs must be 0 or more")
 	}
 	if o.Type == model.Diagram {
-		need := "object.reload computes the diagram through its language servers"
-		if r.clients.Choose("object.reload", b.ID()) == nil {
-			return nil, noClient(b.ID(), need)
-		}
-		return nil, fail(api.CodeUnavailable, "%s", need)
+		return r.reloadDiagram(requestID, b, o, timeout)
 	}
 	return r.reloadBrowser(b, o, p, timeout)
 }

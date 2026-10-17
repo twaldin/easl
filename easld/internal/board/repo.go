@@ -290,21 +290,3 @@ func asJSONMap(v any) map[string]any {
 	m, _ := v.(map[string]any)
 	return m
 }
-
-// reanchorShown is the code tile's own write-back when an update re-aims its range or anchor
-// while it shows the same file (CodeTile.update → reanchor): the app's tile reacts to the
-// update before it is broadcast, so its bookkeeping write is announced first. A tile that must
-// load another file first re-anchors after its load (the router's post-call reanchor).
-func (b *Board) reanchorShown(before, after model.Object) {
-	if after.Type != model.Code || (jsonEqualKey(before.Props, after.Props, "range") && jsonEqualKey(before.Props, after.Props, "anchor")) {
-		return
-	}
-	for _, k := range []string{"path", "diffBase", "pinnedCommit", "ref"} {
-		if !jsonEqualKey(before.Props, after.Props, k) {
-			return
-		}
-	}
-	if rng, anchor, changed := measure.Reanchor(after.Props, b.root); changed {
-		_ = b.Reanchor(after.ID, rng, anchor)
-	}
-}

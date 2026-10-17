@@ -1,5 +1,5 @@
 {
-  "description": "A scripted Mac client serves object.measure, view.render and object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a host-picture refusal is the caller's. client.list names attached clients. A diagram reload stays unavailable and is not forwarded. easld only.",
+  "description": "A scripted Mac client serves object.measure, view.render and browser object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a host-picture refusal is the caller's. client.list names attached clients. easld only.",
   "steps": [
     {
       "call": "object.measure",
@@ -24,11 +24,6 @@
       "call": "object.create",
       "params": { "board": "{{board}}", "type": "browser", "props": { "url": "https://example.com/" }, "frame": { "x": 400, "y": 0, "w": 600, "h": 400 } },
       "save": "web"
-    },
-    {
-      "call": "object.create",
-      "params": { "board": "{{board}}", "type": "diagram", "props": { "kind": "calls", "symbol": "main" }, "frame": { "x": 1100, "y": 0, "w": 600, "h": 400 } },
-      "save": "dg"
     },
     {
       "call": "object.create",
@@ -146,12 +141,6 @@
       "params": { "board": "{{board}}", "target": "{{n.object.id}}", "inline": true },
       "expect": { "response.ok": false, "response.error.code": "unavailable", "response.error.message": "{{n.object.id}} is only a host picture: view.render cannot draw it" },
       "note": "a target the viewer has only as a host picture fails the whole call; the reason is the client's, and no file is written"
-    },
-    {
-      "call": "object.reload",
-      "params": { "id": "{{dg.object.id}}" },
-      "expect": { "response.ok": false, "response.error.code": "unavailable", "response.error.message": "object.reload computes the diagram through its language servers" },
-      "note": "a diagram is not forwarded, even though a client serves object.reload"
     },
     {
       "call": "object.reload",

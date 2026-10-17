@@ -136,10 +136,9 @@ final class AgentMessageTests {
         let id = try #require(sent["result"]?["message"]?.string)
         var first: LineClient? = try connect()
         #expect(try await call(first!, "agent.inbox", ["tile": .string(reviewer)])["result"]?["messages"]?.array?.count == 1)
+        shutdown(first!.fd, SHUT_RDWR)
         first = nil
         let next = try connect()
-        // Dropping the client doesn't prove its reader thread has let it go or the server has
-        // processed EOF. Poll the real inbox until the old connection no longer holds the message.
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(3))
         var again = try await call(next, "agent.inbox", ["tile": .string(reviewer)])

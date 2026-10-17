@@ -14,6 +14,21 @@ public enum CodeAnchor {
         return NoteFence(path: path, lines: LineRange(start: start, end: end), anchor: props["anchor"]?.string.flatMap { $0.isEmpty ? nil : $0 })
     }
 
+    /// Resolves metadata only from a board-authorized read, never the tile's display document.
+    static func excerpt(props: JSONValue, boardRoot: URL, captured: [String]? = nil) async -> NoteExcerpt? {
+        guard let fence = fence(props) else { return nil }
+        let areas = BoardAreas(boardRoot: boardRoot)
+        if let ref = RefSource.ref(of: props) {
+            do {
+                let source = try await RefSource.resolve(ref: ref, lastKnownSha: props["refSha"]?.string, boardRoot: boardRoot)
+                return await NoteSource.excerpt(for: source.fence(fence), root: source.root, captured: captured, within: areas)
+            } catch {
+                return NoteExcerpt(path: fence.path ?? "", range: nil, lines: [], status: .stale(RefSource.describe(error, ref: ref)), missing: true)
+            }
+        }
+        return await NoteSource.excerpt(for: fence, root: boardRoot, captured: captured, within: areas)
+    }
+
     /// The anchor written back for `range` of `source`: its first line, trimmed; nil when blank.
     public static func anchor(of range: LineRange, in source: [String]) -> String? {
         guard range.start >= 1, range.start <= source.count else { return nil }

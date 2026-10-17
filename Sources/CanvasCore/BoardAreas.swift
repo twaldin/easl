@@ -1,12 +1,12 @@
 import Foundation
 
-/// The files the app may read into note metadata it writes or reports itself (a fence's
-/// `anchor=`, `object.get`'s `fences`), by the board file policy a remote host's reader applies
-/// (`boardAreas` in `HostFiles.prelude`). An area is the board root, or its place in another
-/// registered worktree of the board's repository, as written and with symlinks resolved. A live
-/// file must be written inside an area and still lie inside it once symlinks resolve; a file at a
-/// commit must be written inside one and not be a symlink in that commit. The note tile still
-/// shows any file on this Mac (`NoteSource.excerpts` without areas).
+/// The files the app may read into note or code metadata it writes or reports itself (a fence's
+/// `anchor=`, a code tile's `props.anchor`, `object.get`'s `fences`), by the board file policy a
+/// remote host's reader applies (`boardAreas` in `HostFiles.prelude`). An area is the board root,
+/// or its place in another registered worktree of the board's repository, as written and with
+/// symlinks resolved. A live file must be written inside an area and still lie inside it once
+/// symlinks resolve; a file at a commit must be written inside one and not be a symlink in that
+/// commit. Local note and code tiles still show any file on this Mac.
 public struct BoardAreas: Sendable {
     struct Area: Sendable {
         var lexical: String

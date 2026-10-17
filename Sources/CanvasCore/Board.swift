@@ -439,8 +439,8 @@ public final class Board {
         commitBookkeeping(before, props: props)
     }
 
-    /// A page's committed URL or title, credited to its driver. Preview remote observations
-    /// without a new object revision so their replies cannot look like new navigation intent.
+    /// A page's committed URL or title, credited to its driver. Remote observations preview
+    /// their props without advancing the object's revision.
     public func reportPage(_ id: ObjectID, _ report: BrowserReport) throws {
         if isRemote {
             var shown = try object(id)
@@ -462,20 +462,25 @@ public final class Board {
         }
     }
 
-    /// A code tile's range re-found by content (`NoteAnchor`, from the tile's reload of its
-    /// file) and the first line it is anchored by, written like `writeBookkeeping`: the app keeps
-    /// the range on the code it showed, nobody chose to move it, so no `rev`, undo step, or log.
-    /// Only a code tile whose range anchors (`CodeAnchor.fence`).
-    public func reanchor(_ id: ObjectID, range: LineRange, anchor: String?) throws {
+    /// Re-finds a code range using an authorized read, not text supplied by a display tile.
+    /// Like bookkeeping, relocation changes no object rev, undo step, or activity log.
+    @discardableResult
+    public func reanchor(_ id: ObjectID, captured: [String]? = nil) async throws -> NoteExcerpt? {
         let before = try object(id)
         guard before.type == .code, CodeAnchor.fence(before.props) != nil else {
             throw BoardError.invalidParams("only a code tile showing a range, not a follow tile or pinned to a commit, is re-anchored")
         }
-        commitBookkeeping(before, props: .object(["range": range.json, "anchor": anchor.map(JSONValue.string) ?? .null]))
+        guard !isRemote, !Task.isCancelled else { return nil }
+        let excerpt = await CodeAnchor.excerpt(props: before.props, boardRoot: root, captured: captured)
+        guard !Task.isCancelled, objects[id] == before else { return nil }
+        if let excerpt, let range = excerpt.range, !excerpt.refused {
+            let anchor = CodeAnchor.anchor(of: LineRange(start: 1, end: 1), in: excerpt.lines)
+            commitBookkeeping(before, props: .object(["range": range.json, "anchor": anchor.map(JSONValue.string) ?? .null]))
+        }
+        return excerpt
     }
 
     func commitBookkeeping(_ before: CanvasObject, props: JSONValue) {
-        // A remote board's bookkeeping is its host's.
         guard !isRemote else { return }
         var object = before
         object.props = object.props.merging(props)

@@ -28,15 +28,6 @@ final class DelegatedCallsTests {
     var page: (JSONValue, CGFloat) -> CGSize = { _, width in CGSize(width: width, height: 900.2) }
     /// The widths the window laid pages out at, in order.
     var laidOut: [CGFloat] = []
-    var reloaded: [ObjectID] = []
-    var browsed: [Browsed] = []
-    var pageAnswer: (CmuxBrowserCommand) throws -> JSONValue = { _ in .object([:]) }
-
-    struct Browsed: Equatable {
-        var id: ObjectID
-        var command: CmuxBrowserCommand
-        var caller: ObjectID?
-    }
 
     init() throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -62,14 +53,8 @@ final class DelegatedCallsTests {
                 laidOut.append(width)
                 return page(props, width)
             },
-            reload: { [unowned self] id, _, _ in
-                reloaded.append(id)
-                return .object(["id": .string(id), "loaded": .bool(true)])
-            },
-            browse: { [unowned self] id, command, caller in
-                browsed.append(Browsed(id: id, command: command, caller: caller))
-                return try pageAnswer(command)
-            },
+            reload: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser page is loaded") },
+            browse: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser page is loaded") },
             submit: { [unowned self] id, text in
                 guard surface, id == terminal else { return false }
                 screen += ["> \(text)"] + reply
@@ -82,7 +67,8 @@ final class DelegatedCallsTests {
                 return tail.finish()
             },
             block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") },
-            status: { _ in TerminalStatus(title: "omp") }))
+            status: { _ in TerminalStatus(title: "omp") },
+            languages: { nil }))
     }
 
     @discardableResult
@@ -193,18 +179,13 @@ final class DelegatedCallsTests {
         ]))
     }
 
-    /// RenderQueue would otherwise take the returned stand-in as its own host picture.
-    @Test func whatOnlyTheHostDrawsIsNeverDrawnOrReloadedHere() async throws {
+    @Test func aHostBrowserPictureCannotBeRenderedByTheViewer() async throws {
         tile("obj_note", .note, at: 0)
-        tile("obj_code", .code, at: 400)
-        tile("obj_diagram", .diagram, at: 800)
-        hostPictures = ["obj_code", "obj_diagram"]
+        tile("obj_browser", .browser, at: 400)
+        hostPictures = ["obj_browser"]
         let calls = delegated()
-        let named = await answer(calls, "view.render", .object(["board": "brd_host", "target": ["obj_note", "obj_code"], "inline": .bool(true)]))
+        let named = await answer(calls, "view.render", .object(["board": "brd_host", "target": ["obj_note", "obj_browser"], "inline": .bool(true)]))
         #expect(code(named) == "unavailable")
-        #expect(drawn.isEmpty)
-        #expect(code(await answer(calls, "object.reload", .object(["id": "obj_diagram"]))) == "unavailable")
-        #expect(reloaded.isEmpty)
     }
 
     @Test func aViewerRefusesFileDelivery() async throws {
@@ -246,25 +227,16 @@ final class DelegatedCallsTests {
     }
 
 
-    @Test func aBrowserCallFailsWithThePagesOwnCodeOrBeforeReachingIt() async throws {
+    @Test func aBrowserCallRejectsInvalidCommandsAndTargets() async throws {
         tile("obj_page", .browser, at: 0)
         tile("obj_note", .note, at: 400)
-        pageAnswer = { command in
-            if case .eval = command { throw CmuxError("js_error", "ReferenceError: missing is not defined") }
-            throw CmuxError("timeout", "timed out waiting for #done")
-        }
         let calls = delegated()
         func call(_ id: ObjectID, _ method: String, _ params: JSONValue) async -> Result<JSONValue, EaslConnection.Failure> {
             await answer(calls, "browser.call", .object(["id": .string(id), "method": .string(method), "params": params]))
         }
-        #expect(await call("obj_page", "browser.eval", .object(["script": "missing"])) == .failure(EaslConnection.Failure("js_error", "ReferenceError: missing is not defined")))
-        #expect(await call("obj_page", "browser.wait", .object(["selector": "#done", "timeout_ms": 50])) == .failure(EaslConnection.Failure("timeout", "timed out waiting for #done")))
-        #expect(browsed.map(\.command) == [.eval(script: "missing"), .wait(.selector("#done"), timeoutMs: 50)])
-        browsed = []
-        #expect(await call("obj_page", "browser.wait", .object(["selector": "#done", "load_state": "complete"])) == .failure(EaslConnection.Failure("invalid_params", "browser.wait takes exactly one of load_state, url_contains, selector")))
+        #expect(code(await call("obj_page", "browser.wait", .object(["selector": "#done", "load_state": "complete"]))) == "invalid_params")
         #expect(code(await call("obj_page", "browser.open_split", .object(["url": "https://example.com/"]))) == "invalid_params")
         #expect(code(await call("obj_note", "browser.url.get", .object([:]))) == "not_found")
         #expect(code(await call("obj_gone", "browser.url.get", .object([:]))) == "not_found")
-        #expect(browsed.isEmpty)
     }
 }

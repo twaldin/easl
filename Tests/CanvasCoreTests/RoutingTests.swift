@@ -108,11 +108,11 @@ final class RoutingTests {
         #expect(ConnectorRouter.overlaps(out).isEmpty && ConnectorRouter.intersections(out).isEmpty)
     }
 
-    @Test func labelsKeepOffTilesTitlesArrowsAndEachOther() {
+    @Test func labelsKeepOffTilesTitlesArrowsAndEachOther() async {
         let fan = fanIn(labels: true)
         let lane = group(fan.sources)
         let objects = fan.sources + [fan.target, lane] + fan.arrows
-        let routing = geometry(objects).routing()
+        let routing = await route(geometry(objects))
         let labels = routing.labels
         #expect(labels.count == fan.arrows.count)
         let tiles = objects.filter(BoardGeometry.blocksRoutes).map(\.frame.rect)
@@ -129,7 +129,7 @@ final class RoutingTests {
             }.min()!
             #expect(label.leader == nil && gap <= 8, "\(id) right by its own line")
         }
-        let check = geometry(objects).layoutCheck()
+        let check = await check(geometry(objects))
         #expect(check.labelOverlaps.isEmpty, "\(check.labelOverlaps)")
     }
 
@@ -176,15 +176,15 @@ final class RoutingTests {
         #expect(paths["whole"]!.first! != paths["row"]!.first!)
     }
 
-    @Test func routingIsDeterministic() throws {
+    @Test func routingIsDeterministic() async throws {
         let objects = try atlas()
-        let first = geometry(objects).routing()
-        let again = geometry(objects.reversed()).routing()
+        let first = await route(geometry(objects))
+        let again = await route(geometry(objects.reversed()))
         #expect(first.paths == again.paths && first.labels == again.labels)
     }
 
-    @Test func theAtlasBoardRoutesWithoutSharedRunsArrowsThroughTilesOrCoveredLabels() throws {
-        let check = geometry(try atlas()).layoutCheck()
+    @Test func theAtlasBoardRoutesWithoutSharedRunsArrowsThroughTilesOrCoveredLabels() async throws {
+        let check = await check(geometry(try atlas()))
         #expect(check.arrowOverlaps.isEmpty, "\(check.arrowOverlaps)")
         #expect(check.crossings.isEmpty, "\(check.crossings)")
         #expect(check.labelOverlaps.isEmpty, "no label on a tile, title, label, or line: \(check.labelOverlaps.map { ($0.label, $0.overlaps, $0.lines) })")
@@ -241,6 +241,10 @@ final class RoutingTests {
         await withCheckedContinuation { done in
             DispatchQueue.global().async { done.resume(returning: geometry.routing()) }
         }
+    }
+
+    private func check(_ geometry: BoardGeometry) async -> BoardGeometry.LayoutReport {
+        await offPool { geometry.layoutCheck() }
     }
 
     @Test func aDropSettlesOnceAndSettlingAgainChangesNothing() async throws {
@@ -308,7 +312,7 @@ final class RoutingTests {
         #expect(geometry([under, over, across]).layoutCheck(scope: [over.id]).arrowIntersections.isEmpty, "scoped to what's involved")
     }
 
-    @Test func layoutCheckHintsAtColoringManyLabelledArrowsThatShareOneColor() {
+    @Test func layoutCheckHintsAtColoringManyLabelledArrowsThatShareOneColor() async {
         let fan = fanIn(labels: true)
         func colored(_ arrow: CanvasObject, _ color: String) -> CanvasObject {
             var object = arrow
@@ -319,10 +323,10 @@ final class RoutingTests {
         }
         let grey = fan.arrows.map { colored($0, "grey") }
         let tiles = fan.sources + [fan.target]
-        let hints = geometry(tiles + grey).layoutCheck().hints
+        let hints = await check(geometry(tiles + grey)).hints
         #expect(hints.count == 1 && hints[0].contains("8 labelled arrows are all grey"), "\(hints)")
-        #expect(geometry(tiles + Array(grey.prefix(6))).layoutCheck().hints.isEmpty, "six are few enough to tell apart")
-        #expect(geometry(tiles + grey.dropLast() + [colored(grey.last!, "blue")]).layoutCheck().hints.isEmpty, "already colored by flow")
-        #expect(geometry(tiles + fan.arrows).layoutCheck().hints.count == 1, "the default ink counts as one color")
+        #expect(await check(geometry(tiles + Array(grey.prefix(6)))).hints.isEmpty, "six are few enough to tell apart")
+        #expect(await check(geometry(tiles + grey.dropLast() + [colored(grey.last!, "blue")])).hints.isEmpty, "already colored by flow")
+        #expect(await check(geometry(tiles + fan.arrows)).hints.count == 1, "the default ink counts as one color")
     }
 }

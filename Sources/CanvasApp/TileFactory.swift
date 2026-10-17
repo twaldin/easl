@@ -24,10 +24,10 @@ enum TileFactory {
             case .question: return QuestionTile(object: object, board: board)
             case .html: return HtmlTile(object: object, board: board, files: remote.files)
             case .image: return ImageTile(object: object, board: board, files: remote.files)
-            case .code: return CodeTile(object: object, board: board, git: remote.git)
+            case .code: return CodeTile(object: object, board: board, git: remote.git, languages: remote.languages)
             case .changes: return ChangesTile(object: object, board: board, git: remote.git)
             case .browser: return remote.drawsPage(object) ? BrowserTile(object: object, board: board) : RemoteBrowserTile(object: object, remote: remote)
-            case .diagram: return RemoteImageTile(object: object, remote: remote)
+            case .diagram: return DiagramTile(object: object, board: board, remote: remote)
             default: return CardTile(object: object)
             }
         }

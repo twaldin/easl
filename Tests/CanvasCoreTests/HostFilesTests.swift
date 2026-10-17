@@ -4,6 +4,23 @@ import Testing
 @testable import CanvasCore
 
 final class HostFileFixture: @unchecked Sendable {
+    // Keep one executable beside the runner; per-fixture bodies are sourced as data.
+    private static let launcher = Result<URL, Error> {
+        let url = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+            .appendingPathComponent("CanvasCoreTests-host-files-ssh")
+        let script = """
+        #!/bin/sh
+        for command; do :; done
+        . "$2"
+
+        """
+        if (try? String(contentsOf: url, encoding: .utf8)) != script {
+            try script.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+        return url
+    }
+
     let directory: URL
     let root: URL
     let temp: URL
@@ -24,24 +41,26 @@ final class HostFileFixture: @unchecked Sendable {
     }
 
     func reader(body: String? = nil, request: JSONValue? = nil) throws -> HostFiles {
-        let executable = directory.appendingPathComponent("ssh-\(UUID().uuidString)")
+        let bodyFile = directory.appendingPathComponent("reader-\(UUID().uuidString)")
         let execution: String
         if let request {
             let json = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
             execution = """
-            eval "set -- $command"
-            exec "$1" "$2" "$3" "$4" "$5" \(RemoteHost.quote(json))
+            { head -n 1; printf '%s' \(RemoteHost.quote(json)); } | /bin/sh -c "$command"
             """
         } else {
             execution = body ?? "exec /bin/sh -c \"$command\""
         }
-        try """
-        #!/bin/sh
-        for command; do :; done
-        \(execution)
-        """.write(to: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-        return HostFiles(hostName: "fixture", route: HostRoute(target: "fixture", controlPath: directory.appendingPathComponent("control").path, executable: executable.path), temps: [temp.path])
+        try (execution + "\n").write(to: bodyFile, atomically: true, encoding: .utf8)
+        return HostFiles(hostName: "fixture", route: HostRoute(target: "fixture", controlPath: bodyFile.path,
+                         executable: try Self.launcher.get().path), temps: [temp.path])
+    }
+
+    func reader(running injection: String) throws -> HostFiles {
+        let escaped = String(decoding: try JSONEncoder().encode(injection + "\n"), as: UTF8.self).dropFirst().dropLast()
+        return try reader(body: """
+        { dd bs=1 count=1 of=/dev/null 2>/dev/null; printf '"%s' \(RemoteHost.quote(String(escaped))); cat; } | /bin/sh -c "$command"
+        """)
     }
 
     func readerSwappingDirectory(containing relative: String, afterCanonicalization: Int) throws -> HostFiles {
@@ -70,12 +89,8 @@ final class HostFileFixture: @unchecked Sendable {
             return canonical;
           };
         })();
-
         """
-        return try reader(body: """
-        eval "set -- $command"
-        exec "$1" "$2" "$3" "$4" \(RemoteHost.quote(injection))"$5" "$6"
-        """)
+        return try reader(running: injection)
     }
 
     func request(_ path: String, source: HostFileRequest.Source? = nil, bytes: Bool = true) -> HostFileRequest {
@@ -353,6 +368,23 @@ struct HostFilesTests {
         try fixture.write("file.txt", Data("host".utf8))
         let broken = try fixture.reader(body: "/bin/sh -c \"$command\"; printf 'truncated'")
         await #expect(throws: HostFileError.unavailable("invalid host file reply")) { try await broken.read(fixture.request("file.txt")) }
+    }
+
+    @Test func anSshThatTakesOnlyShortCommandsStillReadsFilesAndListsChanges() async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.reader(body: """
+        if [ "${#command}" -gt 4096 ]; then echo 'mux_client_request_session: send fds failed' >&2; exit 255; fi
+        exec /bin/sh -c "$command"
+        """)
+        try fixture.write("file.txt", Data("host bytes\n".utf8))
+        #expect(try await files.read(fixture.request("file.txt")).data == Data("host bytes\n".utf8))
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("a.txt", "base\n")
+        try await repo.commit("base")
+        try await repo.write("a.txt", "edited\n")
+        let load = try await HostGit(files: files).changes(boardRoot: repo.root.path, spec: ChangesSpec(.object([:])), highlight: false)
+        #expect(load.set.notice == nil && load.set.files.map(\.path) == ["a.txt"] && load.set.files.map { $0.new.text } == ["edited\n"])
     }
 
     @Test func cancellationReapsTheClient() async throws {

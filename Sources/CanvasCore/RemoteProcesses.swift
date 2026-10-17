@@ -34,9 +34,9 @@ public final class RemoteProcesses: @unchecked Sendable {
         let key = ObjectIdentifier(process)
         let previous = process.terminationHandler
         process.terminationHandler = { [weak self] process in
-            previous?(process)
             self?.lock.withLock { self?.entries[key] = nil }
             entry.exited.leave()
+            previous?(process)
         }
         try lock.withLock {
             guard !stopped else { throw Stopped() }
