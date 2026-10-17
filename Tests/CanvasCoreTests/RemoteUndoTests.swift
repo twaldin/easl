@@ -540,7 +540,7 @@ extension BoardMirrorTests {
         let retired = try #require(view.nextUndo).id
         _ = try host.replayViewer(mirror.viewer, step: retired, redo: false)
         for id in (retired + 1)...(retired + 201) {
-            let edit = try #require(ViewerEdit(.object(["viewer": .string(mirror.viewer), "step": .number(Double(id))])))
+            let edit = try #require(try ViewerEdit(.object(["viewer": .string(mirror.viewer), "step": .number(Double(id))])))
             _ = try host.asViewerEdit(edit) {
                 try host.update(deleted.id, frame: Frame(x: Double(id), y: 0, w: 280, h: 200))
             }

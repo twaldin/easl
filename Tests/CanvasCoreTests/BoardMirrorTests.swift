@@ -191,7 +191,7 @@ final class BoardMirrorTests {
         let router = router
         server = SocketServer(path: socket) { request, connection in
             guard request["method"]?.string == "view.seen" else { return await router.handle(request, connection: connection) }
-            let failure: JSONValue = .object(["id": request["id"] ?? .null, "ok": false,
+            let failure: JSONValue = .object(["id": request["id"] ?? .null, "ok": .bool(false),
                                              "error": .object(["code": "unavailable", "message": "ack refused"])])
             pending.withLock { $0 = { connection.send(failure) } }
             return nil
@@ -240,10 +240,10 @@ final class BoardMirrorTests {
         let router = router
         let handler: SocketServer.Handler = { request, connection in
             if request["method"]?.string == "system.ping" {
-                return .object(["id": request["id"] ?? .null, "ok": true, "result": .object(["version": .number(Double(version)), "app": "easl"])])
+                return .object(["id": request["id"] ?? .null, "ok": .bool(true), "result": .object(["version": .number(Double(version)), "app": "easl"])])
             }
             if version == 1, request["params"]?["viewer"] != nil {
-                return .object(["id": request["id"] ?? .null, "ok": false, "error": .object(["code": "invalid_params", "message": "unknown viewer"])])
+                return .object(["id": request["id"] ?? .null, "ok": .bool(false), "error": .object(["code": "invalid_params", "message": "unknown viewer"])])
             }
             guard let reply = await router.handle(request, connection: connection) else { return nil }
             guard request["method"]?.string == "board.get", var result = reply["result"]?.object else { return reply }
@@ -275,7 +275,7 @@ final class BoardMirrorTests {
             let router = router
             server = SocketServer(path: socket) { request, connection in
                 if request["method"]?.string == "system.ping" {
-                    return .object(["id": request["id"] ?? .null, "ok": true, "result": .object(["app": "easl"])])
+                    return .object(["id": request["id"] ?? .null, "ok": .bool(true), "result": .object(["app": "easl"])])
                 }
                 return await router.handle(request, connection: connection)
             }
