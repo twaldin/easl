@@ -106,7 +106,7 @@ func (r *Registry) Open(root string) (*Board, error) {
 		if r.Hook != nil {
 			r.Hook(b, e)
 		}
-		r.broadcast(e, b.id)
+		r.broadcast(e.Name, e.Data, b.id)
 	}
 	b.OnMessagesBounced = func(bounce Bounce) {
 		if r.Bounced != nil {
@@ -129,6 +129,7 @@ func (r *Registry) Open(root string) (*Board, error) {
 	if r.Opened != nil {
 		r.Opened(b, root)
 	}
+	r.broadcast("board.opened", map[string]any{}, b.id)
 	return b, nil
 }
 
@@ -221,6 +222,7 @@ func (r *Registry) Close(id string, persistClosed func() error) error {
 			r.Frontmost = ids[0].id
 		}
 	}
+	r.broadcast("board.closed", map[string]any{}, id)
 	return nil
 }
 
@@ -237,7 +239,7 @@ func (r *Registry) Subscribe(sink Sink, board string, events []string) {
 	metrics.Shared.Gauge("events.subscribers", float64(len(r.subscribers)))
 }
 
-func (r *Registry) broadcast(e model.Event, board string) {
+func (r *Registry) broadcast(name string, data any, board string) {
 	kept := r.subscribers[:0]
 	for _, s := range r.subscribers {
 		if s.sink.IsOpen() {
@@ -250,19 +252,19 @@ func (r *Registry) broadcast(e model.Event, board string) {
 	if len(kept) == 0 {
 		return
 	}
-	message := map[string]any{"event": e.Name, "board": board, "data": e.Data}
+	message := map[string]any{"event": name, "board": board, "data": data}
 	sent := false
 	for _, s := range kept {
 		if s.board != "" && s.board != board {
 			continue
 		}
-		if s.events != nil && !s.events[e.Name] {
+		if s.events != nil && !s.events[name] {
 			continue
 		}
 		sent = s.sink.Send(message) || sent
 	}
 	if sent {
-		metrics.Shared.Record("event."+e.Name, 0, 0)
+		metrics.Shared.Record("event."+name, 0, 0)
 	}
 }
 

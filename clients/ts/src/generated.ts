@@ -129,6 +129,13 @@ export type SurfaceEvent = {
   data: SurfaceNotice;
 };
 
+/** Board availability after a successful registry transition. The envelope names the canonical board and data is empty. Closing does not disconnect subscriptions; reopening the board announces its availability on those same subscriptions. */
+export type BoardLifecycleEvent = {
+  event: "board.closed" | "board.opened";
+  board: Id;
+  data: Record<string, unknown>;
+};
+
 /** Prefixed id, e.g. obj_01H…, men_… */
 export type Id = string;
 
@@ -1029,6 +1036,8 @@ export type BoardGetResult = {
   root: string;
   /** board ids this repository board took in (`repo.merged`), omitted when empty. A terminal session may still carry one of these original board labels; an attaching client accepts it only when its home and tile labels also match. Absent: only this board's current id owns its terminals */
   merged?: Id[];
+  /** True when the Mac host closed this board's tab by hand but keeps its agents running. Omitted while its tab is open and by easld. Remote viewers keep the last seen board read-only until board.opened or a later board.get without closed:true. */
+  closed?: boolean;
   revision: number;
   objects: CanvasObject[];
   changed?: Id[];
@@ -2126,7 +2135,7 @@ export interface CanvasApi {
     open(params: RelayOpenParams): Promise<RelayOpenResult>;
   };
   events: {
-    /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}). Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers. */
+    /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers. */
     subscribe(params?: EventsSubscribeParams): Promise<EventsSubscribeResult>;
   };
   client: {

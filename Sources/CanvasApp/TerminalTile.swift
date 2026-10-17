@@ -42,6 +42,25 @@ final class TerminalTile: NSView, TileContent {
         }
     }
 
+    private var hostBoardClosed = false
+    private var lastRemoteScreen: (lines: [TerminalLine], cursorRow: Int?)?
+
+    func setHostBoardClosed(_ closed: Bool) {
+        guard isRemote, hostBoardClosed != closed, !discarded else { return }
+        if closed {
+            lastRemoteScreen = liveScreen()
+            snapshotHistory = lastRemoteScreen
+            showSnapshot(true)
+            terminal.cancelImageInput()
+            terminal.controller = nil
+        } else {
+            showSnapshot(false)
+            lastRemoteScreen = nil
+            terminal.controller = TerminalConfig.shared.controller
+        }
+        hostBoardClosed = closed
+    }
+
     func discard() {
         guard !discarded else { return }
         discarded = true
@@ -1384,6 +1403,7 @@ final class TerminalTile: NSView, TileContent {
 
     /// A remote terminal's screen as its surface shows it, without styles; nil before it attached.
     private func liveScreen() -> (lines: [TerminalLine], cursorRow: Int?)? {
+        if hostBoardClosed { return lastRemoteScreen }
         let rows = screenRows()
         guard !rows.isEmpty else { return nil }
         return (rows.map { TerminalLine(runs: [TerminalRun(text: $0.text, style: TerminalStyle())]) }, nil)

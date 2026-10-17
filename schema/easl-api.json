@@ -132,6 +132,17 @@
         { "type": "object", "required": ["event", "board", "data"], "properties": { "event": { "const": "surface.notice" }, "board": { "$ref": "#/definitions/Id" }, "data": { "$ref": "#/definitions/SurfaceNotice" } }, "additionalProperties": false }
       ]
     },
+    "BoardLifecycleEvent": {
+      "description": "Board availability after a successful registry transition. The envelope names the canonical board and data is empty. Closing does not disconnect subscriptions; reopening the board announces its availability on those same subscriptions.",
+      "type": "object",
+      "required": ["event", "board", "data"],
+      "properties": {
+        "event": { "enum": ["board.closed", "board.opened"] },
+        "board": { "$ref": "#/definitions/Id" },
+        "data": { "type": "object", "properties": {}, "additionalProperties": false }
+      },
+      "additionalProperties": false
+    },
     "Id": { "type": "string", "pattern": "^[a-z]+_[0-9A-Za-z]+$", "description": "Prefixed id, e.g. obj_01H…, men_…" },
     "MessageId": { "type": "string", "pattern": "^msg_[A-Za-z0-9_-]{8,64}$", "description": "A message's id: `msg_` and 8 to 64 letters, digits, `_` or `-`; easl's own (`msg_` and a ULID) or the one its sender gave (agent.prompt `message`)" },
     "Frame": {
@@ -1029,6 +1040,7 @@
           "board": { "$ref": "#/definitions/Id" },
           "root": { "type": "string" },
           "merged": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "board ids this repository board took in (`repo.merged`), omitted when empty. A terminal session may still carry one of these original board labels; an attaching client accepts it only when its home and tile labels also match. Absent: only this board's current id owns its terminals" },
+          "closed": { "type": "boolean", "description": "True when the Mac host closed this board's tab by hand but keeps its agents running. Omitted while its tab is open and by easld. Remote viewers keep the last seen board read-only until board.opened or a later board.get without closed:true." },
           "revision": { "type": "integer" },
           "objects": { "type": "array", "items": { "$ref": "#/definitions/CanvasObject" } },
           "changed": { "type": "array", "items": { "$ref": "#/definitions/Id" } },
@@ -2019,7 +2031,7 @@
       }
     },
     "events.subscribe": {
-      "description": "Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}). Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers.",
+      "description": "Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers.",
       "params": {
         "type": "object",
         "properties": { "board": { "$ref": "#/definitions/Id" }, "events": { "type": "array", "items": { "type": "string" } } },

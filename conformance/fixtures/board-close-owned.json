@@ -1,7 +1,7 @@
 {
   "scenario": "board-close-owned",
   "description": "easld --own-terminals with zmxtest: keep-close preserves an owned session, reopen keeps its terminal id, end-close removes the owned terminal and session but retains a hosted terminal. Reopen before teardown.",
-  "recordedOn": "board.close candidate, scratch easld --own-terminals with zmxtest-compatible zmx",
+  "recordedOn": "remote closed-board fix, scratch easld with zmxtest",
   "steps": [
     {
       "step": "board.open",
@@ -218,7 +218,14 @@
           ],
           "root": "<root>"
         }
-      }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.closed"
+        }
+      ]
     },
     {
       "step": "session.list",
@@ -261,7 +268,14 @@
           "objects": 2,
           "root": "<root>"
         }
-      }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.opened"
+        }
+      ]
     },
     {
       "step": "object.get",
@@ -334,6 +348,11 @@
             "id": "<obj:1>"
           },
           "event": "object.deleted"
+        },
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.closed"
         }
       ]
     },
@@ -386,7 +405,14 @@
           "objects": 1,
           "root": "<root>"
         }
-      }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.opened"
+        }
+      ]
     },
     {
       "step": "object.get",

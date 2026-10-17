@@ -23,6 +23,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// A remote board's host and its link (docs/design.md "Client mode"); nil for a local board.
     let remote: RemoteSource?
     private let banner = ConnectionBanner(frame: .zero)
+    private var closedBoardView: ClosedBoardView?
+    var hostBoardClosed: Bool { remote?.mirror.availability == .closed }
     private var languages: LanguageService { remote?.languages ?? CodeNavigation.languages }
     private var navigationRoot: URL { remote == nil ? board.workingRoot : board.root }
 
@@ -251,13 +253,57 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         ])
         let mirror = remote.mirror, host = remote.host.name
         banner.onRetry = { mirror.reconnect() }
-        banner.show(mirror.state, host: host, problem: mirror.problem)
-        mirror.onState = { [weak self, weak mirror] state in self?.banner.show(state, host: host, problem: mirror?.problem) }
+        banner.show(mirror.state, availability: mirror.availability, host: host, problem: mirror.problem)
+        mirror.onState = { [weak self, weak mirror] state in
+            guard let mirror else { return }
+            self?.banner.show(state, availability: mirror.availability, host: host, problem: mirror.problem)
+        }
+        mirror.onAvailability = { [weak self] _ in self?.hostBoardAvailabilityChanged() }
+        if hostBoardClosed { hostBoardAvailabilityChanged() }
         mirror.onNotice = { [weak self] text in self?.canvas.showNotice(text) }
         mirror.onRedraw = { [weak self] in self?.canvas.redrawRemoteTiles() }
         sendPrompt = { text, terminal, mentions, answer in
             try await mirror.prompt(text, to: terminal, mentions: mentions, answer: answer)
         }
+    }
+
+    private func hostBoardAvailabilityChanged() {
+        guard let remote, let container = window?.contentView else { return }
+        if hostBoardClosed {
+            guard closedBoardView == nil else { return }
+            banner.isHidden = true
+            window?.makeFirstResponder(nil)
+            for tile in canvas.tiles.values {
+                if let terminal = tile.content as? TerminalTile {
+                    terminal.setHostBoardClosed(true)
+                } else {
+                    tile.content.showSnapshot(true)
+                }
+                (tile.content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
+            }
+            let request = TileRenderRequest(size: container.bounds.size, scale: window?.backingScaleFactor ?? 2,
+                                            full: false, appearance: container.effectiveAppearance)
+            let cover = ClosedBoardView(frame: container.bounds)
+            cover.image = request.image(of: container)
+            cover.imageScaling = .scaleProportionallyUpOrDown
+            cover.autoresizingMask = [.width, .height]
+            for tile in canvas.tiles.values where !(tile.content is TerminalTile) { tile.content.showSnapshot(false) }
+            for tile in canvas.tiles.values { tile.content.setLive(false) }
+            container.addSubview(cover, positioned: .below, relativeTo: banner)
+            closedBoardView = cover
+            canvas.isHidden = true
+            window?.makeFirstResponder(cover)
+        } else {
+            closedBoardView?.removeFromSuperview()
+            closedBoardView = nil
+            canvas.isHidden = false
+            for tile in canvas.tiles.values {
+                tile.content.setLive(tile.isLive)
+                (tile.content as? TerminalTile)?.setHostBoardClosed(false)
+                (tile.content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
+            }
+        }
+        banner.show(remote.mirror.state, availability: remote.mirror.availability, host: remote.host.name, problem: remote.mirror.problem)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -1126,6 +1172,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     /// Whether a menu item applies now (AppDelegate forwards the menu bar's validation here).
     func validate(_ item: NSMenuItem) -> Bool {
+        if hostBoardClosed, let action = item.action, responds(to: action) { return false }
         let selection = canvas.selection
         if remote != nil, let action = item.action, Self.localOnly.contains(action) { return false }
         switch item.action {
@@ -1314,6 +1361,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// beat Ghostty's own bindings (its defaults bind ⌘T, ⌘N, ⌘Q, ⌘⇧[ and ⌘⇧] to tab, window and
     /// app actions the embedded library can't perform, so the key would do nothing).
     func handleKeyEquivalent(_ event: NSEvent) -> Bool {
+        guard !hostBoardClosed else { return false }
         if let action = Self.navigationAction(for: event) {
             perform(action, with: self)
             return true

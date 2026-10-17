@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- **Remote boards say when their host closes them.** The viewer shows "<host> closed this board", keeps its last seen viewport read-only, and detaches terminals and browser streams. Reopening on either a Mac host or easld resumes the viewer automatically. Background viewers stop serving the closed board without forgetting its reopen address. Manually closed Mac tabs still accept their agents' reports and notifications. Requires updated hosts and viewers.
 - **Navigate host code on remote boards.** Definitions, references, hover, Outline, and Go to use the host's checkout and language servers, never a local server against host paths. Missing-server messages name the command and host. Diagram tiles draw live call graphs and reload after host edits. easld persists computed graphs without changing the tile's revision or undo history. On easld, diagram `object.reload` requires an attached Mac viewer. Host text, locations, and graphs stay in the viewer's memory.
 - Quitting while a language server is still being located no longer lets it start after shutdown.
 - Host-generated note anchors stay inside the board's file policy on easld and Mac hosts. Outside paths and escaping symlinks add no source text to markdown and report `path refused`. Registered worktrees, pinned revisions, and permitted source-root overrides still work. Authored markdown and intentional local display access are unchanged. Requires the host update.

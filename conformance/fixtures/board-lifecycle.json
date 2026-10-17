@@ -1,0 +1,381 @@
+{
+  "scenario": "board-lifecycle",
+  "description": "Board availability uses canonical board envelopes with empty data, preserves subscriptions across close and reopen, respects board and event-name filters, rejects closed targets, and announces only successful transitions.",
+  "recordedOn": "remote board closure candidate on isolated Mac",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>/keeper"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "board": "<brd:1>",
+          "objects": 0,
+          "root": "<root>/keeper"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "lifecycle",
+      "request": {
+        "board": "<board>",
+        "events": [
+          "board.closed",
+          "board.opened"
+        ]
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "opened",
+      "request": {
+        "events": [
+          "board.opened"
+        ]
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "elsewhere",
+      "request": {
+        "board": "<brd:1>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "objects",
+      "request": {
+        "board": "<board>",
+        "events": [
+          "object.created"
+        ]
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>",
+        "endSessions": "true"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "endSessions must be a boolean"
+        },
+        "id": "r4",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "ended": [],
+          "kept": [],
+          "root": "<root>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.closed"
+        },
+        {
+          "board": "<board>",
+          "conn": "lifecycle",
+          "data": {},
+          "event": "board.closed"
+        }
+      ]
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "board <board>"
+        },
+        "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "board <board>"
+        },
+        "id": "r7",
+        "ok": false
+      }
+    },
+    {
+      "step": "system.ping",
+      "method": "system.ping",
+      "conn": "lifecycle",
+      "request": {},
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "app": "easl",
+          "version": 1
+        }
+      }
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.opened"
+        },
+        {
+          "board": "<board>",
+          "conn": "lifecycle",
+          "data": {},
+          "event": "board.opened"
+        },
+        {
+          "board": "<board>",
+          "conn": "opened",
+          "data": {},
+          "event": "board.opened"
+        }
+      ]
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": [],
+          "revision": "<board:1>",
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 120,
+          "w": 280,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "after reopen"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "after reopen"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "after reopen"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "conn": "objects",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 120,
+              "w": 280,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "after reopen"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    }
+  ]
+}

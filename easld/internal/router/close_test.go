@@ -43,6 +43,94 @@ func TestBoardCloseAnnouncesAvailabilityAndReopenOnTheSameSubscription(t *testin
 	if got := subscriber.messages()[before:]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("reopen signal %v, want %v", got, want)
 	}
+	f.result("board.open", map[string]any{"root": f.board.Root()})
+	if got := subscriber.messages()[before:]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("already open board announced another transition: %v", got)
+	}
+}
+
+func TestBoardLifecycleEventsUseCanonicalAliasAndNameFilters(t *testing.T) {
+	f := newFixture(t)
+	f.board.Repo = &store.RepoRecord{CommonDir: t.TempDir(), Merged: []string{"brd_legacy"}}
+	alias, opened, elsewhere := &conn{}, &conn{}, &conn{}
+	f.on(alias, "events.subscribe", map[string]any{"board": "brd_legacy", "events": []any{"board.closed", "board.opened"}})
+	f.on(opened, "events.subscribe", map[string]any{"events": []any{"board.opened"}})
+	f.on(elsewhere, "events.subscribe", map[string]any{"board": "brd_elsewhere"})
+	beforeAlias, beforeOpened, beforeElsewhere := len(alias.messages()), len(opened.messages()), len(elsewhere.messages())
+	f.result("board.close", map[string]any{"board": "brd_legacy"})
+	if code, _ := errorOf(f.call("board.get", map[string]any{"board": f.board.ID()})); code != "not_found" {
+		t.Fatalf("closed board is still available: %s", code)
+	}
+	f.result("board.open", map[string]any{"root": f.board.Root()})
+	want := []map[string]any{
+		{"event": "board.closed", "board": f.board.ID(), "data": map[string]any{}},
+		{"event": "board.opened", "board": f.board.ID(), "data": map[string]any{}},
+	}
+	if got := alias.messages()[beforeAlias:]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("alias subscription: %v, want %v", got, want)
+	}
+	if got := opened.messages()[beforeOpened:]; !reflect.DeepEqual(got, want[1:]) {
+		t.Fatalf("event-name filter: %v, want %v", got, want[1:])
+	}
+	if got := elsewhere.messages()[beforeElsewhere:]; len(got) != 0 {
+		t.Fatalf("unrelated board received lifecycle events: %v", got)
+	}
+}
+
+func TestBoardClosePrunesClientBoardsWithoutDisconnectingOtherBoardsOrSubscriptions(t *testing.T) {
+	f := newFixture(t)
+	other, _ := f.openBoard("other")
+	client := &conn{}
+	id := attachApp(f, client, map[string]any{"boards": []any{f.board.ID(), other}, "focused": f.board.ID(), "serves": []any{"view.get"}})
+	f.on(client, "events.subscribe", map[string]any{"board": f.board.ID(), "events": []any{"board.closed", "board.opened"}})
+	before := len(client.messages())
+	f.result("board.close", map[string]any{"board": f.board.ID()})
+	want := []any{map[string]any{"id": id, "boards": []string{other}, "serves": []string{"view.get"}}}
+	if got := f.result("client.list", map[string]any{})["clients"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("closed board remains attached or lost other board: %v, want %v", got, want)
+	}
+	if !client.IsOpen() || f.router.clients.Choose("view.get", other) == nil || f.router.clients.Choose("view.get", f.board.ID()) != nil {
+		t.Fatal("close disconnected the client or routed the wrong board")
+	}
+	f.result("board.open", map[string]any{"root": f.board.Root()})
+	wantEvents := []map[string]any{
+		{"event": "board.closed", "board": f.board.ID(), "data": map[string]any{}},
+		{"event": "board.opened", "board": f.board.ID(), "data": map[string]any{}},
+	}
+	if got := client.messages()[before:]; !reflect.DeepEqual(got, wantEvents) {
+		t.Fatalf("client event subscription did not survive close: %v", got)
+	}
+}
+
+func TestBoardCloseFailsAnInFlightDelegatedCallWithoutDisconnectingTheClient(t *testing.T) {
+	f := newFixture(t)
+	peer := &diagramPeer{conn: &conn{}, incoming: make(chan map[string]any, 16)}
+	t.Cleanup(peer.close)
+	attachApp(f, peer, map[string]any{"serves": []any{"view.get"}})
+	done := make(chan map[string]any, 1)
+	go func() {
+		reply := f.router.HandleConn(map[string]any{"id": "view", "method": "view.get", "params": map[string]any{"board": f.board.ID()}}, &conn{})
+		done <- reply.(map[string]any)
+	}()
+	request := diagramMessage(t, peer.incoming)
+	if request["method"] != "view.get" {
+		t.Fatalf("delegated the wrong method: %v", request)
+	}
+	f.result("board.close", map[string]any{"board": f.board.ID()})
+	select {
+	case reply := <-done:
+		if code, _ := errorOf(reply); code != "not_found" {
+			t.Fatalf("closed board call succeeded or timed out: %v", reply)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("closed board retained its delegated call")
+	}
+	if !f.router.clients.Answer(peer, map[string]any{"id": request["id"], "ok": true, "result": map[string]any{"selection": []any{}}}) {
+		t.Fatal("late closed-board answer was not discarded")
+	}
+	if !peer.IsOpen() {
+		t.Fatal("board.close disconnected its attached client")
+	}
 }
 
 func TestBoardCloseKeepsSessionsThroughSweepsRestartAndReopen(t *testing.T) {
@@ -251,6 +339,9 @@ func TestBoardClosePersistenceFailuresLeaveTheBoardOpen(t *testing.T) {
 		t.Run(boundary, func(t *testing.T) {
 			f, state := restorable(t)
 			tile := idOf(f.result("object.create", terminal(map[string]any{"name": "still running"})))
+			subscriber := &conn{}
+			f.on(subscriber, "events.subscribe", map[string]any{"board": f.board.ID(), "events": []any{"board.closed", "board.opened"}})
+			before := len(subscriber.messages())
 			switch boundary {
 			case "board save":
 				if err := os.Mkdir(f.router.reg.Store.Path(f.board.ID()), 0o700); err != nil {
@@ -275,6 +366,9 @@ func TestBoardClosePersistenceFailuresLeaveTheBoardOpen(t *testing.T) {
 			}
 			if got := sessions(t, state); !reflect.DeepEqual(got, []string{tile}) {
 				t.Fatalf("failed keep close ended sessions: %v", got)
+			}
+			if got := subscriber.messages()[before:]; len(got) != 0 {
+				t.Fatalf("failed close announced availability: %v", got)
 			}
 			if boundary == "board save" {
 				if listed, err := store.ReadReopened(f.router.Reopens); err != nil || !reflect.DeepEqual(listed, []store.Reopened{{Root: f.board.Root(), Board: f.board.ID()}}) {
@@ -457,8 +551,8 @@ func TestBoardCloseFinishesWaitsAndReleasesInboxHoldsWithoutClosingSubscriptions
 			t.Errorf("%s answered %v", label, messages[0])
 		}
 	}
-	if got := len(subscriber.messages()); got != before || !subscriber.IsOpen() {
-		t.Fatalf("close changed subscription: %v", subscriber.messages())
+	if !subscriber.IsOpen() {
+		t.Fatal("close disconnected event subscription")
 	}
 	f.result("board.open", map[string]any{"root": f.board.Root()})
 	messages := f.result("agent.inbox", map[string]any{"tile": tile})["messages"].([]any)
@@ -467,7 +561,7 @@ func TestBoardCloseFinishesWaitsAndReleasesInboxHoldsWithoutClosingSubscriptions
 	}
 	f.result("object.update", map[string]any{"id": tile, "props": map[string]any{"name": "reopened"}})
 	events := subscriber.messages()
-	if len(events) != before+1 || events[len(events)-1]["event"] != "object.updated" {
+	if len(events) != before+3 || events[before]["event"] != "board.closed" || events[before+1]["event"] != "board.opened" || events[len(events)-1]["event"] != "object.updated" {
 		t.Fatalf("subscription did not resume on reopen: %v", events)
 	}
 }

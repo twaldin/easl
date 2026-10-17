@@ -182,7 +182,7 @@ func TestCallRelaysTheClientsResultOrError(t *testing.T) {
 	call := func() chan outcome {
 		out := make(chan outcome, 1)
 		go func() {
-			result, failure := r.Call(context.Background(), c, "view.get", map[string]any{"board": board}, 5*time.Second)
+			result, failure := r.Call(context.Background(), c, board, "view.get", map[string]any{"board": board}, 5*time.Second)
 			out <- outcome{result, failure}
 		}()
 		return out
@@ -219,7 +219,7 @@ func TestCallFailsUnavailableAtItsDeadlineAndDropsTheLateAnswer(t *testing.T) {
 	conn := newConn()
 	c := attach(t, r, conn, current("0.2.0", "studio", []string{"view.get"}, []string{board}, board))
 	start := time.Now()
-	_, failure := r.Call(context.Background(), c, "view.get", map[string]any{"board": board}, 50*time.Millisecond)
+	_, failure := r.Call(context.Background(), c, board, "view.get", map[string]any{"board": board}, 50*time.Millisecond)
 	if elapsed := time.Since(start); elapsed < 50*time.Millisecond {
 		t.Errorf("gave up after %v", elapsed)
 	}
@@ -232,7 +232,7 @@ func TestCallFailsUnavailableAtItsDeadlineAndDropsTheLateAnswer(t *testing.T) {
 	// The next call waits for its own answer.
 	done := make(chan *Failure, 1)
 	go func() {
-		_, failure := r.Call(context.Background(), c, "view.get", map[string]any{"board": board}, 5*time.Second)
+		_, failure := r.Call(context.Background(), c, board, "view.get", map[string]any{"board": board}, 5*time.Second)
 		done <- failure
 	}()
 	next := conn.request(t)
@@ -251,7 +251,7 @@ func TestCallFailsUnavailableWhenTheClientDisconnects(t *testing.T) {
 	c := attach(t, r, conn, current("0.2.0", "studio", []string{"view.render"}, []string{board}, board))
 	done := make(chan *Failure, 1)
 	go func() {
-		_, failure := r.Call(context.Background(), c, "view.render", map[string]any{"board": board}, time.Minute)
+		_, failure := r.Call(context.Background(), c, board, "view.render", map[string]any{"board": board}, time.Minute)
 		done <- failure
 	}()
 	conn.request(t)
@@ -269,7 +269,7 @@ func TestCallFailsUnavailableWhenTheClientDisconnects(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	_, failure := r.Call(context.Background(), c, "view.render", map[string]any{"board": board}, time.Minute)
+	_, failure := r.Call(context.Background(), c, board, "view.render", map[string]any{"board": board}, time.Minute)
 	expectFailure(t, failure, api.CodeUnavailable, "easl 0.2.0 on studio (client "+c.ID+") disconnected before answering view.render")
 }
 
@@ -382,7 +382,7 @@ func TestCancelledCallReleasesPendingAnswerWithoutClosingTheClient(t *testing.T)
 	t.Cleanup(cancel)
 	done := make(chan *Failure, 1)
 	go func() {
-		_, failure := r.Call(ctx, c, "object.reload", map[string]any{"id": "obj_old"}, time.Minute)
+		_, failure := r.Call(ctx, c, board, "object.reload", map[string]any{"id": "obj_old"}, time.Minute)
 		done <- failure
 	}()
 	old := conn.request(t)
@@ -401,7 +401,7 @@ func TestCancelledCallReleasesPendingAnswerWithoutClosingTheClient(t *testing.T)
 	}
 	next := make(chan any, 1)
 	go func() {
-		result, failure := r.Call(context.Background(), c, "object.reload", map[string]any{"id": "obj_new"}, time.Minute)
+		result, failure := r.Call(context.Background(), c, board, "object.reload", map[string]any{"id": "obj_new"}, time.Minute)
 		if failure != nil {
 			next <- failure
 			return
@@ -419,5 +419,56 @@ func TestCancelledCallReleasesPendingAnswerWithoutClosingTheClient(t *testing.T)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("new call did not receive its own answer")
+	}
+}
+
+func TestRemoveBoardFailsOnlyItsCallsAndKeepsTheClientServingOtherBoards(t *testing.T) {
+	r := New()
+	conn := newConn()
+	t.Cleanup(conn.hangUp)
+	c := attach(t, r, conn, current("0.2.0", "studio", []string{"object.reload"}, []string{board, "brd_b"}, board))
+	type outcome struct {
+		result  any
+		failure *Failure
+	}
+	call := func(id string) <-chan outcome {
+		done := make(chan outcome, 1)
+		go func() {
+			result, failure := r.Call(context.Background(), c, id, "object.reload", map[string]any{"id": "obj_" + id}, time.Minute)
+			done <- outcome{result, failure}
+		}()
+		return done
+	}
+	closed := call(board)
+	old := conn.request(t)
+	other := call("brd_b")
+	request := conn.request(t)
+	r.RemoveBoard(board)
+	select {
+	case got := <-closed:
+		expectFailure(t, got.failure, api.CodeNotFound, "board brd_a was closed")
+	case <-time.After(5 * time.Second):
+		t.Fatal("closed board retained its delegated call")
+	}
+	if got := r.List(); len(got) != 1 || got[0].Focused != "" || len(got[0].Boards) != 1 || got[0].Boards[0] != "brd_b" {
+		t.Fatalf("client retained closed board or lost other board: %+v", got)
+	}
+	if r.Choose("object.reload", board) != nil || r.Choose("object.reload", "brd_b") != c {
+		t.Fatal("closed board remains routable or other board lost its client")
+	}
+	_, failure := r.Call(context.Background(), c, board, "object.reload", map[string]any{"id": "obj_stale"}, time.Minute)
+	expectFailure(t, failure, api.CodeNotFound, "board brd_a was closed")
+	if !r.Answer(conn, map[string]any{"id": old["id"], "ok": true, "result": map[string]any{"loaded": true}}) {
+		t.Fatal("late answer to closed board was not discarded")
+	}
+	r.Answer(conn, map[string]any{"id": request["id"], "ok": true, "result": map[string]any{"id": "obj_b", "loaded": true}})
+	select {
+	case got := <-other:
+		result, ok := got.result.(map[string]any)
+		if got.failure != nil || !ok || result["id"] != "obj_b" || result["loaded"] != true {
+			t.Fatalf("other board call failed: %+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("other board did not receive its delegated result")
 	}
 }

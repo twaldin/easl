@@ -3,6 +3,19 @@ import Testing
 @testable import CanvasCore
 
 extension ApiRouterTests {
+    @Test func closeAnnouncesAvailabilityAndReopenOnTheSameSubscription() async throws {
+        board.repo = RepoRecord(commonDir: dir.appendingPathComponent("common.git").path, merged: ["brd_old"])
+        let subscriber = try connect(), client = try connect()
+        #expect(try await call(subscriber, "events.subscribe", ["board": "brd_old", "events": ["board.closed", "board.opened"]])["ok"] == .bool(true))
+        #expect(try await call(client, "board.close", ["board": "brd_old"])["ok"] == .bool(true))
+        #expect(try await subscriber.next() == .object(["event": "board.closed", "board": .string(board.id), "data": .object([:])]))
+        #expect(try await call(client, "board.get", ["board": .string(board.id)])["error"]?["code"] == "not_found")
+        #expect(try await call(client, "board.open", ["root": .string(board.root.path)])["result"]?["board"] == .string(board.id))
+        #expect(try await subscriber.next() == .object(["event": "board.opened", "board": .string(board.id), "data": .object([:])]))
+        _ = try await call(client, "board.open", ["root": .string(board.root.path)])
+        #expect(try await call(subscriber, "system.ping", [:])["ok"] == .bool(true))
+    }
+
     @Test func closeKeepsTerminalsAndReopensTheirLatestObjects() async throws {
         let named = board.create(type: .terminal, props: .object(["name": "worker", "title": "ignored"]))
         let titled = board.create(type: .terminal, props: .object(["name": "", "title": "review"]))
@@ -61,13 +74,16 @@ extension ApiRouterTests {
         let note = board.create(type: .note, props: .object(["markdown": "must survive"]))
         let blocked = registry.store.url(for: board.id)
         try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: true)
-        let client = try connect()
+        let client = try connect(), subscriber = try connect()
+        _ = try await call(subscriber, "events.subscribe", ["board": .string(board.id), "events": ["board.closed"]])
         #expect(try await call(client, "board.close", [:])["error"]?["code"] == "unavailable")
         #expect(registry.boards[board.id] === board)
         #expect(!board.isClosed)
         #expect(board.objects[note.id]?.props["markdown"] == "must survive")
+        #expect(try await call(subscriber, "system.ping", [:])["ok"] == .bool(true))
         try FileManager.default.removeItem(at: blocked)
         #expect(try await call(client, "board.close", [:])["result"]?["board"] == .string(board.id))
+        #expect(try await subscriber.next() == .object(["event": "board.closed", "board": .string(board.id), "data": .object([:])]))
         #expect(registry.open(root: board.root).objects[note.id]?.props["markdown"] == "must survive")
     }
 
@@ -111,6 +127,23 @@ extension ApiRouterTests {
         #expect(try Data(contentsOf: registry.store.url(for: board.id)) == data)
     }
 
+    @Test func closingAHostWindowKeepsAgentReportsAndReopensItsExistingBoard() async throws {
+        let tile = terminal()
+        let subscriber = try connect(), client = try connect()
+        _ = try await call(subscriber, "events.subscribe", ["board": .string(board.id), "events": .array(["board.closed", "board.opened"])])
+        registry.setWindowOpen(false, board: board.id)
+        registry.setWindowOpen(false, board: board.id)
+        #expect(try await subscriber.next() == .object(["event": "board.closed", "board": .string(board.id), "data": .object([:])]))
+        #expect(try await call(subscriber, "system.ping", [:])["ok"] == .bool(true))
+        #expect(try await call(client, "board.get", ["board": .string(board.id)])["result"]?["closed"] == .bool(true))
+        #expect(try await call(client, "agent.report", ["tile": .string(tile), "kind": "omp", "state": "idle", "seq": 1])["ok"] == .bool(true))
+        #expect(board.objects[tile]?.props["lifecycle"]?["state"] == "idle")
+        #expect(registry.open(root: board.root) === board)
+        #expect(try await subscriber.next() == .object(["event": "board.opened", "board": .string(board.id), "data": .object([:])]))
+        #expect(try await call(client, "board.get", ["board": .string(board.id)])["result"]?["closed"] == nil)
+        #expect(board.objects[tile]?.props["lifecycle"]?["state"] == "idle")
+    }
+
     @Test func closeAnswersWaitsAndInboxButKeepsEventSubscriptionsConnected() async throws {
         let tile = terminal()
         try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
@@ -125,8 +158,10 @@ extension ApiRouterTests {
         #expect(try await call(client, "board.close", [:])["ok"] == .bool(true))
         #expect(try await wait.next()["error"]?["code"] == "not_found")
         #expect(try await inbox.next()["error"]?["code"] == "not_found")
+        #expect(try await subscriber.next() == .object(["event": "board.closed", "board": .string(board.id), "data": .object([:])]))
         #expect(try await call(subscriber, "system.ping", [:])["result"]?["version"] == .number(1))
         _ = try await call(client, "board.open", ["root": .string(board.root.path)])
+        #expect(try await subscriber.next() == .object(["event": "board.opened", "board": .string(board.id), "data": .object([:])]))
         let created = try await call(client, "object.create", ["type": "note", "props": .object(["markdown": "after reopen"])])
         let event = try await subscriber.next()
         #expect(event["event"] == "object.created")
