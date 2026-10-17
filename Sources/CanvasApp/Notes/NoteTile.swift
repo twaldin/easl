@@ -15,6 +15,8 @@ final class NoteTile: NSView, TileContent {
 
     private(set) var object: CanvasObject
     private let board: Board
+    private let files: HostFiles?
+    private var hostWatch: HostFileWatch?
     private let displayScroll = OverlayScrollView()
     private let display = NoteDisplayView(usingTextLayoutManager: true)
     private let layoutDelegate = NoteLayoutDelegate()
@@ -47,9 +49,10 @@ final class NoteTile: NSView, TileContent {
     var isEditing: Bool { session != nil }
     private var clickMonitor: Any?
 
-    init(object: CanvasObject, board: Board) {
+    init(object: CanvasObject, board: Board, files: HostFiles? = nil) {
         self.object = object
         self.board = board
+        self.files = files
         document = NoteMarkdown.parse(object.props["markdown"]?.string ?? "")
         super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         wantsLayer = true
@@ -189,7 +192,7 @@ final class NoteTile: NSView, TileContent {
     /// and excerpts but no text layout (about 1 MB per note on a large board).
     private func renderDisplay() {
         guard live || isEditing else { return }
-        let renderer = NoteRenderer(excerpts: excerpts, images: images, width: textWidth, asWritten: board.isRemote)
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, width: textWidth)
         let text = renderer.render(document, placeholder: Self.placeholder)
         renderedWidth = renderer.fitsWidth ? textWidth : nil
         display.textStorage?.setAttributedString(text)
@@ -197,14 +200,15 @@ final class NoteTile: NSView, TileContent {
 
     // MARK: Live fences
 
-    /// Resolve every anchored fence off the main actor, one at a time per note, then re-render
-    /// if anything changed. Only while live and on screen. A remote board's note reads nothing
-    /// here: its fences and images are its host's files, so they show as written.
     private func resolve() {
         pendingResolve?.cancel()
         pendingResolve = nil
         resolveTask?.cancel()
-        guard live, window != nil, !board.isRemote else { return }
+        guard live, window != nil else { return }
+        if board.isRemote {
+            resolveHost()
+            return
+        }
         let sources = NoteImages.sources(in: document)
         guard !fences.isEmpty || !sources.isEmpty else {
             if !images.isEmpty {
@@ -230,6 +234,44 @@ final class NoteTile: NSView, TileContent {
             self.resolveTask = nil
             self.reading = reading
             self.apply(results, images: images, imageFiles: Array(NoteImages.files(sources, root: root).values))
+        }
+    }
+
+    private func hostRequest() -> HostNoteRequest {
+        HostNoteRequest(boardRoot: board.root.path, source: board.hostSource(props: object.props, objects: true),
+                        imagesSource: board.hostSource(props: object.props, objects: false),
+                        fences: fences, images: NoteImages.sources(in: document))
+    }
+
+    private func resolveHost() {
+        hostWatch?.cancel()
+        hostWatch = nil
+        guard let files else { return }
+        let request = hostRequest()
+        guard !request.fences.isEmpty || !request.images.isEmpty else {
+            excerpts = [:]
+            images = [:]
+            renderDisplay()
+            return
+        }
+        resolveGeneration += 1
+        let generation = resolveGeneration
+        let captured = captured
+        resolveTask = Task { [weak self] in
+            let read = await files.loadNote(request, captured: captured)
+            let pictures = await NoteImages.decode(read.images)
+            guard !Task.isCancelled, let self, self.resolveGeneration == generation else { return }
+            self.resolveTask = nil
+            if !read.observation.isUnavailable || (self.excerpts.isEmpty && self.images.isEmpty) {
+                self.capture(read.excerpts)
+                self.excerpts = read.excerpts
+                self.images = pictures
+                self.renderDisplay()
+            }
+            self.hostWatch = HostFileWatch(baseline: read.observation, probe: {
+                let read = await files.loadNote(request, bytes: false)
+                return Task.isCancelled ? nil : read.observation
+            }, changed: { [weak self] _ in self?.scheduleResolve() })
         }
     }
 
@@ -261,7 +303,11 @@ final class NoteTile: NSView, TileContent {
     /// note that isn't live watches nothing, so a render or `object.get` of it must not trust
     /// what it resolved last (a source restored since would still show its stale badge).
     func resolvedExcerpts() async -> [String: NoteExcerpt] {
-        guard !board.isRemote else { return [:] }
+        if board.isRemote {
+            guard !fences.isEmpty, let files else { return [:] }
+            let read = await files.loadNote(hostRequest(), captured: captured)
+            return read.observation.isUnavailable && !excerpts.isEmpty ? excerpts : read.excerpts
+        }
         let jobs = fences
         let reading = await board.linkSource(of: object)
         self.reading = reading
@@ -280,7 +326,7 @@ final class NoteTile: NSView, TileContent {
     /// `anchor="…"`, so the range can be re-found after lines move even across app restarts,
     /// and agents reading the markdown see what it's anchored to. One update for all fences.
     private func persistAnchors(_ results: [String: NoteExcerpt]) {
-        guard session == nil else { return }
+        guard !board.isRemote, session == nil else { return }
         let text = NoteMarkdown.anchoringRanges(markdown, fences: fences, results: results)
         guard text != markdown else { return }
         _ = try? board.update(object.id, rev: object.rev, props: .object(["markdown": .string(text)]), actor: .system)
@@ -337,6 +383,8 @@ final class NoteTile: NSView, TileContent {
         resolveTask?.cancel()
         resolveTask = nil
         events = nil
+        hostWatch?.cancel()
+        hostWatch = nil
         watchedFiles = []
         watchesRoot = false
     }
@@ -664,12 +712,29 @@ final class NoteTile: NSView, TileContent {
     /// the note is live and caught up (watching its files, nothing pending): an offscreen note's
     /// last resolution may predate any number of changes.
     func render(_ request: TileRenderRequest) async -> TileRender {
-        let current = live && window != nil && pendingResolve == nil && resolveTask == nil && fences.allSatisfy { excerpts[$0.key] != nil }
-        let resolved = current ? excerpts : await resolvedExcerpts()
-        // A remote note's pictures are its host's files: none is read here.
-        let pictures = board.isRemote ? [:] : await NoteImages.load(NoteImages.sources(in: document), root: linkRoot)
+        let resolved: [String: NoteExcerpt]
+        let pictures: [String: NSImage]
+        if board.isRemote {
+            let host = hostRequest()
+            let current = live && window != nil && hostWatch != nil && pendingResolve == nil && resolveTask == nil && fences.allSatisfy { excerpts[$0.key] != nil }
+            if host.fences.isEmpty && host.images.isEmpty {
+                resolved = [:]
+                pictures = [:]
+            } else if current {
+                resolved = excerpts
+                pictures = images
+            } else {
+                let read = await files?.loadNote(host, captured: captured)
+                resolved = read?.observation.isUnavailable == true ? excerpts : read?.excerpts ?? [:]
+                pictures = read?.observation.isUnavailable == true ? images : await NoteImages.decode(read?.images ?? [:])
+            }
+        } else {
+            let current = live && window != nil && pendingResolve == nil && resolveTask == nil && fences.allSatisfy { excerpts[$0.key] != nil }
+            resolved = current ? excerpts : await resolvedExcerpts()
+            pictures = await NoteImages.load(NoteImages.sources(in: document), root: linkRoot)
+        }
         let inset = NSSize(width: 8, height: 10)
-        let text = NoteRenderer(excerpts: resolved, images: pictures, width: request.size.width - 2 * inset.width, asWritten: board.isRemote).render(document, placeholder: Self.placeholder)
+        let text = NoteRenderer(excerpts: resolved, images: pictures, width: request.size.width - 2 * inset.width).render(document, placeholder: Self.placeholder)
         let content = NSTextContentStorage()
         let layout = NSTextLayoutManager()
         let delegate = NoteLayoutDelegate()
