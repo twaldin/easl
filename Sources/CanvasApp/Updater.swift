@@ -24,6 +24,7 @@ final class Updater {
         let staging: AppUpdate.Staging
         let app: URL
         let incoming: URL
+        let lease: AppUpdate.StagingLease
         let team: String?
         let gatekeeper: Bool
     }
@@ -248,20 +249,25 @@ final class Updater {
               let running, let current = AppVersion(running), release.isNewer(than: current) else { return }
         phase = next
         await discardStaged()
+        var lease: AppUpdate.StagingLease?
         do {
             try persistInterruption("The download of easl \(release.version) was interrupted.")
             let app = try Self.replaceable()
             try await Self.requireSoleInstance(of: app)
             let staging = try AppUpdate.Staging(updates: AppPaths.updates, version: release.version.description)
+            let stagingLease = try AppUpdate.StagingLease(incoming: staging.incoming(beside: app))
+            lease = stagingLease
             try await download(release, into: staging)
             phase = phase.after(.downloaded) ?? phase
             let team = await offPool { AppUpdate.runningTeamID() }
             let gatekeeper = !(team == nil && DevInput.enabled)
             let incoming = try await AppUpdate.prepareInstall(staging, release: release, replacing: app, team: team, gatekeeper: gatekeeper)
-            staged = StagedUpdate(staging: staging, app: app, incoming: incoming, team: team, gatekeeper: gatekeeper)
+            staged = StagedUpdate(staging: staging, app: app, incoming: incoming, lease: stagingLease, team: team, gatekeeper: gatekeeper)
+            lease = nil
             try restoreFailureRecord(nil)
             phase = phase.after(.verified) ?? phase
         } catch {
+            try? lease?.discard()
             await discardStaged()
             recordFailure(Self.reason(error), rejecting: Self.rejectsArtifact(error) ? release.sha256 : nil)
         }
@@ -286,13 +292,13 @@ final class Updater {
                 return
             }
             try persistInterruption("The update to easl \(release.version) was interrupted before completion.")
-            try startHelper(staged.staging, replacing: staged.app)
+            try startHelper(staged.staging, replacing: staged.app, lease: staged.lease)
             phase = phase.after(.install) ?? phase
             Task {
                 if delayQuit { try? await Task.sleep(for: .seconds(1)) }
                 AppDelegate.terminateNow()
                 try? await Task.sleep(for: .seconds(30))
-                stopHelper()
+                await stopHelper()
                 var reason = "easl didn't quit, so nothing was replaced"
                 do { try delegate.cancelPreparedUpdate() } catch {
                     reason += ". Couldn't remove the saved update boards: \(Self.reason(error))"
@@ -315,7 +321,9 @@ final class Updater {
     private func discardStaged() async {
         guard let staged else { return }
         self.staged = nil
-        await offPool { try? FileManager.default.removeItem(at: staged.incoming) }
+        let incoming = staged.incoming
+        await offPool { try? FileManager.default.removeItem(at: incoming) }
+        try? staged.lease.discard()
     }
 
     private func saveFailure(_ failure: UpdateFailure) throws {
@@ -408,11 +416,11 @@ final class Updater {
     }
 
     /// The helper (`AppUpdate.helperScript`) in a session of its own, so it outlives easl and
-    /// nothing aimed at easl's process group reaches it, with none of easl's file descriptors
-    /// (the instance lock, the sockets) and its output in `staging.log`. It relaunches with this
+    /// nothing aimed at easl's process group reaches it, with only the staging lease inherited
+    /// from easl and its output in `staging.log`. It relaunches with this
     /// bundle's `LSEnvironment` and `EASL_HOME`: a development or test instance comes back on its
     /// own home, never on the default one beside the user's own easl.
-    private func startHelper(_ staging: AppUpdate.Staging, replacing app: URL) throws {
+    private func startHelper(_ staging: AppUpdate.Staging, replacing app: URL, lease: AppUpdate.StagingLease) throws {
         var environment = Bundle.main.infoDictionary?["LSEnvironment"] as? [String: String] ?? [:]
         if let home = ProcessInfo.processInfo.environment["EASL_HOME"] { environment["EASL_HOME"] = home }
         let script = AppUpdate.helperScript(pid: getpid(), app: app, staging: staging, relaunch: AppUpdate.relaunchCommand(environment: environment))
@@ -422,6 +430,10 @@ final class Updater {
         posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
         posix_spawn_file_actions_addopen(&actions, 1, staging.log.path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
         posix_spawn_file_actions_adddup2(&actions, 1, 2)
+        let leaseStatus = posix_spawn_file_actions_adddup2(&actions, lease.descriptor, 198)
+        guard leaseStatus == 0 else {
+            throw UpdateError("couldn't pass staging ownership to the update helper: \(String(cString: strerror(leaseStatus)))")
+        }
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
@@ -443,12 +455,14 @@ final class Updater {
         helper = pid
     }
 
-    private func stopHelper() {
+    private func stopHelper() async {
         guard let pid = helper else { return }
         helper = nil
         // Its session's group: the shell and the sleep it waits in.
         kill(-pid, SIGTERM)
-        DispatchQueue.global(qos: .utility).async { waitpid(pid, nil, 0) }
+        await offPool {
+            while waitpid(pid, nil, 0) == -1 && errno == EINTR {}
+        }
     }
 
     /// At launch, off the main thread: logs what the helper did (and says so when it failed),

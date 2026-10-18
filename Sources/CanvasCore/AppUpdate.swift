@@ -225,19 +225,31 @@ public enum AppUpdate {
         name.hasPrefix(backupPrefix) && name.hasSuffix(protectionSuffix) && isLeftover(String(name.dropLast(protectionSuffix.count)))
     }
 
-    /// How old a leftover must be before a launch deletes it: an update renames its copies within
-    /// seconds, so one this old belongs to no update still running (another home's instance of
-    /// the same bundle may be mid-update).
+    private static func isLease(_ name: String) -> Bool {
+        name.hasPrefix(incomingPrefix) && name.hasSuffix(".lease") && isLeftover(String(name.dropLast(6)))
+    }
+
+    private static func leaseName(for name: String) -> String {
+        if isLease(name) { return name }
+        let bundle = isProtection(name) ? String(name.dropLast(protectionSuffix.count)) : name
+        if bundle.hasPrefix(backupPrefix) {
+            return incomingPrefix + String(bundle.dropFirst(backupPrefix.count)) + ".lease"
+        }
+        return bundle + ".lease"
+    }
+
+    /// How old an unlocked leftover must be before a launch deletes it. A live staging lease
+    /// protects an update regardless of how long it waits for idle or for the app to quit.
     public static let leftoverAge: TimeInterval = 60 * 60
 
-    /// The leftovers and protection directories a launch deletes: at least `leftoverAge` old,
-    /// and never `running` or its protection. A backup's newer protection date takes precedence
-    /// over its bundle date, which a rename preserves; an old protection never ages a fresh bundle.
-    /// Repeated protection names use the newest date.
+    /// Candidates for launch cleanup, at least `leftoverAge` old and never `running`, its lease
+    /// or its protection. Live leases are checked separately at deletion time.
+    /// A backup's newer protection date takes precedence over its bundle date, which a rename
+    /// preserves; an old protection never ages a fresh bundle. Repeated names use the newest date.
     public static func staleLeftovers(_ files: [Housekeeping.File], running: String, now: Date) -> [String] {
         let protections = Dictionary(files.filter { isProtection($0.name) }.map { ($0.name, $0.modified) }, uniquingKeysWith: max)
         return files.compactMap { file in
-            guard file.name != running, file.name != running + protectionSuffix else { return nil }
+            guard file.name != running, file.name != running + protectionSuffix, file.name != running + ".lease" else { return nil }
             if isLeftover(file.name) {
                 let protectionName = file.name.hasPrefix(incomingPrefix)
                     ? backupPrefix + String(file.name.dropFirst(incomingPrefix.count)) + protectionSuffix
@@ -245,14 +257,15 @@ public enum AppUpdate {
                 let modified = max(file.modified, protections[protectionName] ?? file.modified)
                 return now.timeIntervalSince(modified) >= leftoverAge ? file.name : nil
             }
+            if isLease(file.name) { return now.timeIntervalSince(file.modified) >= leftoverAge ? file.name : nil }
             guard let modified = protections[file.name] else { return nil }
             return now.timeIntervalSince(modified) >= leftoverAge ? file.name : nil
         }
     }
 
     /// Lists the entries in `folder`, applies `staleLeftovers`, and returns the names actually
-    /// removed. Launch cleanup is deliberately best-effort: an unreadable directory is skipped;
-    /// an unreadable date is treated as young, keeping that entry and, for a protection, its backup.
+    /// removed. A live advisory lease protects its transaction through each removal.
+    /// Launch cleanup is best-effort. Unreadable directories, dates or leases are preserved.
     /// Failed removals are logged and skipped without failing launch or stopping other removals.
     /// Blocking: call it off the main thread.
     public static func removeStaleLeftovers(beside folder: URL, running: String, now: Date = Date()) -> [String] {
@@ -265,8 +278,7 @@ public enum AppUpdate {
         return staleLeftovers(entries, running: running, now: now).filter { name in
             let url = folder.appendingPathComponent(name)
             do {
-                try files.removeItem(at: url)
-                return true
+                return try StagingLease.removeLeftover(url, protectedBy: folder.appendingPathComponent(leaseName(for: name)))
             } catch {
                 NSLog("easl: couldn't remove %@, left by an update: %@", url.path, error.localizedDescription)
                 return false
@@ -347,7 +359,7 @@ public enum AppUpdate {
         let incoming = staging.incoming(beside: installed)
         do {
             try await run("/usr/bin/ditto", [staged.path, incoming.path], or: InstallProblem.copy)
-            // ditto keeps the release's dates; a launch deletes only leftovers an hour old.
+            // Keep an abandoned copy young after the lease owner exits.
             try await blocking { try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: incoming.path) }
             try await verify(incoming, release: release, team: team, gatekeeper: gatekeeper)
             if try await blocking({ isQuarantined(incoming) }) { try await clearQuarantine(incoming) }
@@ -458,6 +470,7 @@ public enum AppUpdate {
         pid=\(pid)
         app=\(q(app.path))
         new=\(q(staging.incoming(beside: app).path))
+        lease="$new.lease"
         backup=\(q(staging.backup(beside: app).path))
         protection=\(q(staging.protection(beside: app).path))
         previous=\(q(staging.previous.path))
@@ -467,6 +480,23 @@ public enum AppUpdate {
         vacant() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
         identity() { /usr/bin/stat -f '%d:%i' "$1"; }
         unchanged() { printf 'unchanged: %s\\n' "$1" > "$result"; }
+        installed() {
+          echo installed > "$result"
+          if /bin/mv "$new" "$backup" && /bin/mv "$backup" "$previous"; then
+            /bin/rmdir "$protection"
+          else
+            echo "easl: previous app stays beside $app until the next launch"
+          fi
+        }
+        failed() {
+          current=$(identity "$app") || return
+          if [ "$current" != "$original" ]; then
+            installed
+          else
+            unchanged "$1"
+            /bin/rmdir "$protection"
+          fi
+        }
         replace() {
           vacant "$backup" || { unchanged "$backup is in the way"; return; }
           err=$(/bin/mkdir "$protection" 2>&1) || { unchanged "$err"; return; }
@@ -474,15 +504,9 @@ public enum AppUpdate {
           \(beforeSwap.isEmpty ? ":" : beforeSwap)
           if err=$(\(q(executable.path)) --update-swap "$app" "$new" 2>&1); then
             \(afterSwap.isEmpty ? ":" : afterSwap)
-            echo installed > "$result"
-            if /bin/mv "$new" "$backup" && /bin/mv "$backup" "$previous"; then
-              /bin/rmdir "$protection"
-            else
-              echo "easl: previous app stays beside $app until the next launch"
-            fi
+            installed
           else
-            unchanged "$err"
-            /bin/rmdir "$protection"
+            failed "$err"
           fi
         }
         finish() {
@@ -490,13 +514,13 @@ public enum AppUpdate {
           trap '' 1 2 15
           [ "$swapping" = 1 ] || exit 1
           if [ ! -f "$result" ]; then
-            if [ -n "$original" ] && [ "$(identity "$app")" != "$original" ]; then
-              echo installed > "$result"
+            if [ -n "$original" ]; then
+              failed "helper interrupted"
             else
               unchanged "helper interrupted"
-              [ -z "$original" ] || /bin/rmdir "$protection"
             fi
           fi
+          [ ! -f "$result" ] || /bin/rm -f "$lease"
           \(relaunch)
         }
         trap finish 0

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 import CanvasCore
@@ -328,6 +329,162 @@ struct UpdateStagingTests {
     }
 }
 
+struct UpdateStagingLeaseTests {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("easl-lease-\(UUID().uuidString)", isDirectory: true)
+    var app: URL { root.appendingPathComponent("easl.app") }
+
+    func incoming(version: String = "0.2.3") throws -> URL {
+        try AppUpdate.Staging(updates: root.appendingPathComponent("updates"), version: version).incoming(beside: app)
+    }
+
+    func age(_ urls: [URL], now: Date) throws {
+        for url in urls {
+            try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-2 * AppUpdate.leftoverAge)], ofItemAtPath: url.path)
+        }
+    }
+
+    @Test func anotherHomesStartupKeepsAReadyCopyForAsLongAsItsLeaseIsHeld() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        try files.createDirectory(at: root, withIntermediateDirectories: true)
+        let ready = try incoming()
+        let leaseURL = URL(fileURLWithPath: ready.path + ".lease")
+        var lease: AppUpdate.StagingLease? = try AppUpdate.StagingLease(incoming: ready)
+        #expect(lease?.descriptor != nil, "ownership begins before the incoming copy exists")
+        try TestBundle.make(ready, version: "0.2.3", executable: Data("ready".utf8))
+        let original = try TestBundle.snapshot(ready)
+        let orphan = try incoming(version: "0.2.4")
+        try TestBundle.make(orphan, version: "0.2.4")
+        let now = Date()
+        try age([ready, leaseURL, orphan], now: now)
+        let muchLater = now.addingTimeInterval(365 * 24 * 60 * 60)
+        #expect(AppUpdate.removeStaleLeftovers(beside: root, running: "easl.app", now: muchLater) == [orphan.lastPathComponent])
+        #expect(try TestBundle.snapshot(ready) == original)
+        #expect(files.fileExists(atPath: leaseURL.path))
+        withExtendedLifetime(lease) {}
+        lease = nil
+        #expect(files.fileExists(atPath: leaseURL.path), "deinit closes ownership without unlinking an inherited lease")
+        #expect(Set(AppUpdate.removeStaleLeftovers(beside: root, running: "easl.app", now: muchLater))
+                == Set([ready.lastPathComponent, leaseURL.lastPathComponent]))
+        #expect(!files.fileExists(atPath: ready.path))
+        #expect(!files.fileExists(atPath: leaseURL.path))
+        #expect(AppUpdate.removeStaleLeftovers(beside: root, running: "easl.app", now: muchLater).isEmpty)
+    }
+
+    @Test func orphanLeaseCleanupDoesNotAgeAYoungBundleOrKeepAnAbsentOneForever() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        let young = try incoming()
+        try TestBundle.make(young, version: "0.2.3")
+        let youngLease = URL(fileURLWithPath: young.path + ".lease")
+        let absent = try incoming(version: "0.2.4")
+        let absentLease = URL(fileURLWithPath: absent.path + ".lease")
+        try Data().write(to: youngLease)
+        try Data().write(to: absentLease)
+        let now = Date()
+        try age([youngLease, absentLease], now: now)
+        #expect(Set(AppUpdate.removeStaleLeftovers(beside: root, running: "easl.app", now: now))
+                == Set([youngLease.lastPathComponent, absentLease.lastPathComponent]))
+        #expect(AppUpdate.bundleVersion(of: young) == "0.2.3")
+        #expect(!files.fileExists(atPath: youngLease.path))
+        #expect(!files.fileExists(atPath: absentLease.path))
+        #expect(!files.fileExists(atPath: absent.path))
+    }
+
+    @Test func uninspectableLeasesPreserveTheirCopiesWithoutBlockingOtherCleanup() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        let linked = try incoming()
+        let directory = try incoming(version: "0.2.4")
+        let orphan = try incoming(version: "0.2.5")
+        for url in [linked, directory, orphan] { try TestBundle.make(url, version: "0.2.3") }
+        let sentinel = root.appendingPathComponent("keep")
+        try Data("keep".utf8).write(to: sentinel)
+        let linkLease = URL(fileURLWithPath: linked.path + ".lease")
+        let directoryLease = URL(fileURLWithPath: directory.path + ".lease")
+        try files.createSymbolicLink(at: linkLease, withDestinationURL: sentinel)
+        try files.createDirectory(at: directoryLease, withIntermediateDirectories: false)
+        let now = Date()
+        try age([linked, directory, orphan, sentinel, directoryLease], now: now)
+        #expect(AppUpdate.removeStaleLeftovers(beside: root, running: "easl.app", now: now) == [orphan.lastPathComponent])
+        #expect(AppUpdate.bundleVersion(of: linked) == "0.2.3")
+        #expect(AppUpdate.bundleVersion(of: directory) == "0.2.3")
+        #expect(try files.destinationOfSymbolicLink(atPath: linkLease.path) == sentinel.path)
+        #expect(try String(contentsOf: sentinel, encoding: .utf8) == "keep")
+        #expect(files.fileExists(atPath: directoryLease.path))
+    }
+
+    @Test func discardReleasesOnlyItsOwnExclusivelyCreatedLease() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        try files.createDirectory(at: root, withIntermediateDirectories: true)
+        let copy = try incoming()
+        let path = copy.path + ".lease"
+        let first = try AppUpdate.StagingLease(incoming: copy)
+        #expect(throws: POSIXError.self) { try AppUpdate.StagingLease(incoming: copy) }
+        try first.discard()
+        #expect(first.descriptor == -1)
+        #expect(!files.fileExists(atPath: path))
+        try first.discard()
+        let second = try AppUpdate.StagingLease(incoming: copy)
+        try files.removeItem(atPath: path)
+        try Data("replacement".utf8).write(to: URL(fileURLWithPath: path))
+        #expect(throws: POSIXError(.ESTALE)) { try second.discard() }
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == "replacement")
+        try files.removeItem(atPath: path)
+        let sentinel = root.appendingPathComponent("sentinel")
+        try Data("keep".utf8).write(to: sentinel)
+        try files.createSymbolicLink(atPath: path, withDestinationPath: sentinel.path)
+        #expect(throws: POSIXError.self) { try AppUpdate.StagingLease(incoming: copy) }
+        #expect(try String(contentsOf: sentinel, encoding: .utf8) == "keep")
+        #expect(try files.destinationOfSymbolicLink(atPath: path) == sentinel.path)
+    }
+
+    @Test func anInheritedHelperDescriptorKeepsTheLeaseAfterItsOriginalOwnerExits() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let copy = try incoming()
+        try TestBundle.make(copy, version: "0.2.3")
+        let leaseURL = URL(fileURLWithPath: copy.path + ".lease")
+        let pidFile = root.appendingPathComponent("helper-pid")
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0])
+        let observed = try await offPool {
+            Result {
+                let owner = Process()
+                owner.executableURL = executable
+                owner.arguments = ["--update-lease-owner", copy.path, pidFile.path]
+                owner.standardOutput = FileHandle.nullDevice
+                owner.standardError = FileHandle.nullDevice
+                try owner.run()
+                owner.waitUntilExit()
+                let child = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8)))
+                var helperToStop = child
+                defer { if helperToStop > 0 { kill(helperToStop, SIGKILL) } }
+                let now = Date().addingTimeInterval(365 * 24 * 60 * 60)
+                let held = AppUpdate.removeStaleLeftovers(beside: copy.deletingLastPathComponent(), running: "easl.app", now: now)
+                let survived = AppUpdate.bundleVersion(of: copy)
+                let leaseSurvived = FileManager.default.fileExists(atPath: leaseURL.path)
+                let killed = kill(child, SIGKILL)
+                if killed == 0 { helperToStop = 0 }
+                var removed: Set<String> = []
+                let deadline = Date().addingTimeInterval(5)
+                while Date() < deadline && removed.count < 2 {
+                    removed.formUnion(AppUpdate.removeStaleLeftovers(beside: copy.deletingLastPathComponent(), running: "easl.app", now: now))
+                    if removed.count < 2 { usleep(10_000) }
+                }
+                return (status: owner.terminationStatus, held: held, survived: survived, leaseSurvived: leaseSurvived, killed: killed, removed: removed)
+            }
+        }.get()
+        #expect(observed.status == 0)
+        #expect(observed.held.isEmpty)
+        #expect(observed.survived == "0.2.3")
+        #expect(observed.leaseSurvived)
+        #expect(observed.killed == 0)
+        #expect(observed.removed == Set([copy.lastPathComponent, leaseURL.lastPathComponent]))
+        #expect(!FileManager.default.fileExists(atPath: copy.path))
+        #expect(!FileManager.default.fileExists(atPath: leaseURL.path))
+    }
+}
+
 /// Bundles on disk for the install tests: an app folder with an Info.plist and an executable.
 enum TestBundle {
     static func make(_ app: URL, version: String, executable: Data? = nil) throws {
@@ -376,7 +533,8 @@ extension TestBundle {
 
     /// Runs the helper for a process that has already exited, relaunching by writing `"$app"`
     /// to `relaunched`; its outcome.
-    static func runHelper(app: URL, staging: AppUpdate.Staging, relaunched: URL, beforeSwap: String = "", afterSwap: String = "", expectedStatus: Int32 = 0) async throws -> AppUpdate.Outcome? {
+    static func runHelper(app: URL, staging: AppUpdate.Staging, relaunched: URL, beforeSwap: String = "", afterSwap: String = "",
+                          swapExitsAfterExchange: Bool = false, expectedStatus: Int32 = 0) async throws -> AppUpdate.Outcome? {
         try FileManager.default.createDirectory(at: staging.directory, withIntermediateDirectories: true)
         let executable = URL(fileURLWithPath: CommandLine.arguments[0])
         let status = await offPool { () -> Int32 in
@@ -390,6 +548,11 @@ extension TestBundle {
             let helper = Process()
             helper.executableURL = URL(fileURLWithPath: "/bin/sh")
             helper.arguments = ["-c", script]
+            if swapExitsAfterExchange {
+                var environment = ProcessInfo.processInfo.environment
+                environment["EASL_TEST_EXIT_AFTER_UPDATE_SWAP"] = "1"
+                helper.environment = environment
+            }
             helper.standardOutput = FileHandle.nullDevice
             helper.standardError = FileHandle.nullDevice
             guard (try? helper.run()) != nil else { return -1 }
@@ -431,6 +594,46 @@ struct UpdateHelperTests {
         #expect(backupDate == oldDate, "replacement must not need to change the installed bundle's timestamp")
         #expect(try FileManager.default.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+    }
+
+    @Test func aSwapChildThatExitsAbnormallyAfterExchangeStillReportsInstalled() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        let incoming = staging.incoming(beside: app)
+        try TestBundle.make(incoming, version: "0.2.3", executable: Data("new".utf8))
+        let old = try TestBundle.snapshot(app)
+        let new = try TestBundle.snapshot(incoming)
+        let lease = try AppUpdate.StagingLease(incoming: incoming)
+        let leaseURL = URL(fileURLWithPath: incoming.path + ".lease")
+        #expect(try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched, swapExitsAfterExchange: true) == .installed)
+        #expect(try TestBundle.snapshot(app) == new)
+        #expect(try TestBundle.snapshot(staging.previous) == old)
+        #expect(!FileManager.default.fileExists(atPath: leaseURL.path))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
+        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+        withExtendedLifetime(lease) {}
+    }
+
+    @Test func anAbnormalSwapChildKeepsTheOriginalProtectedWhenArchivingFails() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        try files.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)], ofItemAtPath: app.path)
+        let old = try TestBundle.snapshot(app)
+        let incoming = staging.incoming(beside: app)
+        try TestBundle.make(incoming, version: "0.2.3", executable: Data("new".utf8))
+        let new = try TestBundle.snapshot(incoming)
+        try files.createDirectory(at: staging.directory, withIntermediateDirectories: true)
+        try Data("blocked".utf8).write(to: staging.previous)
+        let lease = try AppUpdate.StagingLease(incoming: incoming)
+        #expect(try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched, swapExitsAfterExchange: true) == .installed)
+        #expect(try TestBundle.snapshot(app) == new)
+        #expect(try TestBundle.snapshot(staging.backup(beside: app)) == old)
+        #expect(files.fileExists(atPath: staging.protection(beside: app).path))
+        #expect(!files.fileExists(atPath: incoming.path + ".lease"))
+        #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: app.lastPathComponent).isEmpty)
+        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+        withExtendedLifetime(lease) {}
     }
 
     @Test func aFailedSwapLeavesTheOriginalByteForByte() async throws {
