@@ -477,7 +477,7 @@ final class BrowserTile: NSView, TileContent {
     private func setPageActivity(_ on: Bool) {
         guard let webView, on != pageActivity else { return }
         pageActivity = on
-        Task { _ = try? await webView.callAsyncJavaScript(BrowserScripts.ensure + "return window.__canvasCmux.setActivity(on)", arguments: ["on": on], in: nil, contentWorld: BrowserScripts.world) }
+        PageScript.call(BrowserScripts.ensure + "return window.__canvasCmux.setActivity(on)", ["on": on], in: BrowserScripts.world, on: webView)
     }
 
     /// Drops the web view (its page, history, and web content process share) but keeps the image
@@ -1706,7 +1706,7 @@ extension BrowserTile {
 
     /// `webView`'s page log, its own document's HTTP error (`failure`) first.
     fileprivate static func pageLog(of webView: WKWebView, failure: PageLogEntry?) async -> PageLog? {
-        guard let text = try? await webView.callAsyncJavaScript(PageCapture.readScript, arguments: [:], in: nil, contentWorld: .page) as? String,
+        guard let text = await PageScript.value(PageCapture.readScript, in: .page, on: webView, { $0 as? String }),
               let json = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)), var log = PageLog(json: json) else { return nil }
         if let failure { log.add(documentFailure: failure) }
         return log
