@@ -443,10 +443,7 @@ final class Updater {
         posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
         posix_spawn_file_actions_addopen(&actions, 1, staging.log.path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
         posix_spawn_file_actions_adddup2(&actions, 1, 2)
-        let leaseStatus = posix_spawn_file_actions_adddup2(&actions, lease.descriptor, 198)
-        guard leaseStatus == 0 else {
-            throw UpdateError("couldn't pass staging ownership to the update helper: \(String(cString: strerror(leaseStatus)))")
-        }
+        try lease.inherit(in: &actions)
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
@@ -579,6 +576,8 @@ final class Updater {
         case let error as LatestRelease.Problem: error.description
         case let error as AppUpdate.DownloadProblem: error.description
         case let error as AppUpdate.InstallProblem: error.description
+        case let error as ApiRouter.Failure: error.message
+        case let error as EaslConnection.Failure: error.message
         default: error.localizedDescription
         }
     }

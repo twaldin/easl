@@ -25,6 +25,14 @@ extension AppUpdate {
             if descriptor >= 0 { close(descriptor) }
         }
 
+        /// Passes ownership through exec without changing this owner's close-on-exec descriptor.
+        public func inherit(in actions: inout posix_spawn_file_actions_t?) throws {
+            // A same-descriptor dup2 does not clear close-on-exec on Darwin.
+            let destination: Int32 = descriptor == 198 ? 199 : 198
+            let status = posix_spawn_file_actions_adddup2(&actions, descriptor, destination)
+            guard status == 0 else { throw POSIXError(.init(rawValue: status) ?? .EIO) }
+        }
+
         /// Only before helper handoff. Never removes another owner's replacement lease.
         public func discard() throws {
             guard descriptor >= 0 else { return }

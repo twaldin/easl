@@ -767,7 +767,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if let window = controller.window { restored.append((index, window)) }
                 } catch {
                     guard !Task.isCancelled, !terminating else { return }
-                    failures.append(error.localizedDescription)
+                    failures.append((error as? ApiRouter.Failure)?.message ?? (error as? EaslConnection.Failure)?.message ?? error.localizedDescription)
                     if index == saved.selected { failedSelection = failedTabs.count }
                     failedTabs.append(tab)
                 }

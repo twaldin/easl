@@ -17,15 +17,33 @@ if CommandLine.arguments.dropFirst().first == "--update-swap" {
 }
 
 if CommandLine.arguments.dropFirst().first == "--update-lease-owner" {
-    guard CommandLine.arguments.count == 4 else { exit(2) }
+    guard CommandLine.arguments.count == 5,
+          ["normal", "forced198"].contains(CommandLine.arguments[4]) else { exit(2) }
     do {
+        let force198 = CommandLine.arguments[4] == "forced198"
+        var fillers: [Int32] = []
+        defer { fillers.forEach { close($0) } }
+        if force198 {
+            while true {
+                let fd = open("/dev/null", O_RDONLY | O_CLOEXEC)
+                guard fd >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+                if fd >= 198 {
+                    close(fd)
+                    guard fd == 198 else { throw POSIXError(.EBUSY) }
+                    break
+                }
+                fillers.append(fd)
+            }
+        }
         let lease = try AppUpdate.StagingLease(incoming: URL(fileURLWithPath: CommandLine.arguments[2]))
+        guard force198 ? lease.descriptor == 198 : lease.descriptor != 198 else { throw POSIXError(.EBUSY) }
+        fillers.forEach { close($0) }
+        fillers.removeAll()
         var actions: posix_spawn_file_actions_t?
         let initialized = posix_spawn_file_actions_init(&actions)
         guard initialized == 0 else { throw POSIXError(.init(rawValue: initialized) ?? .EIO) }
         defer { posix_spawn_file_actions_destroy(&actions) }
-        let duplicated = posix_spawn_file_actions_adddup2(&actions, lease.descriptor, 198)
-        guard duplicated == 0 else { throw POSIXError(.init(rawValue: duplicated) ?? .EIO) }
+        try lease.inherit(in: &actions)
         var attributes: posix_spawnattr_t?
         let attributed = posix_spawnattr_init(&attributes)
         guard attributed == 0 else { throw POSIXError(.init(rawValue: attributed) ?? .EIO) }

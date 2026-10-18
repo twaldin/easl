@@ -440,7 +440,8 @@ struct UpdateStagingLeaseTests {
         #expect(try files.destinationOfSymbolicLink(atPath: path) == sentinel.path)
     }
 
-    @Test func anInheritedHelperDescriptorKeepsTheLeaseAfterItsOriginalOwnerExits() async throws {
+    @Test(arguments: ["normal", "forced198"])
+    func anInheritedHelperDescriptorKeepsTheLeaseAfterItsOriginalOwnerExits(mode: String) async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let copy = try incoming()
         try TestBundle.make(copy, version: "0.2.3")
@@ -451,7 +452,7 @@ struct UpdateStagingLeaseTests {
             Result {
                 let owner = Process()
                 owner.executableURL = executable
-                owner.arguments = ["--update-lease-owner", copy.path, pidFile.path]
+                owner.arguments = ["--update-lease-owner", copy.path, pidFile.path, mode]
                 owner.standardOutput = FileHandle.nullDevice
                 owner.standardError = FileHandle.nullDevice
                 try owner.run()
