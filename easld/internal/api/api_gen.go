@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "61151ef03a4152c8"
+const SchemaHash = "b4f651f8d1b88208"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -337,7 +337,7 @@ type SurfaceSize struct {
 // SurfaceInputEvent is a union of JSON objects (variants: "mouse", "scroll", "key", "text", "compose", "unmark", "focus", "command", "command", "navigate"); decode it as a generic map.
 type SurfaceInputEvent = map[string]any
 
-// SurfaceFrame: Private in-memory surface frame. JPEG and PNG requests retain full images. Native h264 streams measure the first three decoded motion acknowledgements, then use JPEG on fast links or bounded predicted ESV1 video on constrained links, regardless of host topology. Motion is bounded to 256 KiB JPEG or 48 KiB H264. A settled image may receive one independent High444Predictive H264 IDR, bounded to 576 KiB and transported in ordered 16 KiB chunks with at most two unreceipted chunks. Chunks share one frame sequence and all metadata, are assembled before decoding, and are never separate images or pixel regions. surface.progress grants transport capacity only; surface.ack follows complete decode and presentation. Input supersedes refresh without waiting; the next frame declares the canceled range. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay.
+// SurfaceFrame: Private in-memory surface frame. JPEG and PNG requests retain full images. Native h264 streams measure the first three decoded motion acknowledgements, then use JPEG on fast links or bounded predicted ESV1 video on constrained links, regardless of host topology. Motion is bounded to 256 KiB JPEG or 48 KiB H264. After one second without input or a change to more than 1% of consecutive-capture pixels, a stream may send one full-resolution lossless PNG bounded to 576 KiB. Small changes continue as predicted motion without repeated refresh until a large change or new input. The PNG travels in ordered 16 KiB chunks with at most two unreceipted chunks. Chunks share one frame sequence and all metadata and are assembled before decoding. They are not separate images or pixel regions. surface.progress grants transport capacity only; surface.ack follows complete decode and presentation. Input cancels refresh without waiting; the next frame declares the canceled range. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay.
 type SurfaceFrame struct {
 	Stream SurfaceStream `json:"stream"`
 	Seq    int           `json:"seq"`
@@ -353,13 +353,13 @@ type SurfaceFrame struct {
 	Back    bool   `json:"back"`
 	Forward bool   `json:"forward"`
 	Loading bool   `json:"loading"`
-	// Independent full-resolution H264 idle IDR, supersedable by input and decoded with a separate reference session.
+	// Full-resolution lossless PNG refresh, supersedable by input and independent of video decoder references.
 	Refresh *bool `json:"refresh,omitempty"`
 	// First sequence in a consecutive range of canceled refinements ending immediately before this frame. This never skips a video reference frame.
 	Supersedes *int `json:"supersedes,omitempty"`
-	// Original raster dimensions, retained when a refresh pads each axis to an even minimum of 16 pixels.
+	// Original raster dimensions. PNG refresh dimensions equal this canvas without padding or resampling.
 	Canvas *SurfaceSize `json:"canvas,omitempty"`
-	// Refresh transport chunk byte offset. Only with refresh=true, format=h264 and total. The first chunk starts at zero; chunks are ordered.
+	// Refresh transport chunk byte offset. Only with refresh=true, format=png and total. The first chunk starts at zero; chunks are ordered.
 	Offset *int `json:"offset,omitempty"`
 	// Whole encoded refresh size. Each chunk contains exactly min(16384,total-offset) decoded bytes, with constant frame metadata.
 	Total *int `json:"total,omitempty"`
