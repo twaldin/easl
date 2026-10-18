@@ -237,81 +237,82 @@ struct SurfaceVideoTests {
         #expect(decoded.width == 64 && decoded.height == 66)
     }
 
-    private func coloredDetail(width: Int, height: Int, shifted: Bool = false) throws -> CGImage {
-        let colors: [[UInt8]] = [[255, 0, 0, 255], [0, 0, 255, 255], [0, 255, 0, 255],
-                                 [255, 0, 255, 255], [0, 255, 255, 255], [255, 255, 255, 255]]
-        var pixels = Data(count: width * height * 4)
-        pixels.withUnsafeMutableBytes { raw in
-            let bytes = raw.bindMemory(to: UInt8.self)
-            for y in 0..<height {
-                for x in 0..<width {
-                    let color = colors[(x + y * 3 + (shifted ? 1 : 0)) % colors.count]
-                    for channel in 0..<4 { bytes[(y * width + x) * 4 + channel] = color[channel] }
+    private enum LifecycleError: Error {
+        case missingFrame
+    }
+
+    private struct LifecycleObservation: Sendable {
+        let frames: [SurfaceVideoFrame]
+        let cancellations: [Bool]
+    }
+
+    private final class LifecycleResult: @unchecked Sendable {
+        private let lock = NSLock()
+        private let completed = DispatchSemaphore(value: 0)
+        private var result: Result<LifecycleObservation, Error>?
+
+        func finish(_ result: Result<LifecycleObservation, Error>) {
+            lock.lock()
+            self.result = result
+            lock.unlock()
+            completed.signal()
+        }
+
+        func wait() -> Result<LifecycleObservation, Error>? {
+            guard completed.wait(timeout: .now() + 20) == .success else { return nil }
+            lock.lock()
+            defer { lock.unlock() }
+            return result
+        }
+    }
+
+    @Test func cancellationResizeAndRepeatedDestructionCompleteWithinDeadline() throws {
+        let result = LifecycleResult()
+        // A detached worker lets the deadline fail even if a synchronous codec call never returns.
+        DispatchQueue.global(qos: .userInitiated).async {
+            result.finish(Result {
+                var frames: [SurfaceVideoFrame] = []
+                var cancellations: [Bool] = []
+                for _ in 0..<3 {
+                    var encoder: SurfaceVideoEncoder? = SurfaceVideoEncoder()
+                    let source = try image()
+                    guard let first = try encoder?.encode(source, width: 64, height: 64) else {
+                        throw LifecycleError.missingFrame
+                    }
+                    frames.append(first)
+                    var checks = 0
+                    let cancelled = try encoder?.encode(source, width: 64, height: 64, isCancelled: {
+                        checks += 1
+                        return checks >= 5
+                    })
+                    cancellations.append(cancelled == nil)
+                    guard let recovered = try encoder?.encode(image(red: true), width: 64, height: 64),
+                          let resized = try encoder?.encode(image(width: 96, height: 80, red: true),
+                                                            width: 96, height: 80) else {
+                        throw LifecycleError.missingFrame
+                    }
+                    frames.append(contentsOf: [recovered, resized])
+                    encoder = nil
                 }
+                return LifecycleObservation(frames: frames, cancellations: cancellations)
+            })
+        }
+        let observation = try #require(result.wait(), "Encoder lifecycle exceeded 20 seconds").get()
+        #expect(observation.cancellations == [true, true, true])
+        #expect(observation.frames.count == 9)
+        for (index, frame) in observation.frames.enumerated() {
+            let resized = index % 3 == 2
+            #expect(frame.width == (resized ? 96 : 64))
+            #expect(frame.height == (resized ? 80 : 64))
+            #expect(frame.data.count <= 48 * 1024)
+            #expect(frame.data[4] == 1)
+            let decoded = try SurfaceVideoDecoder().decode(frame.data, width: frame.width, height: frame.height)
+            let pixel = try center(decoded)
+            if index % 3 == 0 {
+                #expect(pixel.allSatisfy { $0 < 30 })
+            } else {
+                #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30)
             }
         }
-        let provider = try #require(CGDataProvider(data: pixels as CFData))
-        return try #require(CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-            bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue |
-                CGBitmapInfo.byteOrder32Big.rawValue), provider: provider, decode: nil,
-            shouldInterpolate: false, intent: .defaultIntent))
-    }
-
-    private func rgba(_ image: CGImage) throws -> Data {
-        var pixels = Data(count: image.width * image.height * 4)
-        try pixels.withUnsafeMutableBytes { bytes in
-            let context = try #require(CGContext(data: bytes.baseAddress, width: image.width, height: image.height,
-                bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
-            context.setBlendMode(.copy)
-            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        }
-        return pixels
-    }
-
-    @Test func refreshPreservesColoredPixelsAndDoesNotChangeMotionReferences() throws {
-        let motion = SurfaceVideoEncoder()
-        let motionDecoder = SurfaceVideoDecoder()
-        let first = try #require(try motion.encode(image(), width: 64, height: 64))
-        _ = try motionDecoder.decode(first.data, width: first.width, height: first.height)
-        let refresh = SurfaceVideoEncoder(mode: .refresh)
-        for shifted in [false, true] {
-            let source = try coloredDetail(width: 65, height: 67, shifted: shifted)
-            let frame = try #require(try refresh.encode(source, width: 65, height: 67))
-            #expect(frame.width == 66 && frame.height == 68)
-            #expect(frame.data.count <= 576 * 1024 && frame.data[4] == 1)
-            let decoded = try SurfaceVideoDecoder().decode(frame.data, width: frame.width, height: frame.height)
-            let cropped = try #require(decoded.cropping(to: CGRect(x: 0, y: 0, width: 65, height: 67)))
-            let expected = try rgba(source)
-            let actual = try rgba(cropped)
-            #expect(actual.count == 65 * 67 * 4)
-            let maximumError = zip(expected, actual).map { abs(Int($0) - Int($1)) }.max()
-            #expect(try #require(maximumError) <= 4)
-        }
-        let predicted = try #require(try motion.encode(image(red: true), width: 64, height: 64))
-        #expect(predicted.data[4] == 0 && predicted.data.count <= 48 * 1024)
-        let red = try motionDecoder.decode(predicted.data, width: predicted.width, height: predicted.height)
-        #expect(try center(red)[0] > 220)
-    }
-
-    @Test func refreshCancellationAndPacketRejectionAllowIndependentRecovery() throws {
-        let refresh = SurfaceVideoEncoder(mode: .refresh)
-        let source = try coloredDetail(width: 64, height: 64)
-        #expect(try refresh.encode(source, width: 64, height: 64, isCancelled: { true }) == nil)
-        let entropy = try noise(width: 512, height: 512, seed: 0x123456789abcdef)
-        #expect(try refresh.encode(entropy, width: 512, height: 512) == nil)
-        let frame = try #require(try refresh.encode(source, width: 64, height: 64))
-        #expect(frame.width == 64 && frame.height == 64)
-        #expect(frame.data.count <= 576 * 1024 && frame.data[4] == 1)
-        let decoded = try SurfaceVideoDecoder().decode(frame.data, width: frame.width, height: frame.height)
-        let maximumError = zip(try rgba(source), try rgba(decoded)).map { abs(Int($0) - Int($1)) }.max()
-        #expect(try #require(maximumError) <= 4)
-    }
-
-    @Test func refreshRejectsSourceDimensionMismatch() throws {
-        let refresh = SurfaceVideoEncoder(mode: .refresh)
-        let source = try image(width: 65, height: 67)
-        #expect(throws: (any Error).self) { try refresh.encode(source, width: 64, height: 67) }
     }
 }

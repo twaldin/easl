@@ -104,7 +104,7 @@ public struct SurfaceRefreshAssembly: Sendable {
 }
 
 private func validateRefresh(_ frame: SurfaceEvent.Frame) throws {
-    guard frame.refresh, frame.format == .h264,
+    guard frame.refresh, frame.format == .png,
           !frame.stream.isEmpty, (1...SurfaceRequest.maxInteger).contains(frame.seq),
           (0...SurfaceRequest.maxInteger).contains(frame.input),
           frame.width > 0, frame.height > 0,

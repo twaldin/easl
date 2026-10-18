@@ -5,8 +5,8 @@ import Testing
 struct SurfaceRefreshTransferTests {
     private func refresh(bytes: Int = 32769, seq: Int = 7) -> SurfaceEvent.Frame {
         var frame = SurfaceEvent.Frame(stream: "str_refresh", seq: seq, input: 3,
-            size: CGSize(width: 640, height: 479), scale: 1, format: .h264,
-            data: Data((0..<bytes).map { UInt8($0 % 251) }), width: 640, height: 480,
+            size: CGSize(width: 640, height: 479), scale: 1, format: .png,
+            data: Data((0..<bytes).map { UInt8($0 % 251) }), width: 640, height: 479,
             back: true, forward: false, loading: false)
         frame.refresh = true
         frame.canvas = CGSize(width: 640, height: 479)
@@ -140,7 +140,7 @@ struct SurfaceRefreshTransferTests {
         #expect(throws: SurfaceRefreshTransferError.invalidFrame) { try assembly.append(frame: invalid) }
         invalid = part(original, offset: 16384); invalid.refresh = false
         #expect(throws: SurfaceRefreshTransferError.invalidFrame) { try assembly.append(frame: invalid) }
-        invalid = part(original, offset: 16384); invalid.format = .png
+        invalid = part(original, offset: 16384); invalid.format = .h264
         #expect(throws: SurfaceRefreshTransferError.invalidFrame) { try assembly.append(frame: invalid) }
         invalid = part(original, offset: 16384); invalid.data.append(0)
         #expect(throws: SurfaceRefreshTransferError.invalidFrame) { try assembly.append(frame: invalid) }

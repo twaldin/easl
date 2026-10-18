@@ -40,7 +40,6 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private var stashed: [HostFrame] = []
     private var lastAcked = 0
     private var video = SurfaceVideoDecoder()
-    private var refreshVideo = SurfaceVideoDecoder()
     private var refreshAssembly = SurfaceRefreshAssembly()
     private var assemblingRefinement: Int?
     private var abandonedRefinement = 0
@@ -290,7 +289,6 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         stashed.removeAll()
         lastAcked = 0
         video = SurfaceVideoDecoder()
-        refreshVideo = SurfaceVideoDecoder()
         refreshAssembly.reset()
         assemblingRefinement = nil
         abandonedRefinement = 0
@@ -560,10 +558,9 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         let generation = streamEpoch
         let stream = frame.stream
         let video = video
-        let refreshVideo = refreshVideo
         runStreamTask { [weak self] in
             let decoded = await offPool {
-                DecodedFrame(SurfaceWire.decode(frame, video: video, refreshVideo: refreshVideo))
+                DecodedFrame(SurfaceWire.decode(frame, video: video))
             }
             guard let self, generation == self.streamEpoch, self.streamID == stream else { return }
             self.finishDecode(frame, decoded)
@@ -1556,7 +1553,7 @@ private enum SurfaceWire {
               width > 0, height > 0, width <= SurfaceEvent.Frame.maxPixels / height,
               let back = data["back"]?.bool, let forward = data["forward"]?.bool, let loading = data["loading"]?.bool else { return nil }
         let refresh = data["refresh"]?.bool ?? false
-        guard data["refresh"] == nil || data["refresh"]?.bool != nil, !refresh || format == .h264 else { return nil }
+        guard data["refresh"] == nil || data["refresh"]?.bool != nil, !refresh || format == .png else { return nil }
         let supersedes = integer(data["supersedes"])
         guard data["supersedes"] == nil || supersedes.map({ $0 > 0 && $0 < seq }) == true else { return nil }
         let offset = integer(data["offset"]), total = integer(data["total"])
@@ -1609,10 +1606,10 @@ private enum SurfaceWire {
                           name: data["name"]?.string, state: data["state"]?.string)
     }
 
-    static func decode(_ frame: HostFrame, video: SurfaceVideoDecoder, refreshVideo: SurfaceVideoDecoder) -> (CGImage?, Int) {
+    static func decode(_ frame: HostFrame, video: SurfaceVideoDecoder) -> (CGImage?, Int) {
         (try? SurfaceImageDecoder.decode(frame.data, format: frame.format, width: frame.width, height: frame.height,
             canvas: frame.canvas ?? CGSize(width: frame.width, height: frame.height),
-            video: video, refreshVideo: refreshVideo, refinement: frame.refresh), frame.data.count)
+            video: video, refinement: frame.refresh), frame.data.count)
     }
 
     static func plain(_ value: Any) -> String {
