@@ -1,0 +1,315 @@
+{
+  "git": true,
+  "files": {
+    "src/app.ts": "export function greet(name: string): string {\n  return `hello ${name}`;\n}\n\nexport function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport const answer = 42;\n",
+    "README.md": "# Sample\n\nA repository for the conformance suite.\n\n## Usage\n\nRun it.\n",
+    "notes/plan.md": "# Plan\n\n- step one\n- step two\n"
+  },
+  "description": "easld only. A scripted client types three composer prompts. Staged mentions are tray.stage results, in token order, sent with viewer after tray.commit has taken them off the host tray. Matching drains number those mentions from 1. Committing a peek emits composer.submitted; releasing a target or closing its board emits composer.returned. Events name original staged ids, not captured targets. A viewer-scoped manifest recovers the same outcomes, including after board close and reopen.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": { "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs" },
+        "frame": { "x": 0, "y": 0, "w": 300, "h": 200 }
+      },
+      "save": "n"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": { "kind": "rect", "text": "box" },
+        "frame": { "x": 400, "y": 0, "w": 160, "h": 100 }
+      },
+      "save": "r"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "code",
+        "props": { "path": "src/app.ts", "range": { "start": 5, "end": 7 } },
+        "frame": { "x": 0, "y": 400, "w": 640, "h": 300 }
+      },
+      "save": "c",
+      "settleMs": 1000
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "terminal",
+        "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "worker" },
+        "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 }
+      },
+      "save": "t"
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "seq": 1, "source": "main", "draft": false }
+    },
+    {
+      "call": "client.attach",
+      "conn": "app",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "{{schemaHash}}",
+        "app": "0.2.0",
+        "host": "studio",
+        "identity": "mch_composer",
+        "serves": ["agent.prompt"],
+        "boards": ["{{board}}"],
+        "focused": "{{board}}"
+      },
+      "replies": {
+        "agent.prompt": [
+          {
+            "result": {
+              "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "kind": "omp", "lifecycle": { "state": "idle" } },
+              "submittedAt": "2026-10-05T12:00:00Z",
+              "waitable": true,
+              "delivery": "typed"
+            }
+          },
+          {
+            "result": {
+              "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "kind": "omp", "lifecycle": { "state": "idle" } },
+              "submittedAt": "2026-10-05T12:00:01Z",
+              "waitable": true,
+              "delivery": "typed"
+            }
+          },
+          {
+            "result": {
+              "agent": { "tile": "{{t.object.id}}", "board": "{{board}}", "root": "{{root}}", "kind": "omp", "lifecycle": { "state": "idle" } },
+              "submittedAt": "2026-10-05T12:00:02Z",
+              "waitable": true,
+              "delivery": "typed"
+            }
+          }
+        ]
+      },
+      "ignore": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": {
+          "kind": "code",
+          "object": "{{c.object.id}}",
+          "path": "src/app.ts",
+          "lines": { "start": 5, "end": 7 },
+          "symbol": "add"
+        }
+      },
+      "save": "code"
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": {
+          "kind": "note",
+          "object": "{{n.object.id}}",
+          "block": "paragraph",
+          "headings": ["Plan"],
+          "lines": { "start": 3, "end": 3 },
+          "text": "Ship the parser."
+        }
+      },
+      "save": "note"
+    },
+    {
+      "call": "tray.commit",
+      "params": { "board": "{{board}}", "ids": ["{{code.mention.id}}", "{{note.mention.id}}"] },
+      "note": "the host tray no longer holds these; the prompt carries the staged copies"
+    },
+    {
+      "call": "agent.prompt",
+      "params": {
+        "target": "{{t.object.id}}",
+        "text": "fix [1] using [2]",
+        "composer": true,
+        "viewer": "vw_composer1",
+        "staged": ["{{code.mention}}", "{{note.mention}}"]
+      },
+      "expect": { "response.ok": true, "eventCount": 0 },
+      "note": "paste does not submit. Forwarded params omit staged and viewer; the runner's expect cannot see forwarded."
+    },
+    {
+      "call": "tray.drain",
+      "params": { "board": "{{board}}", "caller": "{{t.object.id}}" },
+      "expect": {
+        "response.result.mentions": [],
+        "response.result.context": "",
+        "eventCount": 0
+      },
+      "note": "no prompt: the queue is invisible"
+    },
+    {
+      "call": "tray.drain",
+      "params": { "board": "{{board}}", "caller": "{{t.object.id}}", "prompt": "zz" },
+      "expect": {
+        "response.result.mentions": [],
+        "response.result.context": "",
+        "eventCount": 0
+      },
+      "note": "under 3 folded characters, only an equal text matches"
+    },
+    {
+      "call": "tray.drain",
+      "params": { "board": "{{board}}", "caller": "{{t.object.id}}", "prompt": "unrelated question" },
+      "expect": {
+        "response.result.mentions": [],
+        "response.result.context": "",
+        "eventCount": 0
+      }
+    },
+    {
+      "call": "tray.drain",
+      "params": {
+        "board": "{{board}}",
+        "caller": "{{t.object.id}}",
+        "prompt": "fix [1] using [2]",
+        "peek": true
+      },
+      "save": "peek",
+      "expect": {
+        "response.result.mentions.0.label": "{{code.mention.label}}",
+        "response.result.mentions.1.label": "{{note.mention.label}}",
+        "eventCount": 0
+      },
+      "note": "token order, numbered from 1 in context and summaries: code is [1], the note is [2]. A peek does not submit."
+    },
+    {
+      "call": "tray.commit",
+      "params": {
+        "board": "{{board}}",
+        "ids": ["{{peek.mentions.0.id}}", "{{peek.mentions.1.id}}"]
+      },
+      "expect": {
+        "response.ok": true,
+        "eventCount": 1,
+        "events.0.event": "composer.submitted",
+        "events.0.board": "{{board}}",
+        "events.0.data.event": "composer.submitted",
+        "events.0.data.viewer": "vw_composer1",
+        "events.0.data.terminal": "{{t.object.id}}",
+        "events.0.data.ids": ["{{code.mention.id}}", "{{note.mention.id}}"]
+      },
+      "note": "Original staged ids in token order, with a stable receipt identity for reconnect deduplication; no captured targets."
+    },
+    {
+      "call": "tray.drain",
+      "params": {
+        "board": "{{board}}",
+        "caller": "{{t.object.id}}",
+        "prompt": "fix [1] using [2]",
+        "peek": true
+      },
+      "expect": {
+        "response.result.mentions": [],
+        "response.result.context": "",
+        "eventCount": 0
+      },
+      "note": "commit consumed the queue"
+    },
+    {
+      "call": "tray.stage",
+      "params": {
+        "board": "{{board}}",
+        "target": { "kind": "object", "object": "{{r.object.id}}" }
+      },
+      "save": "box"
+    },
+    {
+      "call": "tray.commit",
+      "params": { "board": "{{board}}", "ids": ["{{box.mention.id}}"] }
+    },
+    {
+      "call": "agent.prompt",
+      "params": {
+        "target": "{{t.object.id}}",
+        "text": "remember the box",
+        "composer": true,
+        "viewer": "vw_composer1",
+        "staged": ["{{box.mention}}"]
+      },
+      "expect": { "response.ok": true, "eventCount": 0 }
+    },
+    {
+      "call": "agent.release",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "source": "main" },
+      "note": "composer.returned names the original box id and a stable receipt; recorded beside object.updated and agent.lifecycle."
+    },
+    {
+      "call": "board.get",
+      "params": { "board": "{{board}}", "viewer": "vw_composer1" },
+      "expect": {
+        "response.result.composerReceipts.0.event": "composer.submitted",
+        "response.result.composerReceipts.0.viewer": "vw_composer1",
+        "response.result.composerReceipts.0.terminal": "{{t.object.id}}",
+        "response.result.composerReceipts.0.ids": ["{{code.mention.id}}", "{{note.mention.id}}"],
+        "response.result.composerReceipts.1.event": "composer.returned",
+        "response.result.composerReceipts.1.ids": ["{{box.mention.id}}"]
+      },
+      "note": "A disconnected viewer recovers both outcomes from the manifest, using the same normalized receipt identities as the live events."
+    },
+    {
+      "call": "tray.drain",
+      "params": {
+        "board": "{{board}}",
+        "caller": "{{t.object.id}}",
+        "prompt": "remember the box",
+        "peek": true
+      },
+      "expect": {
+        "response.result.mentions": [],
+        "response.result.context": "",
+        "eventCount": 0
+      },
+      "note": "release returned the prompt; it is not still queued"
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "seq": 2, "source": "main", "draft": false }
+    },
+    {
+      "call": "agent.prompt",
+      "params": {
+        "target": "{{t.object.id}}",
+        "text": "close and return the box",
+        "composer": true,
+        "viewer": "vw_composer1",
+        "staged": ["{{box.mention}}"]
+      },
+      "expect": { "response.ok": true, "eventCount": 0 }
+    },
+    {
+      "call": "board.close",
+      "params": { "board": "{{board}}" },
+      "note": "The queued prompt returns before board.closed."
+    },
+    {
+      "call": "board.open",
+      "params": { "root": "{{root}}" }
+    },
+    {
+      "call": "board.get",
+      "params": { "board": "{{board}}", "viewer": "vw_composer1" },
+      "expect": {
+        "response.result.composerReceipts.2.event": "composer.returned",
+        "response.result.composerReceipts.2.ids": ["{{box.mention.id}}"]
+      },
+      "note": "Close and reopen retain the return receipt for this viewer in the host process."
+    }
+  ]
+}

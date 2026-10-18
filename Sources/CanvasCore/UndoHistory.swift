@@ -18,6 +18,9 @@ public final class UndoHistory {
         /// object's, or the ones Hyper-V pasted into the terminal `pastedInto`. Undo puts them
         /// back where they were; redo takes them out again.
         case unstaged([PlacedMention], pastedInto: ObjectID?)
+        /// Text the user kept out of a remote note. Replayed through a guarded host write,
+        /// never through the host's history cursor.
+        case noteRecovery(NoteRecovery)
     }
 
     /// Props a terminal's integrations keep current on their own.
@@ -39,10 +42,31 @@ public final class UndoHistory {
     }
 
     /// One undo step: its changes, oldest first, and who made it (an agent when one made any
-    /// of it, else the user), so undoing someone else's work can say so.
+    /// of it, else the user), so undoing someone else's work can say so. `id` is the step's own,
+    /// unique in its history: a remote board sends it with the step's writes, and its host's
+    /// undo and redo answer for that step by it.
     public struct Step: Sendable {
+        public var id: Int
         public var changes: [Change]
         public var author: Actor
+
+        /// The step created, changed or deleted board objects (what a remote board's host
+        /// reverts), not only what is the viewer's own (a tray's chips, an effect).
+        public var changesBoard: Bool {
+            changes.contains { change in
+                if case .effect = change { return false }
+                if case .unstaged = change { return false }
+                if case .noteRecovery = change { return false }
+                return true
+            }
+        }
+
+        public var noteRecoveries: [NoteRecovery] {
+            changes.compactMap {
+                if case .noteRecovery(let recovery) = $0 { return recovery }
+                return nil
+            }
+        }
     }
 
     public private(set) var undoSteps: [Step] = []
@@ -53,6 +77,8 @@ public final class UndoHistory {
     private var depth = 0
     private var open: [Change] = []
     private var openAuthor: Actor = .user
+    private var nextID = 1
+    private(set) var openID = 0
     /// Where in `open` each object's update sits, so another update of it in the same step (a
     /// group re-fit once per member change, an arrow freed at both ends) amends it instead of
     /// adding a change. Only changes at or after `mergeFloor` amend, so `discard(from:)` of a
@@ -81,16 +107,34 @@ public final class UndoHistory {
             openUpdates[after.id] = open.count
         case .created(let object), .deleted(let object):
             openUpdates.removeValue(forKey: object.id)
-        case .effect, .unstaged:
+        case .effect, .unstaged, .noteRecovery:
             break
         }
         open.append(change)
         if depth == 0 { close() }
     }
 
+    func recordNoteRecovery(_ recovery: NoteRecovery) {
+        guard !replaying, muted == 0 else { return }
+        if !open.isEmpty { close() }
+        open = [.noteRecovery(recovery)]
+        close()
+        if depth > 0 { openID = takeID() }
+    }
+
     func begin() {
+        if depth == 0 { openID = takeID() }
         depth += 1
     }
+
+    private func takeID() -> Int {
+        defer { nextID += 1 }
+        return nextID
+    }
+
+    var openChanges: [Change] { open }
+
+    var lastID: Int { nextID - 1 }
 
     /// True while a step is open (between the outermost `begin` and its `end`).
     var isOpen: Bool { depth > 0 }
@@ -119,8 +163,10 @@ public final class UndoHistory {
         mergeFloor = 0
         let author = openAuthor
         openAuthor = .user
+        let id = openID > 0 ? openID : takeID()
+        openID = 0
         guard !open.isEmpty else { return }
-        undoSteps.append(Step(changes: open, author: author))
+        undoSteps.append(Step(id: id, changes: open, author: author))
         open = []
         if undoSteps.count > limit { undoSteps.removeFirst(undoSteps.count - limit) }
         redoSteps.removeAll()
@@ -130,6 +176,18 @@ public final class UndoHistory {
     func popRedo() -> Step? { redoSteps.popLast() }
     func pushRedo(_ step: Step) { redoSteps.append(step) }
     func pushUndo(_ step: Step) { undoSteps.append(step) }
+
+    @discardableResult
+    func remove(redo: Bool, where picked: (Step) -> Bool) -> [Step] {
+        let taken = (redo ? redoSteps : undoSteps).filter(picked)
+        guard !taken.isEmpty else { return [] }
+        if redo { redoSteps.removeAll(where: picked) } else { undoSteps.removeAll(where: picked) }
+        return taken
+    }
+
+    func insertUndo(_ step: Step) {
+        undoSteps.insert(step, at: undoSteps.firstIndex { $0.id > step.id } ?? undoSteps.count)
+    }
 
     /// What an undo compares and restores: everything the user can see change, minus bookkeeping.
     struct Content: Equatable {
@@ -203,6 +261,12 @@ extension Board {
         return try body()
     }
 
+    func stepping<T>(_ body: (Int?) throws -> T) rethrows -> T {
+        history.begin()
+        defer { endStep() }
+        return try body(history.muted == 0 && !history.replaying ? history.openID : nil)
+    }
+
     /// Makes changes no one chose, which ⌘Z skips (a follow tile appearing or re-aiming, the
     /// app's write-backs): nothing inside is recorded, and later undos keep what it did.
     func unrecorded<T>(_ body: () throws -> T) rethrows -> T {
@@ -211,13 +275,15 @@ extension Board {
         return try body()
     }
 
-    /// Reverts the latest recorded step. False when there is nothing to undo.
+    /// Reverts the latest recorded step. False when there is nothing to undo, or the step needs
+    /// an asynchronous host write (remote board changes and note recovery use `BoardMirror.undo`).
     @discardableResult
     public func undo() -> Bool {
-        guard let step = history.popUndo() else { return false }
+        guard let next = nextUndo, !(isRemote && next.changesBoard), next.noteRecoveries.isEmpty,
+              let step = history.popUndo() else { return false }
         replayVerb = "undo"
         defer { replayVerb = nil }
-        history.pushRedo(UndoHistory.Step(changes: revert(step.changes), author: step.author))
+        history.pushRedo(UndoHistory.Step(id: step.id, changes: revert(step.changes), author: step.author))
         return true
     }
 
@@ -242,16 +308,20 @@ extension Board {
                 case .unstaged(let placed, _):
                     restageMentions(placed)
                     replayed.append(change)
+                case .noteRecovery:
+                    break
                 }
             }
         }
         return replayed.reversed()
     }
 
-    /// Re-applies the latest undone step. False when there is nothing to redo.
+    /// Re-applies the latest undone step. False when there is nothing to redo, or the step needs
+    /// an asynchronous host write (`undo`).
     @discardableResult
     public func redo() -> Bool {
-        guard let step = history.popRedo() else { return false }
+        guard let next = nextRedo, !(isRemote && next.changesBoard), next.noteRecoveries.isEmpty,
+              let step = history.popRedo() else { return false }
         replayVerb = "redo"
         defer { replayVerb = nil }
         var replayed: [UndoHistory.Change] = []
@@ -272,10 +342,12 @@ extension Board {
                 case .unstaged(let placed, _):
                     unstageMentions(placed)
                     replayed.append(change)
+                case .noteRecovery:
+                    break
                 }
             }
         }
-        history.pushUndo(UndoHistory.Step(changes: replayed, author: step.author))
+        history.pushUndo(UndoHistory.Step(id: step.id, changes: replayed, author: step.author))
         return true
     }
 

@@ -74,14 +74,21 @@ func (b *Board) Unstage(id string) error {
 	return nil
 }
 
-// Drain resolves every staged mention (includeTray) and what agents handed to caller, returning
-// the prompt context; without peek they leave the tray.
-func (b *Board) Drain(peek bool, caller string, includeTray bool) ([]mention.Resolved, string) {
-	var resolved []mention.Resolved
+// Drain resolves a claimed composer prompt, else the staged tray (includeTray), and what
+// agents handed to caller. A prompt replaces the tray for that drain. Without peek, delivered
+// mentions leave. prompt "" never looks at the composer queue.
+func (b *Board) Drain(peek bool, caller, prompt string, includeTray bool) ([]mention.Resolved, string) {
+	var claimed *ComposerPrompt
+	if caller != "" && prompt != "" {
+		claimed = b.claimComposerPrompt(caller, prompt, time.Now())
+	}
 	var staged []model.Mention
-	if includeTray {
+	if claimed != nil {
+		staged = claimed.Mentions
+	} else if includeTray {
 		staged = b.tray
 	}
+	var resolved []mention.Resolved
 	for i, m := range staged {
 		resolved = append(resolved, mention.Resolve(m, i+1, b, caller))
 	}
@@ -112,6 +119,7 @@ func (b *Board) Drain(peek bool, caller string, includeTray bool) ([]mention.Res
 // terminals; unknown ids are ignored.
 func (b *Board) Commit(ids []string) {
 	b.commitHandoffs(ids)
+	b.CommitComposerPrompts(ids)
 	kept := b.tray[:0:0]
 	removed := 0
 	for _, m := range b.tray {

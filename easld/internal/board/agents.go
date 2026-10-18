@@ -191,6 +191,7 @@ func (b *Board) ReportLifecycle(r Report) error {
 		b.endAgentSession(r.Tile)
 	}
 	b.emit(EventAgentLifecycle, map[string]any{"tile": r.Tile, "lifecycle": model.Clone(lifecycle)})
+	b.ComposerAgentReported(r.Tile, state, time.Now())
 	return nil
 }
 
@@ -348,6 +349,7 @@ func (b *Board) ReleaseAgent(tile string) error {
 		return err
 	}
 	b.endAgentSession(tile)
+	b.DropComposerPrompts(tile)
 	b.emit(EventAgentLifecycle, map[string]any{"tile": tile, "lifecycle": nil})
 	return nil
 }
@@ -403,6 +405,7 @@ func (b *Board) RestartedAgent(tile string, command []string, agent any) error {
 		return err
 	}
 	b.emit(EventAgentLifecycle, map[string]any{"tile": tile, "lifecycle": model.Clone(kept)})
+	b.DropComposerPrompts(tile)
 	return nil
 }
 
@@ -480,9 +483,23 @@ func (b *Board) Replay(entries []SpoolEntry) {
 
 // --- attention (Attention.swift) ---
 
-// AttentionJSON is a marker as the API and events carry it.
-func AttentionJSON(a store.Attention) map[string]any {
-	m := map[string]any{"id": a.Object, "active": true}
+// AttentionStamp is the wire identity of a marker: UTC RFC3339 with fixed nanoseconds,
+// so a later view.seen can echo it without fractional loss.
+func AttentionStamp(t time.Time) string {
+	return t.UTC().Format("2006-01-02T15:04:05.000000000Z")
+}
+
+func ensureStamp(a store.Attention) store.Attention {
+	if a.Stamp == "" {
+		a.Stamp = AttentionStamp(a.RaisedAt)
+	}
+	return a
+}
+
+// AttentionMarkerJSON is a marker as board.get and view.seen carry it.
+func AttentionMarkerJSON(a store.Attention) map[string]any {
+	a = ensureStamp(a)
+	m := map[string]any{"id": a.Object, "raisedAt": a.Stamp}
 	if a.Message != nil {
 		m["message"] = *a.Message
 	}
@@ -492,8 +509,35 @@ func AttentionJSON(a store.Attention) map[string]any {
 	return m
 }
 
+// AttentionJSON is a marker as attention.changed carries it.
+func AttentionJSON(a store.Attention) map[string]any {
+	m := AttentionMarkerJSON(a)
+	m["active"] = true
+	return m
+}
+
+// AttentionMarkers are the unseen markers, sorted by id. ids nil is the whole board;
+// otherwise only markers on those objects. Empty is omitted by the caller.
+func (b *Board) AttentionMarkers(ids map[string]bool) []map[string]any {
+	var keys []string
+	for id := range b.attention {
+		if ids != nil && !ids[id] {
+			continue
+		}
+		keys = append(keys, id)
+	}
+	sort.Strings(keys)
+	out := make([]map[string]any, 0, len(keys))
+	for _, id := range keys {
+		marker := ensureStamp(b.attention[id])
+		b.attention[id] = marker
+		out = append(out, AttentionMarkerJSON(marker))
+	}
+	return out
+}
+
 // RaiseAttention raises (or re-raises) the marker on id, clearing the caller's markers from
-// earlier turns.
+// earlier turns. The stamp is fixed here and reused by the event and later snapshots.
 func (b *Board) RaiseAttention(id string, message *string, caller string) (store.Attention, []string, error) {
 	if _, ok := b.objects[id]; !ok {
 		return store.Attention{}, nil, NotFound("object %s", id)
@@ -513,7 +557,8 @@ func (b *Board) RaiseAttention(id string, message *string, caller string) (store
 			}
 		}
 	}
-	marker := store.Attention{Object: id, Message: message, RaisedAt: time.Now()}
+	now := time.Now()
+	marker := store.Attention{Object: id, Message: message, RaisedAt: now, Stamp: AttentionStamp(now)}
 	if caller != "" {
 		c := caller
 		marker.RaisedBy = &c
@@ -533,6 +578,52 @@ func (b *Board) ClearAttention(id string) bool {
 	b.changed()
 	b.emit(EventAttentionChanged, map[string]any{"id": id, "active": false})
 	return true
+}
+
+// MarkSeen is Board.markSeen: a done agent becomes idle. Working and blocked are not seen.
+func (b *Board) MarkSeen(tile string) bool {
+	terminal, ok := b.objects[tile]
+	if !ok || terminal.Type != model.Terminal || b.seenSinceWorking[tile] {
+		return false
+	}
+	state := LifecycleState(terminal)
+	if state == "working" || state == "blocked" {
+		return false
+	}
+	b.seenSinceWorking[tile] = true
+	if state != "done" {
+		return true
+	}
+	seen := map[string]any{"state": "idle", "seen": true}
+	if via, ok := lifecycleOf(terminal)["via"]; ok {
+		seen["via"] = via
+	}
+	if _, err := b.Update(tile, nil, nil, nil, map[string]any{"lifecycle": seen}, "", ""); err != nil {
+		return false
+	}
+	b.emit(EventAgentLifecycle, map[string]any{"tile": tile, "lifecycle": model.Clone(seen)})
+	return true
+}
+
+// Seen acknowledges a marker only when raisedAt still matches, and marks a terminal seen
+// only when rev is still its revision. A mismatch leaves the newer state.
+func (b *Board) Seen(id string, rev *int, marker map[string]any) (cleared, seen bool) {
+	if marker != nil {
+		got, _ := marker["raisedAt"].(string)
+		if current, ok := b.attention[id]; ok {
+			current = ensureStamp(current)
+			b.attention[id] = current
+			if got != "" && current.Stamp == got {
+				cleared = b.ClearAttention(id)
+			}
+		}
+	}
+	if rev != nil {
+		if terminal, ok := b.objects[id]; ok && terminal.Rev == *rev {
+			seen = b.MarkSeen(id)
+		}
+	}
+	return cleared, seen
 }
 
 func (b *Board) agentStartedTurn(tile string) {

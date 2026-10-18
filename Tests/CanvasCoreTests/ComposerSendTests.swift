@@ -455,4 +455,249 @@ final class ComposerSendTests {
         #expect(text.hasPrefix("<canvas-mentions board=\"\(board.id)\"") && text.contains("[1] code a.py:1-1") && text.hasSuffix("</canvas-mentions>\n[1] why?"))
         #expect(board.composerPrompts[shell] == nil, "nothing there drains")
     }
+
+    @Test func aRemoteComposerQueuesItsOwnCopiesAndSubmitsTheOriginalIds() async throws {
+        let alpha = try terminal("alpha"), beta = try terminal("beta")
+        let a = code("a.py"), b = code("b.py")
+        let first = try board.stage(line(a, "a.py"))
+        let second = try board.stage(line(b, "b.py"))
+        var events: [ComposerNotice] = []
+        board.onEvent = { event in
+            if case .composer(let notice) = event { events.append(notice) }
+        }
+        board.queueComposerPrompt("[1] one [2] two", to: alpha, mentions: [first, second], viewer: "vw_viewer01")
+        board.queueComposerPrompt("[1] one [2] two", to: beta, mentions: [first, second], viewer: "vw_viewer02")
+        board.withdraw([first.id, second.id])
+        #expect(try await drain(alpha, "[1] one [2] two") == ["[1] a.py", "[2] b.py"])
+        let submitted = try #require(events.first)
+        #expect(events.count == 1 && submitted.kind == .submitted)
+        #expect(submitted.viewer == "vw_viewer01" && submitted.terminal == alpha && submitted.ids == [first.id, second.id])
+        #expect(try await drain(alpha, "[1] one [2] two") == [])
+        #expect(try await drain(beta, "[1] one [2] two") == ["[1] a.py", "[2] b.py"])
+        #expect(events.last?.viewer == "vw_viewer02")
+        #expect(board.tray.isEmpty)
+    }
+
+    @Test func documentedRFC3339StagedMentionsCanBeSubmitted() async throws {
+        let alpha = try terminal("alpha")
+        let staged = try board.stage(line(code("a.py"), "a.py"))
+        var fields = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(staged)) as? [String: Any])
+        fields["stagedAt"] = "2026-10-17T22:14:00.123Z"
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: fields), as: UTF8.self)
+        let response = try await call("agent.prompt", #"{"target":"\#(alpha)","text":"inspect [1]","composer":true,"viewer":"vw_viewer01","staged":[\#(encoded)]}"#)
+        #expect(response["ok"] == .bool(true))
+        board.withdraw([staged.id])
+        #expect(try await drain(alpha, "inspect [1]") == ["[1] a.py"])
+        #expect(board.tray.isEmpty)
+    }
+
+    @Test func closingReturnsRemoteMentionsBeforeClosedAndReopenRetainsTheirReceipt() async throws {
+        let alpha = try terminal("alpha")
+        let staged = try board.stage(line(code("a.py"), "a.py"))
+        board.queueComposerPrompt("inspect [1]", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        board.withdraw([staged.id])
+        let subscriber = try LineClient(path: dir.appendingPathComponent("s").path)
+        subscriber.send(#"{"id":"sub","method":"events.subscribe","params":{"board":"\#(board.id)","events":["composer.returned","board.closed"]}}"#)
+        #expect(try await subscriber.next()["ok"] == .bool(true))
+        try registry.close(board.id)
+        let returned = try await subscriber.next()
+        let closed = try await subscriber.next()
+        #expect(returned["event"]?.string == "composer.returned")
+        #expect(returned["data"]?["ids"]?.array == [.string(staged.id)])
+        #expect(closed["event"]?.string == "board.closed")
+        let reopened = registry.open(root: board.root)
+        let manifest = try await call("board.get", #"{"board":"\#(reopened.id)","viewer":"vw_viewer01"}"#)
+        let receipt = try #require(manifest["result"]?["composerReceipts"]?.array?.first)
+        #expect(receipt["receipt"] == returned["data"]?["receipt"])
+        #expect(reopened.composerPrompts.isEmpty && reopened.tray.isEmpty)
+    }
+
+    @Test func anUnrelatedDrainAndADrainWithoutAPromptLeaveTheQueue() async throws {
+        let alpha = try terminal("alpha")
+        let a = code("a.py")
+        let staged = try board.stage(line(a, "a.py"))
+        board.queueComposerPrompt("fix the parser", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        try board.unstage(staged.id)
+        try board.stage(line(code("x.py"), "x.py"))
+        #expect(try await drain(alpha, "ship the widget") == ["[1] x.py"])
+        #expect(board.composerPrompts[alpha]?.count == 1)
+        #expect(try await drain(alpha, nil) == [])
+        #expect(board.composerPrompts[alpha]?.count == 1)
+        #expect(try await drain(alpha, "Please fix the parser now") == ["[1] a.py"])
+    }
+
+    @Test func unicodeFoldAndShortTextFollowTheClaimRule() async throws {
+        let alpha = try terminal("alpha")
+        let a = code("a.py")
+        let staged = try board.stage(line(a, "a.py"))
+        board.queueComposerPrompt("Café [1]", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        try board.unstage(staged.id)
+        try board.stage(line(code("x.py"), "x.py"))
+        #expect(try await drain(alpha, "CAFÉ [1]") == ["[1] a.py"])
+        #expect(board.tray.map(\.label) == ["x.py:1"])
+        let short = try board.stage(line(a, "a.py"))
+        board.queueComposerPrompt("Ab", to: alpha, mentions: [short], viewer: "vw_viewer01")
+        #expect(try await drain(alpha, "abacus") == ["[1] x.py", "[2] a.py"])
+        #expect(board.composerPrompts[alpha]?.map(\.folded) == ["ab"])
+        #expect(try await drain(alpha, "AB") == ["[1] a.py"])
+    }
+
+    @Test func aPeekHoldsThePromptUntilCommit() async throws {
+        let alpha = try terminal("alpha")
+        let staged = try board.stage(line(code("a.py"), "a.py"))
+        board.queueComposerPrompt("fix it", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        #expect(try await drain(alpha, "fix it", commit: false) == ["[1] a.py"])
+        #expect(try await drain(alpha, "fix it", commit: false) == ["[1] a.py"])
+        #expect(board.composerPrompts[alpha]?.count == 1)
+        #expect(try await drain(alpha, "fix it") == ["[1] a.py"])
+        #expect(board.composerPrompts[alpha] == nil)
+    }
+
+    @Test func releaseExitAndExpiryReturnOriginIdsNotTheHostTray() async throws {
+        let alpha = try terminal("alpha")
+        let staged = try board.stage(line(code("a.py"), "a.py"))
+        var returned: [[String]] = []
+        board.onEvent = { event in
+            if case .composer(let notice) = event, notice.kind == .returned { returned.append(notice.ids) }
+        }
+        board.onComposerMentionsReturned = { _, _ in returned.append(["tray"]) }
+        board.queueComposerPrompt("hold", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        try board.releaseAgent(tile: alpha)
+        #expect(returned == [[staged.id]])
+        #expect(board.tray.map(\.id) == [staged.id])
+
+        try agent(alpha, "omp", .idle)
+        board.queueComposerPrompt("again", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        board.terminalProgram(alpha, is: nil)
+        #expect(returned == [[staged.id], [staged.id]])
+
+        try agent(alpha, "omp", .idle)
+        board.queueComposerPrompt("later", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        board.expireComposerPrompts(now: Date().addingTimeInterval(ComposerPrompt.lifetime + 1))
+        #expect(returned.last == [staged.id])
+        #expect(board.composerPrompts[alpha] == nil)
+    }
+
+    @Test func aFailedDeleteNeitherLosesNorReturnsTheQueue() throws {
+        let alpha = try terminal("alpha")
+        let note = board.create(type: .note, props: .object(["markdown": "n"]))
+        let staged = try board.stage(.object(note.id))
+        board.queueComposerPrompt("keep", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        var events = 0
+        board.onEvent = { event in
+            if case .composer = event { events += 1 }
+        }
+        #expect(throws: BoardError.self) {
+            try board.atomically {
+                try board.delete(alpha)
+                throw BoardError.conflict("stop")
+            }
+        }
+        #expect(events == 0)
+        #expect(board.composerPrompts[alpha]?.count == 1)
+        #expect(board.objects[alpha] != nil)
+    }
+
+    @Test func onlyCommittedReturnsAreRecoverableFromTheBoardSnapshot() async throws {
+        let alpha = try terminal("alpha")
+        let staged = try board.stage(line(code("a.py"), "a.py"))
+        board.queueComposerPrompt("keep", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        var live: [ComposerNotice] = []
+        board.onEvent = { event in
+            if case .composer(let notice) = event { live.append(notice) }
+        }
+        #expect(throws: BoardError.self) {
+            try board.atomically {
+                try board.delete(alpha)
+                throw BoardError.conflict("rollback")
+            }
+        }
+        let before = try await call("board.get", #"{"board":"\#(board.id)","viewer":"vw_viewer01"}"#)
+        #expect(before["result"]?["composerReceipts"] == nil)
+        #expect(board.composerPrompts[alpha]?.first?.origins == [staged.id])
+        try board.delete(alpha)
+        let notice = try #require(live.first)
+        let after = try await call("board.get", #"{"board":"\#(board.id)","viewer":"vw_viewer01"}"#)
+        let recovered = try #require(after["result"]?["composerReceipts"]?.array?.first)
+        #expect(recovered["receipt"]?.string == notice.receipt)
+        #expect(recovered["event"] == "composer.returned")
+        #expect(recovered["viewer"] == "vw_viewer01")
+        #expect(recovered["terminal"]?.string == alpha)
+        #expect(recovered["ids"]?.array == [.string(staged.id)])
+        #expect(recovered.object?.keys.sorted() == ["event", "ids", "receipt", "terminal", "viewer"])
+        #expect(live.count == 1)
+    }
+
+    @Test func aPartialCommitThenReleaseReturnsOnlyTheRemainder() async throws {
+        let alpha = try terminal("alpha")
+        let first = try board.stage(line(code("a.py"), "a.py"))
+        let second = try board.stage(line(code("b.py"), "b.py"))
+        board.queueComposerPrompt("both", to: alpha, mentions: [first, second], viewer: "vw_viewer01")
+        let copies = try #require(board.composerPrompts[alpha]?.first?.mentions)
+        board.commit([copies[0].id], pastedInto: alpha)
+        var returned: [String] = []
+        board.onEvent = { event in
+            if case .composer(let notice) = event, notice.kind == .returned { returned = notice.ids }
+        }
+        try board.releaseAgent(tile: alpha)
+        #expect(returned == [second.id])
+    }
+
+    @Test func deletingATargetReturnsThatOrigin() throws {
+        let alpha = try terminal("alpha")
+        let note = board.create(type: .note, props: .object(["markdown": "n"]))
+        let staged = try board.stage(.object(note.id))
+        board.queueComposerPrompt("look", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        var returned: [String] = []
+        board.onEvent = { event in
+            if case .composer(let notice) = event, notice.kind == .returned { returned = notice.ids }
+        }
+        try board.delete(note.id)
+        #expect(returned == [staged.id])
+        #expect(board.composerPrompts[alpha]?.first?.mentions.isEmpty == true)
+    }
+
+    @Test func aFailedForwardWithdrawsWithoutAnEvent() throws {
+        let alpha = try terminal("alpha")
+        let staged = try board.stage(line(code("a.py"), "a.py"))
+        let id = board.queueComposerPrompt("nope", to: alpha, mentions: [staged], viewer: "vw_viewer01")
+        var events = 0
+        board.onEvent = { event in
+            if case .composer = event { events += 1 }
+        }
+        board.withdrawComposerPrompt(id)
+        #expect(events == 0)
+        #expect(board.composerPrompts[alpha] == nil)
+    }
+
+    @Test func anAnswerClaimSubmitsWithoutMentionIds() async throws {
+        let codex = try terminal("codex")
+        try agent(codex, "codex", .blocked)
+        var submitted: [[String]] = []
+        board.onEvent = { event in
+            if case .composer(let notice) = event, notice.kind == .submitted { submitted.append(notice.ids) }
+        }
+        board.queueComposerPrompt("yes", to: codex, mentions: [], answer: true, viewer: "vw_viewer01")
+        #expect(try await drain(codex, "yes", commit: false) == [])
+        #expect(submitted == [[]])
+        #expect(board.composerPrompts[codex] == nil)
+    }
+
+    @Test func staleSeenKeepsANewerMarkerAndAMismatchedRevision() throws {
+        let alpha = try terminal("alpha")
+        let note = board.create(type: .note, props: .object(["markdown": "n"]))
+        let first = try board.raiseAttention(note.id, message: "old", caller: alpha)
+        let stale = first.marker.seenMarker
+        let second = try board.raiseAttention(note.id, message: "new", caller: alpha)
+        let kept = board.seen(note.id, rev: nil, marker: stale)
+        #expect(kept.cleared == false)
+        #expect(board.attention[note.id]?.stamp == second.marker.stamp)
+        let cleared = board.seen(note.id, rev: nil, marker: second.marker.seenMarker)
+        #expect(cleared.cleared == true)
+        #expect(board.attention[note.id] == nil)
+        try board.reportLifecycle(tile: alpha, kind: "omp", state: .idle, message: nil, seq: 2, source: nil)
+        let rev = try #require(board.objects[alpha]?.rev)
+        #expect(board.seen(alpha, rev: rev - 1, marker: nil).seen == false)
+        #expect(board.seen(alpha, rev: rev, marker: nil).seen == true)
+    }
 }

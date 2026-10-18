@@ -1,0 +1,1582 @@
+{
+  "scenario": "remote-composer",
+  "description": "easld only. A scripted client types three composer prompts. Staged mentions are tray.stage results, in token order, sent with viewer after tray.commit has taken them off the host tray. Matching drains number those mentions from 1. Committing a peek emits composer.submitted; releasing a target or closing its board emits composer.returned. Events name original staged ids, not captured targets. A viewer-scoped manifest recovers the same outcomes, including after board close and reopen.",
+  "recordedOn": "deckbox scratch easld reviewed remote-edit-1",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>",
+          "worktree": {
+            "branch": "main",
+            "main": true,
+            "path": "<root>"
+          }
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 300,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 300,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 300,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 400,
+          "y": 0
+        },
+        "props": {
+          "kind": "rect",
+          "text": "box"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect",
+              "text": "box"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "kind": "rect",
+              "text": "box"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 300,
+          "w": 640,
+          "x": 0,
+          "y": 400
+        },
+        "props": {
+          "path": "src/app.ts",
+          "range": {
+            "end": 7,
+            "start": 5
+          }
+        },
+        "type": "code"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 300,
+              "w": 640,
+              "x": 0,
+              "y": 400
+            },
+            "id": "<obj:3>",
+            "props": {
+              "path": "src/app.ts",
+              "range": {
+                "end": 7,
+                "start": 5
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "code",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 300,
+              "w": 640,
+              "x": 0,
+              "y": 400
+            },
+            "id": "<obj:3>",
+            "props": {
+              "path": "src/app.ts",
+              "range": {
+                "end": 7,
+                "start": 5
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "code",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 300,
+              "w": 640,
+              "x": 0,
+              "y": 400
+            },
+            "id": "<obj:3>",
+            "props": {
+              "anchor": "export function add(a: number, b: number): number {",
+              "path": "src/app.ts",
+              "range": {
+                "end": 7,
+                "start": 5
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "code",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>",
+          "name": "worker"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:4>",
+            "props": {
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker",
+              "worktree": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 4
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:4>",
+            "props": {
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker",
+              "worktree": "<root>"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 4
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "seq": 1,
+        "source": "main",
+        "state": "idle",
+        "tile": "<obj:4>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:4>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker",
+              "worktree": "<root>"
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:4>"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:4>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "app",
+      "request": {
+        "app": "0.2.0",
+        "boards": [
+          "<board>"
+        ],
+        "focused": "<board>",
+        "host": "studio",
+        "identity": "mch_composer",
+        "serves": [
+          "agent.prompt"
+        ],
+        "version": 2
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:1>",
+          "version": 2
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "studio",
+                "id": "<cli:1>",
+                "identity": "mch_composer",
+                "serves": [
+                  "agent.prompt"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        }
+      ],
+      "ignored": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "kind": "code",
+          "lines": {
+            "end": 7,
+            "start": 5
+          },
+          "object": "<obj:3>",
+          "path": "src/app.ts",
+          "symbol": "add"
+        }
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "mention": {
+            "edited": false,
+            "id": "<men:1>",
+            "label": "src/app.ts:5-7 add",
+            "stagedAt": "<time:number>",
+            "target": {
+              "kind": "code",
+              "lines": {
+                "end": 7,
+                "start": 5
+              },
+              "object": "<obj:3>",
+              "path": "src/app.ts",
+              "symbol": "add"
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": false,
+                "id": "<men:1>",
+                "label": "src/app.ts:5-7 add",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "code",
+                  "lines": {
+                    "end": 7,
+                    "start": 5
+                  },
+                  "object": "<obj:3>",
+                  "path": "src/app.ts",
+                  "symbol": "add"
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "block": "paragraph",
+          "headings": [
+            "Plan"
+          ],
+          "kind": "note",
+          "lines": {
+            "end": 3,
+            "start": 3
+          },
+          "object": "<obj:1>",
+          "text": "Ship the parser."
+        }
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "mention": {
+            "edited": false,
+            "id": "<men:2>",
+            "label": "note Plan › Ship the parser.",
+            "stagedAt": "<time:number>",
+            "target": {
+              "block": "paragraph",
+              "headings": [
+                "Plan"
+              ],
+              "kind": "note",
+              "lines": {
+                "end": 3,
+                "start": 3
+              },
+              "object": "<obj:1>",
+              "text": "Ship the parser."
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": false,
+                "id": "<men:1>",
+                "label": "src/app.ts:5-7 add",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "code",
+                  "lines": {
+                    "end": 7,
+                    "start": 5
+                  },
+                  "object": "<obj:3>",
+                  "path": "src/app.ts",
+                  "symbol": "add"
+                }
+              },
+              {
+                "edited": false,
+                "id": "<men:2>",
+                "label": "note Plan › Ship the parser.",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "block": "paragraph",
+                  "headings": [
+                    "Plan"
+                  ],
+                  "kind": "note",
+                  "lines": {
+                    "end": 3,
+                    "start": 3
+                  },
+                  "object": "<obj:1>",
+                  "text": "Ship the parser."
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "tray.commit",
+      "method": "tray.commit",
+      "request": {
+        "board": "<board>",
+        "ids": [
+          "<men:1>",
+          "<men:2>"
+        ]
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": []
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "staged": [
+          {
+            "edited": false,
+            "id": "<men:1>",
+            "label": "src/app.ts:5-7 add",
+            "stagedAt": "<time:number>",
+            "target": {
+              "kind": "code",
+              "lines": {
+                "end": 7,
+                "start": 5
+              },
+              "object": "<obj:3>",
+              "path": "src/app.ts",
+              "symbol": "add"
+            }
+          },
+          {
+            "edited": false,
+            "id": "<men:2>",
+            "label": "note Plan › Ship the parser.",
+            "stagedAt": "<time:number>",
+            "target": {
+              "block": "paragraph",
+              "headings": [
+                "Plan"
+              ],
+              "kind": "note",
+              "lines": {
+                "end": 3,
+                "start": 3
+              },
+              "object": "<obj:1>",
+              "text": "Ship the parser."
+            }
+          }
+        ],
+        "target": "<obj:4>",
+        "text": "fix [1] using [2]",
+        "viewer": "vw_composer1"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "agent": {
+            "board": "<board>",
+            "kind": "omp",
+            "lifecycle": {
+              "state": "idle"
+            },
+            "root": "<root>",
+            "tile": "<obj:4>"
+          },
+          "delivery": "typed",
+          "submittedAt": "<time:iso>",
+          "waitable": true
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "agent.prompt",
+          "params": {
+            "composer": true,
+            "target": "<obj:4>",
+            "text": "fix [1] using [2]"
+          }
+        }
+      ]
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:4>"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "context": "",
+          "mentions": []
+        }
+      }
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:4>",
+        "prompt": "zz"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "context": "",
+          "mentions": []
+        }
+      }
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:4>",
+        "prompt": "unrelated question"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "context": "",
+          "mentions": []
+        }
+      }
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:4>",
+        "peek": true,
+        "prompt": "fix [1] using [2]"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "context": "<canvas-mentions board=\"<board>\" root=\"<root>\">\n[1] code src/app.ts:5-7 (symbol add) · tile <obj:3>\n    2      return `hello ${name}`;\n    3    }\n    4    \n  > 5    export function add(a: number, b: number): number {\n  > 6      return a + b;\n  > 7    }\n    8    \n    9    export const answer = 42;\n[2] note <obj:1> \"Plan\" · paragraph, markdown line 3 · in Plan\n    Ship the parser.\nRead more with the easl SDK or CLI: easl get <id> --as graph; look with easl render <id>\n</canvas-mentions>",
+          "mentions": [
+            {
+              "id": "<men:3>",
+              "label": "src/app.ts:5-7 add",
+              "ref": "canvas:<men:3>@rev1",
+              "summary": "[1] code src/app.ts:5-7 (symbol add) · tile <obj:3>\n    2      return `hello ${name}`;\n    3    }\n    4    \n  > 5    export function add(a: number, b: number): number {\n  > 6      return a + b;\n  > 7    }\n    8    \n    9    export const answer = 42;"
+            },
+            {
+              "id": "<men:4>",
+              "label": "note Plan › Ship the parser.",
+              "ref": "canvas:<men:4>@rev1",
+              "summary": "[2] note <obj:1> \"Plan\" · paragraph, markdown line 3 · in Plan\n    Ship the parser."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "tray.commit",
+      "method": "tray.commit",
+      "request": {
+        "board": "<board>",
+        "ids": [
+          "<men:3>",
+          "<men:4>"
+        ]
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "event": "composer.submitted",
+            "ids": [
+              "<men:1>",
+              "<men:2>"
+            ],
+            "receipt": "<crp:1>",
+            "terminal": "<obj:4>",
+            "viewer": "vw_composer1"
+          },
+          "event": "composer.submitted"
+        }
+      ]
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:4>",
+        "peek": true,
+        "prompt": "fix [1] using [2]"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "context": "",
+          "mentions": []
+        }
+      }
+    },
+    {
+      "step": "tray.stage",
+      "method": "tray.stage",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "kind": "object",
+          "object": "<obj:2>"
+        }
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "mention": {
+            "edited": false,
+            "id": "<men:5>",
+            "label": "shape box",
+            "stagedAt": "<time:number>",
+            "target": {
+              "kind": "object",
+              "object": "<obj:2>"
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": [
+              {
+                "edited": false,
+                "id": "<men:5>",
+                "label": "shape box",
+                "stagedAt": "<time:number>",
+                "target": {
+                  "kind": "object",
+                  "object": "<obj:2>"
+                }
+              }
+            ]
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "tray.commit",
+      "method": "tray.commit",
+      "request": {
+        "board": "<board>",
+        "ids": [
+          "<men:5>"
+        ]
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "mentions": []
+          },
+          "event": "tray.changed"
+        }
+      ]
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "staged": [
+          {
+            "edited": false,
+            "id": "<men:5>",
+            "label": "shape box",
+            "stagedAt": "<time:number>",
+            "target": {
+              "kind": "object",
+              "object": "<obj:2>"
+            }
+          }
+        ],
+        "target": "<obj:4>",
+        "text": "remember the box",
+        "viewer": "vw_composer1"
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "agent": {
+            "board": "<board>",
+            "kind": "omp",
+            "lifecycle": {
+              "state": "idle"
+            },
+            "root": "<root>",
+            "tile": "<obj:4>"
+          },
+          "delivery": "typed",
+          "submittedAt": "<time:iso>",
+          "waitable": true
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "agent.prompt",
+          "params": {
+            "composer": true,
+            "target": "<obj:4>",
+            "text": "remember the box"
+          }
+        }
+      ]
+    },
+    {
+      "step": "agent.release",
+      "method": "agent.release",
+      "request": {
+        "kind": "omp",
+        "source": "main",
+        "tile": "<obj:4>"
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:4>",
+            "props": {
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker",
+              "worktree": "<root>"
+            },
+            "rev": "<rev:3>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:4>"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "event": "composer.returned",
+            "ids": [
+              "<men:5>"
+            ],
+            "receipt": "<crp:2>",
+            "terminal": "<obj:4>",
+            "viewer": "vw_composer1"
+          },
+          "event": "composer.returned"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": null,
+            "tile": "<obj:4>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>",
+        "viewer": "vw_composer1"
+      },
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "composerReceipts": [
+            {
+              "event": "composer.submitted",
+              "ids": [
+                "<men:1>",
+                "<men:2>"
+              ],
+              "receipt": "<crp:1>",
+              "terminal": "<obj:4>",
+              "viewer": "vw_composer1"
+            },
+            {
+              "event": "composer.returned",
+              "ids": [
+                "<men:5>"
+              ],
+              "receipt": "<crp:2>",
+              "terminal": "<obj:4>",
+              "viewer": "vw_composer1"
+            }
+          ],
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 200,
+                "w": 300,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:1>",
+              "props": {
+                "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+              },
+              "rev": "<rev:1>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "z": 1
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 400,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "kind": "rect",
+                "text": "box"
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "z": 2
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 300,
+                "w": 640,
+                "x": 0,
+                "y": 400
+              },
+              "id": "<obj:3>",
+              "props": {
+                "anchor": "export function add(a: number, b: number): number {",
+                "path": "src/app.ts",
+                "range": {
+                  "end": 7,
+                  "start": 5
+                }
+              },
+              "rev": "<rev:1>",
+              "type": "code",
+              "updatedAt": "<time:number>",
+              "z": 3
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 400,
+                "w": 600,
+                "x": 50000,
+                "y": 50000
+              },
+              "id": "<obj:4>",
+              "props": {
+                "branch": "main",
+                "command": [
+                  "/bin/cat"
+                ],
+                "cwd": "<root>",
+                "name": "worker",
+                "worktree": "<root>"
+              },
+              "rev": "<rev:3>",
+              "type": "terminal",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "agent",
+                "tile": "<obj:4>"
+              },
+              "z": 4
+            }
+          ],
+          "revision": "<board:1>",
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:4>",
+        "peek": true,
+        "prompt": "remember the box"
+      },
+      "response": {
+        "id": "r22",
+        "ok": true,
+        "result": {
+          "context": "",
+          "mentions": []
+        }
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "seq": 2,
+        "source": "main",
+        "state": "idle",
+        "tile": "<obj:4>"
+      },
+      "response": {
+        "id": "r23",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:4>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "branch": "main",
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker",
+              "worktree": "<root>"
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:4>"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:4>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "staged": [
+          {
+            "edited": false,
+            "id": "<men:5>",
+            "label": "shape box",
+            "stagedAt": "<time:number>",
+            "target": {
+              "kind": "object",
+              "object": "<obj:2>"
+            }
+          }
+        ],
+        "target": "<obj:4>",
+        "text": "close and return the box",
+        "viewer": "vw_composer1"
+      },
+      "response": {
+        "id": "r24",
+        "ok": true,
+        "result": {
+          "agent": {
+            "board": "<board>",
+            "kind": "omp",
+            "lifecycle": {
+              "state": "idle"
+            },
+            "root": "<root>",
+            "tile": "<obj:4>"
+          },
+          "delivery": "typed",
+          "submittedAt": "<time:iso>",
+          "waitable": true
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "app",
+          "method": "agent.prompt",
+          "params": {
+            "composer": true,
+            "target": "<obj:4>",
+            "text": "close and return the box"
+          }
+        }
+      ]
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r25",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "ended": [],
+          "kept": [
+            {
+              "id": "<obj:4>",
+              "name": "worker"
+            }
+          ],
+          "root": "<root>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "event": "composer.returned",
+            "ids": [
+              "<men:5>"
+            ],
+            "receipt": "<crp:3>",
+            "terminal": "<obj:4>",
+            "viewer": "vw_composer1"
+          },
+          "event": "composer.returned"
+        },
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.closed"
+        }
+      ]
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r26",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 4,
+          "root": "<root>",
+          "worktree": {
+            "branch": "main",
+            "main": true,
+            "path": "<root>"
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.opened"
+        }
+      ]
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>",
+        "viewer": "vw_composer1"
+      },
+      "response": {
+        "id": "r27",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "composerReceipts": [
+            {
+              "event": "composer.submitted",
+              "ids": [
+                "<men:1>",
+                "<men:2>"
+              ],
+              "receipt": "<crp:1>",
+              "terminal": "<obj:4>",
+              "viewer": "vw_composer1"
+            },
+            {
+              "event": "composer.returned",
+              "ids": [
+                "<men:5>"
+              ],
+              "receipt": "<crp:2>",
+              "terminal": "<obj:4>",
+              "viewer": "vw_composer1"
+            },
+            {
+              "event": "composer.returned",
+              "ids": [
+                "<men:5>"
+              ],
+              "receipt": "<crp:3>",
+              "terminal": "<obj:4>",
+              "viewer": "vw_composer1"
+            }
+          ],
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 200,
+                "w": 300,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:1>",
+              "props": {
+                "markdown": "# Plan\n\nShip the parser.\n\n- write tests\n- fix bugs"
+              },
+              "rev": "<rev:1>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "z": 1
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 400,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "kind": "rect",
+                "text": "box"
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "z": 2
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 300,
+                "w": 640,
+                "x": 0,
+                "y": 400
+              },
+              "id": "<obj:3>",
+              "props": {
+                "anchor": "export function add(a: number, b: number): number {",
+                "path": "src/app.ts",
+                "range": {
+                  "end": 7,
+                  "start": 5
+                }
+              },
+              "rev": "<rev:1>",
+              "type": "code",
+              "updatedAt": "<time:number>",
+              "z": 3
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 400,
+                "w": 600,
+                "x": 50000,
+                "y": 50000
+              },
+              "id": "<obj:4>",
+              "props": {
+                "agent": {
+                  "draft": false,
+                  "kind": "omp"
+                },
+                "branch": "main",
+                "command": [
+                  "/bin/cat"
+                ],
+                "cwd": "<root>",
+                "lifecycle": {
+                  "seen": false,
+                  "state": "idle"
+                },
+                "name": "worker",
+                "worktree": "<root>"
+              },
+              "rev": "<rev:4>",
+              "type": "terminal",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "agent",
+                "tile": "<obj:4>"
+              },
+              "z": 4
+            }
+          ],
+          "revision": "<board:2>",
+          "root": "<root>"
+        }
+      }
+    }
+  ]
+}

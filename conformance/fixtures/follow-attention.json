@@ -1,7 +1,7 @@
 {
   "scenario": "follow-attention",
   "description": "follow.report re-aims (creating) a terminal's follow tile, ignored with follow off and for files outside the root; view.attention raises, replaces, clears, and a new turn of the same caller clears its earlier markers.",
-  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "recordedOn": "scratch easld schema2 remote edits and composer receipts",
   "steps": [
     {
       "step": "board.open",
@@ -834,6 +834,7 @@
             "active": true,
             "id": "<obj:2>",
             "message": "look here",
+            "raisedAt": "<time:iso>",
             "raisedBy": "<obj:1>"
           },
           "event": "attention.changed"
@@ -866,6 +867,7 @@
             "active": true,
             "id": "<obj:2>",
             "message": "look here instead",
+            "raisedAt": "<time:iso>",
             "raisedBy": "<obj:1>"
           },
           "event": "attention.changed"
@@ -896,6 +898,7 @@
           "data": {
             "active": true,
             "id": "<obj:3>",
+            "raisedAt": "<time:iso>",
             "raisedBy": "<obj:1>"
           },
           "event": "attention.changed"
@@ -1071,6 +1074,7 @@
             "active": true,
             "id": "<obj:3>",
             "message": "new turn",
+            "raisedAt": "<time:iso>",
             "raisedBy": "<obj:1>"
           },
           "event": "attention.changed"
@@ -1148,7 +1152,8 @@
           "data": {
             "active": true,
             "id": "<obj:2>",
-            "message": "from the user"
+            "message": "from the user",
+            "raisedAt": "<time:iso>"
           },
           "event": "attention.changed"
         }

@@ -59,6 +59,23 @@ func (r *Router) dispatch(method string, p map[string]any, from Conn) (any, erro
 			return nil, fail(api.CodeUnavailable, "cannot write %s: %s", out, localizedDescription(err))
 		}
 		return map[string]any{"path": out, "objects": float64(len(b.Objects()))}, nil
+	case "board.undo", "board.redo":
+		b, err := r.boardOf(p)
+		if err != nil {
+			return nil, err
+		}
+		edit, err := board.ParseViewerEdit(p)
+		if err != nil {
+			return nil, err
+		}
+		if edit == nil {
+			return nil, invalid("missing viewer, step")
+		}
+		replay, err := b.ReplayViewer(edit.Viewer, edit.Step, method == "board.redo")
+		if err != nil {
+			return nil, err
+		}
+		return replay.JSON(b), nil
 	case "object.get":
 		return r.objectGet(p)
 	case "object.create":
@@ -74,7 +91,11 @@ func (r *Router) dispatch(method string, p map[string]any, from Conn) (any, erro
 		if err != nil {
 			return nil, err
 		}
-		if err := b.Delete(id, r.callerOf(p)); err != nil {
+		edit, err := board.ParseViewerEdit(p)
+		if err != nil {
+			return nil, err
+		}
+		if err := b.AsViewerEdit(edit, func() error { return b.Delete(id, r.callerOf(p)) }); err != nil {
 			return nil, err
 		}
 		return map[string]any{}, nil
@@ -233,6 +254,8 @@ func (r *Router) dispatch(method string, p map[string]any, from Conn) (any, erro
 			result["cleared"] = list
 		}
 		return result, nil
+	case "view.seen":
+		return r.viewSeen(p)
 	case "view.open_url":
 		return r.openURL(p, from)
 	case "view.get":
@@ -283,6 +306,14 @@ func (r *Router) boardGet(p map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	viewer := ""
+	if raw, present := p["viewer"]; present {
+		var ok bool
+		viewer, ok = raw.(string)
+		if !ok || !board.ValidViewer(viewer) {
+			return nil, invalid("viewer must be a remote window's id: vw_ and 8 to 64 letters, digits, _ or -")
+		}
+	}
 	snapshot := b.Snapshot().Objects
 	var regions []string
 	branch, hasBranch := optStr(p, "branch")
@@ -302,6 +333,23 @@ func (r *Router) boardGet(p map[string]any) (any, error) {
 		objects = append(objects, objectJSON(summarized(o)))
 	}
 	result := map[string]any{"board": b.ID(), "root": b.Root(), "revision": float64(b.Revision()), "objects": objects}
+	var scope map[string]bool
+	if hasBranch {
+		scope = map[string]bool{}
+		for _, o := range snapshot {
+			scope[o.ID] = true
+		}
+	}
+	if markers := b.AttentionMarkers(scope); len(markers) > 0 {
+		list := make([]any, len(markers))
+		for i, marker := range markers {
+			list[i] = marker
+		}
+		result["attention"] = list
+	}
+	if receipts := b.ComposerReceipts(viewer); len(receipts) > 0 {
+		result["composerReceipts"] = receipts
+	}
 	if b.Repo != nil && len(b.Repo.Merged) > 0 {
 		result["merged"] = b.Repo.Merged
 	}
@@ -318,6 +366,49 @@ func (r *Router) boardGet(p map[string]any) (any, error) {
 			changed = append(changed, id)
 		}
 		result["changed"] = changed
+	}
+	return result, nil
+}
+
+func (r *Router) viewSeen(p map[string]any) (any, error) {
+	id, err := str(p, "id")
+	if err != nil {
+		return nil, err
+	}
+	b, err := r.boardForObject(id)
+	if err != nil {
+		return nil, err
+	}
+	var rev *int
+	if _, present := p["rev"]; present && p["rev"] != nil {
+		n, ok := intParam(p, "rev")
+		if !ok || n < 1 {
+			return nil, invalid("rev must be an integer of at least 1")
+		}
+		rev = &n
+	}
+	var marker map[string]any
+	if raw, present := p["marker"]; present && raw != nil {
+		parsed, ok := raw.(map[string]any)
+		if !ok {
+			return nil, invalid("marker must be an attention marker")
+		}
+		if mid, _ := parsed["id"].(string); mid != id {
+			return nil, invalid("marker.id must be the object being acknowledged")
+		}
+		if _, ok := parsed["raisedAt"].(string); !ok {
+			return nil, invalid("marker.raisedAt is required")
+		}
+		marker = parsed
+	}
+	before, objectErr := b.Object(id)
+	matchesRevision := objectErr == nil && rev != nil && before.Rev == *rev
+	cleared, seen := b.Seen(id, rev, marker)
+	result := map[string]any{"cleared": cleared, "seen": seen}
+	if matchesRevision && seen {
+		if terminal, err := b.Object(id); err == nil && terminal.Type == model.Terminal {
+			result["object"] = objectJSON(b.ReportedOne(terminal))
+		}
 	}
 	return result, nil
 }

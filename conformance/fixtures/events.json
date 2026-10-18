@@ -1,7 +1,7 @@
 {
   "scenario": "events",
   "description": "events.subscribe with a board filter and an event-name filter on other connections; every event kind's payload.",
-  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "recordedOn": "scratch easld schema2 remote edits and composer receipts",
   "steps": [
     {
       "step": "board.open",
@@ -432,6 +432,7 @@
             "active": true,
             "id": "<obj:2>",
             "message": "see",
+            "raisedAt": "<time:iso>",
             "raisedBy": "<obj:1>"
           },
           "event": "attention.changed"

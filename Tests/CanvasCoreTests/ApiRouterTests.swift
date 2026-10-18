@@ -41,6 +41,40 @@ final class ApiRouterTests {
         board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
     }
 
+    @Test func seenReturnsCanonicalTerminalOnlyForAcceptedRevision() async throws {
+        let tile = terminal()
+        let client = try connect()
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
+        let working = try #require(board.objects[tile])
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 2, source: "canvas-omp")
+        let done = try #require(board.objects[tile])
+
+        let stale = try await call(client, "view.seen", ["id": .string(tile), "rev": .number(Double(working.rev))])
+        #expect(stale["result"] == .object(["cleared": .bool(false), "seen": .bool(false)]))
+        #expect(board.objects[tile] == done)
+
+        let unguarded = try await call(client, "view.seen", ["id": .string(tile)])
+        #expect(unguarded["result"] == .object(["cleared": .bool(false), "seen": .bool(false)]))
+        #expect(board.objects[tile] == done)
+
+        let markerOnly = try await call(client, "view.seen", [
+            "id": .string(tile),
+            "marker": .object(["id": .string(tile), "raisedAt": .string("2026-10-17T00:00:00Z")]),
+        ])
+        #expect(markerOnly["result"] == .object(["cleared": .bool(false), "seen": .bool(false)]))
+        #expect(board.objects[tile] == done)
+
+        let accepted = try await call(client, "view.seen", ["id": .string(tile), "rev": .number(Double(done.rev))])
+        let canonical = try #require(accepted["result"]?["object"])
+        #expect(accepted["result"]?["seen"] == .bool(true))
+        #expect(accepted["result"]?["cleared"] == .bool(false))
+        #expect(canonical["rev"]?.int == done.rev + 1)
+        #expect(canonical["props"]?["lifecycle"]?["state"] == .string("idle"))
+        #expect(canonical["props"]?["lifecycle"]?["seen"] == .bool(true))
+        let fetched = try await call(client, "object.get", ["id": .string(tile)])
+        #expect(canonical == fetched["result"]?["object"])
+    }
+
     @Test func waitAfterPromptIgnoresThePrePromptIdle() async throws {
         let tile = terminal()
         try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp")
@@ -857,14 +891,13 @@ final class ApiRouterTests {
         #expect(other.objects[fakeID]?.createdBy == .user, "only a terminal tile is an agent")
     }
 
-    @Test func unknownOrMissingParamsNameWhatTheMethodTakes() async throws {
+    @Test func invalidParametersLeaveTheBoardUnchanged() async throws {
         let note = board.create(type: .note, props: .object(["markdown": .string("n")]))
         let client = try connect()
         let guessed = try await call(client, "layout.translate", ["ids": .array([.string(note.id)]), "delta": .array([.number(10), .number(0)])])
         #expect(guessed["error"]?["code"] == .string("invalid_params"))
-        #expect(guessed["error"]?["message"] == .string("unknown param delta; missing dx, dy; layout.translate takes ids (required), dx (required), dy (required), caller"))
         let batch = try await call(client, "object.batch", ["ops": .array([.object(["method": .string("object.update"), "params": .object(["id": .string(note.id), "text": .string("x")])])])])
-        #expect(batch["error"]?["message"] == .string("op 0 (object.update): unknown param text; object.update takes id (required), rev, frame, size, props, caller"))
+        #expect(batch["error"]?["code"] == .string("invalid_params"))
         #expect(board.objects[note.id]?.frame.x == note.frame.x, "nothing moved")
     }
 

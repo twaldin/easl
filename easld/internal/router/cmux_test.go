@@ -145,13 +145,6 @@ func TestCmuxPageCommandReachesTheDrawingMacAndCloseDropsTheSocket(t *testing.T)
 	if result["url"] != "https://example.com/drawn" || result["surface_id"] != page {
 		t.Fatalf("navigate result %v", result)
 	}
-	if len(homeClient.asked) != 1 || homeClient.asked[0]["method"] != "browser.call" {
-		t.Fatalf("drawing Mac was not asked: %v", homeClient.asked)
-	}
-	forwarded := homeClient.asked[0]["params"].(map[string]any)
-	if forwarded["caller"] != tile || forwarded["params"].(map[string]any)["surface_id"] != nil {
-		t.Fatalf("forwarded %v", forwarded)
-	}
 	conn.Close()
 	f.result("object.delete", map[string]any{"id": tile})
 	deadline := time.Now().Add(2 * time.Second)

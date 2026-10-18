@@ -1,0 +1,530 @@
+{
+  "description": "A remote viewer's own board.undo and board.redo. Writes carry viewer and step. One step groups every write with that id. Undo reverts only fields still equal to what that step wrote: another actor's edit of a different field stays, and an edit of the same field is kept. Deleting and undoing restores the same id at a fresh revision unless its key was taken. A repeated undo or redo of a step already replayed changes nothing. A viewer's new accepted step clears that viewer's redo.",
+  "unordered": {
+    "response.result.changed": "board.undo lists patched objects in plan order; the set is the contract",
+    "response.result.deleted": "board.undo lists removed ids in plan order; the set is the contract",
+    "response.result.kept": "board.undo lists kept ids in plan order; the set is the contract"
+  },
+  "steps": [
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_noviewer", "step": 1 },
+      "expect": {
+        "response.ok": true,
+        "response.result.changed": [],
+        "response.result.deleted": [],
+        "response.result.kept": []
+      },
+      "note": "no host history for this viewer: step is omitted. The runner cannot expect a missing path."
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": { "kind": "rect" },
+        "frame": { "x": 0, "y": 200, "w": 160, "h": 100 },
+        "viewer": "vw_viewer02",
+        "step": 1
+      },
+      "save": "c",
+      "note": "viewer B's own create"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": { "markdown": "start" },
+        "frame": { "x": 0, "y": 0, "w": 280, "h": 120 },
+        "viewer": "vw_viewer01",
+        "step": 1
+      },
+      "save": "a"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": { "markdown": "pair" },
+        "frame": { "x": 400, "y": 0, "w": 280, "h": 120 },
+        "viewer": "vw_viewer01",
+        "step": 1
+      },
+      "save": "b",
+      "note": "same step as the other note: one undo removes both"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": { "kind": "rect" },
+        "frame": { "x": 0, "y": 800, "w": 160, "h": 100 }
+      },
+      "save": "d",
+      "note": "no viewer: not in either viewer's history"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": { "kind": "rect" },
+        "frame": { "x": 300, "y": 800, "w": 160, "h": 100 }
+      },
+      "save": "e"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "group",
+        "props": { "members": ["{{d.object.id}}", "{{e.object.id}}"], "title": "Pair" },
+        "frame": { "x": 0, "y": 0, "w": 0, "h": 0 }
+      },
+      "save": "g"
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{g.object.id}}" },
+      "save": "g0",
+      "note": "the fitted group frame, before its members move"
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 1 },
+      "save": "undoCreated",
+      "expect": {
+        "response.ok": true,
+        "response.result.step": 1,
+        "response.result.kept": []
+      },
+      "note": "both notes this step created are deleted; B's shape and the unowned group stay"
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{a.object.id}}" },
+      "expect": { "response.ok": false, "response.error.code": "not_found" }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{b.object.id}}" },
+      "expect": { "response.ok": false, "response.error.code": "not_found" }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{c.object.id}}" },
+      "expect": { "response.ok": true, "response.result.object.id": "{{c.object.id}}" }
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 1 },
+      "expect": { "response.ok": true, "response.result": "{{undoCreated}}", "eventCount": 0 },
+      "note": "duplicate undo of a step already undone: nothing changes again"
+    },
+    {
+      "call": "board.redo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 1 },
+      "save": "redoCreated",
+      "expect": { "response.ok": true, "response.result.step": 1, "response.result.kept": [] },
+      "note": "recreates both notes at the same ids. Each rev is above the rev from the create; the recording shows a new rev token."
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{a.object.id}}" },
+      "save": "a2",
+      "expect": {
+        "response.ok": true,
+        "response.result.object.id": "{{a.object.id}}",
+        "response.result.object.props.markdown": "start"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{b.object.id}}" },
+      "expect": {
+        "response.ok": true,
+        "response.result.object.id": "{{b.object.id}}",
+        "response.result.object.props.markdown": "pair"
+      }
+    },
+    {
+      "call": "board.redo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 1 },
+      "expect": { "response.ok": true, "response.result": "{{redoCreated}}", "eventCount": 0 },
+      "note": "duplicate redo"
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{a.object.id}}",
+        "frame": { "x": 120 },
+        "viewer": "vw_viewer01",
+        "step": 2
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{a.object.id}}",
+        "props": { "markdown": "agent text" }
+      },
+      "note": "no viewer: another actor's edit of a field the move did not write"
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 2 },
+      "expect": {
+        "response.ok": true,
+        "response.result.step": 2,
+        "response.result.kept": [],
+        "response.result.deleted": []
+      }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{a.object.id}}" },
+      "expect": {
+        "response.result.object.frame.x": 0,
+        "response.result.object.props.markdown": "agent text"
+      },
+      "note": "the move is undone; the other field stays"
+    },
+    {
+      "call": "board.redo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 2 },
+      "expect": { "response.ok": true, "response.result.step": 2 }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{a.object.id}}" },
+      "expect": {
+        "response.result.object.frame.x": 120,
+        "response.result.object.props.markdown": "agent text"
+      },
+      "note": "redo puts back only the frame the undo reverted"
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{b.object.id}}",
+        "props": { "markdown": "viewer words" },
+        "viewer": "vw_viewer01",
+        "step": 3
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{b.object.id}}",
+        "props": { "markdown": "kept words" }
+      },
+      "note": "the same field, replaced after the viewer's write"
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 3 },
+      "save": "keptEdit",
+      "expect": {
+        "response.ok": true,
+        "response.result.step": 3,
+        "response.result.changed": [],
+        "response.result.deleted": [],
+        "response.result.kept": ["{{b.object.id}}"]
+      }
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 3 },
+      "expect": { "response.ok": true, "response.result": "{{keptEdit}}", "eventCount": 0 }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{a.object.id}}" },
+      "expect": { "response.result.object.frame.x": 120, "response.result.object.props.markdown": "agent text" },
+      "note": "retrying an all-kept undo must not undo the earlier move"
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{b.object.id}}" },
+      "expect": { "response.result.object.props.markdown": "kept words" }
+    },
+    {
+      "call": "board.redo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 3 },
+      "expect": {
+        "response.ok": true,
+        "response.result.changed": [],
+        "response.result.deleted": [],
+        "response.result.kept": []
+      },
+      "note": "the undo applied nothing, so nothing was pushed to redo: step is omitted"
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{b.object.id}}" },
+      "expect": { "response.result.object.props.markdown": "kept words" }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{a.object.id}}",
+        "z": 9,
+        "viewer": "vw_viewer01",
+        "step": 4
+      }
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 4 },
+      "save": "undoStack",
+      "expect": { "response.ok": true, "response.result.step": 4, "response.result.kept": [] }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{a.object.id}}" },
+      "expect": { "response.result.object.z": "{{a2.object.z}}" },
+      "note": "z returns to the value the recreated note had before this update"
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 4 },
+      "expect": { "response.ok": true, "response.result": "{{undoStack}}", "eventCount": 0 },
+      "note": "duplicate undo"
+    },
+    {
+      "call": "board.redo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 4 },
+      "save": "redoStack",
+      "expect": { "response.ok": true, "response.result.step": 4 }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{a.object.id}}" },
+      "expect": { "response.result.object.z": 9 }
+    },
+    {
+      "call": "board.redo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 4 },
+      "expect": { "response.ok": true, "response.result": "{{redoStack}}", "eventCount": 0 },
+      "note": "duplicate redo"
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{d.object.id}}",
+        "frame": { "x": 40 },
+        "viewer": "vw_viewer01",
+        "step": 5
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{e.object.id}}",
+        "frame": { "x": 500 },
+        "viewer": "vw_viewer01",
+        "step": 5
+      },
+      "note": "one gesture moves both members; the group frame is refit, not a field of its own"
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 5 },
+      "expect": {
+        "response.ok": true,
+        "response.result.step": 5,
+        "response.result.kept": [],
+        "response.result.deleted": []
+      }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{d.object.id}}" },
+      "expect": { "response.result.object.frame.x": "{{d.object.frame.x}}" }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{e.object.id}}" },
+      "expect": { "response.result.object.frame.x": "{{e.object.frame.x}}" }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{g.object.id}}" },
+      "expect": { "response.result.object.frame": "{{g0.object.frame}}" },
+      "note": "member restore refits the group back to the frame saved before the move"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": { "markdown": "keyed", "key": "fresh" },
+        "frame": { "x": 0, "y": 1200, "w": 280, "h": 120 },
+        "viewer": "vw_viewer01",
+        "step": 6
+      },
+      "save": "k"
+    },
+    {
+      "call": "object.delete",
+      "params": { "id": "{{k.object.id}}", "viewer": "vw_viewer01", "step": 7 }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{k.object.id}}" },
+      "expect": { "response.ok": false, "response.error.code": "not_found" }
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 7 },
+      "expect": {
+        "response.ok": true,
+        "response.result.step": 7,
+        "response.result.deleted": [],
+        "response.result.kept": []
+      },
+      "note": "delete undo restores the same id. rev is above the deleted object's rev; the recording shows a new rev token."
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{k.object.id}}" },
+      "expect": {
+        "response.ok": true,
+        "response.result.object.id": "{{k.object.id}}",
+        "response.result.object.props.key": "fresh",
+        "response.result.object.props.markdown": "keyed"
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "props": { "kind": "rect", "key": "busy" },
+        "frame": { "x": 400, "y": 1200, "w": 160, "h": 100 },
+        "viewer": "vw_viewer01",
+        "step": 8
+      },
+      "save": "busy"
+    },
+    {
+      "call": "object.delete",
+      "params": { "id": "{{busy.object.id}}", "viewer": "vw_viewer01", "step": 9 }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "note",
+        "props": { "markdown": "took the key", "key": "busy" },
+        "frame": { "x": 800, "y": 1200, "w": 280, "h": 120 }
+      },
+      "save": "usurper",
+      "note": "no viewer: the key is taken before the delete is undone"
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 9 },
+      "expect": {
+        "response.ok": true,
+        "response.result.step": 9,
+        "response.result.changed": [],
+        "response.result.deleted": [],
+        "response.result.kept": ["{{busy.object.id}}"]
+      }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{busy.object.id}}" },
+      "expect": { "response.ok": false, "response.error.code": "not_found" }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{usurper.object.id}}" },
+      "expect": { "response.result.object.props.key": "busy" }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{c.object.id}}",
+        "frame": { "x": 900 },
+        "viewer": "vw_viewer02",
+        "step": 2
+      },
+      "note": "B's later gesture, on B's own stack"
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{a.object.id}}",
+        "frame": { "x": 10 },
+        "viewer": "vw_viewer01",
+        "step": 10
+      }
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 10 },
+      "expect": { "response.ok": true, "response.result.step": 10, "response.result.kept": [] }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{a.object.id}}" },
+      "expect": { "response.result.object.frame.x": 120 }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{c.object.id}}" },
+      "expect": { "response.result.object.frame.x": 900 },
+      "note": "A's undo does not touch B's shape"
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{a.object.id}}",
+        "z": 4,
+        "viewer": "vw_viewer01",
+        "step": 11
+      },
+      "note": "a new accepted step clears A's redo, including the undone move to x 10"
+    },
+    {
+      "call": "board.redo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer01", "step": 10 },
+      "expect": {
+        "response.ok": true,
+        "response.result.changed": [],
+        "response.result.deleted": [],
+        "response.result.kept": []
+      },
+      "note": "redo was cleared: step is omitted, and x stays 120"
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{a.object.id}}" },
+      "expect": {
+        "response.result.object.frame.x": 120,
+        "response.result.object.z": 4
+      }
+    },
+    {
+      "call": "board.undo",
+      "params": { "board": "{{board}}", "viewer": "vw_viewer02", "step": 2 },
+      "expect": { "response.ok": true, "response.result.step": 2, "response.result.kept": [] }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{c.object.id}}" },
+      "expect": { "response.result.object.frame.x": "{{c.object.frame.x}}" }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{a.object.id}}" },
+      "expect": { "response.result.object.frame.x": 120 },
+      "note": "B's undo does not touch A's note"
+    }
+  ]
+}

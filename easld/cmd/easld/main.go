@@ -153,12 +153,20 @@ func run(args []string, stderr io.Writer) int {
 		stopped := make(chan struct{})
 		defer close(stopped)
 		go func() {
+			r.SweepOrphans()
+			orphans := time.NewTimer(orphanGrace)
+			composer := time.NewTicker(time.Second)
+			defer orphans.Stop()
+			defer composer.Stop()
 			for {
-				r.SweepOrphans()
 				select {
 				case <-stopped:
 					return
-				case <-time.After(orphanGrace):
+				case <-orphans.C:
+					r.SweepOrphans()
+					orphans.Reset(orphanGrace)
+				case <-composer.C:
+					r.SweepComposerExits()
 				}
 			}
 		}()

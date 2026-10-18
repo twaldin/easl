@@ -1,0 +1,1251 @@
+{
+  "scenario": "remote-attention",
+  "description": "board.get carries the attention snapshot, including raisedAt as the marker's identity. view.seen echoes that marker and the terminal rev from the same read: a matching marker clears, a matching rev on a done terminal is seen, a replaced marker and a stale or working rev are left as they are.",
+  "recordedOn": "deckbox scratch easld canonical seen acknowledgment",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>",
+          "name": "worker"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "seq": 1,
+        "source": "main",
+        "state": "working",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "seq": 2,
+        "source": "main",
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "done"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:3>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "done"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "view.attention",
+      "method": "view.attention",
+      "request": {
+        "caller": "<obj:1>",
+        "id": "<obj:1>",
+        "message": "look"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "active": true,
+          "id": "<obj:1>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": true,
+            "id": "<obj:1>",
+            "message": "look",
+            "raisedAt": "<time:iso>",
+            "raisedBy": "<obj:1>"
+          },
+          "event": "attention.changed"
+        }
+      ]
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "attention": [
+            {
+              "id": "<obj:1>",
+              "message": "look",
+              "raisedAt": "<time:iso>",
+              "raisedBy": "<obj:1>"
+            }
+          ],
+          "board": "<board>",
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 400,
+                "w": 600,
+                "x": 50000,
+                "y": 50000
+              },
+              "id": "<obj:1>",
+              "props": {
+                "agent": {
+                  "draft": false,
+                  "kind": "omp"
+                },
+                "command": [
+                  "/bin/cat"
+                ],
+                "cwd": "<root>",
+                "lifecycle": {
+                  "seen": false,
+                  "state": "done"
+                },
+                "name": "worker"
+              },
+              "rev": "<rev:3>",
+              "type": "terminal",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "agent",
+                "tile": "<obj:1>"
+              },
+              "z": 1
+            }
+          ],
+          "revision": "<board:1>",
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "view.seen",
+      "method": "view.seen",
+      "request": {
+        "id": "<obj:1>",
+        "marker": {
+          "id": "<obj:1>",
+          "message": "look",
+          "raisedAt": "<time:iso>",
+          "raisedBy": "<obj:1>"
+        },
+        "rev": "<rev:3>"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "cleared": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": true,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "seen": true
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": false,
+            "id": "<obj:1>"
+          },
+          "event": "attention.changed"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": true,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": true,
+              "state": "idle"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": true,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:4>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "seq": 3,
+        "source": "main",
+        "state": "working",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:5>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:5>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "view.seen",
+      "method": "view.seen",
+      "request": {
+        "id": "<obj:1>",
+        "rev": "<rev:3>"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "cleared": false,
+          "seen": false
+        }
+      }
+    },
+    {
+      "step": "view.seen",
+      "method": "view.seen",
+      "request": {
+        "id": "<obj:1>",
+        "rev": "<rev:5>"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "cleared": false,
+          "seen": false
+        }
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "seq": 4,
+        "source": "main",
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "done"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:6>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "done"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "done"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:6>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "view.seen",
+      "method": "view.seen",
+      "request": {
+        "id": "<obj:1>",
+        "rev": "<rev:5>"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "cleared": false,
+          "seen": false
+        }
+      }
+    },
+    {
+      "step": "view.seen",
+      "method": "view.seen",
+      "request": {
+        "id": "<obj:1>",
+        "rev": "<rev:6>"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "cleared": false,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": true,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:7>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "seen": true
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp"
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": true,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:7>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": true,
+              "state": "idle"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "view.attention",
+      "method": "view.attention",
+      "request": {
+        "caller": "<obj:1>",
+        "id": "<obj:1>",
+        "message": "first"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "active": true,
+          "id": "<obj:1>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": true,
+            "id": "<obj:1>",
+            "message": "first",
+            "raisedAt": "<time:iso>",
+            "raisedBy": "<obj:1>"
+          },
+          "event": "attention.changed"
+        }
+      ]
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "attention": [
+            {
+              "id": "<obj:1>",
+              "message": "first",
+              "raisedAt": "<time:iso>",
+              "raisedBy": "<obj:1>"
+            }
+          ],
+          "board": "<board>",
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 400,
+                "w": 600,
+                "x": 50000,
+                "y": 50000
+              },
+              "id": "<obj:1>",
+              "props": {
+                "agent": {
+                  "draft": false,
+                  "kind": "omp"
+                },
+                "command": [
+                  "/bin/cat"
+                ],
+                "cwd": "<root>",
+                "lifecycle": {
+                  "seen": true,
+                  "state": "idle"
+                },
+                "name": "worker"
+              },
+              "rev": "<rev:7>",
+              "type": "terminal",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 1
+            }
+          ],
+          "revision": "<board:2>",
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "view.attention",
+      "method": "view.attention",
+      "request": {
+        "caller": "<obj:1>",
+        "id": "<obj:1>",
+        "message": "second"
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "active": true,
+          "id": "<obj:1>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": true,
+            "id": "<obj:1>",
+            "message": "second",
+            "raisedAt": "<time:iso>",
+            "raisedBy": "<obj:1>"
+          },
+          "event": "attention.changed"
+        }
+      ]
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {
+          "attention": [
+            {
+              "id": "<obj:1>",
+              "message": "second",
+              "raisedAt": "<time:iso>",
+              "raisedBy": "<obj:1>"
+            }
+          ],
+          "board": "<board>",
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 400,
+                "w": 600,
+                "x": 50000,
+                "y": 50000
+              },
+              "id": "<obj:1>",
+              "props": {
+                "agent": {
+                  "draft": false,
+                  "kind": "omp"
+                },
+                "command": [
+                  "/bin/cat"
+                ],
+                "cwd": "<root>",
+                "lifecycle": {
+                  "seen": true,
+                  "state": "idle"
+                },
+                "name": "worker"
+              },
+              "rev": "<rev:7>",
+              "type": "terminal",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 1
+            }
+          ],
+          "revision": "<board:2>",
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "view.seen",
+      "method": "view.seen",
+      "request": {
+        "id": "<obj:1>",
+        "marker": {
+          "id": "<obj:1>",
+          "message": "first",
+          "raisedAt": "<time:iso>",
+          "raisedBy": "<obj:1>"
+        }
+      },
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {
+          "cleared": false,
+          "seen": false
+        }
+      }
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r22",
+        "ok": true,
+        "result": {
+          "attention": [
+            {
+              "id": "<obj:1>",
+              "message": "second",
+              "raisedAt": "<time:iso>",
+              "raisedBy": "<obj:1>"
+            }
+          ],
+          "board": "<board>",
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 400,
+                "w": 600,
+                "x": 50000,
+                "y": 50000
+              },
+              "id": "<obj:1>",
+              "props": {
+                "agent": {
+                  "draft": false,
+                  "kind": "omp"
+                },
+                "command": [
+                  "/bin/cat"
+                ],
+                "cwd": "<root>",
+                "lifecycle": {
+                  "seen": true,
+                  "state": "idle"
+                },
+                "name": "worker"
+              },
+              "rev": "<rev:7>",
+              "type": "terminal",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 1
+            }
+          ],
+          "revision": "<board:2>",
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "view.seen",
+      "method": "view.seen",
+      "request": {
+        "id": "<obj:1>",
+        "marker": {
+          "id": "<obj:1>",
+          "message": "second",
+          "raisedAt": "<time:iso>",
+          "raisedBy": "<obj:1>"
+        }
+      },
+      "response": {
+        "id": "r23",
+        "ok": true,
+        "result": {
+          "cleared": true,
+          "seen": false
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "active": false,
+            "id": "<obj:1>"
+          },
+          "event": "attention.changed"
+        }
+      ]
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r24",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 400,
+                "w": 600,
+                "x": 50000,
+                "y": 50000
+              },
+              "id": "<obj:1>",
+              "props": {
+                "agent": {
+                  "draft": false,
+                  "kind": "omp"
+                },
+                "command": [
+                  "/bin/cat"
+                ],
+                "cwd": "<root>",
+                "lifecycle": {
+                  "seen": true,
+                  "state": "idle"
+                },
+                "name": "worker"
+              },
+              "rev": "<rev:7>",
+              "type": "terminal",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 1
+            }
+          ],
+          "revision": "<board:2>",
+          "root": "<root>"
+        }
+      }
+    }
+  ]
+}

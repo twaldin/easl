@@ -15,6 +15,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/clients"
 	"github.com/twaldin/easl/easld/internal/measure"
+	"github.com/twaldin/easl/easld/internal/mention"
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/session"
 	"github.com/twaldin/easl/easld/internal/store"
@@ -301,8 +302,8 @@ func (r *Router) ownSessions() map[string]session.Session {
 // says, when sessions are known (non-nil; ApiRouter.withSession): `live`, a session carrying its
 // labels (Owner.Labels: not another home's or board's of its name, but for one of `merged`, the
 // boards boardID took in); without one no process of it runs (a pid reported before is stale,
-// or another process's by now); with one, its foreground process (session.ForegroundPID) stands
-// in for a pid no integration reported. A hosted terminal's session is its host's.
+// or another process's by now); with one, its foreground process (session.ForegroundState)
+// stands in for a pid no integration reported. A hosted terminal's session is its host's.
 func (r *Router) withSession(entry map[string]any, boardID string, merged []string, terminal model.Object, sessions map[string]session.Session) map[string]any {
 	if sessions == nil || board.TerminalHost(terminal) != "" {
 		return entry
@@ -313,7 +314,7 @@ func (r *Router) withSession(entry map[string]any, boardID string, merged []stri
 	if !live {
 		delete(entry, "pid")
 	} else if _, reported := entry["pid"]; !reported {
-		if pid := session.ForegroundPID(s.PID); pid > 0 {
+		if pid, _ := session.ForegroundState(s.PID); pid > 0 {
 			entry["pid"] = float64(pid)
 		}
 	}
@@ -734,6 +735,9 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if composer {
+		return r.forwardComposer(p, b, terminal, c, text, answering)
+	}
 	var targets []map[string]any
 	if list, present := p["mentions"]; present && list != nil {
 		items, ok := list.([]any)
@@ -786,12 +790,7 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 	}
 	// Only a reporting agent's next report can end the pre-prompt state; one still in its turn
 	// takes the prompt into that turn, whose end answers agent.wait.
-	notifying := board.NotifyingReports(current)
-	if notifying {
-		b.NotifyingAgentSubmitted(terminal.ID)
-	} else if stateOf(current) != "unknown" && stateOf(current) != "working" {
-		r.pendingPrompts[terminal.ID] = time.Now()
-	}
+	r.promptSubmitted(b, current)
 	if len(handed) > 0 {
 		list := make([]any, len(handed))
 		for i, m := range handed {
@@ -811,7 +810,23 @@ func checkComposer(p map[string]any) error {
 		return invalid("answer is the user's answer from a composer: it needs composer: true (an agent or script sends force: true instead)")
 	}
 	if !composer {
+		if _, ok := p["staged"]; ok && p["staged"] != nil {
+			return invalid("staged is only for a composer's prompt")
+		}
+		if _, ok := p["viewer"]; ok && p["viewer"] != nil {
+			return invalid("viewer is only for a composer's prompt")
+		}
 		return nil
+	}
+	if list, ok := p["mentions"]; ok && list != nil {
+		return invalid("a composer's prompt takes staged mentions, not mentions")
+	}
+	if boolParam(p, "answer") {
+		if list, ok := p["staged"]; ok && list != nil {
+			if items, _ := list.([]any); len(items) > 0 {
+				return invalid("an answer takes no staged mentions")
+			}
+		}
 	}
 	if caller, ok := p["caller"]; ok && caller != nil {
 		return invalid("a composer's prompt is the user's: it takes no caller")
@@ -826,6 +841,106 @@ func checkComposer(p map[string]any) error {
 		return invalid("a composer's prompt never forces: answer: true answers a blocked target")
 	}
 	return nil
+}
+
+func (r *Router) forwardComposer(p map[string]any, b *board.Board, terminal model.Object, c *clients.Client, text string, answering bool) (any, error) {
+	staged, err := stagedMentions(p["staged"], b)
+	if err != nil {
+		return nil, err
+	}
+	viewer, _ := p["viewer"].(string)
+	if viewer != "" && !board.ValidViewer(viewer) {
+		return nil, invalid("viewer must match ^vw_[A-Za-z0-9_-]{8,64}$")
+	}
+	if len(staged) > 0 && !board.ValidViewer(viewer) {
+		return nil, invalid("viewer is required when staged is nonempty")
+	}
+	if len(staged) > 0 && !board.Drains(terminal) {
+		return nil, fail(api.CodeUnavailable, "%s runs no agent with an easl integration, so nothing there would take the mentions; name the objects in the text instead", terminal.ID)
+	}
+	if board.SkipsDrain(text, terminal) && len(staged) > 0 {
+		return nil, invalid("a slash command or shell escape takes no mentions: its agent drains nothing for it")
+	}
+	queued := ""
+	if board.Drains(terminal) && !board.SkipsDrain(text, terminal) && (answering && board.AnswersAsPrompt(terminal) || len(staged) > 0) {
+		queued = b.QueueComposerPrompt(text, terminal.ID, staged, answering, viewer, time.Now())
+	}
+	params := copyParams(p)
+	delete(params, "mentions")
+	delete(params, "staged")
+	delete(params, "viewer")
+	params["target"] = terminal.ID
+	r.typing[terminal.ID]++
+	result, err := r.await(c, b.ID(), "agent.prompt", params, clients.TerminalDeadline)
+	if r.typing[terminal.ID]--; r.typing[terminal.ID] <= 0 {
+		delete(r.typing, terminal.ID)
+	}
+	if err != nil {
+		if queued != "" {
+			b.WithdrawComposerPrompt(queued)
+		}
+		return nil, err
+	}
+	current, ok := b.Objects()[terminal.ID]
+	if !ok {
+		if queued != "" {
+			b.WithdrawComposerPrompt(queued)
+		}
+		return nil, fail(api.CodeNotFound, "terminal %s was closed", terminal.ID)
+	}
+	r.promptSubmitted(b, current)
+	return result, nil
+}
+
+func (r *Router) promptSubmitted(b *board.Board, terminal model.Object) {
+	if board.NotifyingReports(terminal) {
+		b.NotifyingAgentSubmitted(terminal.ID)
+	} else if stateOf(terminal) != "unknown" && stateOf(terminal) != "working" {
+		r.pendingPrompts[terminal.ID] = time.Now()
+	}
+}
+
+func stagedMentions(raw any, b *board.Board) ([]model.Mention, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, invalid("staged must be a list of mentions")
+	}
+	out := make([]model.Mention, 0, len(items))
+	for _, item := range items {
+		fields, ok := item.(map[string]any)
+		if !ok {
+			return nil, invalid("a staged mention needs id, target, label, stagedAt and edited")
+		}
+		_, labelOK := fields["label"].(string)
+		_, editedOK := fields["edited"].(bool)
+		timeOK := false
+		switch stamp := fields["stagedAt"].(type) {
+		case float64:
+			timeOK = true
+		case string:
+			_, err := time.Parse(time.RFC3339Nano, stamp)
+			timeOK = err == nil
+		}
+		parsed, ok := model.MentionFromJSON(item)
+		if !ok || parsed.Target == nil || !labelOK || !editedOK || !timeOK {
+			return nil, invalid("a staged mention needs id, target, label, stagedAt and edited")
+		}
+		target, err := mention.ValidateTarget(parsed.Target)
+		if err != nil {
+			return nil, invalid("%s", err.Error())
+		}
+		for _, id := range model.MentionObjects(target) {
+			if _, exists := b.Objects()[id]; !exists {
+				return nil, board.NotFound("object %s", id)
+			}
+		}
+		parsed.Target = target
+		out = append(out, parsed)
+	}
+	return out, nil
 }
 
 // restartKinds are the agents agent.restart relaunches by kind (AgentResume's grammars).
@@ -978,7 +1093,8 @@ func (r *Router) drain(p map[string]any) (any, error) {
 		return nil, err
 	}
 	caller, _ := optStr(p, "caller")
-	resolved, context := b.Drain(boolParam(p, "peek"), caller, true)
+	prompt, _ := optStr(p, "prompt")
+	resolved, context := b.Drain(boolParam(p, "peek"), caller, prompt, true)
 	mentions := make([]any, len(resolved))
 	for i, m := range resolved {
 		mentions[i] = m.JSON()

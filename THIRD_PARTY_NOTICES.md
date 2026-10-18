@@ -20,6 +20,12 @@ Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`;
 | [tree-sitter-go](https://github.com/tree-sitter/tree-sitter-go) | 0.23.4 | MIT | (c) 2014 Max Brunsfeld |
 | [tree-sitter-rust](https://github.com/tree-sitter/tree-sitter-rust) | 0.24.2 | MIT | (c) 2017 Maxim Sokolov |
 
+### Composer grapheme segmentation
+
+| Package | Version | License | Copyright |
+| --- | --- | --- | --- |
+| [uax29](https://github.com/clipperhouse/uax29) (`easld` composer grapheme segmentation) | 2.7.0 | MIT | (c) 2020 Matt Sherman |
+
 ### Inside the libghostty binary
 
 `libghostty.a`, the xcframework libghostty-spm downloads and easl links statically, is Ghostty built by Zig 0.16 together with these libraries, Zig packages and fonts. Versions are the ones Ghostty pins at commit 3c47ca159368 (its `build.zig.zon` and those under `pkg/` and `src/stb/`); the archive's object files, symbols and embedded font names match them.
@@ -66,7 +72,7 @@ Ghostty draws box-drawing and other sprite glyphs with z2d, which is covered by 
 
 ## MIT License
 
-Applies to every MIT entry in both tables whose license text isn't reproduced below, with the copyright line listed for it.
+Applies to every MIT entry in the tables above whose license text isn't reproduced below, with the copyright line listed for it.
 
 ```text
 Permission is hereby granted, free of charge, to any person obtaining a copy

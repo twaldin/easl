@@ -1,0 +1,154 @@
+{
+  "description": "board.get carries the attention snapshot, including raisedAt as the marker's identity. view.seen echoes that marker and the terminal rev from the same read: a matching marker clears, a matching rev on a done terminal is seen, a replaced marker and a stale or working rev are left as they are.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "terminal",
+        "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "worker" },
+        "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 }
+      },
+      "save": "t"
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "working", "seq": 1, "source": "main", "draft": false }
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "seq": 2, "source": "main", "draft": false },
+      "note": "an unread idle after working is done"
+    },
+    {
+      "call": "view.attention",
+      "params": { "id": "{{t.object.id}}", "message": "look", "caller": "{{t.object.id}}" }
+    },
+    {
+      "call": "board.get",
+      "params": { "board": "{{board}}" },
+      "save": "snap",
+      "expect": {
+        "response.ok": true,
+        "response.result.attention.0.id": "{{t.object.id}}",
+        "response.result.attention.0.message": "look",
+        "response.result.attention.0.raisedBy": "{{t.object.id}}",
+        "response.result.objects.0.id": "{{t.object.id}}",
+        "response.result.objects.0.props.lifecycle.state": "done",
+        "response.result.objects.0.props.lifecycle.seen": false
+      },
+      "expectShape": { "response.result.attention.0": "AttentionMarker" },
+      "note": "raisedAt is a date-time string on the marker. Attention is omitted when empty; the runner cannot expect a missing path, so the later clear is only in the recording."
+    },
+    {
+      "call": "view.seen",
+      "params": {
+        "id": "{{t.object.id}}",
+        "rev": "{{snap.objects.0.rev}}",
+        "marker": "{{snap.attention.0}}"
+      },
+      "expect": { "response.ok": true, "response.result.cleared": true, "response.result.seen": true },
+      "note": "rev and marker both come from that board.get"
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{t.object.id}}" },
+      "expect": {
+        "response.result.object.props.lifecycle.state": "idle",
+        "response.result.object.props.lifecycle.seen": true
+      }
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "working", "seq": 3, "source": "main", "draft": false }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{t.object.id}}" },
+      "save": "working"
+    },
+    {
+      "call": "view.seen",
+      "params": { "id": "{{t.object.id}}", "rev": "{{snap.objects.0.rev}}" },
+      "expect": { "response.result.cleared": false, "response.result.seen": false },
+      "note": "the rev from the first board.get is stale after the new turn"
+    },
+    {
+      "call": "view.seen",
+      "params": { "id": "{{t.object.id}}", "rev": "{{working.object.rev}}" },
+      "expect": { "response.result.cleared": false, "response.result.seen": false },
+      "note": "a working terminal is not marked seen, even at its current rev"
+    },
+    {
+      "call": "agent.report",
+      "params": { "tile": "{{t.object.id}}", "kind": "omp", "state": "idle", "seq": 4, "source": "main", "draft": false }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{t.object.id}}" },
+      "save": "done"
+    },
+    {
+      "call": "view.seen",
+      "params": { "id": "{{t.object.id}}", "rev": "{{working.object.rev}}" },
+      "expect": { "response.result.cleared": false, "response.result.seen": false },
+      "note": "the working rev no longer matches"
+    },
+    {
+      "call": "view.seen",
+      "params": { "id": "{{t.object.id}}", "rev": "{{done.object.rev}}" },
+      "expect": { "response.result.cleared": false, "response.result.seen": true }
+    },
+    {
+      "call": "view.attention",
+      "params": { "id": "{{t.object.id}}", "message": "first", "caller": "{{t.object.id}}" }
+    },
+    {
+      "call": "board.get",
+      "params": { "board": "{{board}}" },
+      "save": "first",
+      "expect": {
+        "response.result.attention.0.message": "first",
+        "response.result.attention.0.id": "{{t.object.id}}"
+      },
+      "expectShape": { "response.result.attention.0": "AttentionMarker" }
+    },
+    {
+      "call": "view.attention",
+      "params": { "id": "{{t.object.id}}", "message": "second", "caller": "{{t.object.id}}" },
+      "note": "replacement: a new raisedAt"
+    },
+    {
+      "call": "board.get",
+      "params": { "board": "{{board}}" },
+      "save": "second",
+      "expect": { "response.result.attention.0.message": "second" },
+      "expectShape": { "response.result.attention.0": "AttentionMarker" }
+    },
+    {
+      "call": "view.seen",
+      "params": { "id": "{{t.object.id}}", "marker": "{{first.attention.0}}" },
+      "expect": { "response.result.cleared": false, "response.result.seen": false },
+      "note": "the marker from the first board.get does not clear the replacement"
+    },
+    {
+      "call": "board.get",
+      "params": { "board": "{{board}}" },
+      "save": "still",
+      "expect": {
+        "response.result.attention.0.message": "second",
+        "response.result.attention.0.raisedAt": "{{second.attention.0.raisedAt}}"
+      }
+    },
+    {
+      "call": "view.seen",
+      "params": { "id": "{{t.object.id}}", "marker": "{{second.attention.0}}" },
+      "expect": { "response.result.cleared": true, "response.result.seen": false }
+    },
+    {
+      "call": "board.get",
+      "params": { "board": "{{board}}" },
+      "note": "attention is omitted once the marker is cleared"
+    }
+  ]
+}

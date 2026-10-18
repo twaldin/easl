@@ -236,7 +236,7 @@ func TestAnAnsweredQuestionIsHandedToItsAskingTerminalWithItsOwnHeader(t *testin
 
 	q := ask(t, b, askProps(map[string]any{"recommended": "a", "context": []any{map[string]any{"path": "a.go", "lines": map[string]any{"start": 1.0, "end": 4.0}}}}), nil, terminal.ID)
 	// Not yet: nothing waits for the terminal.
-	if _, context := b.Drain(true, terminal.ID, false); context != "" {
+	if _, context := b.Drain(true, terminal.ID, "", false); context != "" {
 		t.Fatalf("before the answer: %q", context)
 	}
 	// A script's mention queued first, so the question's block comes second.
@@ -245,7 +245,7 @@ func TestAnAnsweredQuestionIsHandedToItsAskingTerminalWithItsOwnHeader(t *testin
 	}
 	write(t, b, q.ID, map[string]any{"status": "answered", "answer": map[string]any{"option": "a", "note": "go\nnow"}}, nil, "")
 
-	resolved, context := b.Drain(true, terminal.ID, false)
+	resolved, context := b.Drain(true, terminal.ID, "", false)
 	if len(resolved) != 2 {
 		t.Fatalf("mentions %d: %s", len(resolved), context)
 	}
@@ -266,14 +266,14 @@ func TestAnAnsweredQuestionIsHandedToItsAskingTerminalWithItsOwnHeader(t *testin
 	if blocks := strings.SplitN(context, "<canvas-mentions", 3); strings.Contains(blocks[2], "Attached by") || strings.Contains(blocks[1], "Your question") {
 		t.Errorf("blocks mixed:\n%s", context)
 	}
-	if _, other := b.Drain(true, other.ID, false); other != "" {
+	if _, other := b.Drain(true, other.ID, "", false); other != "" {
 		t.Errorf("another terminal got it: %q", other)
 	}
 
 	// Delivered with a drained prompt, once; a later write of the answered question hands nothing off.
-	b.Drain(false, terminal.ID, false)
+	b.Drain(false, terminal.ID, "", false)
 	write(t, b, q.ID, map[string]any{"archived": true}, nil, "")
-	if _, context := b.Drain(true, terminal.ID, false); context != "" {
+	if _, context := b.Drain(true, terminal.ID, "", false); context != "" {
 		t.Errorf("after delivery: %q", context)
 	}
 }
@@ -292,14 +292,14 @@ func TestOnlyAnAnswerToATerminalOnThisBoardIsHandedOff(t *testing.T) {
 	write(t, b, cancelled.ID, map[string]any{"status": "cancelled"}, nil, "")
 	expired := ask(t, b, askProps(nil), nil, terminal.ID)
 	write(t, b, expired.ID, map[string]any{"status": "expired"}, nil, "")
-	if _, context := b.Drain(true, terminal.ID, false); context != "" {
+	if _, context := b.Drain(true, terminal.ID, "", false); context != "" {
 		t.Errorf("handed off:\n%s", context)
 	}
 
 	// The question may also be answered by another terminal: the asker still gets it.
 	asked := ask(t, b, askProps(nil), nil, terminal.ID)
 	write(t, b, asked.ID, answer, nil, note.ID)
-	if _, context := b.Drain(true, terminal.ID, false); !strings.Contains(context, "answer: [a] Yes · by terminal "+note.ID+" at ") {
+	if _, context := b.Drain(true, terminal.ID, "", false); !strings.Contains(context, "answer: [a] Yes · by terminal "+note.ID+" at ") {
 		t.Errorf("answered by a terminal:\n%s", context)
 	}
 }

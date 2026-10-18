@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 import Testing
-import CanvasCore
+@testable import CanvasCore
 import Markdown
 
 struct NoteFenceTests {
@@ -526,10 +526,25 @@ struct NoteMarkdownTests {
 }
 
 @MainActor
+private final class NoteSessionHost: BoardHost {
+    var writes: [RemoteWrite] = []
+    func send(_ write: RemoteWrite) { writes.append(write) }
+    var historyUnavailable: String? { nil }
+}
+
+@MainActor
 struct NoteEditSessionTests {
     let board = Board(id: "brd_test", root: URL(fileURLWithPath: NSTemporaryDirectory()))
 
     func markdown(_ id: ObjectID) -> String? { board.objects[id]?.props["markdown"]?.string }
+
+    private func remoteNote() -> (Board, NoteSessionHost, CanvasObject) {
+        let host = NoteSessionHost()
+        let remote = Board(remote: "brd_remote", root: board.root, host: host)
+        let note = board.create(type: .note, props: .object(["markdown": .string("base")]))
+        remote.applyHost(note)
+        return (remote, host, note)
+    }
 
     @Test func implicitCommitsNeverOverwriteSomeoneElsesChange() throws {
         let note = board.create(type: .note, props: .object(["markdown": .string("base")]))
@@ -584,6 +599,77 @@ struct NoteEditSessionTests {
         // Under it, the agent's own change is still a step of its own.
         #expect(board.undo() && board.undo())
         #expect(markdown(note.id) == "base")
+    }
+
+    @Test func remoteRecoveryDoesNotBecomeAHostHistoryCursor() throws {
+        let (remote, host, note) = remoteNote()
+        let session = NoteEditSession(note)
+        try remote.update(note.id, frame: Frame(x: 50, y: 40, w: 280, h: 240))
+        var theirs = try remote.object(note.id)
+        theirs.rev += 1
+        theirs.props = .object(["markdown": .string("theirs")])
+        remote.applyHost(theirs)
+        #expect(try session.commit("my rejected text", confirmed: false, on: remote) == .conflict)
+
+        #expect(session.keepTheirs(discarding: "my rejected text", on: remote))
+        let recovery = try #require(remote.nextUndo)
+        #expect(!recovery.changesBoard)
+        #expect(recovery.noteRecoveries == [NoteRecovery(objectID: note.id, yours: "my rejected text", theirs: "theirs")])
+        #expect(host.writes.count == 1)
+        #expect(!remote.undo())
+        #expect(remote.nextUndo?.id == recovery.id)
+        #expect(remote.objects[note.id]?.props["markdown"]?.string == "theirs")
+        #expect(remote.objects[note.id]?.frame.x == 50)
+    }
+
+    @Test func remoteRecoveryStaysSeparateFromGesturesInATransaction() throws {
+        let (remote, _, note) = remoteNote()
+        let session = NoteEditSession(note)
+        var theirs = note
+        theirs.rev += 1
+        theirs.props = .object(["markdown": .string("theirs")])
+        remote.applyHost(theirs)
+
+        try remote.transaction {
+            try remote.update(note.id, frame: Frame(x: 20, y: 0, w: 280, h: 240))
+            #expect(session.keepTheirs(discarding: "mine", on: remote))
+            try remote.update(note.id, frame: Frame(x: 40, y: 0, w: 280, h: 240))
+        }
+
+        let steps = remote.history.undoSteps
+        #expect(steps.count == 3)
+        #expect(steps.map(\.changesBoard) == [true, false, true])
+        #expect(steps[1].noteRecoveries == [NoteRecovery(objectID: note.id, yours: "mine", theirs: "theirs")])
+        #expect(steps[0].id < steps[1].id && steps[1].id < steps[2].id)
+        #expect(remote.objects[note.id]?.frame.x == 40)
+        #expect(remote.objects[note.id]?.props["markdown"]?.string == "theirs")
+    }
+
+    @Test func unrecordedRemoteWritesDoNotFileHostUndoSteps() throws {
+        let (remote, host, note) = remoteNote()
+        let created = remote.unrecorded {
+            remote.create(type: .note, props: .object(["markdown": .string("unrecorded")]))
+        }
+        try remote.unrecorded {
+            try remote.update(note.id, props: .object(["markdown": .string("bookkeeping")]))
+            try remote.delete(created.id)
+        }
+
+        #expect(remote.history.undoSteps.isEmpty)
+        #expect(remote.objects[note.id]?.props["markdown"]?.string == "bookkeeping")
+        #expect(remote.objects[created.id] == nil)
+        #expect(host.writes == [
+            .create(created, step: nil),
+            .update(note.id, step: nil, seen: note.rev, frame: nil, z: nil, props: .object(["markdown": .string("bookkeeping")])),
+            .delete(created.id, step: nil)
+        ])
+
+        let seen = try remote.object(note.id).rev
+        try remote.update(note.id, props: .object(["markdown": .string("chosen")]))
+        let step = try #require(remote.nextUndo)
+        #expect(host.writes.last == .update(note.id, step: step.id, seen: seen, frame: nil, z: nil, props: .object(["markdown": .string("chosen")])))
+        #expect(step.changesBoard)
+        #expect(remote.objects[note.id]?.props["markdown"]?.string == "chosen")
     }
 
     @Test func keepingTheirsOverAnUnchangedEditRecordsNothing() throws {

@@ -2,6 +2,7 @@ package router
 
 import (
 	"errors"
+	"math"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -148,6 +149,10 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	edit, err := board.ParseViewerEdit(p)
+	if err != nil {
+		return nil, err
+	}
 	typeName, err := str(p, "type")
 	if err != nil {
 		return nil, err
@@ -209,7 +214,13 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 		}
 	}
 	parent, _ := optStr(p, "parent")
-	o := b.Create(typ, props, frame, parent, caller)
+	var o model.Object
+	if err := b.AsViewerEdit(edit, func() error {
+		o = b.Create(typ, props, frame, parent, caller)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 	return withWarnings(map[string]any{"object": objectJSON(b.ReportedOne(o))}, typ.UnknownPropWarnings(props)), nil
 }
 
@@ -224,6 +235,18 @@ func (r *Router) update(p map[string]any) (any, error) {
 	}
 	if err := checkProps(p); err != nil {
 		return nil, err
+	}
+	edit, err := board.ParseViewerEdit(p)
+	if err != nil {
+		return nil, err
+	}
+	var z *float64
+	if value, present := p["z"]; present {
+		n, ok := value.(float64)
+		if !ok || math.IsNaN(n) || math.IsInf(n, 0) {
+			return nil, invalid("z must be a finite number")
+		}
+		z = &n
 	}
 	current, err := b.Object(id)
 	if err != nil {
@@ -263,8 +286,12 @@ func (r *Router) update(p map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	o, err := b.Update(id, rev, frame, nil, written, caller, "")
-	if err != nil {
+	var o model.Object
+	if err := b.AsViewerEdit(edit, func() error {
+		var err error
+		o, err = b.Update(id, rev, frame, z, written, caller, "")
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	return withWarnings(map[string]any{"object": objectJSON(b.ReportedOne(o))}, o.Type.UnknownPropWarnings(props)), nil
@@ -826,6 +853,11 @@ func (r *Router) reusableChanges(p map[string]any) (map[string]any, error) {
 	}
 	if s, ok := p["size"]; ok {
 		update["size"] = s
+	}
+	for _, k := range []string{"viewer", "step"} {
+		if v, ok := p[k]; ok {
+			update[k] = v
+		}
 	}
 	return update, nil
 }

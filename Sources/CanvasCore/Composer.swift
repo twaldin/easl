@@ -189,7 +189,7 @@ public struct ComposerState: Codable, Equatable, Sendable {
 /// prompt's drain: one with mentions, or an answer the integration turns into a prompt (Codex's
 /// queued questions). A drain from that terminal that carries a `prompt` (its integration's
 /// submission drain) claims the oldest one whose text it contains, compared folded (`fold`:
-/// letters and digits only), which survives what agents do to the text (Claude Code's paste
+/// Unicode alphanumerics), which survives what agents do to the text (Claude Code's paste
 /// wrapper, Codex's IDE context, omp's emoji, text already in the input editor), and takes its
 /// `mentions` (numbered from 1) instead of the tray, whatever the tray, the prompt target or the
 /// composer's later prompts are by then. A prompt typed in the terminal or sent by `agent.prompt`
@@ -209,6 +209,10 @@ public struct ComposerPrompt: Equatable, Sendable {
     public var queuedAt: Date
     /// An answer's agent left `blocked` for `working` or `idle` at this time.
     public var answerSettledAt: Date?
+    /// Staged ids parallel to `mentions`. Events name these, not the per-terminal copies.
+    public var origins: [String]
+    /// Nil is this app's own composer. A remote window's id receives its returns.
+    public var viewer: String?
 
     /// A safety cap: a prompt that waited this long for its drain is taken as never coming
     /// (prompts queued behind a long turn wait as long as that turn).
@@ -219,7 +223,7 @@ public struct ComposerPrompt: Equatable, Sendable {
     /// A folded text this short only matches a drain's folded text that equals it.
     public static let shortest = 3
 
-    /// `text` with only its letters and digits, case-folded: what survives every agent's
+    /// `text` with only its Unicode alphanumerics, case-folded: what survives every agent's
     /// rewrite of a prompt (emoji, punctuation, brackets, whitespace drop out).
     public static func fold(_ text: String) -> String {
         String(text.folding(options: [.caseInsensitive], locale: nil).unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(Character.init))
@@ -237,12 +241,13 @@ extension Board {
     /// terminal's delivery is its own), or as an answer. Returns its id, to withdraw it if the
     /// text can't be typed.
     @discardableResult
-    public func queueComposerPrompt(_ text: String, to terminal: ObjectID, mentions: [Mention], answer: Bool = false, now: Date = Date()) -> String {
+    public func queueComposerPrompt(_ text: String, to terminal: ObjectID, mentions: [Mention], answer: Bool = false, viewer: String? = nil, now: Date = Date()) -> String {
         expireComposerPrompts(now: now)
         let copies = answer ? [] : mentions.map { Mention(id: IDs.make("men"), target: $0.target, label: $0.label, stagedAt: $0.stagedAt, edited: $0.edited) }
+        let origins = answer ? [] : mentions.map(\.id)
         let blocked = objects[terminal]?.props["lifecycle"]?["state"]?.string == LifecycleState.blocked.rawValue
         let prompt = ComposerPrompt(id: IDs.make("cmp"), prompt: text, folded: ComposerPrompt.fold(text), mentions: copies, answer: answer, queuedAt: now,
-                                    answerSettledAt: answer && !blocked ? now : nil)
+                                    answerSettledAt: answer && !blocked ? now : nil, origins: origins, viewer: viewer)
         composerPrompts[terminal, default: []].append(prompt)
         return prompt.id
     }
@@ -265,13 +270,16 @@ extension Board {
         guard var queue = composerPrompts[caller] else { return nil }
         let folded = ComposerPrompt.fold(submitted)
         guard let index = queue.firstIndex(where: { $0.isClaimed(by: folded) }) else {
-            NSLog("easl: a submission drain from \(caller) matched none of its \(queue.count) composer prompts (drained \(folded.count) letters and digits; waiting \(queue.map { String($0.folded.count) }.joined(separator: ", ")))")
+            NSLog("easl: a submission drain from \(caller) matched none of its \(queue.count) composer prompts (drained \(folded.count) folded characters; waiting \(queue.map { String($0.folded.count) }.joined(separator: ", ")))")
             return nil
         }
         let found = queue[index]
         if found.mentions.isEmpty {
             queue.remove(at: index)
             composerPrompts[caller] = queue.isEmpty ? nil : queue
+            if let viewer = found.viewer {
+                noteComposer(.submitted, viewer: viewer, terminal: caller, ids: [])
+            }
         }
         return found
     }
@@ -304,15 +312,36 @@ extension Board {
     /// (its drain came: the prompts behind it are next). Returns how many were delivered.
     func commitComposerPrompts(_ ids: [MentionID]) -> Int {
         var count = 0
+        var batched: [String: [String]] = [:]
         for (terminal, queue) in composerPrompts {
             var left: [ComposerPrompt] = []
             for var prompt in queue {
                 let before = prompt.mentions.count
-                prompt.mentions.removeAll { ids.contains($0.id) }
-                count += before - prompt.mentions.count
-                if before == 0 || !prompt.mentions.isEmpty { left.append(prompt) }
+                var keptMentions: [Mention] = []
+                var keptOrigins: [String] = []
+                for (index, mention) in prompt.mentions.enumerated() {
+                    let origin = index < prompt.origins.count ? prompt.origins[index] : ""
+                    if ids.contains(mention.id) {
+                        count += 1
+                        if let viewer = prompt.viewer, !origin.isEmpty {
+                            batched["\(viewer)\u{0}\(terminal)", default: []].append(origin)
+                        }
+                    } else {
+                        keptMentions.append(mention)
+                        keptOrigins.append(origin)
+                    }
+                }
+                if before == 0 || !keptMentions.isEmpty {
+                    prompt.mentions = keptMentions
+                    prompt.origins = keptOrigins
+                    left.append(prompt)
+                }
             }
             composerPrompts[terminal] = left.isEmpty ? nil : left
+        }
+        for (key, origins) in batched {
+            let parts = key.split(separator: "\u{0}", maxSplits: 1).map(String.init)
+            if parts.count == 2 { noteComposer(.submitted, viewer: parts[0], terminal: parts[1], ids: origins) }
         }
         return count
     }
@@ -325,25 +354,108 @@ extension Board {
         returnUndelivered(queue, from: terminal)
     }
 
+    func returnRemoteComposerPrompts() {
+        for terminal in composerPrompts.keys.sorted() {
+            guard let queue = composerPrompts[terminal] else { continue }
+            let remote = queue.filter { $0.viewer != nil }
+            let local = queue.filter { $0.viewer == nil }
+            composerPrompts[terminal] = local.isEmpty ? nil : local
+            returnUndelivered(remote, from: terminal)
+        }
+    }
+
     /// A deleted object leaves every queued prompt's mentions; a deleted terminal's own prompts
     /// return their mentions to the tray.
     func forgetComposerPrompts(of id: ObjectID) {
         for (terminal, queue) in composerPrompts {
             composerPrompts[terminal] = queue.map { prompt in
                 var prompt = prompt
-                prompt.mentions.removeAll { $0.target.objectIDs.contains(id) }
+                var keptMentions: [Mention] = []
+                var keptOrigins: [String] = []
+                var gone: [String] = []
+                for (index, mention) in prompt.mentions.enumerated() {
+                    let origin = index < prompt.origins.count ? prompt.origins[index] : ""
+                    if mention.target.objectIDs.contains(id) {
+                        if !origin.isEmpty { gone.append(origin) }
+                    } else {
+                        keptMentions.append(mention)
+                        keptOrigins.append(origin)
+                    }
+                }
+                prompt.mentions = keptMentions
+                prompt.origins = keptOrigins
+                if let viewer = prompt.viewer, !gone.isEmpty {
+                    noteComposer(.returned, viewer: viewer, terminal: terminal, ids: gone)
+                }
                 return prompt
             }
         }
         dropComposerPrompts(of: id)
     }
 
-    /// Stages the undelivered mentions of `prompts` again (each target once, those still on the
-    /// board) and says so.
     private func returnUndelivered(_ prompts: [ComposerPrompt], from terminal: ObjectID) {
-        let mentions = prompts.flatMap(\.mentions)
-        let returned = mentions.compactMap { try? stage($0.target) }
+        var local: [Mention] = []
+        var remote: [String: [String]] = [:]
+        for prompt in prompts {
+            if let viewer = prompt.viewer {
+                remote[viewer, default: []].append(contentsOf: prompt.origins)
+            } else {
+                local.append(contentsOf: prompt.mentions)
+            }
+        }
+        for (viewer, ids) in remote where !ids.isEmpty {
+            noteComposer(.returned, viewer: viewer, terminal: terminal, ids: ids)
+        }
+        let returned = local.compactMap { try? stage($0.target) }
         if !returned.isEmpty { onComposerMentionsReturned?(terminal, returned) }
+    }
+
+    /// Stages mentions a remote viewer still holds, and says so through the existing callback.
+    public func returnComposerMentions(_ mentions: [Mention], from terminal: ObjectID) {
+        let start = tray.count
+        restageMentions(mentions.enumerated().map { PlacedMention(index: start + $0.offset, mention: $0.element) })
+        let returned = mentions.compactMap { original in
+            tray.first { $0.id == original.id || $0.target == original.target }
+        }
+        if !returned.isEmpty { onComposerMentionsReturned?(terminal, returned) }
+    }
+
+    func noteComposer(_ kind: ComposerNotice.Kind, viewer: String, terminal: ObjectID, ids: [String]) {
+        composerNotices.append(ComposerNotice(kind: kind, viewer: viewer, terminal: terminal, ids: ids))
+        flushComposerNotices()
+    }
+
+    func flushComposerNotices() {
+        guard !history.isOpen, !composerNotices.isEmpty else { return }
+        let due = composerNotices
+        composerNotices = []
+        for notice in due {
+            composerReceipts.append(notice)
+            if composerReceipts.count > 2000 {
+                composerReceipts.removeFirst(composerReceipts.count - 2000)
+            }
+            onEvent?(.composer(notice))
+        }
+    }
+}
+
+public struct ComposerNotice: Equatable, Sendable {
+    public enum Kind: String, Sendable {
+        case returned = "composer.returned"
+        case submitted = "composer.submitted"
+    }
+    public var kind: Kind
+    public var viewer: String
+    public var terminal: ObjectID
+    public var ids: [String]
+    public let receipt = IDs.make("crp")
+
+    var json: JSONValue {
+        .object([
+            "receipt": .string(receipt), "event": .string(kind.rawValue),
+            "viewer": .string(viewer), "terminal": .string(terminal),
+            "ids": .array(ids.map(JSONValue.string)),
+        ])
     }
 }
 

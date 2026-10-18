@@ -1,7 +1,7 @@
 {
   "scenario": "board-lifecycle",
   "description": "Board availability uses canonical board envelopes with empty data, preserves subscriptions across close and reopen, respects board and event-name filters, rejects closed targets, and announces only successful transitions.",
-  "recordedOn": "remote board closure candidate on isolated Mac",
+  "recordedOn": "scratch easld schema2 remote edits and composer receipts",
   "steps": [
     {
       "step": "board.open",
@@ -211,7 +211,7 @@
         "ok": true,
         "result": {
           "app": "easl",
-          "version": 1
+          "version": 2
         }
       }
     },

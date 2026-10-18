@@ -5,7 +5,7 @@
       "call": "client.attach",
       "conn": "old",
       "params": {
-        "version": 0,
+        "version": 1,
         "schema": "5a0c1d7e9b3f2a64",
         "app": "0.1.0",
         "host": "studio",
@@ -44,7 +44,7 @@
       "call": "client.attach",
       "conn": "next",
       "params": {
-        "version": 2,
+        "version": 3,
         "schema": "fedcba9876543210",
         "app": "0.3.0",
         "host": "studio",
