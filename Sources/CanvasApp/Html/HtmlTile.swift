@@ -89,8 +89,8 @@ final class HtmlTile: NSView, TileContent {
             self.assetReload?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self, self.live, self.window != nil else { return }
-                    self.webView?.load(URLRequest(url: self.pageURL))
+                    guard let self, self.live, self.window != nil, let web = self.webView else { return }
+                    self.loadPage(in: web)
                 }
             }
             self.assetReload = work

@@ -99,10 +99,6 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
         self.tile = tile
     }
 
-    func cancelHostReads() {
-        for read in reads.values { read.cancel() }
-        reads.removeAll()
-    }
 
     static func boardFileURL(path: String) -> URL {
         var url = URLComponents()
@@ -385,8 +381,8 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func cancelHostReads() {
-        for task in hostReads.values { task.cancel() }
-        hostReads.removeAll()
+        for task in reads.values { task.cancel() }
+        reads.removeAll()
     }
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
