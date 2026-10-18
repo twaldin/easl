@@ -5,6 +5,29 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Mac boards read their files and check saved anchors off the main thread. Tiles appear before Git checks finish. Unverified anchor metadata stays out of API replies and events, then allowed anchors return without object revisions or undo steps. Undo and redo retain allowed anchors in local and remote viewers. Local and remote windows build and appear on separate main-loop wakes, with shared preparation for concurrent opens. Client metadata loads off the main thread. Startup preserves saved tabs through interrupted restoration and registers background loads before API requests resume.
+
+## 0.2.8
+
+**Interim release.** Remote HTML loading host files and video, browser relay through easld, closed-board inspection, and faster board loading come in the next release.
+
+**Updating from 0.2.4 or 0.2.6.** The update still runs the installed version's own install helper. If Update in 0.2.4 stops with nothing replaced, quit easl and install 0.2.8 from its zip on [GitHub Releases](https://github.com/twaldin/easl/releases), or run `brew upgrade --cask easl` for a Homebrew install. The install-helper fix shipped in 0.2.5, so 0.2.6 can use Check for Updates normally.
+
+**Host updates.** These changes also need easld updated on the host.
+
+- Viewer-served renders, exact HTML measurement and fits, and inline-image validation (#125).
+- Diagram graph persistence and delegated diagram reload (#130). Host language-server navigation itself runs through the viewer's SSH connection.
+- Host-generated note and code anchor confinement, and cleanup of saved outside-board anchor metadata (#131, #133, #135).
+- Host-close notifications and automatic viewer recovery on reopen (#134).
+- Browser drawing-machine assignment, agent browser commands, reload, and private cmux sockets (#137).
+- Automatic archiving of closed questions (#138).
+- Per-viewer undo and redo, restacking, attention snapshots and seen acknowledgments, and staged composer submissions (#142, schema version 2).
+
+Re-run `scripts/offload-setup.sh <host>` on the Mac, then restart `easld@<user>` on the host. Running terminal sessions keep going. For Mac-hosted boards, update the hosting app too, including for browser streaming (#124).
+
+**Mixed versions.** A 0.2.8 app can view and make basic edits on a 0.2.7 easld. Undo, restacking, and composer sends with staged mentions report that the host needs updating; the other host changes above are absent. Live image, code, changes, and note drawing, terminal file references, host language-server navigation, background attachments, and live HTML are viewer-side updates. Host file reads require Bun and Python 3, plus git for refs. Updating easld alone does not add those viewer features. A 0.2.7 app can still display the board on 0.2.8 easld, but its schema-1 delegated-client attachment is refused with an update message, and composer submissions using the old `mentions` format are rejected.
+
+The release smoke drew the inspected HTML and notes with all four 0.2.7 and release-candidate app/easld combinations. Images drew with the new app on either server. Browsers drew with both updated; the new app with old easld showed "No drawing Mac yet", and the old app drew neither images nor browsers on either server. This is not a claim that this release fixes the reported blank HTML.
+
 - Viewers recognize easld running on macOS before choosing browser rendering and client attachment. Scratch servers retain their isolated home, and default-home easld uses its own zmx directory instead of the installed app's.
 - Bundle builds use two Swift jobs, including release bundles.
 - **Undo and restack remote boards.** ⌘Z and ⇧⌘Z replay this viewer's own edits on the host, including create, move, resize, text edit and delete. Guarded field inverses keep concurrent edits by agents and other viewers. Bring to Front, Send to Back and API `object.update z` change the host's order for everyone. History is in memory, scoped per viewer, and requires an updated host.
@@ -15,7 +38,7 @@ Each version's section is its GitHub release's notes.
 - **Deckbox agents drive browser tiles on their drawing Mac.** Each browser records a persistent `drawingMachine` identity and machine name. Easld defaults to the creating attached Mac, or the first eligible attachment for an existing unassigned tile; Mac-hosted boards default to their host. The drawing Mac uses its own browser profile and answers `easl browser`, omp's cmux subset and `object.reload`, including with its window closed while background attach is on. Owned sessions receive private caller-bound cmux sockets only after binding. Offline calls and other viewers name the drawing machine instead of moving the page. Page bodies, cookies and profiles are not stored on easld. Relaying the page to a second viewer and the title-bar machine switch remain unit 5b.
 - Browser load-state waits follow the latest requested navigation. Remote pages keep Back/Forward navigation instead of reloading an older URL when metadata acknowledgements arrive. Agent credit survives profile rebuilds and browser commands across open boards.
 - **Remote boards say when their host closes them.** The viewer shows "<host> closed this board", keeps its last seen viewport (including scrolled terminal rows) read-only, and detaches terminals and browser streams. Reopening on either a Mac host or easld resumes the viewer automatically. Background viewers stop serving the closed board without forgetting its reopen address. Manually closed Mac tabs still accept their agents' reports and notifications. Requires updated hosts and viewers.
-- Boards saved by older easld or Mac hosts drop outside-board anchor metadata when the host loads them, before any viewer receives it. The host removes refused note-fence `anchor=` attributes and code `props.anchor`, then saves only changed snapshots. Authored prose, fence bodies, captions, allowed anchors, object revisions, and undo steps stay unchanged. A second quiet load performs no scrub save. Requires the host update.
+- Boards saved by older easld or Mac hosts drop outside-board anchor metadata when the host loads them, before any viewer receives it. The host removes refused note-fence `anchor=` attributes and code `props.anchor`, then saves only changed snapshots. Authored prose, fence bodies, captions, allowed anchors, revisions, and undo history stay unchanged. A second load performs no scrub save. Requires the host update.
 - Host-generated code-tile anchors stay inside the board's file policy on easld and Mac hosts, including create, update, and background relocation. Outside paths and escaping symlinks add no source text to `props.anchor`. Inside-board files and permitted worktrees still anchor and relocate. Authored anchors and intentional local display access are unchanged. Code update events precede automatic anchor bookkeeping on both hosts. Requires the host update.
 - **Navigate host code on remote boards.** Definitions, references, hover, Outline, and Go to use the host's checkout and language servers, never a local server against host paths. Missing-server messages name the command and host. Diagram tiles draw live call graphs and reload after host edits. easld persists computed graphs without changing the tile's revision or undo history. On easld, diagram `object.reload` requires an attached Mac viewer. Host text, locations, and graphs stay in the viewer's memory.
 - Quitting while a language server is still being located no longer lets it start after shutdown.
@@ -34,6 +57,7 @@ Each version's section is its GitHub release's notes.
 - Socket connections send requests on their own nonblocking queue instead of waiting for shared GCD workers; large writes resume when their descriptor is ready.
 - Streamed requests and replies scan only newly received bytes for line endings instead of repeatedly scanning a partial frame.
 - Host-note replies are decoded and interpreted on utility workers, leaving the cooperative executor available for socket handlers.
+- Synchronous board-load anchor checks take the next free Git slot ahead of queued background reads, without raising the two-process cap or preempting running commands.
 - Quitting tracks SSH process exit independently of output-draining callbacks, so a delayed reader cannot keep an already-reaped child registered.
 - Remote metadata polling runs off the main thread; change notifications remain on it and are discarded if cancelled before delivery.
 - Symbol-only note fences check the name before the declaration regex, avoiding expensive regex scans of long lines that cannot contain that symbol.
