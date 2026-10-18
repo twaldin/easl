@@ -101,8 +101,9 @@ struct SurfaceImageEncoderTests {
             canvas: frame.canvas, video: video, refinement: frame.refresh)
     }
 
+    @discardableResult
     private func expectSharp(_ frame: SurfaceImageEncoding, source: Fixture,
-                             video: SurfaceVideoDecoder = SurfaceVideoDecoder()) throws {
+                             video: SurfaceVideoDecoder = SurfaceVideoDecoder()) throws -> (maximum: Int, mean: Double) {
         #expect(frame.format == .h264)
         #expect(frame.refresh)
         #expect(frame.data.count <= 576 * 1024)
@@ -119,7 +120,9 @@ struct SurfaceImageEncoderTests {
             maximum = max(maximum, error)
             total += UInt64(error)
         }
-        print("Synthetic sharp RGB report max=\(maximum) mean=\(Double(total) / Double(actual.count / 4 * 3))")
+        let mean = Double(total) / Double(actual.count / 4 * 3)
+        print("Sharp RGB report max=\(maximum) mean=\(mean)")
+        return (maximum, mean)
     }
 
     @Test func jpegUsesBaselineBytesDuringIdleAndInputWithoutRefinements() throws {
@@ -509,7 +512,12 @@ struct SurfaceImageEncoderTests {
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
-        let entropy = try fixture(width: 1024, height: 1024, noise: true)
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/browser-quality/docs-caret-off.png")
+        let data = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let docs = try #require(CGImageSourceCreateImageAtIndex(data, 0, nil))
+        let changed = Fixture(image: docs, pixels: try pixels(docs))
+        let entropy = try fixture(width: docs.width, height: docs.height, noise: true)
         let motion = try #require(try capture(encoder, entropy, at: 0, revision: revision))
         #expect(motion.format == .h264 && !motion.refresh && motion.data.count <= 48 * 1024)
         let image = try decode(motion)
@@ -524,12 +532,13 @@ struct SurfaceImageEncoderTests {
         #expect(recovered.format == .h264 && !recovered.refresh && recovered.data[4] == 1)
         #expect(recovered.data.count <= 48 * 1024)
         #expect(try decode(recovered).width == recovered.width)
-        let changed = try fixture(width: 1024, height: 1024)
         let next = try #require(try capture(encoder, changed, at: 7, revision: revision))
         #expect(next.format == .h264 && !next.refresh)
         #expect(try capture(encoder, changed, at: 8.01, revision: revision) == nil)
         work.finish()
         let sharp = try #require(try capture(encoder, changed, at: 8.1, revision: revision))
-        try expectSharp(sharp, source: changed)
+        let quality = try expectSharp(sharp, source: changed)
+        #expect(quality.maximum <= 8)
+        #expect(quality.mean <= 1)
     }
 }

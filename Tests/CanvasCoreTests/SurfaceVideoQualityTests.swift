@@ -58,12 +58,13 @@ private enum BrowserQuality {
         let width: Int
         let height: Int
         let qualityGated: Bool
+        let caretTransitions: Int
         var frames: [Frame] = []
         var exceptions: [String] = []
         var passed: Bool {
-            let checkpoints = frames.filter { $0.checkpoint == "settled" || $0.checkpoint == "caret-30" }
-            return exceptions.isEmpty && frames.count == 32
-                && (!qualityGated || checkpoints.count == 2 && checkpoints.allSatisfy { $0.score.passes })
+            let checkpoints = frames.filter { $0.checkpoint != "initial" }
+            return exceptions.isEmpty && frames.count == caretTransitions + 2
+                && (!qualityGated || checkpoints.count == caretTransitions + 1 && checkpoints.allSatisfy { $0.score.passes })
         }
     }
 
@@ -141,8 +142,9 @@ private enum BrowserQuality {
             score: try score(decoded, expected, width: width, height: height, initial: checkpoint == "initial"))
     }
 
-    static func run(id: String, page: Page?, off: CGImage, on: CGImage, gated: Bool) -> Result {
-        var result = Result(id: id, provenance: page, width: off.width, height: off.height, qualityGated: gated)
+    static func run(id: String, page: Page?, off: CGImage, on: CGImage, gated: Bool, caretTransitions: Int) -> Result {
+        var result = Result(id: id, provenance: page, width: off.width, height: off.height,
+                            qualityGated: gated, caretTransitions: caretTransitions)
         do {
             let offPixels = try raster(off), onPixels = try raster(on)
             var changedPixels = 0
@@ -174,7 +176,7 @@ private enum BrowserQuality {
             result.frames.append(try frame(refresh, checkpoint: "settled", decoder: decoder,
                                            expected: offPixels, width: off.width, height: off.height))
             encoder.acknowledgeRefinement()
-            for index in 1...30 {
+            for index in 1...caretTransitions {
                 let image = index.isMultiple(of: 2) ? off : on
                 // Browser blink pixels change without input, so the input revision and settle epoch stay fixed.
                 let motion = try require(capture(image, at: 1.1 + Double(index) * 0.5), "Missing caret frame \(index)")
@@ -182,9 +184,11 @@ private enum BrowserQuality {
                 let row = try frame(motion, checkpoint: "caret-\(index)", decoder: decoder,
                     expected: index.isMultiple(of: 2) ? offPixels : onPixels, width: off.width, height: off.height)
                 result.frames.append(row)
-                try check(!row.keyframe, "Caret frame \(index) lost the continuing sharp prediction reference")
+                if row.keyframe {
+                    result.exceptions.append("Caret frame \(index) lost the continuing sharp prediction reference")
+                }
             }
-            try check(try capture(off, at: 100) == nil, "Quiet caret sequence rearmed another refresh")
+            try check(try capture(off, at: 2.1 + Double(caretTransitions) * 0.5) == nil, "Quiet caret sequence rearmed another refresh")
         } catch {
             result.exceptions.append(String(describing: error))
         }
@@ -225,10 +229,11 @@ private enum BrowserQuality {
             try check(!page.title.isEmpty && !page.renderer.isEmpty && !page.caretProvenance.isEmpty, "Missing capture provenance")
             let off = try load(page.off, hash: page.offSHA256, root: root, width: page.width, height: page.height)
             let on = try load(page.on, hash: page.onSHA256, root: root, width: page.width, height: page.height)
-            results.append(run(id: page.id, page: page, off: off, on: on, gated: true))
+            results.append(run(id: page.id, page: page, off: off, on: on, gated: true,
+                               caretTransitions: page.id == "docs" ? 200 : 30))
         }
         results.append(run(id: "saturated-128x96-report-only", page: nil,
-                           off: try saturated(caret: false), on: try saturated(caret: true), gated: false))
+                           off: try saturated(caret: false), on: try saturated(caret: true), gated: false, caretTransitions: 30))
         return results
     }
 
@@ -263,14 +268,15 @@ private enum BrowserQuality {
 #else
 @Suite(.serialized)
 struct SurfaceVideoQualityTests {
-    @Test func realBrowserPagesRetainSharpReferenceThroughThirtyCaretFrames() throws {
+    @Test func realBrowserPagesRetainSharpReferenceThroughTwoHundredDocsCaretTransitions() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/browser-quality")
         let results = try BrowserQuality.reports(root: root)
         print(String(decoding: try BrowserQuality.json(results), as: UTF8.self))
         for result in results where result.qualityGated {
             #expect(result.exceptions.isEmpty, "\(result.id): \(result.exceptions)")
-            #expect(result.frames.count == 32, "\(result.id) must decode initial, settled, and 30 caret frames")
-            for frame in result.frames where frame.checkpoint == "settled" || frame.checkpoint == "caret-30" {
+            #expect(result.frames.count == result.caretTransitions + 2,
+                    "\(result.id) must decode initial, settled, and \(result.caretTransitions) caret frames")
+            for frame in result.frames where frame.checkpoint != "initial" {
                 #expect(frame.score.maximum <= 8, "\(result.id) \(frame.checkpoint) full-image RGB maximum")
                 #expect(frame.score.mean <= 1, "\(result.id) \(frame.checkpoint) full-image RGB mean")
             }

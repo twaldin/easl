@@ -99,6 +99,18 @@ struct SurfaceVideoTests {
         #expect(try center(SurfaceVideoDecoder().decode(restarted.data, width: restarted.width, height: restarted.height)).allSatisfy { $0 < 30 })
     }
 
+    @Test func sharpSizeChangeDoesNotFallBackThroughTheMotionFrameCap() throws {
+        let encoder = SurfaceVideoEncoder()
+        _ = try #require(try encoder.encode(image(), width: 64, height: 64, refresh: true))
+        let source = try noise(width: 258, height: 256, seed: 0x123456789abcdef)
+        let resized = try #require(try encoder.encode(source, width: 258, height: 256))
+        #expect(resized.data[4] == 1)
+        #expect(resized.data[11] == 244)
+        #expect(resized.data.count > 48 * 1024 && resized.data.count <= 576 * 1024)
+        let decoded = try SurfaceVideoDecoder().decode(resized.data, width: resized.width, height: resized.height)
+        #expect(decoded.width == 258 && decoded.height == 256)
+    }
+
     @Test func predictedFirstFrameAndForgedKeyframeAreRejected() throws {
         let encoder = SurfaceVideoEncoder()
         let first = try #require(try encoder.encode(image(), width: 64, height: 64)).data

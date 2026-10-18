@@ -117,6 +117,7 @@ public struct SurfaceVideoFrame: Sendable {
     public let data: Data
     public let width: Int
     public let height: Int
+    let refresh: Bool
 }
 
 private struct RetiredVideoCompressionSession: @unchecked Sendable {
@@ -186,7 +187,6 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             if nextProfile == .motion, session != nil, requestedWidth == width, requestedHeight == height {
                 target = (self.width, self.height)
             }
-            let maximumBytes = refresh ? SurfaceImageEncoder.refinementBytes : maximumMotionBytes
             for attempt in 0..<6 {
                 if session == nil || self.width != target.width || self.height != target.height || profile != nextProfile {
                     clear()
@@ -200,15 +200,19 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
                     return nil
                 }
                 guard !isCancelled() else { clear(); return nil }
-                if let packet = try packetFromSample(sample, maximumBytes: maximumBytes) {
-                    guard !refresh || packet[4] == 1 else { throw SurfaceVideoError.missingKeyframe }
+                let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
+                let keyframe = !(attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool ?? false)
+                let reference = nextProfile == .sharp && keyframe
+                let maximumBytes = reference ? SurfaceImageEncoder.refinementBytes : maximumMotionBytes
+                if let packet = try packetFromSample(sample, maximumBytes: maximumBytes, keyframe: keyframe) {
+                    guard !refresh || keyframe else { throw SurfaceVideoError.missingKeyframe }
                     guard !isCancelled() else { clear(); return nil }
                     sequence += 1
-                    return SurfaceVideoFrame(data: packet, width: self.width, height: self.height)
+                    return SurfaceVideoFrame(data: packet, width: self.width, height: self.height, refresh: reference)
                 }
                 // Neither an oversized refresh nor its predicted successors can be published.
                 clear()
-                if refresh { return nil }
+                if refresh || reference { return nil }
                 if nextProfile == .sharp {
                     nextProfile = .motion
                     target = Self.fittedVideoPixels(width: width, height: height)
@@ -295,6 +299,11 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             (kVTCompressionPropertyKey_MinAllowedFrameQP, NSNumber(value: 35)),
             (kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_High_AutoLevel)]
         for (key, value) in settings { try videoCheck(VTSessionSetProperty(session, key: key, value: value)) }
+        // Zero lets the encoder choose keyframes; remove periodic scheduling without trusting that default.
+        try videoCheck(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
+                                            value: NSNumber(value: Int32.max)))
+        try videoCheck(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
+                                            value: NSNumber(value: 0)))
         try videoCheck(VTCompressionSessionPrepareToEncodeFrames(session))
         try videoCheck(CVPixelBufferPoolCreate(nil, [kCVPixelBufferPoolMinimumBufferCountKey: 2] as CFDictionary,
                                              attributes as CFDictionary, &pool))
@@ -304,7 +313,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         epoch = ProcessInfo.processInfo.systemUptime
     }
 
-    private func packetFromSample(_ sample: CMSampleBuffer, maximumBytes: Int) throws -> Data? {
+    private func packetFromSample(_ sample: CMSampleBuffer, maximumBytes: Int, keyframe: Bool) throws -> Data? {
         guard CMSampleBufferDataIsReady(sample), CMSampleBufferGetNumSamples(sample) == 1,
               let block = CMSampleBufferGetDataBuffer(sample), let format = CMSampleBufferGetFormatDescription(sample) else {
             throw SurfaceVideoError.missingOutput
@@ -327,8 +336,6 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         let total = 10 + parameters[0].count + parameters[1].count + size
         guard size > 0 else { throw SurfaceVideoError.invalidPacket }
         guard total <= maximumBytes else { return nil }
-        let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
-        let keyframe = !(attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool ?? false)
         var packet = Data(capacity: total)
         packet.append(contentsOf: [69, 83, 86, 49, keyframe ? 1 : 0, 4])
         for parameter in parameters {

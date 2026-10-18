@@ -217,6 +217,13 @@ private final class SurfaceImageRefresh: @unchecked Sendable {
         guard revision.value == key.inputRevision else { return nil }
         return try result.get()
     }
+
+    func markDelivered(key: Key) {
+        lock.lock()
+        self.key = key
+        state = .delivered
+        lock.unlock()
+    }
 }
 
 /// Callers serialize captures and wait for presentation credit before using a returned reference.
@@ -331,12 +338,18 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
         }
         if motionVersion != imageVersion || forceState {
             guard let encoded = try video.encode(source, width: width, height: height) else { return nil }
+            if encoded.refresh {
+                refresh.markDelivered(key: key)
+                sharp = identity
+                refreshArmed = false
+                unacknowledgedReferenceRevision = key.inputRevision
+            }
             motionVersion = imageVersion
             lastJPEG = nil
             lastJPEGCanvas = nil
             captureDelay = 1.0 / 30
             return SurfaceImageEncoding(format: .h264, data: encoded.data, width: encoded.width, height: encoded.height,
-                                        canvas: canvas, refresh: false)
+                                        canvas: canvas, refresh: encoded.refresh)
         }
         if inputActive || now < due {
             captureDelay = min(captureDelay, max(1.0 / 30, due - now))
