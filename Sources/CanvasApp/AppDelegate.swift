@@ -290,7 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let migration {
                 for (id, controller) in controllers { migration.notice(for: id).map(controller.canvas.showNotice) }
             }
-            if backgroundAttach { attachInBackground() }
+            if backgroundAttach { await attachInBackground() }
             Updater.shared.start()
             if !CanvasApplication.neverActivate, controllers[initial.id]?.window?.isOnActiveSpace == true {
                 NSApp.activate(ignoringOtherApps: true)
@@ -1069,16 +1069,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Attaches every reopen-list board that has no window here, with its window closed and never
     /// shown (background attach). Each one's host is discovered again, at its saved easld home.
-    private func attachInBackground() {
+    private func attachInBackground() async {
         let store = reopenList
-        Task { @MainActor in
-            let entries = (try? await ClientFiles.read { store.load() }) ?? []
-            guard backgroundAttach, !terminating else { return }
-            for entry in entries {
-                let key = Self.remoteKey(entry)
-                guard remoteControllers[key] == nil, remoteLoads[.host(key, entry.board)] == nil, backgroundLoads[key] == nil else { continue }
-                backgroundLoads[key] = Task { await self.attachInBackground(entry, key: key) }
-            }
+        let entries = (try? await ClientFiles.read { store.load() }) ?? []
+        guard backgroundAttach, !terminating else { return }
+        for entry in entries {
+            let key = Self.remoteKey(entry)
+            guard remoteControllers[key] == nil, remoteLoads[.host(key, entry.board)] == nil, backgroundLoads[key] == nil else { continue }
+            backgroundLoads[key] = Task { await self.attachInBackground(entry, key: key) }
         }
     }
 
@@ -1341,7 +1339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         backgroundAttach = on
-        if on { attachInBackground() } else { endBackgroundAttachments() }
+        if on { Task { await attachInBackground() } } else { endBackgroundAttachments() }
     }
     @objc func clearBrowsingData(_ sender: Any?) {
         guard let controller = keyController, let window = controller.window else { return }
