@@ -315,6 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        Updater.shared.applicationWillTerminate()
         pasteMaintenance?.stop()
         updateRestoration?.cancel()
         pasteMaintenance = nil

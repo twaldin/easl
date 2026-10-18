@@ -44,7 +44,7 @@ final class Updater {
         }
 
         let transaction: String
-        let helper: pid_t
+        var helper: pid_t?
         let delegate: AppDelegate
         let retryAfter: Date
         var handoff: Handoff
@@ -320,7 +320,10 @@ final class Updater {
             let retryDeadline = Date.now.addingTimeInterval(AppUpdate.checkInterval)
             retryAfter = retryDeadline
             try persistInterruption("The update to easl \(release.version) was interrupted before completion.", retryAfter: retryDeadline)
-            let helper = try startHelper(staged.staging, replacing: staged.app, lease: staged.lease)
+            var helper: pid_t? = nil
+            if !awaitingReply {
+                helper = try startHelper(staged.staging, replacing: staged.app, lease: staged.lease)
+            }
             let transaction = staged.staging.transaction
             installation = Installation(transaction: transaction, helper: helper, delegate: delegate,
                                         retryAfter: retryDeadline, handoff: awaitingReply ? .awaitingReply : .quitting)
@@ -359,9 +362,19 @@ final class Updater {
             guard let installation, installation.transaction == transaction,
                   case .quitting = installation.handoff else { return }
             if afterReply {
+                guard let staged, staged.staging.transaction == transaction else {
+                    abortInstallation(transaction: transaction, reason: "The prepared update is no longer available. Nothing was replaced.")
+                    return
+                }
                 do { try installation.delegate.prepareForUpdate() } catch {
                     abortInstallation(transaction: transaction,
                                       reason: "Couldn't save the current open boards before updating: \(Self.reason(error))")
+                    return
+                }
+                do {
+                    self.installation?.helper = try startHelper(staged.staging, replacing: staged.app, lease: staged.lease)
+                } catch {
+                    abortInstallation(transaction: transaction, reason: Self.reason(error))
                     return
                 }
             }
@@ -371,19 +384,42 @@ final class Updater {
         }
     }
 
+    func applicationWillTerminate() {
+        guard let installation, installation.helper == nil else { return }
+        abortInstallation(transaction: installation.transaction,
+                          reason: "easl quit while app.update installation was waiting for its acknowledgment or display grace. Nothing was replaced or relaunched.")
+    }
+
     private func abortInstallation(transaction: String, reason: String) {
         guard let installation, installation.transaction == transaction else { return }
         if case .aborting = installation.handoff { return }
         self.installation?.handoff = .aborting
-        Task {
-            await stopHelper(installation.helper)
+        if let helper = installation.helper {
+            Task {
+                await stopHelper(helper)
+                var reason = reason
+                do { try installation.delegate.cancelPreparedUpdate() } catch {
+                    reason += ". Couldn't remove the saved update boards: \(Self.reason(error))"
+                }
+                await discardStaged()
+                self.installation = nil
+                recordFailure(reason, rejecting: nil, retryAfter: installation.retryAfter)
+            }
+        } else {
+            let incoming = staged?.incoming
+            try? staged?.lease.discard()
+            staged = nil
             var reason = reason
             do { try installation.delegate.cancelPreparedUpdate() } catch {
                 reason += ". Couldn't remove the saved update boards: \(Self.reason(error))"
             }
-            await discardStaged()
             self.installation = nil
             recordFailure(reason, rejecting: nil, retryAfter: installation.retryAfter)
+            if let incoming {
+                DispatchQueue.global(qos: .utility).async {
+                    try? FileManager.default.removeItem(at: incoming)
+                }
+            }
         }
     }
 
