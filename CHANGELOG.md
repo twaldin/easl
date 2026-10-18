@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- **Install updates while your Mac is idle.** Enable easl › Install Updates Automatically, off by default, to download and verify newer releases and install after 10 minutes without input anywhere in your login session. Updates reopen your local and remote tabs without taking focus or changing Spaces. Agents can check with `easl app.update check` or install immediately with `easl app.update install`. Both paths keep the manual updater's signature, Team ID, and Gatekeeper checks. Atomic bundle replacement keeps a complete app at its installed path if interrupted. Failures report why when you next look at easl. Failed board recovery offers Retry or Discard without replacing your normal reopen list on later launches.
+
 ## 0.2.8
 
 **Interim release.** Remote HTML loading host files and video, browser relay through easld, closed-board inspection, and faster board loading come in the next release.
@@ -24,7 +28,6 @@ Re-run `scripts/offload-setup.sh <host>` on the Mac, then restart `easld@<user>`
 
 The release smoke drew the inspected HTML and notes with all four 0.2.7 and release-candidate app/easld combinations. Images drew with the new app on either server. Browsers drew with both updated; the new app with old easld showed "No drawing Mac yet", and the old app drew neither images nor browsers on either server. This is not a claim that this release fixes the reported blank HTML.
 
-- **Install updates while your Mac is idle.** Enable easl › Install Updates Automatically, off by default, to download and verify newer releases and install after 10 minutes without input anywhere in your login session. Updates reopen your local and remote tabs without taking focus or changing Spaces. Agents can check with `easl app.update check` or install immediately with `easl app.update install`. Both paths keep the manual updater's signature, Team ID, and Gatekeeper checks. Atomic bundle replacement keeps a complete app at its installed path if interrupted. Failures report why when you next look at easl. Failed board recovery offers Retry or Discard without replacing your normal reopen list on later launches.
 - Viewers recognize easld running on macOS before choosing browser rendering and client attachment. Scratch servers retain their isolated home, and default-home easld uses its own zmx directory instead of the installed app's.
 - Bundle builds use two Swift jobs, including release bundles.
 - **Undo and restack remote boards.** ⌘Z and ⇧⌘Z replay this viewer's own edits on the host, including create, move, resize, text edit and delete. Guarded field inverses keep concurrent edits by agents and other viewers. Bring to Front, Send to Back and API `object.update z` change the host's order for everyone. History is in memory, scoped per viewer, and requires an updated host.

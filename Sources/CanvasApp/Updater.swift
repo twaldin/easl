@@ -17,6 +17,7 @@ final class Updater {
     private var latest: LatestRelease?
     private var staged: StagedUpdate?
     private var failure: UpdateFailure?
+    private var startupCleanupComplete = false
     private var observers: [NSObjectProtocol] = []
     private let failureURL = AppPaths.support.appendingPathComponent("update-failure.json")
 
@@ -32,6 +33,7 @@ final class Updater {
     private struct UpdateFailure: Codable {
         let reason: String
         let sha256: String?
+        let retryAfter: Date?
         var noticePending: Bool
     }
     /// The helper waiting for this process to exit, killed if the quit doesn't happen.
@@ -46,17 +48,23 @@ final class Updater {
         operation = Task {
             await cleanUp()
             operation = nil
+            startupCleanupComplete = true
             showPendingFailure()
         }
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: UserIdleWatch.sampled, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { Updater.shared.advanceAutomatically() }
         })
-        for name in [NSApplication.didBecomeActiveNotification, NSWindow.didBecomeKeyNotification] {
+        for name in [NSApplication.didBecomeActiveNotification, NSApplication.didUnhideNotification,
+                     NSWindow.didBecomeKeyNotification, NSWindow.didDeminiaturizeNotification,
+                     NSWindow.didChangeOcclusionStateNotification] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { Updater.shared.showPendingFailure() }
             })
         }
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { Updater.shared.showPendingFailure() }
+        })
         let localFeed = override.flatMap { URL(string: $0) }?.host.map { ["127.0.0.1", "localhost", "::1"].contains($0) } ?? false
         guard !DevInput.enabled || localFeed else { return }
         Task { [weak self] in
@@ -187,7 +195,8 @@ final class Updater {
         }
         guard let running, let current = AppVersion(running) else { return .none }
         return AppUpdate.automaticAction(phase: phase, running: current, enabled: automaticEnabled,
-                                         idleSeconds: UserIdleWatch.shared.currentIdleSeconds(), rejectedSHA256: failure?.sha256)
+                                         idleSeconds: UserIdleWatch.shared.currentIdleSeconds(), rejectedSHA256: failure?.sha256,
+                                         retryAfter: failure?.retryAfter, now: .now)
     }
 
     private func advanceAutomatically() {
@@ -277,6 +286,7 @@ final class Updater {
         guard case let .ready(release) = phase, let staged else { return }
         if automatic, automaticAction() != .install { return }
         var prepared: AppDelegate?
+        var retryAfter: Date?
         do {
             try await Self.requireSoleInstance(of: staged.app)
             try await AppUpdate.verify(staged.incoming, release: release, team: staged.team, gatekeeper: staged.gatekeeper)
@@ -291,7 +301,8 @@ final class Updater {
                 prepared = nil
                 return
             }
-            try persistInterruption("The update to easl \(release.version) was interrupted before completion.")
+            retryAfter = Date.now.addingTimeInterval(AppUpdate.checkInterval)
+            try persistInterruption("The update to easl \(release.version) was interrupted before completion.", retryAfter: retryAfter)
             try startHelper(staged.staging, replacing: staged.app, lease: staged.lease)
             phase = phase.after(.install) ?? phase
             Task {
@@ -304,7 +315,7 @@ final class Updater {
                     reason += ". Couldn't remove the saved update boards: \(Self.reason(error))"
                 }
                 await discardStaged()
-                recordFailure(reason, rejecting: nil)
+                recordFailure(reason, rejecting: nil, retryAfter: retryAfter)
             }
         } catch {
             var reason = Self.reason(error)
@@ -314,7 +325,8 @@ final class Updater {
                 }
             }
             await discardStaged()
-            recordFailure(reason, rejecting: Self.rejectsArtifact(error) ? release.sha256 : nil)
+            recordFailure(reason, rejecting: Self.rejectsArtifact(error, localCopy: true) ? release.sha256 : nil,
+                          retryAfter: retryAfter)
         }
     }
 
@@ -332,9 +344,9 @@ final class Updater {
         self.failure = failure
     }
 
-    private func persistInterruption(_ reason: String) throws {
+    private func persistInterruption(_ reason: String, retryAfter: Date? = nil) throws {
         let previous = failure
-        try saveFailure(UpdateFailure(reason: reason, sha256: nil, noticePending: true))
+        try saveFailure(UpdateFailure(reason: reason, sha256: nil, retryAfter: retryAfter, noticePending: true))
         failure = previous
     }
 
@@ -347,22 +359,23 @@ final class Updater {
         }
     }
 
-    private func recordFailure(_ reason: String, rejecting sha256: String?) {
+    private func recordFailure(_ reason: String, rejecting sha256: String?, retryAfter: Date? = nil) {
         NSLog("easl: update failed: %@", reason)
         phase = phase.after(.fail(reason)) ?? .failed(reason, offered: phase.offered)
         do {
-            try saveFailure(UpdateFailure(reason: reason, sha256: sha256, noticePending: true))
+            try saveFailure(UpdateFailure(reason: reason, sha256: sha256, retryAfter: retryAfter, noticePending: true))
         } catch {
             failure = UpdateFailure(reason: "\(reason). Couldn't save update failure: \(error.localizedDescription)",
-                                    sha256: sha256, noticePending: true)
+                                    sha256: sha256, retryAfter: retryAfter, noticePending: true)
         }
         refreshButtons()
         showPendingFailure()
     }
 
     private func showPendingFailure() {
-        guard !phase.isUpdating, NSApp.isActive, var failure, failure.noticePending,
-              let controller = CanvasWindowController.frontmost, controller.window?.isMiniaturized == false else { return }
+        guard startupCleanupComplete, !phase.isUpdating, NSApp.isActive, var failure, failure.noticePending,
+              let controller = CanvasWindowController.frontmost, let window = controller.window,
+              !window.isMiniaturized, window.isVisible, window.isOnActiveSpace else { return }
         controller.canvas.showNotice("easl wasn't updated. \(failure.reason)")
         failure.noticePending = false
         do { try saveFailure(failure) } catch { NSLog("easl: couldn't acknowledge update failure: %@", error.localizedDescription) }
@@ -478,15 +491,15 @@ final class Updater {
             let files = FileManager.default
             var failures: [String] = []
             var installed = false
+            let runningVersion = AppUpdate.bundleVersion(of: running)
             for folder in (try? files.contentsOfDirectory(at: updates, includingPropertiesForKeys: nil)) ?? [] {
                 let version = folder.lastPathComponent
                 let result = folder.appendingPathComponent("result")
-                if let outcome = (try? String(contentsOf: result, encoding: .utf8)).flatMap(AppUpdate.Outcome.init(result:)) {
-                    if let failure = outcome.failure {
-                        failures.append("easl couldn't install \(version): \(failure).")
-                    } else if AppUpdate.bundleVersion(of: running) == version {
-                        installed = true
-                    }
+                if version == runningVersion {
+                    installed = true
+                } else if let outcome = (try? String(contentsOf: result, encoding: .utf8)).flatMap(AppUpdate.Outcome.init(result:)),
+                          let failure = outcome.failure {
+                    failures.append("easl couldn't install \(version): \(failure).")
                 }
                 let path = folder.resolvingSymlinksInPath().path
                 guard running.path != path, !running.path.hasPrefix(path + "/") else { continue }
@@ -498,10 +511,10 @@ final class Updater {
             }
             return (failures, installed)
         }
-        if !failures.isEmpty {
-            recordFailure(failures.joined(separator: "\n\n"), rejecting: failure?.sha256)
-        } else if installed {
+        if installed {
             do { try restoreFailureRecord(nil) } catch { recordFailure(Self.reason(error), rejecting: nil) }
+        } else if !failures.isEmpty {
+            recordFailure(failures.joined(separator: "\n\n"), rejecting: failure?.sha256, retryAfter: failure?.retryAfter)
         }
     }
 
@@ -550,11 +563,12 @@ final class Updater {
         }
     }
 
-    private static func rejectsArtifact(_ error: Error) -> Bool {
+    private static func rejectsArtifact(_ error: Error, localCopy: Bool = false) -> Bool {
         if error is AppUpdate.DownloadProblem { return true }
         guard let problem = error as? AppUpdate.InstallProblem else { return false }
         switch problem {
-        case .signature, .team, .gatekeeper, .version, .unpack, .noApp, .notABundle: return true
+        case .signature, .team, .gatekeeper, .version, .unpack: return true
+        case .noApp, .notABundle: return !localCopy
         case .outsideUpdates, .copy, .quarantine, .otherInstance: return false
         }
     }

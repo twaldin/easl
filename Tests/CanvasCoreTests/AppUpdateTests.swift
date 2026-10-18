@@ -1050,6 +1050,46 @@ struct AutomaticUpdatePolicyTests {
                                          enabled: true, idleSeconds: 600, rejectedSHA256: String(repeating: "b", count: 64)) == .stage)
     }
 
+    @Test func aPersistedHelperFailureBlocksAutomaticRetryAcrossRelaunchesUntilItsDeadline() {
+        let attemptedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let retryAfter = attemptedAt.addingTimeInterval(AppUpdate.checkInterval)
+        for now in [attemptedAt, attemptedAt.addingTimeInterval(AppUpdate.firstCheck),
+                    retryAfter.addingTimeInterval(-0.001)] {
+            for phase in [UpdatePhase.available(release), .ready(release)] {
+                #expect(AppUpdate.automaticAction(phase: phase, running: AppVersion("0.2.9")!,
+                                                 enabled: true, idleSeconds: 3600,
+                                                 retryAfter: retryAfter, now: now) == .none)
+            }
+        }
+        for now in [retryAfter, retryAfter.addingTimeInterval(1)] {
+            #expect(AppUpdate.automaticAction(phase: .available(release), running: AppVersion("0.2.9")!,
+                                             enabled: true, idleSeconds: 0,
+                                             retryAfter: retryAfter, now: now) == .stage)
+            #expect(AppUpdate.automaticAction(phase: .ready(release), running: AppVersion("0.2.9")!,
+                                             enabled: true, idleSeconds: 600,
+                                             retryAfter: retryAfter, now: now) == .install)
+        }
+    }
+
+    @Test func clearingThePersistedCooldownAllowsAutomaticActionsAgain() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(AppUpdate.automaticAction(phase: .available(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 0, retryAfter: nil, now: now) == .stage)
+        #expect(AppUpdate.automaticAction(phase: .ready(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 600, retryAfter: nil, now: now) == .install)
+        #expect(AppUpdate.automaticAction(phase: .ready(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 599, retryAfter: nil, now: now) == .none)
+    }
+
+    @Test func anExpiredCooldownDoesNotOverrideArtifactRejectionOrTheIdleGate() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(AppUpdate.automaticAction(phase: .available(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 600, rejectedSHA256: release.sha256,
+                                         retryAfter: now, now: now) == .none)
+        #expect(AppUpdate.automaticAction(phase: .ready(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 599, retryAfter: now, now: now) == .none)
+    }
+
     @Test func onlyVerifiedStagingCanBeInstalled() {
         for phase in [UpdatePhase.downloading(release), .verifying(release), .installing(release), .checking(offered: release)] {
             #expect(AppUpdate.automaticAction(phase: phase, running: AppVersion("0.2.9")!,

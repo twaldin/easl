@@ -686,11 +686,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         releaseHeldCloses()
     }
 
-    /// The open boards (shown, minimized or a tab) in tab/window order: a tab group's boards
-    /// together in tab order, and groups and lone windows by when their first board was opened.
-    private func openBoardsInOrder() -> [CanvasWindowController] {
+    /// Open boards in tab/window order: a tab group's boards together in tab order, and groups
+    /// and lone windows by when their first board was opened. Update snapshots include hidden windows.
+    private func openBoardsInOrder(includeHidden: Bool = false) -> [CanvasWindowController] {
         let open = openedOrder.compactMap { controllers[$0] ?? remoteControllers[$0] }.filter { controller in
-            controller.isBoardOpen && (controller.window.map { isShown($0) && !isHoldingClose($0) } ?? false)
+            guard let window = controller.window else { return false }
+            return controller.isBoardOpen && !isHoldingClose(window) && (includeHidden || isShown(window))
         }
         var ordered: [CanvasWindowController] = []
         for controller in open where !ordered.contains(where: { $0 === controller }) {
@@ -704,7 +705,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard updateRestoration == nil else {
             throw ApiRouter.Failure("unavailable", "Update board tabs are still reopening.")
         }
-        var remaining = openBoardsInOrder()
+        var remaining = openBoardsInOrder(includeHidden: true)
         var groups: [UpdateBoardSnapshot.Group] = []
         while let first = remaining.first, let window = first.window {
             let windows = window.tabGroup?.windows ?? [window]
