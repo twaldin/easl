@@ -333,6 +333,13 @@ struct HostMasterTests {
         defer { channel.cancel() }
         #expect(try await eventually { host.pid("channel.pid") != nil && FileManager.default.fileExists(atPath: busy) })
         let channelPID = try #require(host.pid("channel.pid"))
+        var cleanupFinished = false
+        let cleanup = Task {
+            let file = try await otherFiles.cleanup.read(request)
+            cleanupFinished = true
+            return file
+        }
+        defer { cleanup.cancel() }
         var finished = false
         let read = Task {
             let file = try await otherFiles.read(request)
@@ -340,21 +347,24 @@ struct HostMasterTests {
             return file
         }
         defer { read.cancel() }
-        #expect(try await eventually(timeout: 3) { finished })
+        #expect(try await eventually(timeout: 3) { finished && host.clients.count == 3 })
+        #expect(!cleanupFinished)
         #expect(kill(channelPID, 0) == 0)
         #expect(host.masters.count == 2)
         #expect(Set(host.masterRoutes).count == 2)
-        #expect(host.clientRoutes.first == host.route.controlPath)
-        #expect(host.clientRoutes.last != host.route.controlPath)
+        #expect(host.clientRoutes.filter { $0 == host.route.controlPath }.count == 2)
+        #expect(host.clientRoutes.filter { $0 != host.route.controlPath }.count == 1)
         try Data().write(to: release)
         #expect(try await read.value.data == expected)
+        #expect(try await cleanup.value.data == expected)
         let result = try await channel.value
         #expect(result.status == 0)
         #expect(result.output == "terminal released\n")
         #expect(kill(channelPID, 0) == -1 && errno == ESRCH)
         #expect(try await files.read(request).data == expected)
         #expect(host.masters.count == 2)
-        #expect(host.clientRoutes.suffix(2).allSatisfy { $0 == host.clientRoutes.last })
+        let readerRoutes = host.clientRoutes.filter { $0 != host.route.controlPath }
+        #expect(readerRoutes.count == 2 && Set(readerRoutes).count == 1)
         let masters = host.masters
         #expect(masters.allSatisfy { kill($0, 0) == 0 })
         host.master.close()
@@ -363,6 +373,6 @@ struct HostMasterTests {
         let afterClose = HostFiles(host: remote, master: host.master)
         await #expect(throws: HostFileError.self) { try await afterClose.read(request) }
         #expect(host.masters == masters)
-        #expect(host.clients.count == 3)
+        #expect(host.clients.count == 4)
     }
 }

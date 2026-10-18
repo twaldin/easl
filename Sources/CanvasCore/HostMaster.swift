@@ -75,6 +75,7 @@ public final class HostMaster {
         return reader
     }
 
+    // SSH can withhold a channel's first bytes behind another reply. File reads use one dedicated channel.
     private var fileBusy = false
     private struct Waiter {
         let id: UUID

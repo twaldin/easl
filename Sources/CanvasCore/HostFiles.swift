@@ -124,7 +124,7 @@ public struct HostFiles: Sendable {
 
     /// This host without its master, for cleanup while easl quits: nothing it runs waits for
     /// the master, a file-session slot or the main actor.
-    var cleanup: HostFiles { HostFiles(hostName: hostName, route: route, temps: temps) }
+    var cleanup: HostFiles { HostFiles(hostName: hostName, route: channelRoute, temps: temps) }
 
     public func read(_ request: HostFileRequest) async throws -> HostFile {
         let output = try await execute(Self.program, request: payload(request), retryTransport: true, what: "host file reader")

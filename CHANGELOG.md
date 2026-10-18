@@ -2,6 +2,11 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Remote host file reads use one queued SSH channel, separate from terminals and language servers. Progressing transfers can exceed 20 seconds without failing as SSH status 255. Read-only transport failures retry up to three times. Real file errors and Git mutations do not retry.
+- Remote HTML tiles show the reason when a host image cannot load instead of silently returning not found. These are viewer-side fixes and do not require an easld update.
+
 ## 0.2.8
 
 **Interim release.** Remote HTML loading host files and video, browser relay through easld, closed-board inspection, and faster board loading come in the next release.
