@@ -34,18 +34,55 @@ public final class SocketServer: @unchecked Sendable {
         private var unanswered: [(serial: Int, id: JSONValue, method: String, arrived: Double)] = []
         private var serial = 0
 
+        private final class TimedSend: @unchecked Sendable {
+            let deadline: DispatchTime
+            let completion: @Sendable (Bool) -> Void
+            var timer: DispatchSourceTimer?
+
+            init(timeout: TimeInterval, completion: @escaping @Sendable (Bool) -> Void) {
+                self.deadline = .now() + timeout
+                self.completion = completion
+            }
+
+            func finish(_ sent: Bool) {
+                timer?.cancel()
+                completion(sent)
+            }
+        }
+
+        /// Membership owns the completion. Removal under `writeLock` wins against a late timer.
+        private var timedSends: [ObjectIdentifier: TimedSend] = [:]
+
         init(fd: Int32) {
             self.fd = fd
             (stream, requests) = AsyncStream.makeStream(of: (request: JSONValue, arrived: Double).self)
         }
 
-        /// Stops further writes; the fd itself is closed by the read source's cancel handler.
-        fileprivate func markClosed() -> Bool {
+        /// Ordinary closure lets queued lines drain unless a timed send needs to be invalidated.
+        fileprivate func close() {
+            close(ifPending: nil, abortWrites: false)
+        }
+
+        private func close(ifPending send: TimedSend?, abortWrites: Bool = true) {
             writeLock.lock()
-            defer { writeLock.unlock() }
-            guard isOpen else { return false }
+            guard isOpen, send.map({ timedSends[ObjectIdentifier($0)] != nil }) ?? true else {
+                writeLock.unlock()
+                return
+            }
+            let failed = closeLocked(abortWrites: abortWrites)
+            writeLock.unlock()
+            for send in failed.values { send.finish(false) }
+        }
+
+        /// Called with `writeLock` held, before any later operation can reuse the descriptor.
+        private func closeLocked(abortWrites: Bool = true) -> [ObjectIdentifier: TimedSend] {
             isOpen = false
-            return true
+            if abortWrites || !timedSends.isEmpty { shutdown(fd, SHUT_RDWR) }
+            requests.finish()
+            source?.cancel()
+            let failed = timedSends
+            timedSends = [:]
+            return failed
         }
 
         /// Queues one JSON line. Safe from any thread; returns false once the peer is gone. A
@@ -62,6 +99,18 @@ public final class SocketServer: @unchecked Sendable {
             // ask `app.metrics`, before this thread would get back here.
             if serial != nil || value["ok"] != nil { answered(serial, id: value["id"] ?? .null, bytes: data.count + 1) }
             return write(data)
+        }
+
+        /// Completes exactly once, on an arbitrary queue, after the entire JSON line is written.
+        /// A stalled or failed write aborts the connection, including earlier blocked writes.
+        @discardableResult
+        public func send(_ value: JSONValue, timeout: TimeInterval, completion: @escaping @Sendable (Bool) -> Void) -> Bool {
+            guard timeout.isFinite, timeout >= 0, let data = try? JSONEncoder().encode(value) else {
+                completion(false)
+                return false
+            }
+            if value["ok"] != nil { answered(nil, id: value["id"] ?? .null, bytes: data.count + 1) }
+            return write(data, timed: TimedSend(timeout: timeout, completion: completion))
         }
 
         /// A request arrived at `arrived` (`Metrics.now()`); its serial for `reply(_:to:)`.
@@ -106,39 +155,67 @@ public final class SocketServer: @unchecked Sendable {
             write(Data(line.utf8))
         }
 
-        private func write(_ line: Data) -> Bool {
+        private func write(_ line: Data, timed send: TimedSend? = nil) -> Bool {
             let data = line + [0x0A]
             writeLock.lock()
             guard isOpen else {
                 writeLock.unlock()
+                send?.finish(false)
+                return false
+            }
+            guard data.count <= Self.maxPending - pending else {
+                let failed = closeLocked()
+                writeLock.unlock()
+                for send in failed.values { send.finish(false) }
+                send?.finish(false)
                 return false
             }
             pending += data.count
-            let stuck = pending > Self.maxPending
-            writeLock.unlock()
-            if stuck {
-                shutdown(fd, SHUT_RDWR)
-                return false
+            if let send {
+                let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+                timer.setEventHandler { [weak self, weak send] in
+                    guard let send else { return }
+                    self?.close(ifPending: send)
+                }
+                timer.schedule(deadline: send.deadline)
+                send.timer = timer
+                timedSends[ObjectIdentifier(send)] = send
+                timer.resume()
             }
+            // Admission and submission share the close lock, so the final fd close cannot
+            // overtake a write that was accepted but not yet submitted to the outbox.
             outbox.async { [self] in
                 let written = data.withUnsafeBytes { raw -> Bool in
                     var offset = 0
                     while offset < raw.count {
+                        if let send, DispatchTime.now() >= send.deadline { return false }
                         let written = Darwin.write(fd, raw.baseAddress! + offset, raw.count - offset)
-                        if written < 0 {
-                            if errno == EINTR { continue }
+                        if written <= 0 {
+                            if written < 0, errno == EINTR { continue }
                             return false
                         }
                         offset += written
                     }
+                    if let send { return DispatchTime.now() < send.deadline }
                     return true
                 }
                 writeLock.lock()
                 pending -= data.count
+                let completed: TimedSend?
+                if written, let send {
+                    completed = timedSends.removeValue(forKey: ObjectIdentifier(send))
+                } else {
+                    completed = nil
+                }
                 writeLock.unlock()
-                // A failed write means the peer is gone; the read source sees EOF and closes.
-                if !written { shutdown(fd, SHUT_RDWR) }
+                if !written {
+                    // The fd stays owned until the final close job behind this outbox job.
+                    shutdown(fd, SHUT_RDWR)
+                    close(ifPending: nil)
+                }
+                completed?.finish(true)
             }
+            writeLock.unlock()
             return true
         }
     }
@@ -200,7 +277,7 @@ public final class SocketServer: @unchecked Sendable {
         queue.sync {
             acceptSource?.cancel()
             acceptSource = nil
-            for connection in connections.values { closeConnection(connection) }
+            for connection in connections.values { connection.close() }
             connections.removeAll()
             listenFD = -1
         }
@@ -221,7 +298,10 @@ public final class SocketServer: @unchecked Sendable {
         source.setEventHandler { [weak self, connection] in self?.read(connection) }
         // Queued writes finish (or fail) before the fd closes, so its number can't be reused
         // under a write still waiting in the outbox.
-        source.setCancelHandler { [connection] in connection.outbox.async { close(fd) } }
+        source.setCancelHandler { [weak self, connection] in
+            self?.connections.removeValue(forKey: fd)
+            connection.outbox.async { close(fd) }
+        }
         connection.source = source
         connections[fd] = connection
         let handler = self.handler
@@ -238,7 +318,7 @@ public final class SocketServer: @unchecked Sendable {
         let previous = connection.buffer.count
         let count = readBuffer.withUnsafeMutableBytes { Darwin.read(connection.fd, $0.baseAddress, $0.count) }
         guard count > 0 else {
-            closeConnection(connection)
+            connection.close()
             connections.removeValue(forKey: connection.fd)
             return
         }
@@ -262,11 +342,5 @@ public final class SocketServer: @unchecked Sendable {
             if let method = request["method"]?.string { Metrics.shared.record("api.in.\(method)", bytes: line.count + 1) }
             connection.requests.yield((request, Metrics.now()))
         }
-    }
-
-    private func closeConnection(_ connection: Connection) {
-        guard connection.markClosed() else { return }
-        connection.requests.finish()
-        connection.source?.cancel()
     }
 }

@@ -6,6 +6,7 @@ Each version's section is its GitHub release's notes.
 
 - Remote host file reads use one queued SSH channel, separate from terminals and language servers. Progressing transfers can exceed 20 seconds without failing as SSH status 255. Read-only transport failures retry up to three times. Real file errors and Git mutations do not retry.
 - Remote HTML tiles show the reason when a host image cannot load instead of silently returning not found. These are viewer-side fixes and do not require an easld update.
+- **Install updates while your Mac is idle.** Enable easl › Install Updates Automatically, off by default, to download and verify newer releases and install after 10 minutes without input anywhere in your login session. Updates reopen your local and remote tabs without taking focus or changing Spaces. Agents can check with `easl app.update check` or install immediately with `easl app.update install`. Both paths keep the manual updater's signature, Team ID, and Gatekeeper checks. Atomic bundle replacement keeps a complete app at its installed path if interrupted. Failures report why when you next look at easl. Failed board recovery offers Retry or Discard without replacing your normal reopen list on later launches.
 
 ## 0.2.8
 

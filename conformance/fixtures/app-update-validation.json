@@ -1,0 +1,245 @@
+{
+  "scenario": "app-update-validation",
+  "description": "app.update malformed requests are refused before update work. Safe on both servers. The app validates mode; easld has no updater and uses its existing unknown-method refusal for values beyond shared required/accepted parameter validation.",
+  "recordedOn": "easl-auto-update-1 scratch Linux easld",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {},
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r2",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {
+        "mode": null
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r3",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {
+        "mode": "download"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r4",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {
+        "mode": ""
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r5",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {
+        "mode": "INSTALL"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r6",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {
+        "mode": true
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r7",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {
+        "mode": 1
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r8",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {
+        "mode": [
+          "install"
+        ]
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r9",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {
+        "mode": {
+          "install": true
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r10",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {
+        "force": true,
+        "mode": "install"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r11",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": [],
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r12",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": "install",
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r13",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method."
+      }
+    }
+  ]
+}

@@ -90,6 +90,7 @@ function usage(help = false): never {
     "       easl render <id|id,id|x,y,w,h> [--out file.png] [--scale 2] [--full]",
     "       easl browser <verb> [<tile>] [--key value] [--json '{...}']   (open [url] | list | close | navigate, snapshot, click, …)",
     "       easl metrics [--watch] [--reset] [--json]",
+    "       easl app.update check|install",
     ...ASK_FORMS.map((form) => `       ${form}`),
     "       easl agent spawn --name <n> --command '<argv>' [--cwd <dir>] [--board <id>] [--prompt <text>] [--wait] [--timeout <ms>]",
   ];
@@ -1030,6 +1031,9 @@ if (!spec) unknownMethod(method, Object.keys(methods));
 
 let client: CanvasClient | undefined;
 try {
+  if (method === "app.update" && rest[0] !== undefined && !rest[0].startsWith("-")) {
+    rest = ["--mode", rest[0], ...rest.slice(1)];
+  }
   const params = parseArgs(rest, spec.params);
   if (target !== undefined) params.target = target;
   if (method === "object.get" && params.as === "image") {

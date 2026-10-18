@@ -1,0 +1,66 @@
+{
+  "scenario": "app-update-daemon",
+  "description": "easld only, like no-client and client-versions. App updates are never delegated to attached Mac clients. Both valid modes receive easld's existing unknown-method invalid_params refusal. Do not run on an app socket, where install is a real update command.",
+  "recordedOn": "easl-auto-update-1 scratch Linux easld",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {
+        "mode": "check"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown method app.update"
+        },
+        "id": "r2",
+        "ok": false
+      }
+    },
+    {
+      "step": "app.update",
+      "method": "app.update",
+      "request": {
+        "mode": "install"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "unknown method app.update"
+        },
+        "id": "r3",
+        "ok": false
+      }
+    }
+  ]
+}
