@@ -5,7 +5,7 @@ import Testing
 struct SurfaceRefreshTransferTests {
     private func refresh(bytes: Int = 32769, seq: Int = 7) -> SurfaceEvent.Frame {
         var frame = SurfaceEvent.Frame(stream: "str_refresh", seq: seq, input: 3,
-            size: CGSize(width: 640, height: 479), scale: 1, format: .png,
+            size: CGSize(width: 640, height: 479), scale: 1, format: .h264,
             data: Data((0..<bytes).map { UInt8($0 % 251) }), width: 640, height: 479,
             back: true, forward: false, loading: false)
         frame.refresh = true
@@ -100,6 +100,7 @@ struct SurfaceRefreshTransferTests {
         invalid.append(refresh(bytes: 589825))
         frame = refresh(); frame.refresh = false; invalid.append(frame)
         frame = refresh(); frame.format = .jpeg; invalid.append(frame)
+        frame = refresh(); frame.format = .png; invalid.append(frame)
         frame = refresh(); frame.offset = 0; invalid.append(frame)
         frame = refresh(); frame.total = 32769; invalid.append(frame)
         frame = refresh(); frame.width = Int.max; invalid.append(frame)
@@ -140,7 +141,7 @@ struct SurfaceRefreshTransferTests {
         #expect(throws: SurfaceRefreshTransferError.invalidFrame) { try assembly.append(frame: invalid) }
         invalid = part(original, offset: 16384); invalid.refresh = false
         #expect(throws: SurfaceRefreshTransferError.invalidFrame) { try assembly.append(frame: invalid) }
-        invalid = part(original, offset: 16384); invalid.format = .h264
+        invalid = part(original, offset: 16384); invalid.format = .png
         #expect(throws: SurfaceRefreshTransferError.invalidFrame) { try assembly.append(frame: invalid) }
         invalid = part(original, offset: 16384); invalid.data.append(0)
         #expect(throws: SurfaceRefreshTransferError.invalidFrame) { try assembly.append(frame: invalid) }

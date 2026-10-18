@@ -14,17 +14,18 @@ public enum SurfaceImageDecoder {
               canvas.height.rounded(.towardZero) == canvas.height,
               canvas.width * canvas.height <= Double(SurfaceEvent.Frame.maxPixels) else { throw Failure.invalidImage }
         let canvasWidth = Int(canvas.width), canvasHeight = Int(canvas.height)
+        let nativeWidth = max(16, (canvasWidth + 1) / 2 * 2)
+        let nativeHeight = max(16, (canvasHeight + 1) / 2 * 2)
         if refinement {
-            guard format == .png, width == canvasWidth, height == canvasHeight else { throw Failure.invalidImage }
+            guard format == .h264, width == nativeWidth, height == nativeHeight else { throw Failure.invalidImage }
         }
         let image: CGImage
         if format == .h264 {
-            guard !data.isEmpty,
-                  data.count <= 48 * 1024 else { throw Failure.invalidImage }
+            let limit = refinement ? SurfaceImageEncoder.refinementBytes : 48 * 1024
+            guard !data.isEmpty, data.count <= limit else { throw Failure.invalidImage }
             image = try video.decode(data, width: width, height: height)
         } else {
-            let limit = refinement ? SurfaceImageEncoder.refinementBytes : 16 << 20
-            guard format == .jpeg || format == .png, !data.isEmpty, data.count <= limit,
+            guard format == .jpeg || format == .png, !data.isEmpty, data.count <= 16 << 20,
                   let source = CGImageSourceCreateWithData(data as CFData, nil),
                   CGImageSourceGetCount(source) == 1,
                   let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -36,6 +37,13 @@ public enum SurfaceImageDecoder {
             image = decoded
         }
         guard image.width == width, image.height == height else { throw Failure.invalidImage }
+        if format == .h264, width == nativeWidth, height == nativeHeight,
+           width != canvasWidth || height != canvasHeight {
+            guard let cropped = image.cropping(to: CGRect(x: 0, y: 0, width: canvasWidth, height: canvasHeight)) else {
+                throw Failure.invalidImage
+            }
+            return cropped
+        }
         return image
     }
 }

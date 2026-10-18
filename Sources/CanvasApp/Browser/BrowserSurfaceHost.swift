@@ -367,7 +367,8 @@ final class BrowserSurface {
                 frame.data = data
             }
             guard !stream.closed, stream.next == seq else { continue }
-            let limit = frame.refresh ? SurfaceImageEncoder.refinementBytes : SurfaceImageEncoder.motionBytes
+            let limit = frame.refresh ? SurfaceImageEncoder.refinementBytes :
+                (frame.format == .h264 ? 48 * 1024 : SurfaceImageEncoder.motionBytes)
             guard frame.data.count <= (stream.format == .h264 ? limit : Self.frameBytes) else {
                 end(stream, "frame too large")
                 continue

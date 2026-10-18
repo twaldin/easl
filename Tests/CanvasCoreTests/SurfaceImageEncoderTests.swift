@@ -101,16 +101,25 @@ struct SurfaceImageEncoderTests {
             canvas: frame.canvas, video: video, refinement: frame.refresh)
     }
 
-    private func expectSharp(_ frame: SurfaceImageEncoding, source: Fixture) throws {
-        #expect(frame.format == .png)
+    private func expectSharp(_ frame: SurfaceImageEncoding, source: Fixture,
+                             video: SurfaceVideoDecoder = SurfaceVideoDecoder()) throws {
+        #expect(frame.format == .h264)
         #expect(frame.refresh)
         #expect(frame.data.count <= 576 * 1024)
-        let image = try decode(frame)
+        #expect(Array(frame.data.prefix(6)) == [69, 83, 86, 49, 1, 4])
+        #expect(frame.width == max(16, (source.image.width + 1) / 2 * 2))
+        #expect(frame.height == max(16, (source.image.height + 1) / 2 * 2))
+        let image = try decode(frame, video: video)
         #expect(image.width == source.image.width && image.height == source.image.height)
         let actual = try pixels(image)
         #expect(actual.count == source.pixels.count)
-        let maximumError = zip(actual, source.pixels).map { abs(Int($0) - Int($1)) }.max()
-        #expect(try #require(maximumError) == 0)
+        var maximum = 0, total: UInt64 = 0
+        for index in actual.indices where index % 4 != 3 {
+            let error = abs(Int(actual[index]) - Int(source.pixels[index]))
+            maximum = max(maximum, error)
+            total += UInt64(error)
+        }
+        print("Synthetic sharp RGB report max=\(maximum) mean=\(Double(total) / Double(actual.count / 4 * 3))")
     }
 
     @Test func jpegUsesBaselineBytesDuringIdleAndInputWithoutRefinements() throws {
@@ -140,26 +149,56 @@ struct SurfaceImageEncoderTests {
         }
     }
 
-    @Test func settledRefreshReplacesTheEntireOddCanvasExactlyOnce() throws {
+    @Test func probingKeepsTheLowLatencyMotionPathUntilTheLinkIsMeasured() throws {
+        let work = RefreshQueue()
+        work.pause()
+        let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
+        let revision = SurfaceInputRevision()
+        let source = try fixture()
+        let video = SurfaceVideoDecoder()
+        let first = try #require(try capture(encoder, source, at: 0, revision: revision, mode: .probing))
+        #expect(first.format == .h264 && !first.refresh)
+        _ = try decode(first, video: video)
+        #expect(try capture(encoder, source, at: 1, revision: revision, mode: .probing) == nil)
+        let state = try #require(try capture(encoder, source, at: 2, revision: revision,
+                                           mode: .probing, forceState: true))
+        #expect(!state.refresh && state.data[4] == 0)
+        #expect(try decode(state, video: video).width == state.width)
+        #expect(try capture(encoder, source, at: 3, revision: revision) == nil)
+        work.finish()
+        let sharp = try #require(try capture(encoder, source, at: 3.1, revision: revision))
+        try expectSharp(sharp, source: source)
+    }
+
+    @Test func settledRefreshReplacesTheOddCanvasOnceAndBecomesTheLiveReference() throws {
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
         let source = try fixture()
+        let video = SurfaceVideoDecoder()
         let motion = try #require(try capture(encoder, source, at: 0, revision: revision))
         #expect(motion.format == .h264 && !motion.refresh)
+        _ = try decode(motion, video: video)
         #expect(try capture(encoder, source, at: 0.99, revision: revision) == nil)
         #expect(try capture(encoder, source, at: 1, revision: revision) == nil)
         work.finish()
         let sharp = try #require(try capture(encoder, source, at: 1.1, revision: revision))
-        #expect(sharp.width == 129 && sharp.height == 97)
         #expect(sharp.canvas == CGSize(width: 129, height: 97))
-        try expectSharp(sharp, source: source)
+        try expectSharp(sharp, source: source, video: video)
         for time in [1.2, 1.5, 100] {
             #expect(try capture(encoder, source, at: time, revision: revision) == nil)
         }
+        let changed = try fixture(redLeftHalf: true)
+        let predicted = try #require(try capture(encoder, changed, at: 100.1, revision: revision))
+        #expect(predicted.format == .h264 && !predicted.refresh)
+        #expect(predicted.data[4] == 0)
+        #expect(predicted.width == 130 && predicted.height == 98)
+        #expect(throws: (any Error).self) { try decode(predicted) }
+        let visible = try pixels(decode(predicted, video: video))
+        #expect(visible[0] > visible[1] && visible[0] > visible[2])
     }
 
-    @Test func negotiatedPerStreamSizingDefinesTheExactSharpCanvas() throws {
+    @Test func negotiatedPerStreamSizingDefinesTheNativeSharpCanvas() throws {
         let source = try fixture(width: 258, height: 194, redLeftHalf: true)
         let context = try #require(CGContext(data: nil, width: 129, height: 97, bitsPerComponent: 8,
             bytesPerRow: 129 * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -182,7 +221,7 @@ struct SurfaceImageEncoderTests {
         #expect(try sizedCapture(at: 1) == nil)
         work.finish()
         let sharp = try #require(try sizedCapture(at: 1.1))
-        #expect(sharp.width == 129 && sharp.height == 97)
+        #expect(sharp.width == 130 && sharp.height == 98)
         try expectSharp(sharp, source: expected)
     }
 
@@ -200,6 +239,7 @@ struct SurfaceImageEncoderTests {
         let changed = try fixture(redLeftHalf: true)
         let motion = try #require(try capture(encoder, changed, at: 1.1, revision: revision, input: true, lastInput: 1.1))
         #expect(!motion.refresh && motion.data.count <= 48 * 1024)
+        #expect(motion.data[4] == 1)
         let visible = try pixels(decode(motion, video: video))
         #expect(visible[0] >= 220 && visible[1] <= 30 && visible[2] <= 30)
         #expect(try capture(encoder, changed, at: 2.09, revision: revision, lastInput: 1.1) == nil)
@@ -236,14 +276,65 @@ struct SurfaceImageEncoderTests {
         #expect(try capture(encoder, source, at: 1, revision: revision) == nil)
         work.finish()
         revision.advance()
-        #expect(try capture(encoder, source, at: 1.1, revision: revision, lastInput: 1.1) == nil)
+        let recovery = try #require(try capture(encoder, source, at: 1.1, revision: revision, lastInput: 1.1))
+        #expect(recovery.format == .h264 && !recovery.refresh && recovery.data[4] == 1)
+        let recovered = try decode(recovery)
+        #expect(recovered.width == recovery.width && recovered.height == recovery.height)
         #expect(try capture(encoder, source, at: 2.11, revision: revision, lastInput: 1.1) == nil)
         work.finish()
         let sharp = try #require(try capture(encoder, source, at: 2.2, revision: revision, lastInput: 1.1))
         try expectSharp(sharp, source: source)
     }
 
-    @Test func smallConsecutiveChangesDoNotStarvePendingRefreshOrRepeatItAfterDelivery() throws {
+    @Test(arguments: [false, true])
+    func cancelingATransferredReferenceRecoversWhetherOrNotItWasDecoded(decoded: Bool) throws {
+        let work = RefreshQueue()
+        let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
+        let revision = SurfaceInputRevision()
+        let video = SurfaceVideoDecoder()
+        let source = try fixture()
+        let first = try #require(try capture(encoder, source, at: 0, revision: revision))
+        _ = try decode(first, video: video)
+        #expect(try capture(encoder, source, at: 1, revision: revision) == nil)
+        work.finish()
+        let sharp = try #require(try capture(encoder, source, at: 1.1, revision: revision))
+        #expect(sharp.refresh && sharp.format == .h264)
+        if decoded { try expectSharp(sharp, source: source, video: video) }
+        revision.advance()
+        let changed = try fixture(redLeftHalf: true)
+        let recovered = try #require(try capture(encoder, changed, at: 1.2, revision: revision,
+                                               input: true, lastInput: 1.2))
+        #expect(!recovered.refresh && recovered.data[4] == 1)
+        for consumer in [video, SurfaceVideoDecoder()] {
+            let visible = try pixels(decode(recovered, video: consumer))
+            #expect(visible[0] > visible[1] && visible[0] > visible[2])
+        }
+    }
+
+    @Test func acknowledgedSharpReferenceRemainsPredictiveWhenInputResumes() throws {
+        let work = RefreshQueue()
+        let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
+        let revision = SurfaceInputRevision()
+        let decoder = SurfaceVideoDecoder()
+        let original = try fixture()
+        let first = try #require(try capture(encoder, original, at: 0, revision: revision))
+        _ = try decode(first, video: decoder)
+        #expect(try capture(encoder, original, at: 1, revision: revision) == nil)
+        work.finish()
+        let sharp = try #require(try capture(encoder, original, at: 1.1, revision: revision))
+        try expectSharp(sharp, source: original, video: decoder)
+        encoder.acknowledgeRefinement()
+        revision.advance()
+        let changed = try fixture(marker: 7)
+        let motion = try #require(try capture(encoder, changed, at: 1.2, revision: revision, input: true, lastInput: 1.2))
+        #expect(!motion.refresh && motion.data[4] == 0)
+        #expect(throws: (any Error).self) { try decode(motion) }
+        let actual = try pixels(decode(motion, video: decoder))
+        let marker = (97 / 2 * 129 + 7) * 4
+        #expect(Int(actual[marker + 2]) - Int(actual[marker]) > 40)
+    }
+
+    @Test func smallChangesKeepTheFrozenPendingRefreshAndFollowItsReferenceAfterDelivery() throws {
         let work = RefreshQueue()
         work.pause()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
@@ -252,41 +343,32 @@ struct SurfaceImageEncoderTests {
         let video = SurfaceVideoDecoder()
         let first = try #require(try capture(encoder, source, at: 0, revision: revision))
         _ = try decode(first, video: video)
-        for index in 1...5 {
+        for index in 1...4 {
             let tick = try fixture(marker: index)
             let motion = try #require(try capture(encoder, tick, at: Double(index) * 0.2, revision: revision))
             #expect(motion.format == .h264 && !motion.refresh)
             _ = try decode(motion, video: video)
         }
         let snapshot = try fixture(marker: 5)
+        #expect(try capture(encoder, snapshot, at: 1, revision: revision) == nil)
         for index in 6...10 {
-            let tick = try fixture(marker: index)
-            let motion = try #require(try capture(encoder, tick, at: Double(index) * 0.2, revision: revision))
-            #expect(motion.format == .h264 && !motion.refresh)
-            _ = try decode(motion, video: video)
+            #expect(try capture(encoder, fixture(marker: index), at: Double(index) * 0.2, revision: revision) == nil)
         }
         work.finish()
         let current = try fixture(marker: 10)
         let sharp = try #require(try capture(encoder, current, at: 2.2, revision: revision))
-        try expectSharp(sharp, source: snapshot)
+        try expectSharp(sharp, source: snapshot, video: video)
         let following = try #require(try capture(encoder, current, at: 2.21, revision: revision))
-        #expect(following.format == .h264 && !following.refresh)
+        #expect(following.format == .h264 && !following.refresh && following.data[4] == 0)
         _ = try decode(following, video: video)
         for index in 12...20 {
             let tick = try fixture(marker: index)
             let motion = try #require(try capture(encoder, tick, at: Double(index) * 0.2, revision: revision))
-            #expect(motion.format == .h264 && !motion.refresh)
+            #expect(motion.format == .h264 && !motion.refresh && motion.data[4] == 0)
             _ = try decode(motion, video: video)
             work.finish()
         }
-        let changed = try fixture(redLeftHalf: true)
-        let largeMotion = try #require(try capture(encoder, changed, at: 5, revision: revision))
-        #expect(largeMotion.format == .h264 && !largeMotion.refresh)
-        #expect(try capture(encoder, changed, at: 5.99, revision: revision) == nil)
-        #expect(try capture(encoder, changed, at: 6, revision: revision) == nil)
-        work.finish()
-        let next = try #require(try capture(encoder, changed, at: 6.1, revision: revision))
-        try expectSharp(next, source: changed)
+        #expect(try capture(encoder, fixture(marker: 20), at: 10, revision: revision) == nil)
     }
 
     @Test func cumulativeSmallChangesRefreshAfterQuietWithoutStarvingTheFrozenSnapshot() throws {
@@ -302,10 +384,14 @@ struct SurfaceImageEncoderTests {
         try expectSharp(initialSharp, source: source)
 
         work.pause()
-        for index in 1...15 {
+        for index in 1...5 {
             let changed = try fixture(filledPixels: index * 100)
             let motion = try #require(try capture(encoder, changed, at: 1.25 + Double(index) * 0.25, revision: revision))
             #expect(motion.format == .h264 && !motion.refresh)
+        }
+        for index in 6...15 {
+            let changed = try fixture(filledPixels: index * 100)
+            #expect(try capture(encoder, changed, at: 1.25 + Double(index) * 0.25, revision: revision) == nil)
         }
         work.finish()
         let final = try fixture(filledPixels: 1500)
@@ -356,11 +442,12 @@ struct SurfaceImageEncoderTests {
         try expectSharp(initialSharp, source: source)
 
         work.pause()
-        for index in 1...6 {
+        for index in 1...5 {
             let changed = try fixture(filledPixels: index * 100)
             let motion = try #require(try capture(encoder, changed, at: 1.25 + Double(index) * 0.25, revision: revision))
             #expect(motion.format == .h264 && !motion.refresh)
         }
+        #expect(try capture(encoder, fixture(filledPixels: 600), at: 2.75, revision: revision) == nil)
         revision.advance()
         let current = try fixture(filledPixels: 700)
         let motion = try #require(try capture(encoder, current, at: 3, revision: revision, input: true, lastInput: 3))
@@ -418,12 +505,11 @@ struct SurfaceImageEncoderTests {
         try expectSharp(sharp, source: source)
     }
 
-    @Test(arguments: [512, 513])
-    func anOverBudgetFrozenImageKeepsBoundedMotionAndALargeChangeCanRefresh(width: Int) throws {
+    @Test func anOverBudgetReferenceIsRefusedWithoutShrinkingAndTheNextMotionRecovers() throws {
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
-        let entropy = try fixture(width: width, height: 512, noise: true)
+        let entropy = try fixture(width: 1024, height: 1024, noise: true)
         let motion = try #require(try capture(encoder, entropy, at: 0, revision: revision))
         #expect(motion.format == .h264 && !motion.refresh && motion.data.count <= 48 * 1024)
         let image = try decode(motion)
@@ -434,12 +520,11 @@ struct SurfaceImageEncoderTests {
             #expect(try capture(encoder, entropy, at: time, revision: revision) == nil)
             work.finish()
         }
-        revision.advance()
-        #expect(try capture(encoder, entropy, at: 5.1, revision: revision, input: true, lastInput: 5.1) == nil)
-        #expect(try capture(encoder, entropy, at: 6.2, revision: revision, lastInput: 5.1) == nil)
-        work.finish()
-        #expect(try capture(encoder, entropy, at: 6.3, revision: revision, lastInput: 5.1) == nil)
-        let changed = try fixture(width: width, height: 512)
+        let recovered = try #require(try capture(encoder, entropy, at: 5.1, revision: revision, forceState: true))
+        #expect(recovered.format == .h264 && !recovered.refresh && recovered.data[4] == 1)
+        #expect(recovered.data.count <= 48 * 1024)
+        #expect(try decode(recovered).width == recovered.width)
+        let changed = try fixture(width: 1024, height: 1024)
         let next = try #require(try capture(encoder, changed, at: 7, revision: revision))
         #expect(next.format == .h264 && !next.refresh)
         #expect(try capture(encoder, changed, at: 8.01, revision: revision) == nil)

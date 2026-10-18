@@ -42,6 +42,48 @@ struct SurfaceVideoTests {
         #expect(try center(black) == blackPixel)
     }
 
+    @Test func nativeSharpFrameStartsTheContinuingPredictionChain() throws {
+        let encoder = SurfaceVideoEncoder()
+        let decoder = SurfaceVideoDecoder()
+        let initial = try #require(try encoder.encode(image(width: 65, height: 67), width: 65, height: 67))
+        _ = try decoder.decode(initial.data, width: initial.width, height: initial.height)
+        let sharp = try #require(try encoder.encode(image(width: 65, height: 67), width: 65, height: 67, refresh: true))
+        #expect(sharp.width == 66 && sharp.height == 68 && sharp.data[4] == 1)
+        #expect(sharp.data.count <= 576 * 1024)
+        let black = try decoder.decode(sharp.data, width: sharp.width, height: sharp.height)
+        let originalPixel = try center(black)
+        let predicted = try #require(try encoder.encode(image(width: 65, height: 67, red: true), width: 65, height: 67))
+        #expect(predicted.width == 66 && predicted.height == 68 && predicted.data[4] == 0)
+        #expect(predicted.data.count <= 48 * 1024)
+        #expect(throws: (any Error).self) {
+            try SurfaceVideoDecoder().decode(predicted.data, width: predicted.width, height: predicted.height)
+        }
+        let red = try decoder.decode(predicted.data, width: predicted.width, height: predicted.height)
+        let redPixel = try center(red)
+        #expect(redPixel[0] > redPixel[1] && redPixel[0] > redPixel[2])
+        #expect(redPixel[0] > originalPixel[0])
+        #expect(try center(black) == originalPixel)
+    }
+
+    @Test func aCanceledSharpFrameCannotBecomeAnUnpublishedPredictionReference() throws {
+        let encoder = SurfaceVideoEncoder()
+        let decoder = SurfaceVideoDecoder()
+        let initial = try #require(try encoder.encode(image(), width: 64, height: 64))
+        _ = try decoder.decode(initial.data, width: initial.width, height: initial.height)
+        var checks = 0
+        let canceled = try encoder.encode(image(red: true), width: 64, height: 64, refresh: true, isCancelled: {
+            checks += 1
+            return checks >= 5
+        })
+        #expect(canceled == nil)
+        let recovered = try #require(try encoder.encode(image(red: true), width: 64, height: 64))
+        #expect(recovered.data[4] == 1)
+        for consumer in [decoder, SurfaceVideoDecoder()] {
+            let visible = try center(consumer.decode(recovered.data, width: recovered.width, height: recovered.height))
+            #expect(visible[0] > visible[1] && visible[0] > visible[2])
+        }
+    }
+
     @Test func resizingAndNewStreamsProduceRecoverableKeyframes() throws {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
@@ -195,6 +237,19 @@ struct SurfaceVideoTests {
             bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
             provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+    }
+
+    @Test func anOversizedSharpReferenceIsRefusedAndMotionRestartsIndependently() throws {
+        let encoder = SurfaceVideoEncoder()
+        let rejected = try encoder.encode(noise(width: 1024, height: 1024, seed: 0x123456789abcdef),
+                                          width: 1024, height: 1024, refresh: true)
+        #expect(rejected == nil)
+        let recovered = try #require(try encoder.encode(image(width: 1024, height: 1024, red: true),
+                                                       width: 1024, height: 1024))
+        #expect(recovered.data[4] == 1)
+        #expect(recovered.data.count <= 48 * 1024)
+        let visible = try center(SurfaceVideoDecoder().decode(recovered.data, width: recovered.width, height: recovered.height))
+        #expect(visible[0] > visible[1] && visible[0] > visible[2])
     }
 
     @Test func entropyChangesAndFrozenNoiseStayBoundedAndDecodable() throws {

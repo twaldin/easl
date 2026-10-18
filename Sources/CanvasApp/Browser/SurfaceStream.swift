@@ -100,6 +100,7 @@ final class SurfaceStream {
         case .stale:
             return
         case .granted:
+            if lastSent?.refresh == true { encoder.acknowledgeRefinement() }
             refinementTransfer = nil
             if !started {
                 started = true

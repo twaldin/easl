@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "b4f651f8d1b88208"
+const SchemaHash = "f12bb98f4538301d"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -337,7 +337,7 @@ type SurfaceSize struct {
 // SurfaceInputEvent is a union of JSON objects (variants: "mouse", "scroll", "key", "text", "compose", "unmark", "focus", "command", "command", "navigate"); decode it as a generic map.
 type SurfaceInputEvent = map[string]any
 
-// SurfaceFrame: Private in-memory surface frame. JPEG and PNG requests retain full images. Native h264 streams measure the first three decoded motion acknowledgements, then use JPEG on fast links or bounded predicted ESV1 video on constrained links, regardless of host topology. Motion is bounded to 256 KiB JPEG or 48 KiB H264. After one second without input or a change to more than 1% of consecutive-capture pixels, a stream may send one full-resolution lossless PNG bounded to 576 KiB. Small changes continue as predicted motion without repeated refresh until a large change or new input. The PNG travels in ordered 16 KiB chunks with at most two unreceipted chunks. Chunks share one frame sequence and all metadata and are assembled before decoding. They are not separate images or pixel regions. surface.progress grants transport capacity only; surface.ack follows complete decode and presentation. Input cancels refresh without waiting; the next frame declares the canceled range. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay.
+// SurfaceFrame: Private in-memory surface frame. JPEG and explicit PNG retain full images up to 16 MiB. Native h264 streams measure the first three decoded motion acknowledgements, then use one full-size quality-0.8 JPEG encode on fast links or bounded predicted ESV1 video on constrained links, regardless of host topology. H264 motion is bounded to 48 KiB. After one second without input or a change to more than 1% of consecutive-capture pixels, a stream may send one native-size high-quality H264 refresh bounded to 576 KiB. The refresh and later predicted frames share the continuing codec reference chain. Small idle changes retain the sharp coding quality without repeated refresh; cumulative changes beyond 1% rearm settling. The target on real pages is visually lossless, with maximum channel error at most 8 and mean at most 1 after settling and 30 caret transitions. Refresh bytes travel in ordered 16 KiB chunks with at most two unreceipted chunks. Chunks share one frame sequence and all metadata and are assembled into one complete ESV1 packet before decoding. They are not separate images or pixel regions. surface.progress grants transport capacity only; surface.ack follows complete decode and presentation. Input cancels refresh without waiting; the next frame declares the canceled range and starts with an independent keyframe. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay.
 type SurfaceFrame struct {
 	Stream SurfaceStream `json:"stream"`
 	Seq    int           `json:"seq"`
@@ -353,13 +353,13 @@ type SurfaceFrame struct {
 	Back    bool   `json:"back"`
 	Forward bool   `json:"forward"`
 	Loading bool   `json:"loading"`
-	// Full-resolution lossless PNG refresh, supersedable by input and independent of video decoder references.
+	// High-quality H264 refresh in the continuing video reference chain. Input can supersede it, forcing the next video frame to start with an independent keyframe.
 	Refresh *bool `json:"refresh,omitempty"`
-	// First sequence in a consecutive range of canceled refinements ending immediately before this frame. This never skips a video reference frame.
+	// First sequence in a consecutive range of canceled refreshes ending immediately before this frame. The next H264 frame resets prediction with an independent keyframe. Published motion frames cannot be skipped.
 	Supersedes *int `json:"supersedes,omitempty"`
-	// Original raster dimensions. PNG refresh dimensions equal this canvas without padding or resampling.
+	// Original raster dimensions. Native-size H264 rounds each dimension up to an even number with a minimum of 16, pads the bottom and right edges, and crops decoded output to this canvas.
 	Canvas *SurfaceSize `json:"canvas,omitempty"`
-	// Refresh transport chunk byte offset. Only with refresh=true, format=png and total. The first chunk starts at zero; chunks are ordered.
+	// Refresh transport chunk byte offset. Only with refresh=true, format=h264 and total. The first chunk starts at zero; chunks are ordered.
 	Offset *int `json:"offset,omitempty"`
 	// Whole encoded refresh size. Each chunk contains exactly min(16384,total-offset) decoded bytes, with constant frame metadata.
 	Total *int `json:"total,omitempty"`
