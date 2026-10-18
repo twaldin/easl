@@ -11,12 +11,21 @@ struct HostReferencesTests {
         return String(cString: path)
     }
 
+    private static let zmx = Result<URL, Error> {
+        let url = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+            .appendingPathComponent("CanvasCoreTests-host-references-zmx")
+        let script = "#!/bin/sh\nexec /bin/cat \"$TMPDIR/zmx-listing\"\n"
+        if (try? String(contentsOf: url, encoding: .utf8)) != script {
+            try script.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+        return url
+    }
+
     private func host(_ fixture: HostFileFixture, listing: String = "") throws -> RemoteHost {
-        let zmx = fixture.directory.appendingPathComponent("zmx")
-        try "#!/bin/sh\nprintf '%s' \(RemoteHost.quote(listing))\n".write(to: zmx, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: zmx.path)
+        try listing.write(to: fixture.temp.appendingPathComponent("zmx-listing"), atomically: true, encoding: .utf8)
         return RemoteHost(name: "fixture", sshTarget: "fixture", socketPath: fixture.directory.appendingPathComponent("api.sock").path,
-                          tmpdir: fixture.temp.path, easlBin: "easl", zmxBin: zmx.path)
+                          tmpdir: fixture.temp.path, easlBin: "easl", zmxBin: try Self.zmx.get().path)
     }
 
     private func candidates(_ paths: [String], pytest: [String]? = nil) -> [TerminalReferences.Candidate] {
@@ -78,6 +87,33 @@ struct HostReferencesTests {
         #expect(try await references.resolve(req) == .resolved(.init(candidate: 0, path: repo.url("two/src/lib.rs").path, pytestBytes: nil)))
         req.hosted = true
         #expect(try await references.resolve(req) == .failure(.ambiguous))
+    }
+
+    @Test func failedSessionLookupDoesNotRankFromPropsCwd() async throws {
+        let fixture = try HostFileFixture()
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("one/src/lib.rs", "one")
+        try await repo.write("two/src/lib.rs", "two")
+        try await repo.commit("files")
+        let failedHost = RemoteHost(name: "fixture", sshTarget: "fixture",
+                                   socketPath: fixture.directory.appendingPathComponent("api.sock").path,
+                                   tmpdir: fixture.temp.path, easlBin: "easl", zmxBin: "/usr/bin/false")
+        let references = HostReferences(files: try fixture.reader(), host: failedHost)
+        var req = HostReferenceRequest(boardRoot: repo.root.path, board: "board", tile: "tile",
+                                       cwd: repo.url("one").path, candidates: candidates(["lib.rs"]))
+        #expect(try await references.resolve(req) == .failure(.unavailable))
+        req.candidates = candidates(["src/lib.rs"])
+        #expect(try await references.resolve(req) == .failure(.unavailable))
+        req.reportedCwd = repo.url("missing").path
+        #expect(try await references.resolve(req) == .failure(.unavailable))
+        req.reportedCwd = repo.url("two").path
+        #expect(try await references.resolve(req) == .resolved(.init(candidate: 0, path: repo.url("two/src/lib.rs").path, pytestBytes: nil)))
+        req.reportedCwd = nil
+        req.candidates = candidates([repo.url("two/src/lib.rs").path])
+        #expect(try await references.resolve(req) == .resolved(.init(candidate: 0, path: repo.url("two/src/lib.rs").path, pytestBytes: nil)))
+        req.candidates = candidates(["wrong/lib.rs", repo.url("two/src/lib.rs").path])
+        #expect(try await references.resolve(req) == .resolved(.init(candidate: 1, path: repo.url("two/src/lib.rs").path, pytestBytes: nil)))
     }
 
     @Test func invalidSessionCwdDoesNotUseStaleStartDirectory() async throws {

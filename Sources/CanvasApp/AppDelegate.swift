@@ -862,14 +862,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try checkRemoteOpen()
         let mirror = BoardMirror(hostName: host.name, board: board, connection: host.connection(), renders: host.connection())
         let loaded: Board
+        let identified: RemoteHost
         do {
             loaded = try await mirror.load()
+            identified = try await host.identified(on: mirror.connection)
             try checkRemoteOpen()
         } catch {
             mirror.close()
             throw error
         }
-        let controller = makeRemoteController(host: host, mirror: mirror, board: loaded, key: key, open: true)
+        let controller = makeRemoteController(host: identified, mirror: mirror, board: loaded, key: key, open: true)
         if !openedOrder.contains(key) { openedOrder.append(key) }
         show(controller, select: select)
         controller.serveHost()
@@ -936,22 +938,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let host = try await RemoteHost.discover(name: entry.host, sshTarget: entry.sshTarget, support: entry.support(devRemoteHome: AppPaths.devRemoteHome),
                                                      allowDefault: AppPaths.devRemoteHome == nil)
             guard !Task.isCancelled, !terminating else { return }
-            guard host.server == .easld else {
-                return NSLog("easl: background attach skips %@: not an easld host", entry.sshTarget)
-            }
             let mirror = BoardMirror(hostName: host.name, board: entry.board, connection: host.connection(), renders: host.connection())
             let loaded: Board
+            let identified: RemoteHost
             do {
                 loaded = try await mirror.load()
+                identified = try await host.identified(on: mirror.connection)
             } catch {
                 mirror.close()
                 throw error
             }
             guard !Task.isCancelled, !terminating else { return mirror.close() }
+            guard identified.server == .easld else {
+                mirror.close()
+                return NSLog("easl: background attach skips %@: not an easld host", entry.sshTarget)
+            }
             // An entry saved before easl recorded homes has its key only now, which a window may hold.
-            let attached = Self.remoteKey(host, entry.board)
+            let attached = Self.remoteKey(identified, entry.board)
             guard remoteControllers[attached] == nil, remoteLoads[.host(attached, entry.board)] == nil else { return mirror.close() }
-            let controller = makeRemoteController(host: host, mirror: mirror, board: loaded, key: attached, open: false)
+            let controller = makeRemoteController(host: identified, mirror: mirror, board: loaded, key: attached, open: false)
             controller.window?.isExcludedFromWindowsMenu = true
             // Never shown, so never laid out: `view.get` and drawings see the window's own size.
             controller.window?.contentView?.layoutSubtreeIfNeeded()

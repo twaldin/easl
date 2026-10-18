@@ -6,6 +6,8 @@ Each version's section is its GitHub release's notes.
 
 - **Use the same live browser page from every easld viewer.** Easld relays private frames and input from the tile's drawing Mac, without storing page payloads or replaying input after reconnect. The title-bar selector moves drawing among attached Macs and explains the reload into that Mac's own profile. If the page's input relay cannot be prepared, its stream closes with a clear notice instead of silently losing queued input. Mac-hosted boards still draw only on their host.
 - Streamed file inputs open the file picker on the driving viewer. Up to 32 files and 8 MiB total travel in memory, without staging files on easld or the drawing Mac. Folder and iframe uploads remain unavailable.
+- Viewers recognize easld running on macOS before choosing browser rendering and client attachment. Scratch servers retain their isolated home, and default-home easld uses its own zmx directory instead of the installed app's.
+- Bundle builds use two Swift jobs, including release bundles.
 - **Undo and restack remote boards.** ⌘Z and ⇧⌘Z replay this viewer's own edits on the host, including create, move, resize, text edit and delete. Guarded field inverses keep concurrent edits by agents and other viewers. Bring to Front, Send to Back and API `object.update z` change the host's order for everyone. History is in memory, scoped per viewer, and requires an updated host.
 - Remote boards load existing attention markers and acknowledge clears and seen terminal turns on the host. A stale acknowledgment cannot clear a newer marker or mark a newer turn seen.
 - **Remote composer mentions stay with their submission.** Both hosts queue full staged mentions per target terminal, in token order, and fold them into the matching submission with numbering from 1, not as agent hand-offs. The viewer withdraws sent chips without an undo step and handles host submission and return notifications. Schema version 2 replaces composer `mentions` with `staged` and `viewer`; agent-to-agent `mentions` are unchanged.
@@ -45,6 +47,7 @@ Each version's section is its GitHub release's notes.
 ### Fixed
 
 - Hovering a group's author mark no longer crashes easl while its tooltip appears.
+- Remote terminal ⌘-clicks use a valid OSC 7 directory without a session-list subprocess. If session discovery is needed and fails or times out, relative references show a host lookup notice instead of quietly opening a file near the tile's saved directory. The 2-second deadline is unchanged.
 
 ## 0.2.7
 
