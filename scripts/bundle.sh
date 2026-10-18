@@ -11,7 +11,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 version="${EASL_VERSION:-$(cat "$repo/VERSION")}"
 build="${EASL_BUILD:-1}"
 cd "$repo"
-swift build -j 4 -c "$config" --product Easl
+swift build -j 2 -c "$config" --product Easl
 bin="$(swift build -c "$config" --show-bin-path)"
 app="${EASL_BUNDLE_APP:-$repo/.build/easl.app}"
 rm -rf "$app"

@@ -8,6 +8,8 @@ Each version's section is its GitHub release's notes.
 - **Video clips play on the board.** Create a `video` tile with a board path, optional poster and playback flags, or use `<video>` inside HTML. Both hosts serve seekable bytes in bounded reads, without a viewer-disk copy. MP4/MOV dimensions support exact fitting on easld as well as the Mac. Video file-URI references keep their original source across caller checkouts and repository-board adoption.
 - **GIF image tiles animate** while live, locally and remotely, and stop their timers when parked.
 - **Remote HTML can load a host-private HTTP page.** An allowlisted `http://localhost:5199` in an iframe or resource URL means the board host, not the viewing Mac. HTTP(S) runs over the existing SSH connection with memory-only origin grants. This is a GET/HEAD resource proxy, not a cookie/session, POST or private WebSocket tunnel; unhandled requests fail closed.
+- Viewers recognize easld running on macOS before choosing browser rendering and client attachment. Scratch servers retain their isolated home, and default-home easld uses its own zmx directory instead of the installed app's.
+- Bundle builds use two Swift jobs, including release bundles.
 - **Undo and restack remote boards.** ⌘Z and ⇧⌘Z replay this viewer's own edits on the host, including create, move, resize, text edit and delete. Guarded field inverses keep concurrent edits by agents and other viewers. Bring to Front, Send to Back and API `object.update z` change the host's order for everyone. History is in memory, scoped per viewer, and requires an updated host.
 - Remote boards load existing attention markers and acknowledge clears and seen terminal turns on the host. A stale acknowledgment cannot clear a newer marker or mark a newer turn seen.
 - **Remote composer mentions stay with their submission.** Both hosts queue full staged mentions per target terminal, in token order, and fold them into the matching submission with numbering from 1, not as agent hand-offs. The viewer withdraws sent chips without an undo step and handles host submission and return notifications. Schema version 2 replaces composer `mentions` with `staged` and `viewer`; agent-to-agent `mentions` are unchanged.
@@ -47,6 +49,7 @@ Each version's section is its GitHub release's notes.
 ### Fixed
 
 - Hovering a group's author mark no longer crashes easl while its tooltip appears.
+- Remote terminal ⌘-clicks use a valid OSC 7 directory without a session-list subprocess. If session discovery is needed and fails or times out, relative references show a host lookup notice instead of quietly opening a file near the tile's saved directory. The 2-second deadline is unchanged.
 
 ## 0.2.7
 

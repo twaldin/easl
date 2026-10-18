@@ -299,7 +299,7 @@ public enum RemoteClose: Equatable, Sendable {
         case retain
     }
 
-    /// Only an easld host takes a viewer as its client: a Mac host answers its own calls.
+    /// Only an easld host takes a viewer as its client: an app server answers its own calls.
     public func outcome(backgroundAttach: Bool, server: RemoteHost.Server?) -> Outcome {
         switch self {
         case .tab: .forget
