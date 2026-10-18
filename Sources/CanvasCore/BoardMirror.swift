@@ -104,7 +104,7 @@ public final class BoardMirror: BoardHost {
     /// was down would otherwise stay as it is until the object changes.
     public var onRedraw: (() -> Void)?
     /// This viewer as the board's easld's client (docs/design/next.md "The client protocol");
-    /// nil until `serve`, and on a Mac host, which answers those calls itself.
+    /// nil until `serve`, and on an app server, which answers those calls itself.
     public private(set) var attachment: Attachment?
     /// The machine identities of the Macs attached to the board that run its browser tiles' pages
     /// (`client.list`, then each `client.changed`): attached as easld's clients serving the board
@@ -335,7 +335,7 @@ public final class BoardMirror: BoardHost {
 
     /// Answers the board's delegated calls from `window` (`DelegatedCalls`) and attaches to the
     /// board's easld as its client: now if the link is online, then once on each link after, and
-    /// again when the user focuses the board (`userFocused`). Only for an easld host (a Mac host
+    /// again when the user focuses the board (`userFocused`). Only for an easld host (an app server
     /// answers those calls itself), once the board is loaded and its window shows it.
     public func serve(_ window: ViewerWindow, as identity: ClientIdentity) {
         guard !ended, let board else { return }
