@@ -112,7 +112,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notifier.onOpen = { [weak self] board, tile in
             Task { @MainActor in
                 await self?.localRestore?.value
-                await self?.updateRestoration?.value
                 guard let self, var controller = self.controllers[board] else { return }
                 if !controller.isBoardOpen || controller.window.map(self.isHoldingClose) == true {
                     let reopened = await self.open(root: controller.board.root, select: false)
@@ -233,7 +232,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let router = router
         let server = SocketServer(path: AppPaths.apiSocket) { [weak self] request, connection in
             await self?.localRestore?.value
-            await self?.updateRestoration?.value
             return await router.handle(request, connection: connection)
         }
         do {
@@ -251,7 +249,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let cmux = cmux
         let cmuxServer = SocketServer(path: AppPaths.cmuxSocket, acceptsTextLines: true) { [weak self] request, connection in
             await self?.localRestore?.value
-            await self?.updateRestoration?.value
             return await cmux.handle(request, connection: connection)
         }
         do {
@@ -274,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         defer {
             localRestore = nil
             saveOpenBoards()
-            suppressLaunchActivation = false
+            if updateRestoration == nil { suppressLaunchActivation = false }
             showPendingUpdateRestoreFailure()
         }
         let settings = self.settings
@@ -315,8 +312,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Updater.shared.start()
         if let updateSnapshot, let updateRecovery {
+            let restoring = Set(updateSnapshot.groups.flatMap(\.tabs).compactMap { tab -> String? in
+                if case .remote(let entry) = tab { return Self.remoteKey(entry) }
+                return nil
+            })
+            if backgroundAttach { await attachInBackground(excluding: restoring) }
             beginUpdateRestoration([(updateRecovery, updateSnapshot)])
-            await updateRestoration?.value
         } else {
             let initial = await open(root: initialRoot, select: !suppressLaunchActivation)
             for root in saved {
@@ -853,6 +854,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateRestoration = Task { @MainActor in
             defer {
                 updateRestoration = nil
+                suppressLaunchActivation = false
+                saveOpenBoards()
                 showPendingUpdateRestoreFailure()
             }
             var readable = recoveries ?? []
@@ -1296,12 +1299,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Attaches every reopen-list board that has no window here, with its window closed and never
     /// shown (background attach). Each one's host is discovered again, at its saved easld home.
-    private func attachInBackground() async {
+    private func attachInBackground(excluding: Set<String> = []) async {
         let store = reopenList
         let entries = (try? await ClientFiles.read { store.load() }) ?? []
         guard backgroundAttach, !terminating else { return }
         for entry in entries {
             let key = Self.remoteKey(entry)
+            guard !excluding.contains(key) else { continue }
             guard remoteControllers[key] == nil, remoteLoads[.host(key, entry.board)] == nil, backgroundLoads[key] == nil else { continue }
             backgroundLoads[key] = Task { await self.attachInBackground(entry, key: key) }
         }
@@ -1375,14 +1379,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // Group bookkeeping must not order a newly added tab onto the active Space.
+    // AppKit creates tab groups; inserting into an existing group leaves its selection alone.
     private func addTab(_ window: NSWindow, to host: NSWindow) {
         if let group = host.tabGroup {
             group.insertWindow(window, at: group.windows.firstIndex(of: host)! + 1)
         } else {
-            let group = NSWindowTabGroup()
-            group.addWindow(host)
-            group.addWindow(window)
+            host.addTabbedWindow(window, ordered: .above)
         }
     }
 
