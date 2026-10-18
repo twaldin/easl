@@ -99,12 +99,18 @@ public struct HostFiles: Sendable {
     public let temps: [String]
     private let route: HostRoute
     private let master: HostMaster?
+    private let channelRoute: HostRoute
+    private let channelMaster: HostMaster?
 
+    @MainActor
     public init(host: RemoteHost, master: HostMaster) {
         hostName = host.name
         temps = [host.tmpdir, "/tmp", "/var/tmp"]
-        route = master.route
-        self.master = master
+        let reader = master.fileReader
+        route = reader.route
+        self.master = reader
+        channelRoute = master.route
+        channelMaster = master
     }
 
     init(hostName: String, route: HostRoute, temps: [String]) {
@@ -112,6 +118,8 @@ public struct HostFiles: Sendable {
         self.route = route
         self.temps = temps
         master = nil
+        channelRoute = route
+        channelMaster = nil
     }
 
     /// This host without its master, for cleanup while easl quits: nothing it runs waits for
@@ -138,14 +146,22 @@ public struct HostFiles: Sendable {
         while true {
             attempt += 1
             try Task.checkCancellation()
+            var admitted = false
+            let interrupt: (@Sendable () -> Void)?
             do {
                 if let master {
-                    try await master.ready()
                     try await master.fileSession()
+                    admitted = true
+                    try await master.ready()
+                    interrupt = try await master.interruption()
+                } else {
+                    interrupt = nil
                 }
             } catch is CancellationError {
+                if admitted, let master { await master.endFileSession() }
                 throw CancellationError()
             } catch {
+                if admitted, let master { await master.endFileSession() }
                 try Task.checkCancellation()
                 let failure = error as? HostMaster.Failure
                 if retryTransport, failure?.retryable == true, attempt < 3 {
@@ -157,15 +173,16 @@ public struct HostFiles: Sendable {
             }
             let result: RemoteHost.RunResult
             do {
-                result = try await RemoteHost.run(route.executable, route.ssh(Self.command), input: input, timeout: timeout, timeoutPolicy: .inactivity)
+                result = try await RemoteHost.run(route.executable, route.ssh(Self.command), input: input, timeout: timeout, timeoutPolicy: .inactivity, onStop: interrupt)
             } catch {
                 if let master { await master.endFileSession() }
                 throw error
             }
+            if result.status != 0, Self.retryableSSHFailure(status: result.status, errors: result.errors) { interrupt?() }
             if let master { await master.endFileSession() }
             try Task.checkCancellation()
             if result.timedOut {
-                NSLog("easl: %@ on %@ timed out (status %d): %@", what, hostName, result.status, result.errors)
+                NSLog("easl: %@ on %@ timed out after %ld reply bytes (status %d): %@", what, hostName, result.output.utf8.count, result.status, result.errors)
                 throw HostFileError.unavailable("the host stopped responding for \(String(format: "%g", timeout)) seconds")
             }
             if result.status == 0 { return result.output }
@@ -213,13 +230,13 @@ public struct HostFiles: Sendable {
 
     func channel(_ script: String, _ arguments: [String]) async throws -> (executable: String, arguments: [String]) {
         do {
-            try await master?.ready()
+            try await channelMaster?.ready()
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             throw HostFileError.unavailable((error as? LocalizedError)?.errorDescription ?? String(describing: error))
         }
-        return (route.executable, route.ssh(HostedTerminal.remote(script, arguments)))
+        return (channelRoute.executable, channelRoute.ssh(HostedTerminal.remote(script, arguments)))
     }
 
     private struct Reply: Decodable {

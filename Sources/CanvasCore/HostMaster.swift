@@ -22,7 +22,7 @@ public struct HostRoute: Sendable, Equatable {
     }
 }
 
-/// One tracked ssh master per exact target and app support directory, independent of easld.
+/// A tracked ssh master with a separate, lazily created master for file commands.
 @MainActor
 public final class HostMaster {
     public struct Failure: Error, LocalizedError, Equatable {
@@ -62,9 +62,20 @@ public final class HostMaster {
     private var starting: Task<Void, Error>?
     private var lastFailure: Failure?
     private var closed = false
+    private var cachedFileReader: HostMaster?
 
-    static let maxFileSessions = 4
-    private var fileSessions = 0
+    var fileReader: HostMaster {
+        if let cachedFileReader { return cachedFileReader }
+        let reader = HostMaster(
+            route: HostRoute(target: route.target, controlPath: route.controlPath + "-files", executable: route.executable),
+            processes: processes
+        )
+        if closed { reader.close() }
+        cachedFileReader = reader
+        return reader
+    }
+
+    private var fileBusy = false
     private struct Waiter {
         let id: UUID
         let continuation: CheckedContinuation<Void, Error>
@@ -92,10 +103,18 @@ public final class HostMaster {
         try Task.checkCancellation()
     }
 
+    func interruption() throws -> @Sendable () -> Void {
+        guard !closed else { throw Failure("easl is quitting") }
+        guard let master else {
+            throw lastFailure ?? Failure("ssh to \(route.target) exited")
+        }
+        return { master.interrupt() }
+    }
+
     private func establish() async throws {
         try Task.checkCancellation()
-        if let master, !master.process.isRunning {
-            await offPool { master.drained.wait() }
+        if let master, master.interrupted.withLock({ $0 }) || !master.process.isRunning {
+            await offPool { master.process.waitUntilExit(); master.drained.wait() }
             ended(master)
         }
         if master == nil {
@@ -184,8 +203,8 @@ public final class HostMaster {
     public func fileSession() async throws {
         try Task.checkCancellation()
         guard !closed else { throw Failure("easl is quitting") }
-        if fileSessions < Self.maxFileSessions {
-            fileSessions += 1
+        if !fileBusy {
+            fileBusy = true
             return
         }
         let id = UUID()
@@ -202,6 +221,7 @@ public final class HostMaster {
         }
         do {
             try Task.checkCancellation()
+            guard !closed else { throw Failure("easl is quitting") }
         } catch {
             endFileSession()
             throw error
@@ -209,11 +229,11 @@ public final class HostMaster {
     }
 
     public func endFileSession() {
-        precondition(fileSessions > 0)
+        precondition(fileBusy)
         if !fileWaiters.isEmpty {
             fileWaiters.removeFirst().continuation.resume()
         } else {
-            fileSessions -= 1
+            fileBusy = false
         }
     }
 
@@ -224,6 +244,7 @@ public final class HostMaster {
 
     func close() {
         closed = true
+        cachedFileReader?.close()
         starting?.cancel()
         if let master { RemoteProcesses.stop(master.process) }
         let waiting = fileWaiters
@@ -236,6 +257,15 @@ private final class MasterProcess: @unchecked Sendable {
     let process = Process()
     let errors = Locked(Data())
     let drained = DispatchGroup()
+    let interrupted = Locked(false)
+
+    func interrupt() {
+        interrupted.withLock {
+            guard !$0 else { return }
+            $0 = true
+            RemoteProcesses.stop(process)
+        }
+    }
 
     func failure(target: String) -> HostMaster.Failure {
         let raw = String(decoding: errors.withLock { $0 }, as: UTF8.self)

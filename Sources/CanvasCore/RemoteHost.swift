@@ -363,9 +363,9 @@ public struct RemoteHost: Codable, Hashable, Sendable {
 
     /// Runs blocking process I/O on dedicated threads so GCD can still service socket reads.
     /// Timeout and cancellation end and reap the process, including a blocked stdin writer.
-    public static func run(_ executable: String, _ arguments: [String], input: Data? = nil, timeout: TimeInterval, timeoutPolicy: TimeoutPolicy = .elapsed) async throws -> RunResult {
+    public static func run(_ executable: String, _ arguments: [String], input: Data? = nil, timeout: TimeInterval, timeoutPolicy: TimeoutPolicy = .elapsed, onStop: (@Sendable () -> Void)? = nil) async throws -> RunResult {
         try Task.checkCancellation()
-        let job = RunningProcess()
+        let job = RunningProcess(onStop: onStop)
         let result: RunResult = await withTaskCancellationHandler {
             let work: @Sendable () -> RunResult = {
                 let process = Process()
@@ -435,12 +435,17 @@ public struct RemoteHost: Codable, Hashable, Sendable {
 /// before the process starts keeps it from starting.
 private final class RunningProcess: @unchecked Sendable {
     private let lock = NSLock()
+    private let onStop: (@Sendable () -> Void)?
     private var process: Process?
     private var isCancelled = false
     private var timedOut = false
     private var timer: DispatchSourceTimer?
     private var timeout: TimeInterval = 0
     private var lastProgress = DispatchTime.now()
+
+    init(onStop: (@Sendable () -> Void)?) {
+        self.onStop = onStop
+    }
 
     var cancelled: Bool { lock.withLock { isCancelled } }
 
@@ -468,7 +473,7 @@ private final class RunningProcess: @unchecked Sendable {
 
     private func expire() {
         lock.withLock {
-            guard !isCancelled, !timedOut, let process, process.isRunning else { return }
+            guard !isCancelled, !timedOut, let process else { return }
             let deadline = lastProgress + timeout
             if DispatchTime.now() < deadline {
                 timer?.schedule(deadline: deadline)
@@ -478,6 +483,7 @@ private final class RunningProcess: @unchecked Sendable {
             timer?.cancel()
             timer = nil
             RemoteProcesses.stop(process)
+            onStop?()
         }
     }
 
@@ -495,7 +501,10 @@ private final class RunningProcess: @unchecked Sendable {
             isCancelled = true
             timer?.cancel()
             timer = nil
-            if let process { RemoteProcesses.stop(process) }
+            if let process {
+                RemoteProcesses.stop(process)
+                onStop?()
+            }
         }
     }
 }
