@@ -2,6 +2,14 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+### Fixed
+
+- Remote diagrams leave "Asking" and show late delegated failures after a zero-timeout reload returns. The last graph stays visible when its aim still matches. Requires the easld host update.
+- Host language servers stop when their viewer's SSH link ends, including before the viewer receives the host PID. The viewer-supplied launcher owns cleanup on Linux and macOS.
+- Host-closed boards allow panning, zooming, scrolling, and read-only text selection, including cached text panned back into view, without enabling edits or removing the closed banner. Cached Changes retain native drawing. Menus, shortcuts, accessibility close actions, code navigation, and links refuse changes while closed. Pending navigation, HTML queue handoffs, Changes applies and card reads cannot start stale work after closure or replace cached content across reopening. Inspection preserves focus, selection, attention markers, and the viewport, and ⌘J skips hidden closed tabs.
+
 ## 0.2.8
 
 **Interim release.** Remote HTML loading host files and video, browser relay through easld, closed-board inspection, and faster board loading come in the next release.
@@ -65,9 +73,6 @@ The release smoke drew the inspected HTML and notes with all four 0.2.7 and rele
 ### Fixed
 
 - Hovering a group's author mark no longer crashes easl while its tooltip appears.
-- Remote diagrams leave "Asking" and show late delegated failures after a zero-timeout reload returns. The last graph stays visible when its aim still matches. Requires the easld host update.
-- Host language servers stop when their viewer's SSH link ends, including before the viewer receives the host PID. The viewer-supplied launcher owns cleanup on Linux and macOS.
-- Host-closed boards allow panning, zooming, scrolling, and read-only text selection, including cached text panned back into view, without enabling edits or removing the closed banner. Cached Changes retain native drawing. Menus, shortcuts, accessibility close actions, code navigation, and links refuse changes while closed. Pending navigation, HTML queue handoffs, Changes applies and card reads cannot start stale work after closure or replace cached content across reopening. Inspection preserves focus, selection, attention markers, and the viewport, and ⌘J skips hidden closed tabs.
 - Remote terminal ⌘-clicks use a valid OSC 7 directory without a session-list subprocess. If session discovery is needed and fails or times out, relative references show a host lookup notice instead of quietly opening a file near the tile's saved directory. The 2-second deadline is unchanged.
 
 ## 0.2.7
