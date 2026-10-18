@@ -1095,6 +1095,29 @@
         }
       }
     },
+    "app.update": {
+      "description": "Check for or install an update of the running Mac app without confirmation UI. App socket only, not forwarded by easld. Install ignores idle, uses the manual update trust checks and returns before the app quits and relaunches in the background with its open boards restored. Failures leave the running app intact and are reported in error.",
+      "params": {
+        "type": "object",
+        "required": ["mode"],
+        "properties": {
+          "mode": { "type": "string", "enum": ["check", "install"], "description": "check fetches the latest release; install checks, downloads, verifies and installs a newer release now." }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["currentVersion", "availableVersion", "installPending", "phase", "error"],
+        "properties": {
+          "currentVersion": { "type": "string" },
+          "availableVersion": { "type": ["string", "null"], "description": "The latest feed version, including one that is not newer; null when unknown." },
+          "installPending": { "type": "boolean", "description": "An update is downloading, verifying, waiting in verified staging, or installing." },
+          "phase": { "type": "string", "description": "The app updater's current phase." },
+          "error": { "type": ["string", "null"], "description": "The update failure reason, including a retained failure from the previous install; null without a failure." }
+        },
+        "additionalProperties": false
+      }
+    },
     "board.get": {
       "description": "Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged.",
       "params": {

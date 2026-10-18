@@ -31,7 +31,7 @@ struct TerminalPasteDestination: Sendable {
     }
 
     private func run(_ arguments: [String], input: Data? = nil) async throws -> String {
-        let result: (status: Int32, output: String, errors: String)
+        let result: RemoteHost.RunResult
         switch machine {
         case .local:
             result = try await RemoteHost.run("/bin/sh", ["-c", TerminalPaste.script, "easl"] + arguments, input: input, timeout: 60)
