@@ -55,6 +55,9 @@ final class BrowserSurfaceHost: NSObject {
         guard peer.hears("surface.frame", on: board) else {
             throw ApiRouter.Failure("invalid_params", "subscribe this connection to surface.frame on board \(board) (events.subscribe) before surface.stream")
         }
+        guard PageScript.isAvailable else {
+            throw ApiRouter.Failure("unsupported", "this Mac's WebKit can't run the browser relay's page helper without acting as a user gesture")
+        }
         await tile.markDriven()
         guard peer.isOpen, let now = try? peer.tile(id), now.tile === tile, now.board == board, tile.window != nil else {
             throw ApiRouter.Failure("unavailable", "browser tile \(id) closed while its stream opened")
@@ -643,10 +646,8 @@ final class BrowserSurface {
     /// Mac's pasteboard, which Universal Clipboard may carry to other devices.
     private static func selection(in webView: WKWebView) async -> String? {
         let read = await bounded(selectionWait) { (done: @escaping @MainActor (String?) -> Void) in
-            Task { @MainActor in
-                let value = try? await webView.callAsyncJavaScript(BrowserScripts.ensure + "return window.__canvasCmux.selectedText()", arguments: [:],
-                                                                   in: nil, contentWorld: BrowserScripts.world)
-                done(value as? String)
+            PageScript.call(BrowserScripts.ensure + "return window.__canvasCmux.selectedText()", in: BrowserScripts.world, on: webView) { value, error in
+                done(error == nil ? value as? String : nil)
             }
         }
         return read ?? nil
@@ -654,14 +655,9 @@ final class BrowserSurface {
 
     private static func setSurfaceRelay(_ on: Bool, in webView: WKWebView) async -> Bool {
         await bounded(selectionWait) { (done: @escaping @MainActor (Bool) -> Void) in
-            Task { @MainActor in
-                do {
-                    _ = try await webView.callAsyncJavaScript(BrowserScripts.ensure + "return window.__canvasCmux.setSurfaceRelay(on)", arguments: ["on": on],
-                                                              in: nil, contentWorld: BrowserScripts.world)
-                    done(true)
-                } catch {
-                    done(false)
-                }
+            PageScript.call(BrowserScripts.ensure + "return window.__canvasCmux.setSurfaceRelay(on)", ["on": on],
+                            in: BrowserScripts.world, on: webView) { _, error in
+                done(error == nil)
             }
         } ?? false
     }
@@ -780,10 +776,9 @@ final class BrowserSurface {
 
     private static func choose(_ token: Int, _ index: Int, in webView: WKWebView) async -> Bool {
         await bounded(selectionWait) { (done: @escaping @MainActor (Bool) -> Void) in
-            Task { @MainActor in
-                let chosen = try? await webView.callAsyncJavaScript(BrowserScripts.ensure + "return window.__canvasCmux.chooseSelect(token, index)",
-                                                                    arguments: ["token": token, "index": index], in: nil, contentWorld: BrowserScripts.world)
-                done((chosen as? Bool) == true)
+            PageScript.call(BrowserScripts.ensure + "return window.__canvasCmux.chooseSelect(token, index)", ["token": token, "index": index],
+                            in: BrowserScripts.world, on: webView) { value, error in
+                done(error == nil && (value as? Bool) == true)
             }
         } ?? false
     }
@@ -801,9 +796,8 @@ final class BrowserSurface {
             if let modified = file.modified { fields["modified"] = modified }
             return fields
         }
-        let installed = try? await webView.callAsyncJavaScript(BrowserScripts.ensure + "return window.__canvasCmux.setFiles(token, files)",
-                                                              arguments: ["token": token, "files": payload as Any? ?? NSNull()], in: nil, contentWorld: BrowserScripts.world)
-        return (installed as? Bool) == true
+        return await PageScript.value(BrowserScripts.ensure + "return window.__canvasCmux.setFiles(token, files)",
+                                      ["token": token, "files": payload as Any? ?? NSNull()], in: BrowserScripts.world, on: webView) { ($0 as? Bool) == true }
     }
 
     /// The page helper kept a select's menu from opening here (`relaySelect`).

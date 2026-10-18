@@ -5,7 +5,7 @@ import WebKit
 /// the page's computed styles once it has loaded, in an isolated world.
 @MainActor
 enum PageSurface {
-    struct Probe {
+    struct Probe: Sendable {
         /// Relative luminance of the body's (else the root element's) opaque background; nil
         /// when the page leaves both transparent.
         var luminance: Double?
@@ -32,9 +32,11 @@ enum PageSurface {
     """
 
     static func probe(_ web: WKWebView) async -> Probe? {
-        guard let result = try? await web.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .defaultClient) as? [String: Any] else { return nil }
-        let rgb = (result["rgb"] as? [NSNumber])?.map { $0.doubleValue / 255 }
-        let luminance = rgb.flatMap { $0.count >= 3 ? InkContrast.luminance(red: $0[0], green: $0[1], blue: $0[2]) : nil }
-        return Probe(luminance: luminance, darkDefault: (result["darkDefault"] as? Bool) ?? false)
+        await PageScript.value(script, in: .defaultClient, on: web) { value in
+            guard let result = value as? [String: Any] else { return nil }
+            let rgb = (result["rgb"] as? [NSNumber])?.map { $0.doubleValue / 255 }
+            let luminance = rgb.flatMap { $0.count >= 3 ? InkContrast.luminance(red: $0[0], green: $0[1], blue: $0[2]) : nil }
+            return Probe(luminance: luminance, darkDefault: (result["darkDefault"] as? Bool) ?? false)
+        }
     }
 }
