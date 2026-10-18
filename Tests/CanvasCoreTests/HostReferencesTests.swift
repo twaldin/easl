@@ -103,6 +103,8 @@ struct HostReferencesTests {
         req.reportedCwd = nil
         req.candidates = candidates([repo.url("two/src/lib.rs").path])
         #expect(try await references.resolve(req) == .resolved(.init(candidate: 0, path: repo.url("two/src/lib.rs").path, pytestBytes: nil)))
+        req.candidates = candidates(["wrong/lib.rs", repo.url("two/src/lib.rs").path])
+        #expect(try await references.resolve(req) == .resolved(.init(candidate: 1, path: repo.url("two/src/lib.rs").path, pytestBytes: nil)))
     }
 
     @Test func invalidSessionCwdDoesNotUseStaleStartDirectory() async throws {

@@ -156,7 +156,7 @@ extension HostFiles {
         while (common < Math.min(here.length, there.length) && here[common] === there[common]) common++;
         return here.length + there.length - 2 * common;
       };
-      let ambiguous = false, indexedFailure = null;
+      let ambiguous = false, lookupFailure = null;
       for (let i = 0; i < req.readings.length; i++) {
         const reading = req.readings[i], input = reading.path;
         if (typeof input !== 'string' || !input || input.includes('\0')) fail('refused');
@@ -165,7 +165,7 @@ extension HostFiles {
           if (input.startsWith('~') && !input.startsWith('~/')) fail('refused');
           winner = inspect(path.resolve(expand(input)));
         } else {
-          if (sessionError) fail(sessionError);
+          if (sessionError) { lookupFailure = sessionError; continue; }
           const relatives = [input];
           if (/^[ab]\//.test(input)) relatives.push(input.slice(2));
           for (const relative of relatives) {
@@ -184,13 +184,13 @@ extension HostFiles {
                 if (entry.relative !== suffix && !entry.relative.endsWith('/' + suffix)) continue;
                 const found = candidate(entry.absolute);
                 if (found) pending.push(found);
-                else indexedFailure = 'refused';
+                else lookupFailure = 'refused';
               }
               const replies = readFiles(pending.map(found => readRequest(found)));
               for (let j = 0; j < pending.length; j++) {
                 const reply = replies[j], found = pending[j];
                 if (reply.ok) matches.set(found.canonical, found);
-                else if (reply.code !== 'not_found' && indexedFailure !== 'refused') indexedFailure = reply.code === 'too_large' ? 'tooLarge' : reply.code;
+                else if (reply.code !== 'not_found' && lookupFailure !== 'refused') lookupFailure = reply.code === 'too_large' ? 'tooLarge' : reply.code;
               }
               const ranked = [...matches.values()].sort((a, b) => distance(a.canonical) - distance(b.canonical));
               if (!ranked.length) continue;
@@ -205,7 +205,7 @@ extension HostFiles {
           if (winner) return { ok: true, candidate: i, path: winner.path, ...(reading.pytest ? { data: winner.data } : {}) };
         }
       }
-      return { ok: false, code: indexedFailure || (ambiguous ? 'ambiguous' : 'missing') };
+      return { ok: false, code: lookupFailure || (ambiguous ? 'ambiguous' : 'missing') };
     }
     let reply;
     try { reply = resolve(); }
