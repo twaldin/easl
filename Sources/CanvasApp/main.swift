@@ -3,6 +3,23 @@ import CanvasCore
 import Darwin
 import GhosttyTerminal
 
+if CommandLine.arguments.dropFirst().first == "--update-swap" {
+    guard CommandLine.arguments.count == 4 else {
+        FileHandle.standardError.write(Data("easl: --update-swap requires installed and incoming paths\n".utf8))
+        exit(2)
+    }
+    do {
+        try AppUpdate.swapBundles(installed: URL(fileURLWithPath: CommandLine.arguments[2]),
+                                  incoming: URL(fileURLWithPath: CommandLine.arguments[3]))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("easl: bundle exchange failed: \(error.localizedDescription)\n".utf8))
+        exit(1)
+    }
+}
+
+_ = AppPaths.isUpdateRelaunch
+
 // An install under an earlier name (Canvas 0.4 or 0.2, Chalkwork 0.3): its boards, settings and browser
 // profile, moved once, before anything reads AppPaths or the defaults (LegacyMigration). Never for
 // a development home (EASL_HOME, or an earlier name's), and not while an earlier app is running

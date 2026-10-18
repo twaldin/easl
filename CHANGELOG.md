@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Mac boards read their files and check saved anchors off the main thread. Tiles appear before Git checks finish. Unverified anchor metadata stays out of API replies and events, then allowed anchors return without object revisions or undo steps. Undo and redo retain allowed anchors in local and remote viewers. Local and remote windows build and appear on separate main-loop wakes, with shared preparation for concurrent opens. Client metadata loads off the main thread. Startup preserves saved tabs through interrupted restoration and registers background loads before API requests resume.
+- **Install updates while your Mac is idle.** Enable easl › Install Updates Automatically, off by default, to download and verify newer releases and install after 10 minutes without input anywhere in your login session. Updates reopen your local and remote tabs without taking focus or changing Spaces. Agents can check with `easl app.update check` or install immediately with `easl app.update install`. Both paths keep the manual updater's signature, Team ID, and Gatekeeper checks. Atomic bundle replacement keeps a complete app at its installed path if interrupted. Failures report why when you next look at easl. Failed board recovery offers Retry or Discard without replacing your normal reopen list on later launches.
 
 ## 0.2.8
 
