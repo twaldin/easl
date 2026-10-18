@@ -1397,10 +1397,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// New tabs join a live board's selected native window: key first, otherwise prefer visible.
     /// Hidden and minimized groups remain hosts instead of spawning a window on the current Space.
+    /// Update restoration's unshown windows are not hosts until their group is ready.
     private func tabHost(excluding window: NSWindow) -> NSWindow? {
         var preferred: NSWindow?
         func consider(_ controller: CanvasWindowController) -> NSWindow? {
-            guard controller.isBoardOpen, let member = controller.window, member !== window, isShown(member) else { return nil }
+            guard controller.isBoardOpen, let member = controller.window, member !== window,
+                  updateRestoration == nil || isShown(member) else { return nil }
             let host = member.tabGroup?.selectedWindow ?? member
             guard host !== window else { return nil }
             if host.isKeyWindow { return host }
