@@ -1,0 +1,13 @@
+{
+  "description": "easld only, like no-client and client-versions. App updates are never delegated to attached Mac clients. Both valid modes receive easld's existing unknown-method invalid_params refusal. Do not run on an app socket, where install is a real update command.",
+  "steps": [
+    {
+      "call": "app.update", "params": { "mode": "check" },
+      "expect": { "response.ok": false, "response.error.code": "invalid_params", "response.error.message": "unknown method app.update", "eventCount": 0 }
+    },
+    {
+      "call": "app.update", "params": { "mode": "install" },
+      "expect": { "response.ok": false, "response.error.code": "invalid_params", "response.error.message": "unknown method app.update", "eventCount": 0 }
+    }
+  ]
+}

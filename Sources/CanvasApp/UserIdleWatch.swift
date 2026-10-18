@@ -6,18 +6,12 @@ import CanvasCore
 /// sampled on a timer the policy paces; the app's own input events arrive through a local monitor
 /// and restore full rate at once. A change posts `changed`; `TerminalTile` reads `isIdle` and
 /// pulses its surface.
-///
-/// Sampling runs only while a terminal is shown and could draw (`terminalDrawable`): with every
-/// board hidden or minimized there is nothing to slow down, and a fresh sample starts it again.
-///
-/// Development (`dev-input <pid> idle on|off|auto`): `on` feeds the policy an idle time past the
-/// threshold and stops sampling the Mac (its idle time is the user's, not the check's), so a check
-/// can watch terminals slow down and then, on a replayed key or click, speed up through the same
-/// input path; `off` feeds zero; `auto` samples the Mac again.
+/// The development idle pin overrides both redraw and installation idle checks until cleared.
 @MainActor
 final class UserIdleWatch {
     static let shared = UserIdleWatch()
     static let changed = Notification.Name("easl.userIdle.changed")
+    static let sampled = Notification.Name("easl.userIdle.sampled")
 
     private(set) var policy = IdleRedraw()
     private var pinned = false
@@ -25,14 +19,19 @@ final class UserIdleWatch {
     private var monitor: Any?
 
     var isIdle: Bool { policy.isIdle }
+    private(set) var idleSeconds: TimeInterval = 0
+
+    /// A fresh whole-session sample, including input outside easl since the last timer tick.
+    func currentIdleSeconds() -> TimeInterval {
+        pinned ? idleSeconds : CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+    }
     /// Terminals shown and able to draw (`TerminalTile.updateSurfaceVisibility`).
     private(set) var drawable = 0
 
-    /// A terminal became able to draw, or stopped: sampling runs only while any can.
     func terminalDrawable(_ on: Bool) {
         let was = drawable
         drawable = max(0, drawable + (on ? 1 : -1))
-        if was == 0, drawable > 0 { sample() } else if drawable == 0 { timer?.cancel(); timer = nil }
+        if (was == 0 && drawable > 0) || (was > 0 && drawable == 0) { sample() }
     }
 
     func start() {
@@ -47,32 +46,35 @@ final class UserIdleWatch {
 
     func pin(_ state: String) {
         switch state {
-        case "on": pinned = true; apply(idleSeconds: IdleRedraw.threshold)
-        case "off": pinned = true; apply(idleSeconds: 0)
+        case "on": pinned = true; timer?.cancel(); timer = nil; apply(idleSeconds: AppUpdate.automaticIdleThreshold)
+        case "off": pinned = true; timer?.cancel(); timer = nil; apply(idleSeconds: 0)
         default: pinned = false; sample()
         }
+        if pinned { NotificationCenter.default.post(name: Self.sampled, object: self) }
     }
 
-    private func sample() {
+    private func sample(notifyUpdater: Bool = false) {
         timer?.cancel()
         timer = nil
-        guard !pinned, drawable > 0 else { return }
-        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        guard !pinned else { return }
+        let idle = currentIdleSeconds()
         apply(idleSeconds: idle)
+        if notifyUpdater { NotificationCenter.default.post(name: Self.sampled, object: self) }
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + policy.nextSample(idleSeconds: idle), leeway: .milliseconds(200))
-        timer.setEventHandler { MainActor.assumeIsolated { self.sample() } }
+        let interval = max(drawable > 0 ? 1 : 60, policy.nextSample(idleSeconds: idle))
+        timer.schedule(deadline: .now() + interval, leeway: .milliseconds(200))
+        timer.setEventHandler { MainActor.assumeIsolated { self.sample(notifyUpdater: true) } }
         timer.resume()
         self.timer = timer
     }
 
     private func input() {
-        guard policy.isIdle else { return }
+        guard !pinned, policy.isIdle else { return }
         apply(idleSeconds: 0)
-        sample()  // the pace is the active one again
     }
 
     private func apply(idleSeconds: TimeInterval) {
+        self.idleSeconds = idleSeconds
         guard policy.sampled(idleSeconds: idleSeconds) else { return }
         NSLog("UserIdleWatch: terminals %@", policy.isIdle ? "redraw twice a second (idle)" : "redraw at full rate (active)")
         NotificationCenter.default.post(name: Self.changed, object: self)

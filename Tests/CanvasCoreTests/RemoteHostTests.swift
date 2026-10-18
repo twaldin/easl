@@ -142,7 +142,7 @@ struct RemoteHostTests {
                      createdBy: .user, createdAt: .distantPast, props: .object(host.map { ["host": .string($0)] } ?? [:]))
     }
 
-    func runAttach(_ host: RemoteHost, home: URL, tile: ObjectID, board: BoardID, merged: [BoardID]) async throws -> (status: Int32, output: String, errors: String) {
+    func runAttach(_ host: RemoteHost, home: URL, tile: ObjectID, board: BoardID, merged: [BoardID]) async throws -> RemoteHost.RunResult {
         let command = host.terminalAttachCommand(for: terminal(tile), board: board, merged: merged)
         let index = try #require(command.firstIndex(of: host.sshTarget))
         return try await RemoteHost.run("/usr/bin/env", ["-u", "ZMX_DIR", "HOME=" + home.path, "/bin/sh", "-c", command[(index + 1)...].joined(separator: " ")], timeout: 10)
@@ -510,6 +510,18 @@ struct RemoteHostTests {
         await #expect(throws: CancellationError.self) { try await task.value }
         #expect(Date().timeIntervalSince(started) < 30, "it didn't wait out the sleep, or the timeout")
         #expect(kill(pid, 0) == -1 && errno == ESRCH, "gone, not a zombie waiting to be reaped")
+    }
+
+    @Test func anInactiveRunReportsTimeoutAndReapsItsProcess() async throws {
+        let file = NSTemporaryDirectory() + "rh-\(UUID().uuidString.prefix(8)).pid"
+        defer { try? FileManager.default.removeItem(atPath: file) }
+        let result = try await RemoteHost.run("/bin/sh", ["-c", "echo $$ > '\(file)'; printf 'partial reply'; exec sleep 60"],
+                                              timeout: 0.3, timeoutPolicy: .inactivity)
+        let child = try #require(await pid(in: file))
+        #expect(result.output == "partial reply")
+        #expect(result.timedOut)
+        #expect(result.status != 0)
+        #expect(kill(child, 0) == -1 && errno == ESRCH)
     }
 
     @Test func aRunCancelledBeforeItStartsNeverStarts() async throws {

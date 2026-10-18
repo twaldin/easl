@@ -99,6 +99,11 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
         self.tile = tile
     }
 
+    func cancelHostReads() {
+        for read in reads.values { read.cancel() }
+        reads.removeAll()
+    }
+
     static func boardFileURL(path: String) -> URL {
         var url = URLComponents()
         url.scheme = HtmlKit.scheme
@@ -249,9 +254,11 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                     if !transformed.isEmpty { task.didReceive(transformed) }
                 }
                 guard self.reads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
+                tile.hostImageFinished(url, error: nil, in: webView)
                 task.didFinish()
             } catch {
                 guard self.reads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
+                tile.hostImageFinished(url, error: error, in: webView)
                 if live, !observed {
                     tile.observeAsset(assetKey, request: request,
                                       baseline: .failure(assetFailure ?? (error as? HostFileError) ?? .unavailable(String(describing: error))))
@@ -259,7 +266,13 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                 if began {
                     task.didFailWithError(error)
                 } else {
-                    self.respond(task, url: url, data: Data("not found".utf8), type: "text/plain", cache: "no-store", status: 404)
+                    let failure = error as? HostFileError ?? .unavailable(String(describing: error))
+                    if case .unavailable = failure {
+                        task.didFailWithError(NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost,
+                                                     userInfo: [NSLocalizedDescriptionKey: HostGit.refusal(failure)]))
+                    } else {
+                        self.respond(task, url: url, data: Data("not found".utf8), type: "text/plain", cache: "no-store", status: 404)
+                    }
                 }
             }
         }
@@ -369,6 +382,11 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
             return Data(HtmlHostRuntime.document(hostURLs.rewriteHTML(in: text), base: base).utf8)
         }
         return Data(hostURLs.rewriteCSS(in: text).utf8)
+    }
+
+    func cancelHostReads() {
+        for task in hostReads.values { task.cancel() }
+        hostReads.removeAll()
     }
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {

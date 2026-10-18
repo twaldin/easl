@@ -349,13 +349,25 @@ public struct RemoteHost: Codable, Hashable, Sendable {
         text.split(whereSeparator: \.isNewline).last.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
     }
 
+    public enum TimeoutPolicy: Sendable {
+        case elapsed
+        case inactivity
+    }
+
+    public struct RunResult: Sendable {
+        public let status: Int32
+        public let output: String
+        public let errors: String
+        public let timedOut: Bool
+    }
+
     /// Runs blocking process I/O on dedicated threads so GCD can still service socket reads.
     /// Timeout and cancellation end and reap the process, including a blocked stdin writer.
-    public static func run(_ executable: String, _ arguments: [String], input: Data? = nil, timeout: TimeInterval) async throws -> (status: Int32, output: String, errors: String) {
+    public static func run(_ executable: String, _ arguments: [String], input: Data? = nil, timeout: TimeInterval, timeoutPolicy: TimeoutPolicy = .elapsed, onStop: (@Sendable () -> Void)? = nil) async throws -> RunResult {
         try Task.checkCancellation()
-        let job = RunningProcess()
-        let result: (status: Int32, output: String, errors: String) = await withTaskCancellationHandler {
-            let work: @Sendable () -> (status: Int32, output: String, errors: String) = {
+        let job = RunningProcess(onStop: onStop)
+        let result: RunResult = await withTaskCancellationHandler {
+            let work: @Sendable () -> RunResult = {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: executable)
                 process.arguments = arguments
@@ -369,13 +381,12 @@ public struct RemoteHost: Codable, Hashable, Sendable {
                     process.standardInput = FileHandle.nullDevice
                 }
                 do {
-                    guard try job.launch(process) else { return (-1, "", "cancelled") }
+                    guard try job.launch(process, timeout: timeout) else {
+                        return RunResult(status: -1, output: "", errors: "cancelled", timedOut: false)
+                    }
                 } catch {
-                    return (-1, "", "cannot run \(executable): \(error.localizedDescription)")
+                    return RunResult(status: -1, output: "", errors: "cannot run \(executable): \(error.localizedDescription)", timedOut: false)
                 }
-                let running = UncheckedBox(process)
-                let deadline = DispatchWorkItem { RemoteProcesses.stop(running.value) }
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
                 let stderr = Locked(Data())
                 let drained = DispatchGroup()
                 try? stdin?.fileHandleForReading.close()
@@ -395,11 +406,17 @@ public struct RemoteHost: Codable, Hashable, Sendable {
                     stderr.withLock { $0 = data }
                     drained.leave()
                 }
-                let stdout = output.fileHandleForReading.readDataToEndOfFile()
+                var stdout = Data()
+                while true {
+                    let chunk = output.fileHandleForReading.availableData
+                    if chunk.isEmpty { break }
+                    if case .inactivity = timeoutPolicy { job.progress() }
+                    stdout.append(chunk)
+                }
                 drained.wait()
                 process.waitUntilExit()
-                deadline.cancel()
-                return (process.terminationStatus, String(decoding: stdout, as: UTF8.self), String(decoding: stderr.withLock { $0 }, as: UTF8.self))
+                let timedOut = job.finish()
+                return RunResult(status: process.terminationStatus, output: String(decoding: stdout, as: UTF8.self), errors: String(decoding: stderr.withLock { $0 }, as: UTF8.self), timedOut: timedOut)
             }
             return await withCheckedContinuation { done in
                 let thread = Thread { done.resume(returning: work()) }
@@ -418,25 +435,76 @@ public struct RemoteHost: Codable, Hashable, Sendable {
 /// before the process starts keeps it from starting.
 private final class RunningProcess: @unchecked Sendable {
     private let lock = NSLock()
+    private let onStop: (@Sendable () -> Void)?
     private var process: Process?
     private var isCancelled = false
+    private var timedOut = false
+    private var timer: DispatchSourceTimer?
+    private var timeout: TimeInterval = 0
+    private var lastProgress = DispatchTime.now()
+
+    init(onStop: (@Sendable () -> Void)?) {
+        self.onStop = onStop
+    }
 
     var cancelled: Bool { lock.withLock { isCancelled } }
 
-    /// Starts `process` unless cancelled first (false then).
-    func launch(_ process: Process) throws -> Bool {
+    func launch(_ process: Process, timeout: TimeInterval) throws -> Bool {
         try lock.withLock {
             guard !isCancelled else { return false }
             try RemoteProcesses.shared.launch(process)
             self.process = process
+            self.timeout = timeout
+            lastProgress = .now()
+            let timer = DispatchSource.makeTimerSource(queue: .global())
+            timer.setEventHandler { [weak self] in self?.expire() }
+            timer.schedule(deadline: lastProgress + timeout)
+            self.timer = timer
+            timer.resume()
             return true
+        }
+    }
+
+    func progress() {
+        lock.withLock {
+            lastProgress = .now()
+        }
+    }
+
+    private func expire() {
+        lock.withLock {
+            guard !isCancelled, !timedOut, let process else { return }
+            let deadline = lastProgress + timeout
+            if DispatchTime.now() < deadline {
+                timer?.schedule(deadline: deadline)
+                return
+            }
+            timedOut = true
+            timer?.cancel()
+            timer = nil
+            RemoteProcesses.stop(process)
+            onStop?()
+        }
+    }
+
+    func finish() -> Bool {
+        lock.withLock {
+            timer?.cancel()
+            timer = nil
+            process = nil
+            return timedOut
         }
     }
 
     func cancel() {
         lock.withLock {
             isCancelled = true
-            if let process { RemoteProcesses.stop(process) }
+            timer?.cancel()
+            timer = nil
+            if let process {
+                RemoteProcesses.stop(process)
+                onStop?()
+            }
         }
     }
 }

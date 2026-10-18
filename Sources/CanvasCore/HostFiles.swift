@@ -122,12 +122,18 @@ public struct HostFiles: Sendable {
     public let temps: [String]
     private let route: HostRoute
     private let master: HostMaster?
+    private let channelRoute: HostRoute
+    private let channelMaster: HostMaster?
 
+    @MainActor
     public init(host: RemoteHost, master: HostMaster) {
         hostName = host.name
         temps = [host.tmpdir, "/tmp", "/var/tmp"]
-        route = master.route
-        self.master = master
+        let reader = master.fileReader
+        route = reader.route
+        self.master = reader
+        channelRoute = master.route
+        channelMaster = master
     }
 
     init(hostName: String, route: HostRoute, temps: [String]) {
@@ -135,15 +141,17 @@ public struct HostFiles: Sendable {
         self.route = route
         self.temps = temps
         master = nil
+        channelRoute = route
+        channelMaster = nil
     }
 
     /// This host without its master, for cleanup while easl quits: nothing it runs waits for
     /// the master, a file-session slot or the main actor.
-    var cleanup: HostFiles { HostFiles(hostName: hostName, route: route, temps: temps) }
+    var cleanup: HostFiles { HostFiles(hostName: hostName, route: channelRoute, temps: temps) }
 
     public func read(_ request: HostFileRequest) async throws -> HostFile {
         try request.range?.validate()
-        let output = try await execute(Self.program, request: JSONEncoder().encode(payload(request)), what: "host file reader")
+        let output = try await execute(Self.program, request: JSONEncoder().encode(payload(request)), retryTransport: true, what: "host file reader")
         guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(output.utf8)) else {
             throw HostFileError.unavailable("invalid host file reply")
         }
@@ -174,7 +182,7 @@ public struct HostFiles: Sendable {
                 return try payload(metadata)
             }
             let input = try JSONEncoder().encode(JSONValue.object(["requests": .array(batch)]))
-            let output = try await execute(Self.program, request: input, what: "host file observations")
+            let output = try await execute(Self.program, request: input, retryTransport: true, what: "host file observations")
             guard let replies = try? JSONDecoder().decode([Reply].self, from: Data(output.utf8)), replies.count == batch.count else {
                 throw HostFileError.unavailable("invalid host file observations")
             }
@@ -204,34 +212,95 @@ public struct HostFiles: Sendable {
         return observations
     }
 
-    func execute(_ program: HostProgram, request: Data, timeout: TimeInterval = 20, what: String) async throws -> String {
-        let command = invocation(program, request: request)
-        let result = try await session {
-            try await RemoteHost.run(command.executable, command.arguments, input: command.input, timeout: timeout)
+    func execute(_ program: HostProgram, request: Data, timeout: TimeInterval = 20, retryTransport: Bool = false, what: String) async throws -> String {
+        let input = program.frame + request
+        var attempt = 0
+        while true {
+            attempt += 1
+            try Task.checkCancellation()
+            var admitted = false
+            let interrupt: (@Sendable () -> Void)?
+            do {
+                if let master {
+                    try await master.fileSession()
+                    admitted = true
+                    try await master.ready()
+                    interrupt = try await master.interruption()
+                } else {
+                    interrupt = nil
+                }
+            } catch is CancellationError {
+                if admitted, let master { await master.endFileSession() }
+                throw CancellationError()
+            } catch {
+                if admitted, let master { await master.endFileSession() }
+                try Task.checkCancellation()
+                let failure = error as? HostMaster.Failure
+                if retryTransport, failure?.retryable == true, attempt < 3 {
+                    try await Task.sleep(for: .milliseconds(150 * attempt))
+                    continue
+                }
+                let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                throw HostFileError.unavailable(Self.sshRefused(message) ? "the host refused the SSH connection" : message)
+            }
+            let result: RemoteHost.RunResult
+            do {
+                result = try await RemoteHost.run(route.executable, route.ssh(Self.command), input: input, timeout: timeout, timeoutPolicy: .inactivity, onStop: interrupt)
+            } catch {
+                if let master { await master.endFileSession() }
+                throw error
+            }
+            if result.status != 0, Self.retryableSSHFailure(status: result.status, errors: result.errors) { interrupt?() }
+            if let master { await master.endFileSession() }
+            try Task.checkCancellation()
+            if result.timedOut {
+                NSLog("easl: %@ on %@ timed out after %ld reply bytes (status %d): %@", what, hostName, result.output.utf8.count, result.status, result.errors)
+                throw HostFileError.unavailable("the host stopped responding for \(String(format: "%g", timeout)) seconds")
+            }
+            if result.status == 0 { return result.output }
+            NSLog("easl: %@ on %@ failed (status %d): %@", what, hostName, result.status, result.errors)
+            if retryTransport, Self.retryableSSHFailure(status: result.status, errors: result.errors), attempt < 3 {
+                try await Task.sleep(for: .milliseconds(150 * attempt))
+                continue
+            }
+            let reason: String
+            if Self.sshRefused(result.errors) {
+                reason = "the host refused the SSH connection"
+            } else {
+                reason = RemoteHost.lastLine(result.errors)
+                    ?? (result.status == 255 ? "the SSH connection to \(hostName) ended unexpectedly" : "\(what) exited with status \(result.status)")
+            }
+            throw HostFileError.unavailable(reason)
         }
-        try Task.checkCancellation()
-        guard result.status == 0 else {
-            throw HostFileError.unavailable(RemoteHost.lastLine(result.errors) ?? "\(what) exited with status \(result.status)")
-        }
-        return result.output
     }
 
     func session<T: Sendable>(_ body: () async throws -> T) async throws -> T {
+        var admitted = false
+        let interrupt: (@Sendable () -> Void)?
         do {
             if let master {
-                try await master.ready()
                 try await master.fileSession()
+                admitted = true
+                try await master.ready()
+                interrupt = try await master.interruption()
+            } else {
+                interrupt = nil
             }
         } catch is CancellationError {
+            if admitted, let master { await master.endFileSession() }
             throw CancellationError()
         } catch {
-            throw HostFileError.unavailable((error as? LocalizedError)?.errorDescription ?? String(describing: error))
+            if admitted, let master { await master.endFileSession() }
+            try Task.checkCancellation()
+            let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            throw HostFileError.unavailable(Self.sshRefused(message) ? "the host refused the SSH connection" : message)
         }
         do {
             let value = try await body()
             if let master { await master.endFileSession() }
             return value
         } catch {
+            interrupt?()
             if let master { await master.endFileSession() }
             throw error
         }
@@ -241,15 +310,41 @@ public struct HostFiles: Sendable {
         (route.executable, route.ssh(Self.command), program.frame + request)
     }
 
+    private static let permanentSSHFailures = [
+        "permission denied", "authentication failed", "host key verification failed",
+        "remote host identification has changed", "bad configuration", "no matching host key type",
+        "no matching key exchange method", "no supported authentication methods",
+        "too many authentication failures", "bad owner or permissions", "invalid format",
+        "could not resolve hostname", "hostname contains invalid characters", "unknown option",
+        "illegal option", "cannot execute proxycommand",
+    ]
+
+    static func retryableSSHFailure(status: Int32, errors: String) -> Bool {
+        let message = errors.lowercased()
+        guard !permanentSSHFailures.contains(where: message.contains) else { return false }
+        return status == 255 || sshRefusedLowercased(message)
+    }
+
+    static func sshRefused(_ message: String) -> Bool {
+        sshRefusedLowercased(message.lowercased())
+    }
+
+    private static func sshRefusedLowercased(_ message: String) -> Bool {
+        return (message.contains("ssh: connect to host ") && message.contains("connection refused"))
+            || (message.contains("mux_client_request_session:") && message.contains("refused"))
+            || (message.contains("channel ") && message.contains("open failed:")
+                && (message.contains("refused") || message.contains("administratively prohibited")))
+    }
+
     func channel(_ script: String, _ arguments: [String]) async throws -> (executable: String, arguments: [String]) {
         do {
-            try await master?.ready()
+            try await channelMaster?.ready()
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             throw HostFileError.unavailable((error as? LocalizedError)?.errorDescription ?? String(describing: error))
         }
-        return (route.executable, route.ssh(HostedTerminal.remote(script, arguments)))
+        return (channelRoute.executable, channelRoute.ssh(HostedTerminal.remote(script, arguments)))
     }
 
     private struct Reply: Decodable {

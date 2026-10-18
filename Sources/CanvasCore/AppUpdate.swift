@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Security
+import Darwin
 
 /// easl's in-app updater (easl › Check for Updates…, the titlebar Update button; docs/design.md
 /// "Updates"): the release `latest.json` offers, whether it's newer than the running app, the
@@ -15,6 +16,27 @@ public enum AppUpdate {
     public static let firstCheck: TimeInterval = 60
     /// Automatic checks after the first, while easl runs.
     public static let checkInterval: TimeInterval = 24 * 60 * 60
+    public static let automaticIdleThreshold: TimeInterval = 10 * 60
+
+    public enum AutomaticAction: Equatable, Sendable {
+        case none
+        case stage
+        case install
+    }
+
+    /// Staging does not wait for idle. A failed artifact needs an explicit retry or a new checksum.
+    public static func automaticAction(phase: UpdatePhase, running: AppVersion, enabled: Bool,
+                                       idleSeconds: TimeInterval, rejectedSHA256: String? = nil,
+                                       retryAfter: Date? = nil, now: Date = .now) -> AutomaticAction {
+        guard enabled, retryAfter.map({ $0 <= now }) ?? true,
+              let release = phase.offered, release.isNewer(than: running),
+              release.sha256 != rejectedSHA256 else { return .none }
+        switch phase {
+        case .available: return .stage
+        case .ready: return idleSeconds.isFinite && idleSeconds >= automaticIdleThreshold ? .install : .none
+        default: return .none
+        }
+    }
     /// The bundle a release zip holds.
     public static let appName = "easl.app"
     /// The verified copy beside the installed app, `<prefix><version>.app`, that the helper
@@ -155,7 +177,7 @@ public enum AppUpdate {
             installed.deletingLastPathComponent().appendingPathComponent("\(AppUpdate.incomingPrefix)\(version)-\(transaction).app", isDirectory: true)
         }
 
-        /// Where the helper renames `installed` while the new app takes its name:
+        /// Where the helper parks the old bundle after the atomic exchange, before archiving:
         /// `.easl-previous-<version>-<transaction>.app`.
         public func backup(beside installed: URL) -> URL {
             installed.deletingLastPathComponent().appendingPathComponent("\(AppUpdate.backupPrefix)\(version)-\(transaction).app", isDirectory: true)
@@ -205,31 +227,47 @@ public enum AppUpdate {
         name.hasPrefix(backupPrefix) && name.hasSuffix(protectionSuffix) && isLeftover(String(name.dropLast(protectionSuffix.count)))
     }
 
-    /// How old a leftover must be before a launch deletes it: an update renames its copies within
-    /// seconds, so one this old belongs to no update still running (another home's instance of
-    /// the same bundle may be mid-update).
+    private static func isLease(_ name: String) -> Bool {
+        name.hasPrefix(incomingPrefix) && name.hasSuffix(".lease") && isLeftover(String(name.dropLast(6)))
+    }
+
+    private static func leaseName(for name: String) -> String {
+        if isLease(name) { return name }
+        let bundle = isProtection(name) ? String(name.dropLast(protectionSuffix.count)) : name
+        if bundle.hasPrefix(backupPrefix) {
+            return incomingPrefix + String(bundle.dropFirst(backupPrefix.count)) + ".lease"
+        }
+        return bundle + ".lease"
+    }
+
+    /// How old an unlocked leftover must be before a launch deletes it. A live staging lease
+    /// protects an update regardless of how long it waits for idle or for the app to quit.
     public static let leftoverAge: TimeInterval = 60 * 60
 
-    /// The leftovers and protection directories a launch deletes: at least `leftoverAge` old,
-    /// and never `running` or its protection. A backup's newer protection date takes precedence
-    /// over its bundle date, which a rename preserves; an old protection never ages a fresh bundle.
-    /// Repeated protection names use the newest date.
+    /// Candidates for launch cleanup, at least `leftoverAge` old and never `running`, its lease
+    /// or its protection. Live leases are checked separately at deletion time.
+    /// A backup's newer protection date takes precedence over its bundle date, which a rename
+    /// preserves; an old protection never ages a fresh bundle. Repeated names use the newest date.
     public static func staleLeftovers(_ files: [Housekeeping.File], running: String, now: Date) -> [String] {
         let protections = Dictionary(files.filter { isProtection($0.name) }.map { ($0.name, $0.modified) }, uniquingKeysWith: max)
         return files.compactMap { file in
-            guard file.name != running, file.name != running + protectionSuffix else { return nil }
+            guard file.name != running, file.name != running + protectionSuffix, file.name != running + ".lease" else { return nil }
             if isLeftover(file.name) {
-                let modified = max(file.modified, protections[file.name + protectionSuffix] ?? file.modified)
+                let protectionName = file.name.hasPrefix(incomingPrefix)
+                    ? backupPrefix + String(file.name.dropFirst(incomingPrefix.count)) + protectionSuffix
+                    : file.name + protectionSuffix
+                let modified = max(file.modified, protections[protectionName] ?? file.modified)
                 return now.timeIntervalSince(modified) >= leftoverAge ? file.name : nil
             }
+            if isLease(file.name) { return now.timeIntervalSince(file.modified) >= leftoverAge ? file.name : nil }
             guard let modified = protections[file.name] else { return nil }
             return now.timeIntervalSince(modified) >= leftoverAge ? file.name : nil
         }
     }
 
     /// Lists the entries in `folder`, applies `staleLeftovers`, and returns the names actually
-    /// removed. Launch cleanup is deliberately best-effort: an unreadable directory is skipped;
-    /// an unreadable date is treated as young, keeping that entry and, for a protection, its backup.
+    /// removed. A live advisory lease protects its transaction through each removal.
+    /// Launch cleanup is best-effort. Unreadable directories, dates or leases are preserved.
     /// Failed removals are logged and skipped without failing launch or stopping other removals.
     /// Blocking: call it off the main thread.
     public static func removeStaleLeftovers(beside folder: URL, running: String, now: Date = Date()) -> [String] {
@@ -242,8 +280,7 @@ public enum AppUpdate {
         return staleLeftovers(entries, running: running, now: now).filter { name in
             let url = folder.appendingPathComponent(name)
             do {
-                try files.removeItem(at: url)
-                return true
+                return try StagingLease.removeLeftover(url, protectedBy: folder.appendingPathComponent(leaseName(for: name)))
             } catch {
                 NSLog("easl: couldn't remove %@, left by an update: %@", url.path, error.localizedDescription)
                 return false
@@ -324,7 +361,7 @@ public enum AppUpdate {
         let incoming = staging.incoming(beside: installed)
         do {
             try await run("/usr/bin/ditto", [staged.path, incoming.path], or: InstallProblem.copy)
-            // ditto keeps the release's dates; a launch deletes only leftovers an hour old.
+            // Keep an abandoned copy young after the lease owner exits.
             try await blocking { try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: incoming.path) }
             try await verify(incoming, release: release, team: team, gatekeeper: gatekeeper)
             if try await blocking({ isQuarantined(incoming) }) { try await clearQuarantine(incoming) }
@@ -416,72 +453,95 @@ public enum AppUpdate {
 
     // MARK: the helper
 
-    /// The detached helper's `/bin/sh` script. It waits for `pid` (the app) to exit, then only
-    /// renames within `app`'s folder: `app` to `staging.backup(beside:)` and
-    /// `staging.incoming(beside:)` (the verified copy) to `app`; if the second rename fails, the
-    /// backup goes straight back. A rename never copies, so a failure leaves each bundle whole;
-    /// `mv` would move into a folder already at the destination, so each destination must be
-    /// free first. Before the first rename it exclusively creates `staging.protection(beside:)`,
-    /// a fresh empty directory whose date protects the rollback bundle from hour-old cleanup,
-    /// without writing the installed app's timestamps. A failure to create it replaces nothing.
-    /// After a success the backup goes to `staging.previous`; its protection stays if that move
-    /// fails, or rollback strands the backup. Otherwise the empty protection is removed.
-    /// It writes the outcome to `staging.result` (`Outcome`) and runs `relaunch`, a shell command
-    /// that opens `"$app"`: the new version, or the old one.
-    /// `relaunch` is `relaunchCommand` in the app; tests pass their own, and `afterBackup`, a
-    /// command run right after the first rename.
-    public static func helperScript(pid: Int32, app: URL, staging: Staging, relaunch: String, afterBackup: String = "") -> String {
+    /// Exchanges complete bundles in one filesystem operation. Failure changes neither path.
+    public static func swapBundles(installed: URL, incoming: URL) throws {
+        try requireBundle(installed)
+        try requireBundle(incoming)
+        guard renamex_np(incoming.path, installed.path, UInt32(RENAME_SWAP)) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+    }
+
+    /// The installed executable performs the atomic exchange before any application bootstrap.
+    /// Filesystem identity resolves interruption even between the exchange and shell bookkeeping.
+    public static func helperScript(pid: Int32, app: URL, staging: Staging, relaunch: String,
+                                    swapExecutable: URL? = nil, beforeSwap: String = "", afterSwap: String = "") -> String {
         let q = RemoteHost.quote
+        let executable = swapExecutable ?? app.appendingPathComponent("Contents/MacOS/Easl")
         return """
         pid=\(pid)
         app=\(q(app.path))
         new=\(q(staging.incoming(beside: app).path))
+        lease="$new.lease"
         backup=\(q(staging.backup(beside: app).path))
         protection=\(q(staging.protection(beside: app).path))
         previous=\(q(staging.previous.path))
         result=\(q(staging.result.path))
+        swapping=0
+        original=
         vacant() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
+        identity() { /usr/bin/stat -f '%d:%i' "$1"; }
         unchanged() { printf 'unchanged: %s\\n' "$1" > "$result"; }
+        installed() {
+          echo installed > "$result"
+          if /bin/mv "$new" "$backup" && /bin/mv "$backup" "$previous"; then
+            /bin/rmdir "$protection"
+          else
+            echo "easl: previous app stays beside $app until the next launch"
+          fi
+        }
+        failed() {
+          current=$(identity "$app") || return
+          if [ "$current" != "$original" ]; then
+            installed
+          else
+            unchanged "$1"
+            /bin/rmdir "$protection"
+          fi
+        }
         replace() {
           vacant "$backup" || { unchanged "$backup is in the way"; return; }
           err=$(/bin/mkdir "$protection" 2>&1) || { unchanged "$err"; return; }
-          err=$(/bin/mv "$app" "$backup" 2>&1) || { unchanged "$err"; /bin/rmdir "$protection"; return; }
-          \(afterBackup)
-          if vacant "$app" && err=$(/bin/mv "$new" "$app" 2>&1); then
-            echo installed > "$result"
-            if /bin/mv "$backup" "$previous"; then
-              /bin/rmdir "$protection"
-            else
-              echo "easl: $backup stays until the next launch"
-            fi
-          elif vacant "$app" && /bin/mv "$backup" "$app"; then
-            printf 'restored: %s\\n' "${err:-something else took $app}" > "$result"
-            /bin/rmdir "$protection"
+          original=$(identity "$app") || { unchanged "cannot identify installed app"; /bin/rmdir "$protection"; return; }
+          \(beforeSwap.isEmpty ? ":" : beforeSwap)
+          if err=$(\(q(executable.path)) --update-swap "$app" "$new" 2>&1); then
+            \(afterSwap.isEmpty ? ":" : afterSwap)
+            installed
           else
-            printf 'stranded: %s\\n' "$backup" > "$result"
-            app=$backup
+            failed "$err"
           fi
         }
+        finish() {
+          trap - 0
+          trap '' 1 2 15
+          [ "$swapping" = 1 ] || exit 1
+          if [ ! -f "$result" ]; then
+            if [ -n "$original" ]; then
+              failed "helper interrupted"
+            else
+              unchanged "helper interrupted"
+            fi
+          fi
+          [ ! -f "$result" ] || /bin/rm -f "$lease"
+          \(relaunch)
+        }
+        trap finish 0
+        trap 'exit 1' 1 2 15
         while kill -0 "$pid" 2>/dev/null; do /bin/sleep 0.2; done
+        swapping=1
         replace
-        \(relaunch)
 
         """
     }
 
-    /// How the helper opens easl again: registers the bundle at `"$app"` with LaunchServices
-    /// (it caches Info.plist) and opens a new instance of it with `environment` (the old
-    /// bundle's `LSEnvironment` and `EASL_HOME`, so an instance on its own home comes back on
-    /// it). A user's easl comes back in front: `open -n`, never `-g`, since a Gatekeeper prompt
-    /// for a background launch waits on a Space nobody sees and blocks every exec of the path
-    /// (issue #60). Only an instance that may not activate (`EASL_NO_ACTIVATE=1`, a development
-    /// instance on a shared Mac) opens with `-g`: LaunchServices activates a launched app itself,
-    /// whatever its environment, and an ad hoc development bundle is never quarantined.
+    /// Gatekeeper and quarantine checks finish before the helper runs. LaunchServices and the
+    /// new process both suppress activation for this launch, without changing saved preferences.
     public static func relaunchCommand(environment: [String: String]) -> String {
         let lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-        let background = environment["EASL_NO_ACTIVATE"] == "1" ? " -g" : ""
+        var environment = environment
+        environment["EASL_UPDATE_RELAUNCH"] = "1"
         let env = environment.sorted { $0.key < $1.key }.map { " --env " + RemoteHost.quote("\($0.key)=\($0.value)") }.joined()
-        return "\(lsregister) -f \"$app\" >/dev/null 2>&1\n/usr/bin/open -n\(background)\(env) \"$app\""
+        return "\(lsregister) -f \"$app\" >/dev/null 2>&1\n/usr/bin/open -n -g\(env) \"$app\""
     }
 }
 
@@ -666,7 +726,7 @@ public enum UpdatePhase: Equatable, Sendable {
     /// signature, Team ID, Gatekeeper's verdict and version, then the same for its copy beside
     /// the installed app.
     case verifying(LatestRelease)
-    /// Verified and staged: next the helper starts and easl quits.
+    /// Verified and staged, awaiting idle or an explicit install.
     case ready(LatestRelease)
     /// The helper is waiting for easl to quit.
     case installing(LatestRelease)
@@ -719,11 +779,31 @@ public enum UpdatePhase: Equatable, Sendable {
         }
     }
 
-    /// Downloading, verifying, or about to quit: the update is under way.
-    public var isUpdating: Bool {
+    public var name: String {
+        switch self {
+        case .idle: "idle"
+        case .checking: "checking"
+        case .available: "available"
+        case .downloading: "downloading"
+        case .verifying: "verifying"
+        case .ready: "ready"
+        case .installing: "installing"
+        case .failed: "failed"
+        }
+    }
+
+    public var installPending: Bool {
         switch self {
         case .downloading, .verifying, .ready, .installing: true
-        case .idle, .checking, .available, .failed: false
+        default: false
+        }
+    }
+
+    /// Work that prevents another manual update action. A staged update can be installed now.
+    public var isUpdating: Bool {
+        switch self {
+        case .downloading, .verifying, .installing: true
+        case .idle, .checking, .available, .ready, .failed: false
         }
     }
 }
