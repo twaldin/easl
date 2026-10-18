@@ -2,7 +2,27 @@
 
 Each version's section is its GitHub release's notes.
 
-## Unreleased
+## 0.2.8
+
+**Interim release.** Remote HTML loading host files and video, browser relay through easld, closed-board inspection, and faster board loading come in the next release.
+
+**Updating from 0.2.4 or 0.2.6.** The update still runs the installed version's own install helper. If Update in 0.2.4 stops with nothing replaced, quit easl and install 0.2.8 from its zip on [GitHub Releases](https://github.com/twaldin/easl/releases), or run `brew upgrade --cask easl` for a Homebrew install. The install-helper fix shipped in 0.2.5, so 0.2.6 can use Check for Updates normally.
+
+**Host updates.** These changes also need easld updated on the host.
+
+- Viewer-served renders, exact HTML measurement and fits, and inline-image validation (#125).
+- Diagram graph persistence and delegated diagram reload (#130). Host language-server navigation itself runs through the viewer's SSH connection.
+- Host-generated note and code anchor confinement, and cleanup of saved outside-board anchor metadata (#131, #133, #135).
+- Host-close notifications and automatic viewer recovery on reopen (#134).
+- Browser drawing-machine assignment, agent browser commands, reload, and private cmux sockets (#137).
+- Automatic archiving of closed questions (#138).
+- Per-viewer undo and redo, restacking, attention snapshots and seen acknowledgments, and staged composer submissions (#142, schema version 2).
+
+Re-run `scripts/offload-setup.sh <host>` on the Mac, then restart `easld@<user>` on the host. Running terminal sessions keep going. For Mac-hosted boards, update the hosting app too, including for browser streaming (#124).
+
+**Mixed versions.** A 0.2.8 app can view and make basic edits on a 0.2.7 easld. Undo, restacking, and composer sends with staged mentions report that the host needs updating; the other host changes above are absent. Live image, code, changes, and note drawing, terminal file references, host language-server navigation, background attachments, and live HTML are viewer-side updates. Host file reads require Bun and Python 3, plus git for refs. Updating easld alone does not add those viewer features. A 0.2.7 app can still display the board on 0.2.8 easld, but its schema-1 delegated-client attachment is refused with an update message, and composer submissions using the old `mentions` format are rejected.
+
+The release smoke drew the inspected HTML and notes with all four 0.2.7 and release-candidate app/easld combinations. Images drew with the new app on either server. Browsers drew with both updated; the new app with old easld showed "No drawing Mac yet", and the old app drew neither images nor browsers on either server. This is not a claim that this release fixes the reported blank HTML.
 
 - **Use the same live browser page from every easld viewer.** Easld relays private frames and input from the tile's drawing Mac, without storing page payloads or replaying input after reconnect. The title-bar selector moves drawing among attached Macs and explains the reload into that Mac's own profile. If the page's input relay cannot be prepared, its stream closes with a clear notice instead of silently losing queued input. Mac-hosted boards still draw only on their host.
 - Streamed file inputs open the file picker on the driving viewer, including repeated clicks after choosing or cancelling a file and custom buttons that call `input.click()`. Passive page helpers preserve real user activation between a press and its release. Up to 32 files and 8 MiB total travel in memory, without staging files on easld or the drawing Mac. Folder and iframe uploads remain unavailable.
