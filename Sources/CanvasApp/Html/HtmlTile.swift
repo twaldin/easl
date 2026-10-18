@@ -21,6 +21,7 @@ final class HtmlTile: NSView, TileContent {
     private var live = true
     private var building = false
     private var loadFailure: NSTextField?
+    private var hostImageFailures: [URL: String] = [:]
     /// Last rendered image: zoomed-out cards and `view.snapshot` covers.
     private var lastSnapshot: NSImage?
     private var snapshotCover: NSImageView?
@@ -139,6 +140,7 @@ final class HtmlTile: NSView, TileContent {
         addSubview(web, positioned: .below, relativeTo: nil)
         webView = web
         pageShown = false
+        hostImageFailures.removeAll()
         loadFailure?.removeFromSuperview()
         loadFailure = nil
         web.load(URLRequest(url: pageURL))
@@ -200,11 +202,29 @@ final class HtmlTile: NSView, TileContent {
         loadFailure?.removeFromSuperview()
         let label = NSTextField(wrappingLabelWithString: message)
         label.textColor = .systemRed
+        label.drawsBackground = true
+        label.backgroundColor = .textBackgroundColor
         label.frame = bounds.insetBy(dx: 12, dy: 12)
         label.autoresizingMask = [.width, .height]
         addSubview(label)
         loadFailure = label
         showPage()
+    }
+
+    func hostImageFinished(_ url: URL, error: Error?, in web: WKWebView) {
+        guard web === webView else { return }
+        if let error {
+            let failure = error as? HostFileError ?? .unavailable(String(describing: error))
+            hostImageFailures[url] = "\(url.lastPathComponent): \(HostGit.refusal(failure))"
+        } else {
+            hostImageFailures.removeValue(forKey: url)
+        }
+        if let reason = hostImageFailures.first?.value {
+            showFailure("Host image unavailable: \(reason)")
+        } else {
+            loadFailure?.removeFromSuperview()
+            loadFailure = nil
+        }
     }
 
     // MARK: Channel
@@ -580,6 +600,9 @@ final class HtmlTile: NSView, TileContent {
         } else if object.props["html"] != previous.props["html"] {
             Metrics.shared.record("html.reload")
             work.cancelAll()
+            hostImageFailures.removeAll()
+            loadFailure?.removeFromSuperview()
+            loadFailure = nil
             web.load(URLRequest(url: pageURL))
         } else if object.props["state"] != previous.props["state"] {
             let state = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(object.props["state"] ?? .object([:])))) ?? [String: Any]()
@@ -675,6 +698,11 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if webView === self.webView {
+            hostImageFailures.removeAll()
+            loadFailure?.removeFromSuperview()
+            loadFailure = nil
+        }
         webView.load(URLRequest(url: pageURL))
     }
 
