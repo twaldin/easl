@@ -106,6 +106,11 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
         respond(task, url: url, data: Data("not found".utf8), type: "text/plain", cache: "no-store", status: 404)
     }
 
+    func cancelHostReads() {
+        for task in hostReads.values { task.cancel() }
+        hostReads.removeAll()
+    }
+
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
         reading.remove(ObjectIdentifier(task))
         hostReads.removeValue(forKey: ObjectIdentifier(task))?.cancel()

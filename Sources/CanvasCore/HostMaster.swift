@@ -66,8 +66,10 @@ public final class HostMaster {
 
     var fileReader: HostMaster {
         if let cachedFileReader { return cachedFileReader }
+        let key = HostedTerminal.instance(hostname: "files", support: route.controlPath)
+        let path = URL(fileURLWithPath: route.controlPath).deletingLastPathComponent().appendingPathComponent("easl-ssh-\(key)").path
         let reader = HostMaster(
-            route: HostRoute(target: route.target, controlPath: route.controlPath + "-files", executable: route.executable),
+            route: HostRoute(target: route.target, controlPath: path, executable: route.executable),
             processes: processes
         )
         if closed { reader.close() }
