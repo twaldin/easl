@@ -74,7 +74,7 @@ extension HostFiles {
                                         "imagesSource": .object(try sourcePayload(request.imagesSource)),
                                         "fences": .array(fences), "images": .array(request.images.map(JSONValue.string)),
                                         "temps": .array(temps.map(JSONValue.string)), "bytes": .bool(bytes)])
-        let output = try await execute(Self.noteProgram, request: JSONEncoder().encode(payload), what: "host note reader")
+        let output = try await execute(Self.noteProgram, request: JSONEncoder().encode(payload), retryTransport: true, what: "host note reader")
         return try await offPool(qos: .utility) {
             Result {
                 guard let reply = try? JSONDecoder().decode(NoteReply.self, from: Data(output.utf8)),

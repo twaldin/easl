@@ -27,8 +27,12 @@ public struct HostRoute: Sendable, Equatable {
 public final class HostMaster {
     public struct Failure: Error, LocalizedError, Equatable {
         public let message: String
+        public let retryable: Bool
         public var errorDescription: String? { message }
-        public init(_ message: String) { self.message = message }
+        public init(_ message: String, retryable: Bool = false) {
+            self.message = message
+            self.retryable = retryable
+        }
     }
 
     private struct Key: Hashable {
@@ -56,7 +60,7 @@ public final class HostMaster {
     private let processes: RemoteProcesses
     private var master: MasterProcess?
     private var starting: Task<Void, Error>?
-    private var lastError: String?
+    private var lastFailure: Failure?
     private var closed = false
 
     static let maxFileSessions = 4
@@ -73,7 +77,7 @@ public final class HostMaster {
     }
 
     /// Concurrent callers share one start and readiness check. A caller's cancellation does
-    /// not end a master other consumers are using. Only the terminal owner retries failures.
+    /// not end a master other consumers are using.
     public func ready() async throws {
         try Task.checkCancellation()
         guard !closed else { throw Failure("easl is quitting") }
@@ -119,7 +123,7 @@ public final class HostMaster {
                 throw Failure("ssh didn't start: \(error.localizedDescription)")
             }
             master = live
-            lastError = nil
+            lastFailure = nil
             DispatchQueue.global().async {
                 let reader = errors.fileHandleForReading
                 while true {
@@ -133,7 +137,7 @@ public final class HostMaster {
                 live.drained.leave()
             }
         }
-        guard let live = master else { throw Failure(lastError ?? "ssh to \(route.target) exited") }
+        guard let live = master else { throw lastFailure ?? Failure("ssh to \(route.target) exited") }
         let deadline = Date().addingTimeInterval(15)
         do {
             while true {
@@ -142,7 +146,7 @@ public final class HostMaster {
                 guard live === master, live.process.isRunning else {
                     await offPool { live.drained.wait() }
                     ended(live)
-                    throw Failure(lastError ?? live.message(target: route.target))
+                    throw lastFailure ?? live.failure(target: route.target)
                 }
                 let remaining = deadline.timeIntervalSinceNow
                 guard remaining > 0 else { throw Failure("ssh to \(route.target) didn't connect in 15 s") }
@@ -150,7 +154,7 @@ public final class HostMaster {
                 guard live === master, live.process.isRunning else {
                     await offPool { live.drained.wait() }
                     ended(live)
-                    throw Failure(lastError ?? live.message(target: route.target))
+                    throw lastFailure ?? live.failure(target: route.target)
                 }
                 if check.status == 0 { return }
                 try await Task.sleep(for: .milliseconds(150))
@@ -168,9 +172,13 @@ public final class HostMaster {
     private func ended(_ live: MasterProcess) {
         guard live === master else { return }
         master = nil
-        let message = live.message(target: route.target)
-        lastError = message
-        onEnded?(message)
+        let failure = live.failure(target: route.target)
+        lastFailure = failure
+        if live.process.terminationStatus != 0 {
+            NSLog("easl: ssh master for %@ exited (status %d): %@", route.target, live.process.terminationStatus,
+                  String(decoding: live.errors.withLock { $0 }, as: UTF8.self))
+        }
+        onEnded?(failure.message)
     }
 
     public func fileSession() async throws {
@@ -229,8 +237,13 @@ private final class MasterProcess: @unchecked Sendable {
     let errors = Locked(Data())
     let drained = DispatchGroup()
 
-    func message(target: String) -> String {
-        let message = String(decoding: errors.withLock { $0 }, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return message.isEmpty ? "ssh to \(target) exited (\(process.terminationStatus))" : message
+    func failure(target: String) -> HostMaster.Failure {
+        let raw = String(decoding: errors.withLock { $0 }, as: UTF8.self)
+        let message = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let status = process.terminationStatus
+        let reason = message.isEmpty
+            ? (status == 255 ? "the SSH connection to \(target) ended unexpectedly" : "ssh to \(target) exited (\(status))")
+            : message
+        return HostMaster.Failure(reason, retryable: HostFiles.retryableSSHFailure(status: status, errors: raw))
     }
 }

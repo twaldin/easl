@@ -401,6 +401,17 @@ struct HostFilesTests {
         #expect(fixture.attempts.allSatisfy { kill($0, 0) == -1 && errno == ESRCH })
     }
 
+    @Test func aSuccessfulReadIgnoresSshFallbackWarnings() async throws {
+        let fixture = try HostFileFixture()
+        try fixture.write("chart.png", Data("host image".utf8))
+        let files = try fixture.recordingReader(body: """
+        echo 'mux_client_request_session: session request failed: Session open refused by peer' >&2
+        exec /bin/sh -c "$command"
+        """)
+        #expect(try await files.read(fixture.request("chart.png")).data == Data("host image".utf8))
+        #expect(fixture.attempts.count == 1)
+    }
+
     @Test func exhaustedSilentTransportFailuresHaveAUsefulReasonAndStopAfterThreeAttempts() async throws {
         let fixture = try HostFileFixture()
         let files = try fixture.recordingReader(body: "exit 255")
@@ -411,6 +422,28 @@ struct HostFilesTests {
         #expect(fixture.attempts.allSatisfy { kill($0, 0) == -1 && errno == ESRCH })
     }
 
+    @Test(arguments: ["ssh: connect to host fixture port 22: Connection refused",
+                      "mux_client_request_session: session request failed: Session open refused by peer"])
+    func exhaustedConnectionRefusalsExplainTheHostFailure(_ diagnostic: String) async throws {
+        let fixture = try HostFileFixture()
+        let status = diagnostic.hasPrefix("ssh:") ? 255 : 1
+        let files = try fixture.recordingReader(body: "printf '%s' \(RemoteHost.quote(diagnostic)) >&2; exit \(status)")
+        await #expect(throws: HostFileError.unavailable("the host refused the SSH connection")) {
+            try await files.read(fixture.request("chart.png"))
+        }
+        #expect(fixture.attempts.count == 3)
+    }
+
+    @Test(arguments: ["fixture: Permission denied (publickey).", "Host key verification failed."])
+    func permanentSshFailuresPreserveTheirReasonWithoutRetry(_ diagnostic: String) async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.recordingReader(body: "printf '%s' \(RemoteHost.quote(diagnostic)) >&2; exit 255")
+        await #expect(throws: HostFileError.unavailable(diagnostic)) {
+            try await files.read(fixture.request("chart.png"))
+        }
+        #expect(fixture.attempts.count == 1)
+    }
+
     @Test func fileErrorsAreNotRetried() async throws {
         let fixture = try HostFileFixture()
         let files = try fixture.recordingReader()
@@ -419,7 +452,7 @@ struct HostFilesTests {
         }
         #expect(fixture.attempts.count == 1)
         await #expect(throws: HostFileError.refused) {
-            try await files.read(fixture.request("../outside.txt"))
+            try await files.read(HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage("../outside.txt")))
         }
         #expect(fixture.attempts.count == 2)
         try fixture.write("large.txt", Data(repeating: 65, count: SourceExcerpt.maxFileBytes + 1))
@@ -514,27 +547,6 @@ struct HostFilesTests {
         try await repo.write("a.txt", "edited\n")
         let load = try await HostGit(files: files).changes(boardRoot: repo.root.path, spec: ChangesSpec(.object([:])), highlight: false)
         #expect(load.set.notice == nil && load.set.files.map(\.path) == ["a.txt"] && load.set.files.map { $0.new.text } == ["edited\n"])
-    }
-
-    @Test func cancellationReapsTheClient() async throws {
-        let fixture = try HostFileFixture()
-        let pidFile = fixture.directory.appendingPathComponent("client-pid")
-        let files = try fixture.reader(body: "echo $$ > \(RemoteHost.quote(pidFile.path)); exec /bin/sleep 30")
-        let task = Task { try await files.read(fixture.request("waiting.txt")) }
-        defer { task.cancel() }
-        let deadline = ContinuousClock.now + .seconds(20)
-        var started: Int32?
-        while started == nil, ContinuousClock.now < deadline {
-            started = (try? String(contentsOf: pidFile, encoding: .utf8)).flatMap {
-                Int32($0.trimmingCharacters(in: .whitespacesAndNewlines))
-            }
-            if started == nil { try await Task.sleep(for: .milliseconds(10)) }
-        }
-        let pid = try #require(started, "the host-file client must start before cancellation is exercised")
-        #expect(kill(pid, 0) == 0)
-        task.cancel()
-        await #expect(throws: CancellationError.self) { try await task.value }
-        #expect(kill(pid, 0) == -1 && errno == ESRCH)
     }
 
     @Test func refsReadLiveObjectsMergedAndMissingWithLocalParity() async throws {

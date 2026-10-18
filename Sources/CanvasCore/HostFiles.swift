@@ -119,7 +119,7 @@ public struct HostFiles: Sendable {
     var cleanup: HostFiles { HostFiles(hostName: hostName, route: route, temps: temps) }
 
     public func read(_ request: HostFileRequest) async throws -> HostFile {
-        let output = try await execute(Self.program, request: payload(request), what: "host file reader")
+        let output = try await execute(Self.program, request: payload(request), retryTransport: true, what: "host file reader")
         guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(output.utf8)) else {
             throw HostFileError.unavailable("invalid host file reply")
         }
@@ -132,30 +132,83 @@ public struct HostFiles: Sendable {
         return HostFile(root: root, path: reply.path, commit: reply.commit, data: bytes, stamp: reply.stamp)
     }
 
-    func execute(_ program: HostProgram, request: Data, timeout: TimeInterval = 20, what: String) async throws -> String {
-        do {
-            if let master {
-                try await master.ready()
-                try await master.fileSession()
+    func execute(_ program: HostProgram, request: Data, timeout: TimeInterval = 20, retryTransport: Bool = false, what: String) async throws -> String {
+        let input = program.frame + request
+        var attempt = 0
+        while true {
+            attempt += 1
+            try Task.checkCancellation()
+            do {
+                if let master {
+                    try await master.ready()
+                    try await master.fileSession()
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                try Task.checkCancellation()
+                let failure = error as? HostMaster.Failure
+                if retryTransport, failure?.retryable == true, attempt < 3 {
+                    try await Task.sleep(for: .milliseconds(150 * attempt))
+                    continue
+                }
+                let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                throw HostFileError.unavailable(Self.sshRefused(message) ? "the host refused the SSH connection" : message)
             }
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            throw HostFileError.unavailable((error as? LocalizedError)?.errorDescription ?? String(describing: error))
-        }
-        let result: (status: Int32, output: String, errors: String)
-        do {
-            result = try await RemoteHost.run(route.executable, route.ssh(Self.command), input: program.frame + request, timeout: timeout)
-        } catch {
+            let result: RemoteHost.RunResult
+            do {
+                result = try await RemoteHost.run(route.executable, route.ssh(Self.command), input: input, timeout: timeout, timeoutPolicy: .inactivity)
+            } catch {
+                if let master { await master.endFileSession() }
+                throw error
+            }
             if let master { await master.endFileSession() }
-            throw error
+            try Task.checkCancellation()
+            if result.timedOut {
+                NSLog("easl: %@ on %@ timed out (status %d): %@", what, hostName, result.status, result.errors)
+                throw HostFileError.unavailable("the host stopped responding for \(String(format: "%g", timeout)) seconds")
+            }
+            if result.status == 0 { return result.output }
+            NSLog("easl: %@ on %@ failed (status %d): %@", what, hostName, result.status, result.errors)
+            if retryTransport, Self.retryableSSHFailure(status: result.status, errors: result.errors), attempt < 3 {
+                try await Task.sleep(for: .milliseconds(150 * attempt))
+                continue
+            }
+            let reason: String
+            if Self.sshRefused(result.errors) {
+                reason = "the host refused the SSH connection"
+            } else {
+                reason = RemoteHost.lastLine(result.errors)
+                    ?? (result.status == 255 ? "the SSH connection to \(hostName) ended unexpectedly" : "\(what) exited with status \(result.status)")
+            }
+            throw HostFileError.unavailable(reason)
         }
-        if let master { await master.endFileSession() }
-        try Task.checkCancellation()
-        guard result.status == 0 else {
-            throw HostFileError.unavailable(RemoteHost.lastLine(result.errors) ?? "\(what) exited with status \(result.status)")
-        }
-        return result.output
+    }
+
+    private static let permanentSSHFailures = [
+        "permission denied", "authentication failed", "host key verification failed",
+        "remote host identification has changed", "bad configuration", "no matching host key type",
+        "no matching key exchange method", "no supported authentication methods",
+        "too many authentication failures", "bad owner or permissions", "invalid format",
+        "could not resolve hostname", "hostname contains invalid characters", "unknown option",
+        "illegal option", "cannot execute proxycommand",
+    ]
+
+    static func retryableSSHFailure(status: Int32, errors: String) -> Bool {
+        let message = errors.lowercased()
+        guard !permanentSSHFailures.contains(where: message.contains) else { return false }
+        return status == 255 || sshRefusedLowercased(message)
+    }
+
+    static func sshRefused(_ message: String) -> Bool {
+        sshRefusedLowercased(message.lowercased())
+    }
+
+    private static func sshRefusedLowercased(_ message: String) -> Bool {
+        return (message.contains("ssh: connect to host ") && message.contains("connection refused"))
+            || (message.contains("mux_client_request_session:") && message.contains("refused"))
+            || (message.contains("channel ") && message.contains("open failed:")
+                && (message.contains("refused") || message.contains("administratively prohibited")))
     }
 
     func channel(_ script: String, _ arguments: [String]) async throws -> (executable: String, arguments: [String]) {
