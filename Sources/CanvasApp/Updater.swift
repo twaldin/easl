@@ -18,6 +18,7 @@ final class Updater {
     private var staged: StagedUpdate?
     private var failure: UpdateFailure?
     private var startupCleanupComplete = false
+    private var terminating = false
     private var observers: [NSObjectProtocol] = []
     private let failureURL = AppPaths.support.appendingPathComponent("update-failure.json")
 
@@ -385,6 +386,7 @@ final class Updater {
     }
 
     func applicationWillTerminate() {
+        terminating = true
         guard let installation, installation.helper == nil else { return }
         abortInstallation(transaction: installation.transaction,
                           reason: "easl quit while app.update installation was waiting for its acknowledgment or display grace. Nothing was replaced or relaunched.")
@@ -466,7 +468,7 @@ final class Updater {
     }
 
     private func showPendingFailure() {
-        guard startupCleanupComplete, !phase.isUpdating, NSApp.isActive, var failure, failure.noticePending,
+        guard !terminating, startupCleanupComplete, !phase.isUpdating, NSApp.isActive, var failure, failure.noticePending,
               let controller = CanvasWindowController.frontmost, let window = controller.window,
               !window.isMiniaturized, window.isVisible, window.isOnActiveSpace else { return }
         controller.canvas.showNotice("easl wasn't updated. \(failure.reason)")
