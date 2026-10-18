@@ -1112,6 +1112,22 @@ export type AppMetricsResult = {
   };
 };
 
+export type AppUpdateParams = {
+  /** check fetches the latest release; install checks, downloads, verifies and installs a newer release now. */
+  mode: "check" | "install";
+};
+export type AppUpdateResult = {
+  currentVersion: string;
+  /** The latest feed version, including one that is not newer; null when unknown. */
+  availableVersion: unknown;
+  /** An update is downloading, verifying, waiting in verified staging, or installing. */
+  installPending: boolean;
+  /** The app updater's current phase. */
+  phase: string;
+  /** The update failure reason, including a retained failure from the previous install; null without a failure. */
+  error: unknown;
+};
+
 export type BoardGetParams = {
   board?: Id;
   /** Include only this remote window's retained composer outcome receipts; omitted otherwise. */
@@ -2195,6 +2211,8 @@ export interface CanvasApi {
   app: {
     /** What easl's own work costs, for finding what makes it slow: main-thread busy time and stretches (with the longest one's cause), per-method API requests (`api.<method>`: requests answered, time from arrival to the queued reply, waiting behind earlier requests on the connection included, and reply bytes; `api.in.<method>` requests arrived and their bytes; `api.main.<method>` the main-thread part of its dispatches), events sent, board writes and group refits (top writers), arrow routings (`route.board` the whole board, `route.arrow` one arrow following its ends; top triggering objects), saves, live tiles per kind, HTML page loads, reuses, measures and renders, and the process's CPU, wakeups, memory and energy with its WebKit helpers'. Counters cover three windows: since launch or the last reset, the last 60 s, the last 10 min. `easl metrics [--watch] [--reset]` prints them as text. */
     metrics(params?: AppMetricsParams): Promise<AppMetricsResult>;
+    /** Check for or install an update of the running Mac app without confirmation UI. App socket only, not forwarded by easld. Install ignores idle, uses the manual update trust checks and returns before the app quits and relaunches in the background with its open boards restored. Failures leave the running app intact and are reported in error. */
+    update(params: AppUpdateParams): Promise<AppUpdateResult>;
   };
   board: {
     /** Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged. */
@@ -2351,6 +2369,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
     },
     app: {
       metrics: (params?: AppMetricsParams) => call("app.metrics", params ?? {}, []) as Promise<AppMetricsResult>,
+      update: (params: AppUpdateParams) => call("app.update", params ?? {}, []) as Promise<AppUpdateResult>,
     },
     board: {
       get: (params?: BoardGetParams) => call("board.get", params ?? {}, ["board"]) as Promise<BoardGetResult>,
@@ -2435,7 +2454,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
+export const METHODS = ["surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

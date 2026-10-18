@@ -97,24 +97,26 @@ public enum ChromeTextScale {
     }
 }
 
-/// The app's own settings in an easl home (`ui-settings.json`): the chrome text scale, background
-/// attach and new questions' archive delay. Each change reads the file again and writes back only
-/// its own field, so one setting's write keeps the others'.
+/// The app's own settings in an easl home (`ui-settings.json`). Each change reads the file again
+/// and writes back only its own field, so one setting's write keeps the others'.
 public struct UISettings: Equatable, Sendable {
     /// `ChromeTextScale`'s level.
     public var chromeTextScale: Double
     /// Remote easld boards in the reopen list (`RemoteReopen`) stay attached while easl runs, also
     /// with their windows closed (docs/design.md "Client mode"). On unless turned off.
     public var backgroundAttach: Bool
+    public var installUpdatesAutomatically: Bool
     /// Seconds a closed question that was created naming no `archiveAfter` stays in view on the
     /// boards this Mac hosts (`BoardRegistry.defaultQuestionArchiveAfter`), read at launch.
     public var questionArchiveAfter: TimeInterval
 
     public init(chromeTextScale: Double = ChromeTextScale.normal, backgroundAttach: Bool = true,
-                questionArchiveAfter: TimeInterval = QuestionSpec.defaultArchiveAfter) {
+                questionArchiveAfter: TimeInterval = QuestionSpec.defaultArchiveAfter,
+                installUpdatesAutomatically: Bool = false) {
         self.chromeTextScale = chromeTextScale
         self.backgroundAttach = backgroundAttach
         self.questionArchiveAfter = questionArchiveAfter
+        self.installUpdatesAutomatically = installUpdatesAutomatically
     }
 
     /// On disk: a missing or damaged field is that setting's default, whatever the others hold.
@@ -122,11 +124,13 @@ public struct UISettings: Equatable, Sendable {
         var scale: Double?
         var backgroundAttach: Bool?
         var questionArchiveAfter: Double?
+        var installUpdatesAutomatically: Bool?
 
         init(_ settings: UISettings) {
             scale = settings.chromeTextScale
             backgroundAttach = settings.backgroundAttach
             questionArchiveAfter = settings.questionArchiveAfter
+            installUpdatesAutomatically = settings.installUpdatesAutomatically
         }
 
         init(from decoder: Decoder) throws {
@@ -134,6 +138,7 @@ public struct UISettings: Equatable, Sendable {
             scale = try? fields.decodeIfPresent(Double.self, forKey: .scale)
             backgroundAttach = try? fields.decodeIfPresent(Bool.self, forKey: .backgroundAttach)
             questionArchiveAfter = try? fields.decodeIfPresent(Double.self, forKey: .questionArchiveAfter)
+            installUpdatesAutomatically = try? fields.decodeIfPresent(Bool.self, forKey: .installUpdatesAutomatically)
         }
     }
 
@@ -144,7 +149,7 @@ public struct UISettings: Equatable, Sendable {
             self.url = url
         }
 
-        /// The saved settings; 100%, on and 10 seconds where there is none or the file is unreadable.
+        /// Missing or unreadable settings use their defaults, including automatic updates off.
         public func load() -> UISettings { (try? read()) ?? UISettings() }
 
         private func read() throws -> UISettings {
@@ -152,7 +157,8 @@ public struct UISettings: Equatable, Sendable {
                 let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: url))
                 return UISettings(chromeTextScale: file.scale.map(ChromeTextScale.level(nearest:)) ?? ChromeTextScale.normal,
                                   backgroundAttach: file.backgroundAttach ?? true,
-                                  questionArchiveAfter: file.questionArchiveAfter.flatMap { QuestionSpec.archiveDelay(.number($0)) } ?? QuestionSpec.defaultArchiveAfter)
+                                  questionArchiveAfter: file.questionArchiveAfter.flatMap { QuestionSpec.archiveDelay(.number($0)) } ?? QuestionSpec.defaultArchiveAfter,
+                                  installUpdatesAutomatically: file.installUpdatesAutomatically ?? false)
             } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
                 return UISettings()
             }

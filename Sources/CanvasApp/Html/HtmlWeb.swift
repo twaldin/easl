@@ -66,12 +66,23 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
             }
             let key = ObjectIdentifier(task)
             hostReads[key] = Task { @MainActor [weak self] in
-                let file = try? await files.read(request)
+                let result: Result<HostFile, Error>
+                do { result = .success(try await files.read(request)) }
+                catch { result = .failure(error) }
                 guard let self, self.hostReads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
-                if let file {
+                switch result {
+                case .success(let file):
+                    self.tile?.hostImageFinished(url, error: nil, in: webView)
                     self.respond(task, url: url, data: file.data, type: file.mimeType, cache: "no-store")
-                } else {
-                    self.notFound(task, url: url)
+                case .failure(let error):
+                    self.tile?.hostImageFinished(url, error: error, in: webView)
+                    let failure = error as? HostFileError ?? .unavailable(String(describing: error))
+                    if case .unavailable = failure {
+                        task.didFailWithError(NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost,
+                                                     userInfo: [NSLocalizedDescriptionKey: HostGit.refusal(failure)]))
+                    } else {
+                        self.notFound(task, url: url)
+                    }
                 }
             }
         } else if let file = LocalImage.pageFile(requestPath: url.path, root: tile.boardRoot) {
@@ -93,6 +104,11 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
 
     private func notFound(_ task: any WKURLSchemeTask, url: URL) {
         respond(task, url: url, data: Data("not found".utf8), type: "text/plain", cache: "no-store", status: 404)
+    }
+
+    func cancelHostReads() {
+        for task in hostReads.values { task.cancel() }
+        hostReads.removeAll()
     }
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
