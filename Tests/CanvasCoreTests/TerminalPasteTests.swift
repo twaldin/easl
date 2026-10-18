@@ -9,7 +9,7 @@ struct TerminalPasteTests {
         return directory
     }
 
-    func run(_ directory: URL, _ arguments: [String], input: Data? = nil, base: URL? = nil, script: String = TerminalPaste.script) async throws -> (status: Int32, output: String, errors: String) {
+    func run(_ directory: URL, _ arguments: [String], input: Data? = nil, base: URL? = nil, script: String = TerminalPaste.script) async throws -> RemoteHost.RunResult {
         let environment = ["TMPDIR=\(directory.path)", "EASL_PASTE_BASE=\(base?.path ?? "")"]
         return try await RemoteHost.run("/usr/bin/env", environment + ["/bin/sh", "-c", script, "easl"] + arguments,
                                        input: input, timeout: 10)

@@ -1,0 +1,18 @@
+{
+  "description": "app.update malformed requests are refused before update work. Safe on both servers. The app validates mode; easld has no updater and uses its existing unknown-method refusal for values beyond shared required/accepted parameter validation.",
+  "ignore": { "response.error.message": "The app reports mode validation; easld reports its existing unknown-method refusal for this app-only method." },
+  "steps": [
+    { "call": "app.update", "params": {}, "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "app.update", "params": { "mode": null }, "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "app.update", "params": { "mode": "download" }, "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "app.update", "params": { "mode": "" }, "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "app.update", "params": { "mode": "INSTALL" }, "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "app.update", "params": { "mode": true }, "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "app.update", "params": { "mode": 1 }, "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "app.update", "params": { "mode": ["install"] }, "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "app.update", "params": { "mode": { "install": true } }, "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "app.update", "params": { "mode": "install", "force": true }, "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "app.update", "params": [], "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "app.update", "params": "install", "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 } }
+  ]
+}

@@ -108,6 +108,37 @@ struct ClientUIStateTests {
         }
     }
 
+    @Test func automaticUpdatesAreOptInForMissingOldAndDamagedSettings() throws {
+        let store = UISettings.Store(url: home.appendingPathComponent("ui-settings.json"))
+        defer { try? FileManager.default.removeItem(at: home) }
+        #expect(store.load().installUpdatesAutomatically == false)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        for text in [#"{"scale":1.3,"backgroundAttach":false}"#,
+                     #"{"installUpdatesAutomatically":"yes"}"#, "not json"] {
+            try Data(text.utf8).write(to: store.url)
+            #expect(store.load().installUpdatesAutomatically == false)
+        }
+        try Data(#"{"installUpdatesAutomatically":true}"#.utf8).write(to: store.url)
+        #expect(store.load().installUpdatesAutomatically == true)
+    }
+
+    @Test func automaticUpdatesPersistWithoutReplacingOtherSettings() throws {
+        let store = UISettings.Store(url: home.appendingPathComponent("ui-settings.json"))
+        defer { try? FileManager.default.removeItem(at: home) }
+        try store.update {
+            $0.chromeTextScale = 1.3
+            $0.backgroundAttach = false
+            $0.questionArchiveAfter = 30
+        }
+        try store.update { $0.installUpdatesAutomatically = true }
+        try store.update { $0.chromeTextScale = 1.5 }
+        #expect(store.load() == UISettings(chromeTextScale: 1.5, backgroundAttach: false,
+                                           questionArchiveAfter: 30, installUpdatesAutomatically: true))
+        try store.update { $0.installUpdatesAutomatically = false }
+        #expect(store.load() == UISettings(chromeTextScale: 1.5, backgroundAttach: false,
+                                           questionArchiveAfter: 30, installUpdatesAutomatically: false))
+    }
+
     @Test func theReopenListKeepsOnlyHowToReachEachBoard() throws {
         let store = RemoteReopen.Store(url: home.appendingPathComponent("remote-boards.json"))
         #expect(store.load().isEmpty, "no file: nothing to attach")

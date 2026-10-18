@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "bf019d3c68ba17ee"
+const SchemaHash = "608eca66886347ba"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -65,6 +65,10 @@ var Methods = map[string]ParamSpec{
 	"app.metrics": {
 		Accepted: []string{"reset", "watch"},
 		Required: nil,
+	},
+	"app.update": {
+		Accepted: []string{"mode"},
+		Required: []string{"mode"},
 	},
 	"board.get": {
 		Accepted: []string{"board", "viewer", "since", "branch"},

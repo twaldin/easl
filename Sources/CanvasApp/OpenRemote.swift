@@ -275,7 +275,7 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
         busy("Starting easl on \(host.name)…")
         startButton.isHidden = true
         work.append(Task { [weak self] in
-            let result: (status: Int32, output: String, errors: String)
+            let result: RemoteHost.RunResult
             do {
                 result = try await RemoteHost.run(command[0], Array(command.dropFirst()), timeout: 30)
             } catch {

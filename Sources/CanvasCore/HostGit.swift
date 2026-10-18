@@ -37,7 +37,7 @@ public struct HostGit: Sendable {
         request.pinned = read.pinned
         request.ref = ref
         request.refSha = read.refSha.flatMap { NoteSource.isRevision($0) ? $0 : nil }
-        let reply: CodeReply = try await call(request)
+        let reply: CodeReply = try await call(request, retryTransport: true)
         let probe = reply.watch.map { HostGitProbe(boardRoot: read.boardRoot, spec: $0) }
         let baseline = reply.baseline.map(HostGitStamp.digest)
         guard reply.ok else {
@@ -124,7 +124,7 @@ public struct HostGit: Sendable {
         var request = Request(op: "changes", boardRoot: boardRoot)
         request.spec = Spec(root: spec.root, ref: spec.ref, refSha: spec.refSha.flatMap { NoteSource.isRevision($0) ? $0 : nil }, head: spec.head,
                             base: Base(spec.base), baseProp: spec.baseProp, paths: spec.paths)
-        let reply: ChangesReply = try await call(request)
+        let reply: ChangesReply = try await call(request, retryTransport: true)
         var load = HostChangesLoad(set: ChangeSet())
         load.probe = reply.watch.map { HostGitProbe(boardRoot: boardRoot, spec: $0) }
         load.baseline = reply.baseline.map(HostGitStamp.digest)
@@ -284,7 +284,7 @@ public struct HostGit: Sendable {
         var request = Request(op: "stamp", boardRoot: probe.boardRoot)
         request.watch = probe.spec
         do {
-            let reply: StampReply = try await call(request)
+            let reply: StampReply = try await call(request, retryTransport: true)
             guard reply.ok, let digest = reply.digest else { return .failure(HostFileError(code: reply.code, message: reply.message, limit: reply.limit)) }
             return .digest(digest)
         } catch is CancellationError {
@@ -321,8 +321,8 @@ public struct HostGit: Sendable {
         }
     }
 
-    func call<Reply: Decodable>(_ request: some Encodable, timeout: TimeInterval = 60) async throws -> Reply {
-        let output = try await files.execute(Self.program, request: JSONEncoder().encode(request), timeout: timeout, what: "host git")
+    func call<Reply: Decodable>(_ request: some Encodable, timeout: TimeInterval = 60, retryTransport: Bool = false) async throws -> Reply {
+        let output = try await files.execute(Self.program, request: JSONEncoder().encode(request), timeout: timeout, retryTransport: retryTransport, what: "host git")
         do {
             return try JSONDecoder().decode(Reply.self, from: Data(output.utf8))
         } catch {

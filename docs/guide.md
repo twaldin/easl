@@ -18,6 +18,23 @@ Terminals live in zmx sessions, so quitting easl, a crash, a rebuild or closing 
 
 Terminal tiles are rendered by libghostty and use your Ghostty config (theme, colors, font family, keybinds; easl keeps its own font size; zooming the board, or a tile's content with ⌃⌘= / ⌃⌘-, scales text). A program's notification or bell becomes an attention marker, and ⌘-click opens a `path:line` in the output as a code tile and a URL in a browser tile beside the terminal (⌥⌘-click sends it to your default browser). `open https://…` in a terminal tile does the same.
 
+## Install updates while you are away
+
+Choose **easl › Install Updates Automatically** to enable automatic installation. The setting is off by default. easl downloads and verifies a newer release, then waits for 10 minutes without keyboard or pointer input anywhere in your macOS login session. Typing into a terminal program or another app resets that wait. Background agents can keep working.
+
+An update reopens the local and remote boards that were open, in their tabs, without taking focus or changing your Space. Remote boards reattach to their existing hosts. Closed boards do not become new tabs. Terminal sessions keep running.
+
+To check or install from an agent connected to the Mac app, run:
+
+```sh
+easl app.update check
+easl app.update install
+```
+
+`install` skips the idle wait and confirmation sheet, but keeps the same download, signature, Team ID, and Gatekeeper checks as a manual update. Its answer acknowledges that installation has started, not that the relaunched app is ready. Reconnect after the app restarts. These commands do not update an easld server.
+
+If an update fails, easl keeps the running version usable. The API reports the reason, and a board notice shows it when you next look without bringing easl forward. **easl › Check for Updates…** remains available for manual updates. The [update contract](contracts.md#app-updates) describes the result fields and relaunch behavior.
+
 ## See which agent needs you
 
 Each agent's state is on its tile: blue working, orange needs you (an approval or a question, in a bubble with its message), green done and not yet seen. ⌘J goes to whoever needs you next: blocked agents first, then open questions, then marked tiles, then finished agents you haven't seen. When this board has nothing more, ⌘J carries on to the next board you have open and brings its tab (or window) forward, and after the last board it starts over, so one key works through every board. A turn that ends while its tile is off-screen stays green until you look at it. When easl isn't in front, macOS notifications tell you. A background board's tab shows a dot, and each board's tab title (and its entry in the Window menu) counts what needs you there: "easl (2)".

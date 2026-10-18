@@ -22,6 +22,8 @@ final class HtmlTile: NSView, TileContent {
     private(set) var hostBoardClosed = false
     private var building = false
     private var loadFailure: NSTextField?
+    private var hostImageFailure: NSTextField?
+    private var hostImageFailures: [URL: String] = [:]
     /// Last rendered image: zoomed-out cards and `view.snapshot` covers.
     private var lastSnapshot: NSImage?
     private var snapshotCover: NSImageView?
@@ -140,9 +142,7 @@ final class HtmlTile: NSView, TileContent {
         addSubview(web, positioned: .below, relativeTo: nil)
         webView = web
         pageShown = false
-        loadFailure?.removeFromSuperview()
-        loadFailure = nil
-        web.load(URLRequest(url: pageURL))
+        loadPage(in: web)
     }
 
     private func detach() {
@@ -155,6 +155,7 @@ final class HtmlTile: NSView, TileContent {
         guard let web = webView else { return }
         webViewCount = nil
         web.stopLoading()
+        (web.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
         web.configuration.userContentController.removeAllScriptMessageHandlers()
         web.removeFromSuperview()
         webView = nil
@@ -197,14 +198,53 @@ final class HtmlTile: NSView, TileContent {
         Self.parked.removeAll { $0.tile == nil || $0.tile === self }
     }
 
+    private func loadPage(in web: WKWebView) {
+        (web.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
+        hostImageFailures.removeAll()
+        hostImageFailure?.removeFromSuperview()
+        hostImageFailure = nil
+        loadFailure?.removeFromSuperview()
+        loadFailure = nil
+        web.load(URLRequest(url: pageURL))
+    }
+
     private func showFailure(_ message: String) {
         loadFailure?.removeFromSuperview()
         let label = NSTextField(wrappingLabelWithString: message)
         label.textColor = .systemRed
+        label.drawsBackground = true
+        label.backgroundColor = .textBackgroundColor
         label.frame = bounds.insetBy(dx: 12, dy: 12)
         label.autoresizingMask = [.width, .height]
         addSubview(label)
         loadFailure = label
+        showPage()
+    }
+
+    func hostImageFinished(_ url: URL, error: Error?, in web: WKWebView) {
+        guard web === webView else { return }
+        if let error {
+            let failure = error as? HostFileError ?? .unavailable(String(describing: error))
+            hostImageFailures[url] = "\(HostGit.refusal(failure)) (\(url.lastPathComponent))"
+        } else {
+            hostImageFailures.removeValue(forKey: url)
+        }
+        hostImageFailure?.removeFromSuperview()
+        hostImageFailure = nil
+        guard let reason = hostImageFailures.first?.value else { return }
+        let message = "Host image: \(reason)"
+        let label = NSTextField(wrappingLabelWithString: message)
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .systemRed
+        label.drawsBackground = true
+        label.backgroundColor = .textBackgroundColor
+        label.maximumNumberOfLines = 3
+        label.lineBreakMode = .byTruncatingTail
+        label.toolTip = message
+        label.frame = NSRect(x: 8, y: max(8, bounds.height - 56), width: max(0, bounds.width - 16), height: min(48, max(0, bounds.height - 16)))
+        label.autoresizingMask = [.width, .minYMargin]
+        addSubview(label)
+        hostImageFailure = label
         showPage()
     }
 
@@ -598,7 +638,7 @@ final class HtmlTile: NSView, TileContent {
         } else if object.props["html"] != previous.props["html"] {
             Metrics.shared.record("html.reload")
             work.cancelAll()
-            web.load(URLRequest(url: pageURL))
+            loadPage(in: web)
         } else if object.props["state"] != previous.props["state"] {
             let state = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(object.props["state"] ?? .object([:])))) ?? [String: Any]()
             Task { _ = try? await web.callAsyncJavaScript("window.canvasKit?.receiveState(state)", arguments: ["state": state], contentWorld: .page) }
@@ -695,7 +735,12 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard !hostBoardClosed, !board.isClosed else { return }
-        webView.load(URLRequest(url: pageURL))
+        if webView === self.webView {
+            loadPage(in: webView)
+        } else {
+            (webView.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
+            webView.load(URLRequest(url: pageURL))
+        }
     }
 
     /// A new window the policy above let through (it opened as a link already when it could):
