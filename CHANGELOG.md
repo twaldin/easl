@@ -4,6 +4,8 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Viewers recognize easld running on macOS before choosing browser rendering and client attachment. Scratch servers retain their isolated home, and default-home easld uses its own zmx directory instead of the installed app's.
+- Development bundles use the same two-job Swift build cap as core CI. Shared-home GUI proof runs in the macOS guest, never on the host display.
 - **Undo and restack remote boards.** ⌘Z and ⇧⌘Z replay this viewer's own edits on the host, including create, move, resize, text edit and delete. Guarded field inverses keep concurrent edits by agents and other viewers. Bring to Front, Send to Back and API `object.update z` change the host's order for everyone. History is in memory, scoped per viewer, and requires an updated host.
 - Remote boards load existing attention markers and acknowledge clears and seen terminal turns on the host. A stale acknowledgment cannot clear a newer marker or mark a newer turn seen.
 - **Remote composer mentions stay with their submission.** Both hosts queue full staged mentions per target terminal, in token order, and fold them into the matching submission with numbering from 1, not as agent hand-offs. The viewer withdraws sent chips without an undo step and handles host submission and return notifications. Schema version 2 replaces composer `mentions` with `staged` and `viewer`; agent-to-agent `mentions` are unchanged.

@@ -67,9 +67,19 @@ go run ./conformance/cmd/easl-conformance record --socket … --on "easl main <s
 - Recording: run `record` against a fresh `scripts/dev.sh` instance of the commit you mean (`--on` says which), then `replay` against it twice: both must pass, or a step depends on timing. Re-record after an intended API change and review the fixture diff like code.
 - Against easld: `go run ./easld/cmd/easld --home /tmp/easld-home --socket /tmp/easld.sock &`, then `replay --socket /tmp/easld.sock` (kill it afterwards; SIGINT, SIGTERM and SIGHUP save its pending board changes). Give it a home of its own: it refuses one the app (or another easld) holds, naming the holder's pid, and a socket another server answers on. `go test ./cmd/easld` in `easld/` does the same in-process and fails when a scenario in its `passing` list stops passing, or names no scenario.
 
+## GUI proof in the macOS guest
+
+On `twaldin-home`, run every development or test GUI step inside `agent-gui`, including launch, input, and window captures. Never launch a development bundle on the host display, hidden or visible. Do not touch `/Applications/easl.app` on the host. Headless host builds and core tests remain allowed.
+
+Easl lanes use `/home/tim/agents/projects/easl/state/efforts/gui-guest/recipe.md` for the tested claim, guest setup, proof, export, and cleanup commands. If that recipe is absent, GUI proof is not ready. Do not substitute a host launch.
+
+The guest needs macOS 14 or later, Command Line Tools, git, Python, Go, bun, and zmx 0.8.1. Use a login shell so Homebrew's tools are on `PATH`. Cap Swift builds and bundling at two jobs. Use a separate `EASL_DEV_HOME` and scratch easld home for each lane.
+
+Native SSH `screencapture` needs Screen Recording permission for its responsible executable. Another app's permission does not grant it to SSH. Resolve any administrator-authentication prompt through the machine owner; do not read a password or edit the privacy database. A successful capture must show changed content in fresh pixels, not only a new file or an in-process `view.snapshot`.
+
 ## A development instance
 
-`scripts/dev.sh` runs one isolated development instance per checkout. It never takes focus, so it doesn't interrupt whatever else you are doing on the Mac:
+`scripts/dev.sh` runs one isolated development instance per checkout. Run the commands below in the guest when using `twaldin-home`.
 
 ```sh
 scripts/dev.sh start [root]      # build, bundle, launch without activating (no root: the home's previous tabs)
@@ -236,17 +246,7 @@ EASL_DEV_HOME="$t/home" scripts/dev.sh input key return                         
 
 ## Optional: a machine shared with other agents
 
-For a short GUI check, keep each launch under two hours. `scripts/dev.sh start` and `restart` use `open -g -n`, so the window pops up unfocused on whatever Space the user is viewing. Never add a yabai rule, move a window, focus a Space, or activate an app. Even a rule that places a new window on an unviewed Space can change the user's front app.
-
-The machine's own window-manager configuration must float easl windows so the new window does not retile the user's layout. For example, twaldin-home's yabairc has `app='^easl$' manage=off`. The script adds no rules itself.
-
-```sh
-scripts/dev.sh start
-scripts/dev.sh cli board.get
-scripts/dev.sh input click 400 300 --mods hyper
-scripts/dev.sh shot out.png
-scripts/dev.sh stop
-```
+On `twaldin-home`, use the macOS guest for every GUI check, regardless of duration. A hidden host launch and an unviewed Space are not isolation. Use the guest procedure above; never add host window-manager rules or move host windows for a proof.
 
 - Drive only your instance through the API (`dev.sh cli`) and in-app replay (`dev.sh input`). Prefer `--mods hyper` for clicks. Never send real mouse or keyboard events with CGEvent tools, cliclick, or osascript.
 - Capture only by window id with `dev.sh shot` or `screencapture -x -o -l <window-id> <file>`. `shot` looks up this instance's window by pid with [yabai](https://github.com/koekeishiya/yabai), using `YABAI`, then `~/Applications/Yabai.app`, then `yabai` on `PATH`. These queries are read-only. It captures in place without moving or activating the window, writes into a private directory beside the destination, and replaces the output only after an image exists. A failed capture preserves the previous output.
@@ -254,5 +254,5 @@ scripts/dev.sh stop
 - `EASL_DEV_LAUNCHER="<command> <its args>"` replaces `open -g -n`. It receives the same `open` arguments, runs in the background, and logs to `<home>/launcher.log`. A custom launcher must follow the same rules. It must not activate, add window rules, or move windows.
 - `EASL_DEV_FRAME="x y w h"` sets explicit window geometry in AppKit screen coordinates, with the origin at the primary display's bottom left. The app honours it only with `EASL_DEV_INPUT=1`. Use it for a repeatable window size on the viewed display, not for Space isolation.
 - Without yabai, `start` and `restart` still launch unfocused in place. `shot` and `scripts/perf-replica.sh` report that they need yabai for window-id lookup.
-- Stop the instance with `scripts/dev.sh stop` as soon as the check ends. Runs of two hours or more belong in an isolated VM, not on the shared host's display.
+- Stop the instance with `scripts/dev.sh stop` as soon as the check ends. Release the guest claim and stop the guest after its last claimed GUI step.
 - Keep builds light with `swift build -j 2`. Use one instance per checkout, and at most one omp tile at a time unless the test needs more.

@@ -29,9 +29,9 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     /// FreeBSD's; Apple's `-N` takes a probe count). Without it `nc -U` outlives a closed stdin, so
     /// a relay the viewer ended could stay on the host.
     public var ncShutdown: Bool
-    /// What answers at `socketPath`: the Mac app, which answers a viewer's delegated calls itself
-    /// and takes no `client.attach`, or easld, whose viewers attach as its clients. Nil for a host
-    /// remembered before easl recorded it (`Recents`): every board opens from a fresh discovery.
+    /// Discovery's guess from the host's OS, resolved on the board's link before its window
+    /// opens (`identified`). Nil for a host remembered before easl recorded the server.
+    /// App hosts answer delegated calls themselves; easld takes viewers as clients.
     public var server: Server?
 
     public enum Server: String, Codable, Sendable {
@@ -149,6 +149,31 @@ public struct RemoteHost: Codable, Hashable, Sendable {
             let reason = lastLine(result.errors) ?? (result.status == 0 ? "discovery refused or unexpected answer from \(sshTarget)\(allowDefault ? "" : "; the default easl server is disabled")" : "ssh exited with status \(result.status)")
             throw EaslConnection.Failure("unavailable", reason)
         }
+        return host
+    }
+
+    /// A Mac can run either server. Ask its live board link before choosing rendering and
+    /// attachment behavior; discovery must still work while the installed app is stopped.
+    public func identified(on connection: EaslConnection, timeout: Duration = .seconds(10)) async throws -> RemoteHost {
+        guard server == .app else { return self }
+        do {
+            let result = try await connection.request("client.list", timeout: timeout)
+            guard result["clients"]?.array != nil else {
+                throw ApiRouter.Failure("unavailable", "client.list on \(name) returned no clients list")
+            }
+        } catch let failure as EaslConnection.Failure {
+            switch failure.code {
+            case "unsupported", "invalid_params":
+                return self
+            default:
+                throw ApiRouter.Failure(failure.code == "timeout" ? "unavailable" : failure.code,
+                                        "couldn't identify the server on \(name): \(failure.message)")
+            }
+        }
+        var host = self
+        host.server = .easld
+        host.appBundle = nil
+        if host.zmxDir == nil, let home { host.zmxDir = home + "/zmx" }
         return host
     }
 

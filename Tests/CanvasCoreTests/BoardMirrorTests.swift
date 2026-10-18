@@ -1800,6 +1800,23 @@ final class BoardMirrorTests {
         }
     }
 
+    @Test func easldOnAMacIsIdentifiedBeforeItsViewerAttaches() async throws {
+        let easld = Easld()
+        try serveEasld(easld)
+        let (mirror, _) = try await mirror()
+        for support in [nil, "/tmp/easl-guest-host"] as [String?] {
+            let host = try #require(RemoteHost.parseDiscovery("os=Darwin\nhome=/Users/lume\ntmpdir=/var/folders/T/\n",
+                                                            name: "guest", sshTarget: "guest", support: support))
+            let identified = try await host.identified(on: mirror.connection)
+            #expect(identified.server == .easld)
+            #expect(identified.socketPath == host.socketPath)
+            #expect(identified.tmpdir == host.tmpdir)
+            #expect(identified.appBundle == nil)
+            #expect(identified.startCommand == nil)
+            #expect(identified.zmxDir == (support ?? "/Users/lume/Library/Application Support/Easl") + "/zmx")
+        }
+    }
+
     /// The host's socket served as `easld` fronts it from now on.
     func serveEasld(_ easld: Easld, refusingHtml failure: Locked<String?>? = nil) throws {
         server.stop()
