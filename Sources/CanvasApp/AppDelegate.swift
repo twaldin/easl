@@ -608,7 +608,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 result = BoardCloseResult(board: board, ended: ended)
                 try registry.close(board.id) {
                     do {
-                        if updateRestoration == nil { try writeOpenBoards(openLocalBoards(excluding: controller?.window)) }
+                        try writeOpenBoards(openLocalBoards(excluding: controller?.window))
                     } catch {
                         throw ApiRouter.Failure("unavailable", "cannot save open-boards.json before closing \(board.id): \(error.localizedDescription)")
                     }
