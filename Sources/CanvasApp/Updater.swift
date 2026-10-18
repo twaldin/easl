@@ -36,8 +36,20 @@ final class Updater {
         let retryAfter: Date?
         var noticePending: Bool
     }
-    /// The helper waiting for this process to exit, killed if the quit doesn't happen.
-    private var helper: pid_t?
+    private struct Installation {
+        enum Handoff {
+            case awaitingReply
+            case quitting
+            case aborting
+        }
+
+        let transaction: String
+        let helper: pid_t
+        let delegate: AppDelegate
+        let retryAfter: Date
+        var handoff: Handoff
+    }
+    private var installation: Installation?
 
     private let running = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
     private let override = ProcessInfo.processInfo.environment["EASL_UPDATE_URL"]
@@ -119,23 +131,26 @@ final class Updater {
         }
     }
 
-    /// API installation returns before a delayed quit, allowing the socket response to drain.
-    func apiUpdate(mode: String) async throws -> JSONValue {
+    func apiUpdate(mode: String) async throws -> ApiRouter.UpdateReply {
         while let operation { await operation.value }
-        if case .installing = phase { return status() }
+        if case .installing = phase { return ApiRouter.UpdateReply(value: status()) }
         var checkError: String?
+        var acceptedTransaction: String?
         operation = Task {
             checkError = await runCheck(manual: false)
             if mode == "install", phase.name != "failed" {
                 await stageIfNeeded()
-                await installReady(automatic: false, delayQuit: true)
+                acceptedTransaction = await installReady(automatic: false, awaitingReply: true)
             }
             operation = nil
         }
         await operation?.value
         let answer = status(checkError: checkError)
         if mode == "check" { advanceAutomatically() }
-        return answer
+        guard let acceptedTransaction else { return ApiRouter.UpdateReply(value: answer) }
+        return ApiRouter.UpdateReply(value: answer) { [weak self] sent in
+            self?.installReplySent(sent, transaction: acceptedTransaction)
+        }
     }
 
     private func status(checkError: String? = nil) -> JSONValue {
@@ -203,7 +218,7 @@ final class Updater {
         guard operation == nil, automaticAction() != .none else { return }
         operation = Task {
             if automaticAction() == .stage { await stageIfNeeded() }
-            if automaticAction() == .install { await installReady(automatic: true, delayQuit: false) }
+            if automaticAction() == .install { await installReady(automatic: true) }
             operation = nil
         }
     }
@@ -247,7 +262,7 @@ final class Updater {
         guard !phase.isUpdating else { return }
         operation = Task {
             await stageIfNeeded()
-            await installReady(automatic: false, delayQuit: false)
+            await installReady(automatic: false)
             operation = nil
         }
     }
@@ -282,15 +297,16 @@ final class Updater {
         }
     }
 
-    private func installReady(automatic: Bool, delayQuit: Bool) async {
-        guard case let .ready(release) = phase, let staged else { return }
-        if automatic, automaticAction() != .install { return }
+    @discardableResult
+    private func installReady(automatic: Bool, awaitingReply: Bool = false) async -> String? {
+        guard case let .ready(release) = phase, let staged else { return nil }
+        if automatic, automaticAction() != .install { return nil }
         var prepared: AppDelegate?
         var retryAfter: Date?
         do {
             try await Self.requireSoleInstance(of: staged.app)
             try await AppUpdate.verify(staged.incoming, release: release, team: staged.team, gatekeeper: staged.gatekeeper)
-            if automatic, automaticAction() != .install { return }
+            if automatic, automaticAction() != .install { return nil }
             guard let delegate = NSApp.delegate as? AppDelegate else {
                 throw UpdateError("easl couldn't save its open boards before updating")
             }
@@ -299,24 +315,18 @@ final class Updater {
             if automatic, automaticAction() != .install {
                 try delegate.cancelPreparedUpdate()
                 prepared = nil
-                return
+                return nil
             }
-            retryAfter = Date.now.addingTimeInterval(AppUpdate.checkInterval)
-            try persistInterruption("The update to easl \(release.version) was interrupted before completion.", retryAfter: retryAfter)
-            try startHelper(staged.staging, replacing: staged.app, lease: staged.lease)
+            let retryDeadline = Date.now.addingTimeInterval(AppUpdate.checkInterval)
+            retryAfter = retryDeadline
+            try persistInterruption("The update to easl \(release.version) was interrupted before completion.", retryAfter: retryDeadline)
+            let helper = try startHelper(staged.staging, replacing: staged.app, lease: staged.lease)
+            let transaction = staged.staging.transaction
+            installation = Installation(transaction: transaction, helper: helper, delegate: delegate,
+                                        retryAfter: retryDeadline, handoff: awaitingReply ? .awaitingReply : .quitting)
             phase = phase.after(.install) ?? phase
-            Task {
-                if delayQuit { try? await Task.sleep(for: .seconds(1)) }
-                AppDelegate.terminateNow()
-                try? await Task.sleep(for: .seconds(30))
-                await stopHelper()
-                var reason = "easl didn't quit, so nothing was replaced"
-                do { try delegate.cancelPreparedUpdate() } catch {
-                    reason += ". Couldn't remove the saved update boards: \(Self.reason(error))"
-                }
-                await discardStaged()
-                recordFailure(reason, rejecting: nil, retryAfter: retryAfter)
-            }
+            if !awaitingReply { quitForInstall(transaction: transaction, afterReply: false) }
+            return transaction
         } catch {
             var reason = Self.reason(error)
             if let prepared {
@@ -327,6 +337,53 @@ final class Updater {
             await discardStaged()
             recordFailure(reason, rejecting: Self.rejectsArtifact(error, localCopy: true) ? release.sha256 : nil,
                           retryAfter: retryAfter)
+        }
+        return nil
+    }
+
+    private func installReplySent(_ sent: Bool, transaction: String) {
+        guard let installation, installation.transaction == transaction,
+              case .awaitingReply = installation.handoff else { return }
+        if sent {
+            self.installation?.handoff = .quitting
+            quitForInstall(transaction: transaction, afterReply: true)
+        } else {
+            abortInstallation(transaction: transaction,
+                              reason: "The app.update install acknowledgment failed or did not finish within 30 seconds. easl is still running and nothing was replaced.")
+        }
+    }
+
+    private func quitForInstall(transaction: String, afterReply: Bool) {
+        Task {
+            if afterReply { try? await Task.sleep(for: .seconds(1)) }
+            guard let installation, installation.transaction == transaction,
+                  case .quitting = installation.handoff else { return }
+            if afterReply {
+                do { try installation.delegate.prepareForUpdate() } catch {
+                    abortInstallation(transaction: transaction,
+                                      reason: "Couldn't save the current open boards before updating: \(Self.reason(error))")
+                    return
+                }
+            }
+            AppDelegate.terminateNow()
+            try? await Task.sleep(for: .seconds(30))
+            abortInstallation(transaction: transaction, reason: "easl didn't quit, so nothing was replaced")
+        }
+    }
+
+    private func abortInstallation(transaction: String, reason: String) {
+        guard let installation, installation.transaction == transaction else { return }
+        if case .aborting = installation.handoff { return }
+        self.installation?.handoff = .aborting
+        Task {
+            await stopHelper(installation.helper)
+            var reason = reason
+            do { try installation.delegate.cancelPreparedUpdate() } catch {
+                reason += ". Couldn't remove the saved update boards: \(Self.reason(error))"
+            }
+            await discardStaged()
+            self.installation = nil
+            recordFailure(reason, rejecting: nil, retryAfter: installation.retryAfter)
         }
     }
 
@@ -433,7 +490,7 @@ final class Updater {
     /// from easl and its output in `staging.log`. It relaunches with this
     /// bundle's `LSEnvironment` and `EASL_HOME`: a development or test instance comes back on its
     /// own home, never on the default one beside the user's own easl.
-    private func startHelper(_ staging: AppUpdate.Staging, replacing app: URL, lease: AppUpdate.StagingLease) throws {
+    private func startHelper(_ staging: AppUpdate.Staging, replacing app: URL, lease: AppUpdate.StagingLease) throws -> pid_t {
         var environment = Bundle.main.infoDictionary?["LSEnvironment"] as? [String: String] ?? [:]
         if let home = ProcessInfo.processInfo.environment["EASL_HOME"] { environment["EASL_HOME"] = home }
         let script = AppUpdate.helperScript(pid: getpid(), app: app, staging: staging, relaunch: AppUpdate.relaunchCommand(environment: environment))
@@ -462,12 +519,10 @@ final class Updater {
         var pid: pid_t = 0
         let status = posix_spawn(&pid, "/bin/sh", &actions, &attributes, argv, environ)
         guard status == 0 else { throw UpdateError("couldn't start the helper that replaces easl: \(String(cString: strerror(status)))") }
-        helper = pid
+        return pid
     }
 
-    private func stopHelper() async {
-        guard let pid = helper else { return }
-        helper = nil
+    private func stopHelper(_ pid: pid_t) async {
         // Its session's group: the shell and the sleep it waits in.
         kill(-pid, SIGTERM)
         await offPool {

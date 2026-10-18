@@ -781,10 +781,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 window.orderOut(nil)
                 window.tabGroup?.removeWindow(window)
             }
-            if restored.count > 1 {
-                let group = NSWindowTabGroup()
-                for (_, window) in restored { group.addWindow(window) }
-                group.selectedWindow = restored.first { $0.index == saved.selected }?.window ?? restored.first?.window
+            if restored.count > 1, let first = restored.first?.window {
+                var host = first
+                for (_, window) in restored.dropFirst() {
+                    addTab(window, to: host)
+                    host = window
+                }
+                first.tabGroup?.selectedWindow = restored.first { $0.index == saved.selected }?.window ?? first
             }
             if let selected = restored.first(where: { $0.index == saved.selected })?.window ?? restored.first?.window {
                 selected.orderBack(nil)
@@ -1173,14 +1176,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // Group bookkeeping must not order a newly added tab onto the active Space.
+    // AppKit creates tab groups; inserting into an existing group leaves its selection alone.
     private func addTab(_ window: NSWindow, to host: NSWindow) {
         if let group = host.tabGroup {
             group.insertWindow(window, at: group.windows.firstIndex(of: host)! + 1)
         } else {
-            let group = NSWindowTabGroup()
-            group.addWindow(host)
-            group.addWindow(window)
+            host.addTabbedWindow(window, ordered: .above)
         }
     }
 

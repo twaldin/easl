@@ -17,7 +17,7 @@ extension ApiRouterTests {
         var receivedModes: [String] = []
         router.updateApp = { mode in
             receivedModes.append(mode)
-            return .null
+            return ApiRouter.UpdateReply(value: .null)
         }
         let client = try connect()
         let malformed: [[String: JSONValue]] = [
@@ -37,10 +37,32 @@ extension ApiRouterTests {
             #expect(reply["error"]?["code"] == .string("invalid_params"))
         }
         #expect(receivedModes == [])
+    }
 
-        for mode in ["check", "install"] {
-            _ = try await call(client, "app.update", ["mode": .string(mode)])
+    @Test func appUpdateSendsItsOwnEnvelopeOnceAndCompletesAfterWriting() async throws {
+        let (completion, continuation) = AsyncStream<Bool>.makeStream()
+        defer { continuation.finish() }
+        var sentResults: [Bool] = []
+        router.updateApp = { _ in
+            ApiRouter.UpdateReply(value: .object(["phase": .string("installing")])) { sent in
+                sentResults.append(sent)
+                continuation.yield(sent)
+            }
         }
-        #expect(receivedModes == ["check", "install"])
+        let client = try connect()
+        client.send(#"{"id":"install","method":"app.update","params":{"mode":"install"}}"#)
+        client.send(#"{"id":"after-install","method":"system.ping","params":{}}"#)
+
+        #expect(try await client.next() == .object([
+            "id": .string("install"),
+            "ok": .bool(true),
+            "result": .object(["phase": .string("installing")]),
+        ]))
+        let ping = try await client.next()
+        #expect(ping["id"] == .string("after-install"))
+        #expect(ping["ok"] == .bool(true))
+        var completed = completion.makeAsyncIterator()
+        #expect(await completed.next() == true)
+        #expect(sentResults == [true])
     }
 }

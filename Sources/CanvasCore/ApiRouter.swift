@@ -254,8 +254,18 @@ public final class ApiRouter {
     /// only for a browser tile on an open board whose `surface.frame` this connection subscribed
     /// to; every other request names a stream the app checks belongs to this connection.
     public var surface: ((SurfaceRequest, SocketServer.Connection) async throws -> JSONValue)?
+    public struct UpdateReply {
+        public let value: JSONValue
+        public let sent: (@MainActor (Bool) -> Void)?
+
+        public init(value: JSONValue, sent: (@MainActor (Bool) -> Void)? = nil) {
+            self.value = value
+            self.sent = sent
+        }
+    }
+
     /// Checks or installs an update of the running Mac app.
-    public var updateApp: ((String) async throws -> JSONValue)?
+    public var updateApp: ((String) async throws -> UpdateReply)?
     public static let schemaVersion = ApiParams.schemaVersion
     static let readLinesDefault = 100
     static let readLinesMax = 2000
@@ -352,8 +362,8 @@ public final class ApiRouter {
         registry.terminalsEnded = { [weak self] ended in self?.terminalsEnded(ended) }
     }
 
-    /// Entry point for SocketServer. Returns the response line, or nil when the reply is deferred
-    /// (agent.wait) or the connection became an event stream.
+    /// Entry point for SocketServer. Returns the response line, or nil when the router owns its
+    /// delivery, the reply is deferred, or the connection became an event stream.
     public func handle(_ request: JSONValue, connection: SocketServer.Connection) async -> JSONValue? {
         let id = request["id"] ?? .null
         guard let method = request["method"]?.string else {
@@ -387,7 +397,13 @@ public final class ApiRouter {
                     throw Failure("invalid_params", "mode must be check or install")
                 }
                 guard let updateApp else { throw Failure("unavailable", "app.update needs the easl app") }
-                return Self.ok(id, try await updateApp(mode))
+                let reply = try await updateApp(mode)
+                let response = Self.ok(id, reply.value)
+                guard let sent = reply.sent else { return response }
+                connection.send(response, timeout: 30) { written in
+                    Task { @MainActor in sent(written) }
+                }
+                return nil
             case "board.open_remote": return Self.ok(id, try await openRemote(params))
             case "board.close": return Self.ok(id, try await close(params))
             case "object.measure": return Self.ok(id, try await measure(params))
