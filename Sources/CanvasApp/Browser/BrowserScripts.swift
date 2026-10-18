@@ -501,7 +501,7 @@ enum BrowserScripts {
       addEventListener('click', (event) => {
         const input = event.composedPath()[0];
         if (!surfaceRelay || !(input instanceof HTMLInputElement) || input.type !== 'file' || input.disabled) return;
-        if (!navigator.userActivation.isActive || input.webkitdirectory || input.hasAttribute('directory')) return;
+        if ((!event.isTrusted && !navigator.userActivation.isActive) || input.webkitdirectory || input.hasAttribute('directory')) return;
         event.preventDefault();
         const token = `${fileDocument}-${++fileSequence}`;
         fileChoice = { token, element: new WeakRef(input), multiple: input.multiple };
