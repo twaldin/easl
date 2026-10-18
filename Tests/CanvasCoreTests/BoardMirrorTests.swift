@@ -1800,7 +1800,7 @@ final class BoardMirrorTests {
         }
     }
 
-    @Test func easldOnAMacIsIdentifiedBeforeItsViewerAttaches() async throws {
+    @Test func easldOnAMacKeepsItsOwnSessionDirectoryAndNoAppLauncher() async throws {
         let easld = Easld()
         try serveEasld(easld)
         let (mirror, _) = try await mirror()

@@ -22,8 +22,8 @@ public struct RemoteHost: Codable, Hashable, Sendable {
     public var zmxBin: String
     /// The server's zmx directory; nil for the installed Mac app, which uses the GUI TMPDIR.
     public var zmxDir: String?
-    /// The app bundle that owns `socketPath`, which `startCommand` opens; nil when the viewer
-    /// can't tell (a development instance's launcher isn't discoverable) or the host isn't a Mac.
+    /// The app bundle that owns `socketPath`, which `startCommand` opens; nil for identified
+    /// easld, a development instance's unknown launcher, or a non-Mac host.
     public var appBundle: String?
     /// The host's `nc` shuts its socket down at the end of its stdin with `-N` (OpenBSD's and
     /// FreeBSD's; Apple's `-N` takes a probe count). Without it `nc -U` outlives a closed stdin, so

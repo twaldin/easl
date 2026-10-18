@@ -3,7 +3,7 @@
 ## Behavior tests
 
 ```sh
-swift run -j 4 CanvasCoreTests        # swift-testing suites for CanvasCore
+swift run -j 2 CanvasCoreTests        # swift-testing suites for CanvasCore
 bun scripts/gen-clients.ts --check    # generated TS/Python clients match schema/easl-api.json, package versions match VERSION
 (cd clients/python && python3 -m unittest)   # Python SDK (Python 3.11+): compositions loading, shipped compositions, the default socket's platform choice, connection config/reconnect against a fake socket
 bun test extensions/agent-hooks             # hook payload classification: which thread (the tile's session, a subagent, Codex's internal sessions) an event comes from; the Codex awareness block's easl commands stay plain words
