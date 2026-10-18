@@ -1,0 +1,121 @@
+{
+  "driverProvenance" : "Page.presented and snapshot scale convention reused from easl-surface-video-1\/round3\/harness\/driver.swift",
+  "failures" : [
+
+  ],
+  "guest" : "agent-gui-2",
+  "pages" : [
+    {
+      "browser" : {
+        "contentCharacters" : 45017,
+        "resolvedURL" : "https:\/\/docs.python.org\/3\/library\/asyncio-task.html",
+        "scrollX" : 0,
+        "scrollY" : 69,
+        "title" : "Coroutines and tasks — Python 3.15.0 documentation",
+        "userAgent" : "Mozilla\/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit\/605.1.15 (KHTML, like Gecko) Version\/26.6.2 Safari\/605.1.15",
+        "viewportHeight" : 662,
+        "viewportWidth" : 900
+      },
+      "capturedAt" : "2026-10-18T23:07:16Z",
+      "caretCSSRect" : {
+        "height" : 22,
+        "width" : 2,
+        "x" : 430,
+        "y" : 330
+      },
+      "caretProvenance" : "Replayed actual browser page pixels with a controlled DOM rectangle caret. Not guest-native focus or native caret traffic.",
+      "cssHeight" : 662,
+      "cssWidth" : 900,
+      "height" : 1324,
+      "id" : "docs",
+      "nativeSnapshotScale" : 2,
+      "off" : "docs-caret-off.png",
+      "offOnOffStable" : true,
+      "offSHA256" : "b122ccd6e8dc227cd1901b184453cd40642327617c7cfccf2f414b180d0d62a8",
+      "on" : "docs-caret-on.png",
+      "onSHA256" : "35a9a0ef3010072d95efa301b9778cad136b9f52085085b3ff66c690ac9db096",
+      "renderer" : "WKWebView nonpersistent, visible window in claimed agent-gui-2",
+      "resolvedURL" : "https:\/\/docs.python.org\/3\/library\/asyncio-task.html",
+      "snapshotWidth" : 900,
+      "sourceURL" : "https:\/\/docs.python.org\/3\/library\/asyncio-task.html",
+      "title" : "Coroutines and tasks — Python 3.15.0 documentation",
+      "width" : 1800
+    },
+    {
+      "browser" : {
+        "contentCharacters" : 13768,
+        "resolvedURL" : "https:\/\/en.wikipedia.org\/wiki\/List_of_countries_and_dependencies_by_population_(United_Nations)",
+        "scrollX" : 0,
+        "scrollY" : 491,
+        "title" : "List of countries and dependencies by population (United Nations) - Wikipedia",
+        "userAgent" : "Mozilla\/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit\/605.1.15 (KHTML, like Gecko) Version\/26.6.2 Safari\/605.1.15",
+        "viewportHeight" : 662,
+        "viewportWidth" : 900
+      },
+      "capturedAt" : "2026-10-18T23:07:21Z",
+      "caretCSSRect" : {
+        "height" : 22,
+        "width" : 2,
+        "x" : 430,
+        "y" : 330
+      },
+      "caretProvenance" : "Replayed actual browser page pixels with a controlled DOM rectangle caret. Not guest-native focus or native caret traffic.",
+      "cssHeight" : 662,
+      "cssWidth" : 900,
+      "height" : 1324,
+      "id" : "dense-table",
+      "nativeSnapshotScale" : 2,
+      "off" : "dense-table-caret-off.png",
+      "offOnOffStable" : true,
+      "offSHA256" : "b8cd4eb84bc43f20310c2838a811a5e34e4876e423726235c34ccd111e8ca11a",
+      "on" : "dense-table-caret-on.png",
+      "onSHA256" : "93f1aaf4719dcd94dca8c397beeb9a520626c7a8af87fca9aecf3337a855e235",
+      "renderer" : "WKWebView nonpersistent, visible window in claimed agent-gui-2",
+      "resolvedURL" : "https:\/\/en.wikipedia.org\/wiki\/List_of_countries_and_dependencies_by_population_(United_Nations)",
+      "snapshotWidth" : 900,
+      "sourceURL" : "https:\/\/en.wikipedia.org\/wiki\/List_of_countries_by_population_(United_Nations)",
+      "title" : "List of countries and dependencies by population (United Nations) - Wikipedia",
+      "width" : 1800
+    },
+    {
+      "browser" : {
+        "contentCharacters" : 2243,
+        "resolvedURL" : "https:\/\/github.com\/twaldin\/easl\/blob\/2095073610e53127979186ae3c24587ab1a2c0b2\/Sources\/CanvasCore\/SurfaceImageDecoder.swift",
+        "scrollX" : 0,
+        "scrollY" : 362,
+        "title" : "easl\/Sources\/CanvasCore\/SurfaceImageDecoder.swift at 2095073610e53127979186ae3c24587ab1a2c0b2 · twaldin\/easl · GitHub",
+        "userAgent" : "Mozilla\/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit\/605.1.15 (KHTML, like Gecko) Version\/26.6.2 Safari\/605.1.15",
+        "viewportHeight" : 662,
+        "viewportWidth" : 900
+      },
+      "capturedAt" : "2026-10-18T23:07:27Z",
+      "caretCSSRect" : {
+        "height" : 22,
+        "width" : 2,
+        "x" : 430,
+        "y" : 330
+      },
+      "caretProvenance" : "Replayed actual browser page pixels with a controlled DOM rectangle caret. Not guest-native focus or native caret traffic.",
+      "cssHeight" : 662,
+      "cssWidth" : 900,
+      "height" : 1324,
+      "id" : "github-file",
+      "nativeSnapshotScale" : 2,
+      "off" : "github-file-caret-off.png",
+      "offOnOffStable" : true,
+      "offSHA256" : "0659f7973771fd53bf1c59085b64adceca72440f0b32d9023315a0752e97cc2f",
+      "on" : "github-file-caret-on.png",
+      "onSHA256" : "5a1c368bb00266562a888fb12406a173bc7e33e66fb03c3236ad22d353eff1f9",
+      "renderer" : "WKWebView nonpersistent, visible window in claimed agent-gui-2",
+      "resolvedURL" : "https:\/\/github.com\/twaldin\/easl\/blob\/2095073610e53127979186ae3c24587ab1a2c0b2\/Sources\/CanvasCore\/SurfaceImageDecoder.swift",
+      "snapshotWidth" : 900,
+      "sourceURL" : "https:\/\/github.com\/twaldin\/easl\/blob\/2095073610e53127979186ae3c24587ab1a2c0b2\/Sources\/CanvasCore\/SurfaceImageDecoder.swift",
+      "title" : "easl\/Sources\/CanvasCore\/SurfaceImageDecoder.swift at 2095073610e53127979186ae3c24587ab1a2c0b2 · twaldin\/easl · GitHub",
+      "width" : 1800
+    }
+  ],
+  "pid" : 574,
+  "syntheticLayout" : false,
+  "window" : 38,
+  "windowAttached" : true
+}

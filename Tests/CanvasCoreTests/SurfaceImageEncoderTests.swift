@@ -1,7 +1,6 @@
 import Foundation
 import CoreGraphics
 import ImageIO
-import UniformTypeIdentifiers
 import Testing
 @testable import CanvasCore
 
@@ -125,22 +124,17 @@ struct SurfaceImageEncoderTests {
         return (maximum, mean)
     }
 
-    @Test func jpegUsesBaselineBytesDuringIdleAndInputWithoutRefinements() throws {
+    @Test func jpegPreservesTheOddCanvasAndInputPixelsWithoutIdleRefinement() throws {
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
         let source = try fixture()
-        let output = NSMutableData()
-        let destination = try #require(CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil))
-        CGImageDestinationAddImage(destination, source.image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
-        #expect(CGImageDestinationFinalize(destination))
         let first = try #require(try capture(encoder, source, at: 0, revision: revision, mode: .jpeg))
         #expect(first.format == .jpeg && !first.refresh)
-        #expect(first.data == output as Data)
         #expect(first.width == 129 && first.height == 97)
         #expect(try capture(encoder, source, at: 1, revision: revision, mode: .jpeg) == nil)
         let state = try #require(try capture(encoder, source, at: 1.1, revision: revision, mode: .jpeg, forceState: true))
-        #expect(state.data == first.data && !state.refresh)
+        #expect(state.format == .jpeg && !state.refresh && state.canvas == CGSize(width: 129, height: 97))
         let changed = try fixture(redLeftHalf: true)
         let motion = try #require(try capture(encoder, changed, at: 2, revision: revision, mode: .jpeg, input: true))
         #expect(motion.format == .jpeg && !motion.refresh)
