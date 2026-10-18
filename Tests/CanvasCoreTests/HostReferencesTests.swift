@@ -91,9 +91,18 @@ struct HostReferencesTests {
                                    socketPath: fixture.directory.appendingPathComponent("api.sock").path,
                                    tmpdir: fixture.temp.path, easlBin: "easl", zmxBin: "/usr/bin/false")
         let references = HostReferences(files: try fixture.reader(), host: failedHost)
-        let req = HostReferenceRequest(boardRoot: repo.root.path, board: "board", tile: "tile",
+        var req = HostReferenceRequest(boardRoot: repo.root.path, board: "board", tile: "tile",
                                        cwd: repo.url("one").path, candidates: candidates(["lib.rs"]))
         #expect(try await references.resolve(req) == .failure(.unavailable))
+        req.candidates = candidates(["src/lib.rs"])
+        #expect(try await references.resolve(req) == .failure(.unavailable))
+        req.reportedCwd = repo.url("missing").path
+        #expect(try await references.resolve(req) == .failure(.unavailable))
+        req.reportedCwd = repo.url("two").path
+        #expect(try await references.resolve(req) == .resolved(.init(candidate: 0, path: repo.url("two/src/lib.rs").path, pytestBytes: nil)))
+        req.reportedCwd = nil
+        req.candidates = candidates([repo.url("two/src/lib.rs").path])
+        #expect(try await references.resolve(req) == .resolved(.init(candidate: 0, path: repo.url("two/src/lib.rs").path, pytestBytes: nil)))
     }
 
     @Test func invalidSessionCwdDoesNotUseStaleStartDirectory() async throws {

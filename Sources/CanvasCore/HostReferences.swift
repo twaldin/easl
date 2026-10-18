@@ -101,8 +101,9 @@ extension HostFiles {
         const abs = path.resolve(root, expand(p));
         return isDir(abs) ? abs : null;
       };
-      let session = null;
-      if (!req.hosted) {
+      const reported = req.hosted ? null : directory(req.reportedCwd);
+      let session = null, sessionError = null;
+      if (!req.hosted && !reported) {
         try {
           const env = { ...process.env, TMPDIR: req.tmpdir };
           if (req.zmxDir) env.ZMX_DIR = req.zmxDir;
@@ -115,9 +116,9 @@ extension HostFiles {
             session = directory(fields.cwd);
             break;
           }
-        } catch {}
+        } catch { sessionError = 'unavailable'; }
       }
-      const dirs = req.hosted ? [root] : [...new Set([directory(req.reportedCwd), session, directory(req.cwd), root].filter(Boolean))];
+      const dirs = req.hosted ? [root] : [...new Set([reported, session, directory(req.cwd), root].filter(Boolean))];
       const near = resolved(dirs[0]);
       const roots = areas.map(a => a.real);
       const candidate = p => {
@@ -164,6 +165,7 @@ extension HostFiles {
           if (input.startsWith('~') && !input.startsWith('~/')) fail('refused');
           winner = inspect(path.resolve(expand(input)));
         } else {
+          if (sessionError) fail(sessionError);
           const relatives = [input];
           if (/^[ab]\//.test(input)) relatives.push(input.slice(2));
           for (const relative of relatives) {

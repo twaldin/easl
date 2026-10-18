@@ -43,6 +43,7 @@ Each version's section is its GitHub release's notes.
 ### Fixed
 
 - Hovering a group's author mark no longer crashes easl while its tooltip appears.
+- Remote terminal ⌘-clicks use a valid OSC 7 directory without a session-list subprocess. If session discovery is needed and fails or times out, relative references show a host lookup notice instead of quietly opening a file near the tile's saved directory. The 2-second deadline is unchanged.
 
 ## 0.2.7
 
