@@ -85,7 +85,7 @@ final class SurfaceStream {
         let result = await offPool {
             Result {
                 let frame = try encoder.capture(image, width: width, height: height, mode: mode, inputActive: active,
-                    lastInput: lastInput, forceState: forceState, revision: revision, at: now)
+                    lastInput: lastInput, forceState: mode == .probing || forceState, revision: revision, at: now)
                 return (frame, encoder.captureDelay)
             }
         }
