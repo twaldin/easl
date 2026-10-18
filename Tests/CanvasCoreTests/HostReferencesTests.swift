@@ -80,6 +80,22 @@ struct HostReferencesTests {
         #expect(try await references.resolve(req) == .failure(.ambiguous))
     }
 
+    @Test func failedSessionLookupDoesNotRankFromPropsCwd() async throws {
+        let fixture = try HostFileFixture()
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("one/src/lib.rs", "one")
+        try await repo.write("two/src/lib.rs", "two")
+        try await repo.commit("files")
+        let failedHost = RemoteHost(name: "fixture", sshTarget: "fixture",
+                                   socketPath: fixture.directory.appendingPathComponent("api.sock").path,
+                                   tmpdir: fixture.temp.path, easlBin: "easl", zmxBin: "/usr/bin/false")
+        let references = HostReferences(files: try fixture.reader(), host: failedHost)
+        let req = HostReferenceRequest(boardRoot: repo.root.path, board: "board", tile: "tile",
+                                       cwd: repo.url("one").path, candidates: candidates(["lib.rs"]))
+        #expect(try await references.resolve(req) == .failure(.unavailable))
+    }
+
     @Test func invalidSessionCwdDoesNotUseStaleStartDirectory() async throws {
         let fixture = try HostFileFixture()
         try fixture.write("startup/lib.rs", Data("startup".utf8))
