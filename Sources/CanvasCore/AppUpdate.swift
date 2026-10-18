@@ -15,6 +15,25 @@ public enum AppUpdate {
     public static let firstCheck: TimeInterval = 60
     /// Automatic checks after the first, while easl runs.
     public static let checkInterval: TimeInterval = 24 * 60 * 60
+    public static let automaticIdleThreshold: TimeInterval = 10 * 60
+
+    public enum AutomaticAction: Equatable, Sendable {
+        case none
+        case stage
+        case install
+    }
+
+    /// Staging does not wait for idle. A failed artifact needs an explicit retry or a new checksum.
+    public static func automaticAction(phase: UpdatePhase, running: AppVersion, enabled: Bool,
+                                       idleSeconds: TimeInterval, rejectedSHA256: String? = nil) -> AutomaticAction {
+        guard enabled, let release = phase.offered, release.isNewer(than: running),
+              release.sha256 != rejectedSHA256 else { return .none }
+        switch phase {
+        case .available: return .stage
+        case .ready: return idleSeconds.isFinite && idleSeconds >= automaticIdleThreshold ? .install : .none
+        default: return .none
+        }
+    }
     /// The bundle a release zip holds.
     public static let appName = "easl.app"
     /// The verified copy beside the installed app, `<prefix><version>.app`, that the helper
@@ -440,13 +459,16 @@ public enum AppUpdate {
         protection=\(q(staging.protection(beside: app).path))
         previous=\(q(staging.previous.path))
         result=\(q(staging.result.path))
+        swapping=0
         vacant() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
         unchanged() { printf 'unchanged: %s\\n' "$1" > "$result"; }
         replace() {
           vacant "$backup" || { unchanged "$backup is in the way"; return; }
           err=$(/bin/mkdir "$protection" 2>&1) || { unchanged "$err"; return; }
           err=$(/bin/mv "$app" "$backup" 2>&1) || { unchanged "$err"; /bin/rmdir "$protection"; return; }
-          \(afterBackup)
+          if ! {
+            \(afterBackup.isEmpty ? ":" : afterBackup)
+          }; then return; fi
           if vacant "$app" && err=$(/bin/mv "$new" "$app" 2>&1); then
             echo installed > "$result"
             if /bin/mv "$backup" "$previous"; then
@@ -462,26 +484,42 @@ public enum AppUpdate {
             app=$backup
           fi
         }
+        finish() {
+          trap - 0 1 2 15
+          [ "$swapping" = 1 ] || exit 1
+          if [ ! -f "$result" ]; then
+            if [ -d "$backup" ]; then
+              if ! vacant "$app" && vacant "$new"; then /bin/mv "$app" "$new"; fi
+              if vacant "$app" && /bin/mv "$backup" "$app"; then
+                printf 'restored: helper interrupted\\n' > "$result"
+                /bin/rmdir "$protection"
+              else
+                printf 'stranded: %s\\n' "$backup" > "$result"
+                app=$backup
+              fi
+            else
+              unchanged "helper interrupted"
+            fi
+          fi
+          \(relaunch)
+        }
+        trap finish 0
+        trap 'exit 1' 1 2 15
         while kill -0 "$pid" 2>/dev/null; do /bin/sleep 0.2; done
+        swapping=1
         replace
-        \(relaunch)
 
         """
     }
 
-    /// How the helper opens easl again: registers the bundle at `"$app"` with LaunchServices
-    /// (it caches Info.plist) and opens a new instance of it with `environment` (the old
-    /// bundle's `LSEnvironment` and `EASL_HOME`, so an instance on its own home comes back on
-    /// it). A user's easl comes back in front: `open -n`, never `-g`, since a Gatekeeper prompt
-    /// for a background launch waits on a Space nobody sees and blocks every exec of the path
-    /// (issue #60). Only an instance that may not activate (`EASL_NO_ACTIVATE=1`, a development
-    /// instance on a shared Mac) opens with `-g`: LaunchServices activates a launched app itself,
-    /// whatever its environment, and an ad hoc development bundle is never quarantined.
+    /// Gatekeeper and quarantine checks finish before the helper runs. LaunchServices and the
+    /// new process both suppress activation for this launch, without changing saved preferences.
     public static func relaunchCommand(environment: [String: String]) -> String {
         let lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-        let background = environment["EASL_NO_ACTIVATE"] == "1" ? " -g" : ""
+        var environment = environment
+        environment["EASL_UPDATE_RELAUNCH"] = "1"
         let env = environment.sorted { $0.key < $1.key }.map { " --env " + RemoteHost.quote("\($0.key)=\($0.value)") }.joined()
-        return "\(lsregister) -f \"$app\" >/dev/null 2>&1\n/usr/bin/open -n\(background)\(env) \"$app\""
+        return "\(lsregister) -f \"$app\" >/dev/null 2>&1\n/usr/bin/open -n -g\(env) \"$app\""
     }
 }
 
@@ -666,7 +704,7 @@ public enum UpdatePhase: Equatable, Sendable {
     /// signature, Team ID, Gatekeeper's verdict and version, then the same for its copy beside
     /// the installed app.
     case verifying(LatestRelease)
-    /// Verified and staged: next the helper starts and easl quits.
+    /// Verified and staged, awaiting idle or an explicit install.
     case ready(LatestRelease)
     /// The helper is waiting for easl to quit.
     case installing(LatestRelease)
@@ -719,11 +757,31 @@ public enum UpdatePhase: Equatable, Sendable {
         }
     }
 
-    /// Downloading, verifying, or about to quit: the update is under way.
-    public var isUpdating: Bool {
+    public var name: String {
+        switch self {
+        case .idle: "idle"
+        case .checking: "checking"
+        case .available: "available"
+        case .downloading: "downloading"
+        case .verifying: "verifying"
+        case .ready: "ready"
+        case .installing: "installing"
+        case .failed: "failed"
+        }
+    }
+
+    public var installPending: Bool {
         switch self {
         case .downloading, .verifying, .ready, .installing: true
-        case .idle, .checking, .available, .failed: false
+        default: false
+        }
+    }
+
+    /// Work that prevents another manual update action. A staged update can be installed now.
+    public var isUpdating: Bool {
+        switch self {
+        case .downloading, .verifying, .installing: true
+        case .idle, .checking, .available, .ready, .failed: false
         }
     }
 }

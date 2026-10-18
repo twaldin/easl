@@ -56,13 +56,78 @@ It also starts omp's cmux capture globals in the shapes omp installs after load,
 
 `object.get` on a browser tile adds `page` (schema `PageLog`): the counts since the page loaded, the latest 100 entries (after `since`, a `page.cursor` from an earlier call; one from an earlier document returns all of this one with `reloaded: true`), and the vitals; `loaded: false` when the tile has no page (released or never shown). `visibility` says how WebKit runs the page now (`PageReport.Visibility`): `visible` (on screen: requestAnimationFrame at the display's rate), `hidden` (in its tile where nobody sees it: no rAF, timers throttled more the longer it stays hidden), `driven` (kept visible for an agent though nobody sees it: rAF and timers run, irregularly and slower), `released` (no page). A page easl releases leaves its log behind: the tile reads it from the page as it goes, and `previous` returns it (the same fields plus `releasedAt`) until the page loads another document after the reload, and until `since` names the current document; while released, `cursor` is the released page's, so a cursor loop goes on across the release (the reload returns all of the new page with `reloaded: true`). The badge in the tile's address bar ("2 errors", only while there are any) opens a list of the errors, newest first (message, kind, `file:line`, time); a Hyper-click on a row stages a `console` mention (schema `MentionTarget`: `object`, the page's `url`, and the `entry`). A click on a row shows its whole message and stack; a `file:line` or stack frame served from a file under the board root opens that file's code tile at the line (`PageSource.file`).
 
+## App updates
+
+`app.update` operates on the connected Mac app, not on a board's remote host. Its required `mode` is `check` or `install`. Missing, null, or unknown modes return `invalid_params`. An app router without an updater returns `unavailable`. easld preserves its existing unknown-method refusal, `invalid_params` with `unknown method app.update`.
+
+The CLI accepts `easl app.update check`, `easl app.update install`, and the equivalent `easl app.update --mode check` or `--mode install`. Both modes return the same state fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `currentVersion` | string | The running app's bundle version. |
+| `availableVersion` | string or null | The latest feed's version, even when it is not newer, or null before a successful check. |
+| `installPending` | boolean | An update is downloading, verifying, waiting in verified staging, or installing. A newer release merely being available does not make an install pending. |
+| `phase` | string | `idle`, `checking`, `available`, `downloading`, `verifying`, `ready`, `installing`, or `failed`. `ready` is verified staging awaiting idle or explicit installation. |
+| `error` | string or null | The check, download, verification, or installation failure reason, including a persisted failure from the previous attempt, or null. |
+
+`check` fetches the feed without a modal alert and reports state. `install` checks for a newer version, downloads and verifies it, and starts installation without confirmation or an idle requirement. It returns `phase: "installing"` and `installPending: true` before delayed termination, so the socket can flush the response. This is an acknowledgment, not proof that replacement or relaunch succeeded. The connection closes when the old process quits. A client reconnects to the relaunched app to inspect `currentVersion` and `error`. A failed check, download, or verification returns state with a non-null `error`, not a successful install acknowledgment.
+
+`UISettings.installUpdatesAutomatically`, stored in the Mac's `ui-settings.json`, defaults to false. The easl menu's **Install Updates Automatically** toggle changes that preference. With it enabled, only newer releases download and pass `AppUpdate.prepareInstall` before waiting in `ready`. The idle threshold is 600 seconds since the last input in the whole macOS login session, not terminal inactivity or time since the last board redraw. The policy works without drawable terminal tiles. Input in any foreground program resets the wait. The updater rechecks idle immediately before it starts the helper and quits.
+
+Automatic, API, and manual installs use the same size, SHA-256, bundle signature, Team ID, Gatekeeper, and version checks, including verification of the staged copy. The existing development-only Gatekeeper exception for two ad-hoc signed builds remains limited to development instances. It does not accept an unsigned or invalidly signed bundle. A refused update leaves the running app unchanged. Background failures persist in the instance's support directory, appear in subsequent API checks, and show a nonactivating board notice when the user looks. They do not show a modal alert or retry the same failed signature at every idle poll.
+
+Before installation starts, the app saves an update-specific snapshot of its open local and remote boards, tab order and groups, selected tabs, and minimized windows. A snapshot write failure aborts installation. Relaunch consumes that snapshot before the normal initial-board fallback, reattaches remote boards in order, and does not open closed background-only boards or an extra home board. A failed restoration retains recovery information and reports the failure. This update snapshot is independent of the user's **Keep Remote Boards Attached** preference.
+
+The helper opens the replacement through background LaunchServices with `-g` and the one-launch `EASL_UPDATE_RELAUNCH=1` marker. Relaunch neither activates easl nor changes the user's Space. The marker does not change the user's persistent activation settings. `EASL_NO_ACTIVATE` remains honored. A failed replacement uses the existing rollback path and records its reason for the next launch.
+
+The release feed retains the `version`, `url`, `sha256`, `size`, and `notes` wire fields used by 0.2.7 and 0.2.8. Those versions can discover a release that adds automatic installation through their existing manual updater. Enabling the preference requires the updated app.
+
+### Guest-local update artifacts
+
+`scripts/update-proof.py` prepares artifacts from an existing `.build/easl.app` in a claimed `agent-gui` or `agent-gui-2` guest. It requires an explicit `EASL_DEV_HOME` below a scratch directory in `/tmp` and `EASL_GUI_GUEST` naming that guest. It never builds, launches a GUI, reads signing identities, publishes a release, or writes production app paths.
+
+The helper copies the real source bundle into `EASL_DEV_HOME/update-proof/old/easl.app` and `new/easl.app`, changes their bundle versions, and signs both ad hoc. Both carry the same isolated bundle identifier and scratch home. They contain the same compiled executable. This exercises a real bundle swap, not historical 0.2.7 or 0.2.8 binaries. The manifest records the source executable's SHA-256.
+
+In the claimed guest, after building the source app separately, prepare the artifacts:
+
+```sh
+export EASL_GUI_GUEST=agent-gui
+export EASL_DEV_HOME=/tmp/eg.REPLACE/view
+export EASL_NO_ACTIVATE=0
+python3 scripts/update-proof.py prepare --app .build/easl.app --old-version 0.2.7 --new-version 0.2.8
+```
+
+Use the concrete acquired guest name, not `any`. Preparation passes explicit `EASL_NO_ACTIVATE`, `EASL_DEV_SSH`, `EASL_DEV_REMOTE_HOME`, and `EASL_DEV_FRAME` values into both bundles. `EASL_NO_ACTIVATE=0` allows a relaunch-focus proof to exercise the one-launch update marker instead of relying on the development launch guard. Start the old bundle directly with background `open -g -n`, not `dev.sh start`, which replaces launch environment values. Follow the guest claim and capture procedure for every actual launch and pixel capture.
+
+Run the loopback server in a separate guest shell with the same exported home and guest:
+
+```sh
+python3 scripts/update-proof.py serve
+```
+
+The default feed is `http://127.0.0.1:18766/latest.json`. `prepare --port` chooses another port. The server runs in the foreground, prints its PID and feed URL, and records them in `update-proof/server.json`. Stop that server through its own foreground shell or its recorded, ownership-checked PID.
+
+`update-proof/manifest.json` names both bundles and every artifact. `update-proof/http/` holds `valid.zip`, `corrupt.zip`, `unsigned.zip`, their matching JSON feeds, `notes.txt`, and the selected `latest.json`. Every feed has the actual archive's SHA-256 and byte size. `corrupt` changes a signed bundle resource after signing, and `unsigned` removes the app's signature. Both reach bundle trust checks rather than failing synthetic download pins.
+
+Feed selection is atomic and does not touch the running app:
+
+```sh
+python3 scripts/update-proof.py select corrupt
+python3 scripts/update-proof.py select unsigned
+python3 scripts/update-proof.py select valid
+```
+
+Preparation refuses an existing `update-proof` directory instead of overwriting a running source or installed target. Use a fresh scratch home for another old-to-new run. Feed creation alone is not end-to-end evidence. The proof must retain API answers, the old and new PIDs, exact-window captures, focus and Space observations, and mixed local and remote tab restoration.
+
+
 ## App environment
 
 Variables the app itself reads, besides the development ones docs/testing.md lists (`EASL_HOME`, `EASL_NO_ACTIVATE`, `EASL_DEV_*`) and the socket's for clients (Client connection).
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `EASL_UPDATE_URL` | Unset: `https://easl.sh/latest.json` | The `latest.json` the update checks read (`AppUpdate.source`; docs/design.md "Updates"). Set and empty is the default too. An `http` or `https` address with a host replaces it, such as a local test server; any other value fails every check with "EASL_UPDATE_URL isn't an http or https address". The release it gives still needs an https zip `url` (plain http only from `127.0.0.1`, `localhost` or `::1`). `scripts/dev.sh` passes it into the development bundle's `LSEnvironment`, so the helper's relaunch keeps it. A development instance (`EASL_DEV_INPUT=1`) never checks by itself: there only easl › Check for Updates… reads it |
+| `EASL_UPDATE_URL` | Unset: `https://easl.sh/latest.json` | The `latest.json` that update checks read (`AppUpdate.source`). Set and empty uses the default too. An `http` or `https` address with a host replaces it. Any other value fails checks with "EASL_UPDATE_URL isn't an http or https address". The feed's zip `url` requires HTTPS except on `127.0.0.1`, `localhost`, or `::1`. `scripts/dev.sh` carries the override into the development bundle's `LSEnvironment` for relaunch. Development instances check on request. A development instance with an explicit loopback feed also enables scheduled checks for isolated automatic-update proof. |
+| `EASL_UPDATE_RELAUNCH` | Unset | The update helper sets `1` for its background relaunch. The app suppresses activation for that launch without persisting a user preference. |
 
 ## Terminal tile environment
 
@@ -194,10 +259,12 @@ The app writes replies and events through a per-connection queue, in order, and 
 | `~/Library/Application Support/Easl/composer/<boardId>.json` | The composer's state for one board (`ComposerState`, `AppPaths.composer`): the draft (`text` with U+FFFC per token, `tokens` the mentions they stand for), the sent prompts (the last 100, tokens included) the terminals picked besides the tray's target (`alsoTo`), and the drafts sent but not yet taken by any terminal (`outgoing`, restored on the next launch). This user's, never in the board file: a board will have several clients. Written 0.5 s after a change and when the window closes or the app quits; absent or unreadable is an empty composer | App |
 | `~/Library/Application Support/Easl/get-started.json` | `{"dismissed": bool}`: whether Help › Get Started still opens at launch. Written at the first launch (dismissed when the home already had boards) and when the guide is closed; absent or unreadable counts as a first launch | App |
 | `~/Library/Application Support/Easl/viewport/<boardId>.json` | `{"zoom", "x", "y"}`: where this client left a board's view, the zoom and the board point at the view's centre (`SavedViewport`). Client state, never in the board file: a board is shared by every client that opens it. Written once the view stops moving (and when the board's tab closes and at quit); read when the board opens, where a missing, unreadable or non-finite file is a first open (the top of the content) | App |
-| `~/Library/Application Support/Easl/ui-settings.json` | `{"scale": 1.0, "backgroundAttach": true, "questionArchiveAfter": 10}` (`UISettings`). `scale` is this client's chrome text scale, snapped to `ChromeTextScale`'s levels. `backgroundAttach` is easl › Keep Remote Boards Attached, on when absent. `questionArchiveAfter` is the startup creation delay in seconds for new questions (0...86400). Each setting update preserves the other fields. At startup, missing or unreadable fields use their defaults. Updates fail if an existing file cannot be read or decoded; a failed background-setting save leaves the runtime setting and attachments unchanged | App |
+| `~/Library/Application Support/Easl/ui-settings.json` | `{"scale": 1.0, "backgroundAttach": true, "installUpdatesAutomatically": false, "questionArchiveAfter": 10}` (`UISettings`). `scale` is this client's chrome text scale, snapped to `ChromeTextScale`'s levels. `backgroundAttach` is easl › Keep Remote Boards Attached, on when absent. `installUpdatesAutomatically` is easl › Install Updates Automatically, off when absent. `questionArchiveAfter` is the startup creation delay in seconds for new questions (0...86400). Each setting update preserves the other fields. At startup, missing or unreadable fields use their defaults. Updates fail if an existing file cannot be read or decoded. A failed preference save leaves the runtime setting unchanged. | App |
 | `~/Library/Application Support/Easl/client-id` | The app home's persistent `mch_…` identity (`MachineIdentity`, `AppPaths.clientID`), independent of hostname and per-connection `cli_…` ids. A new home makes one once. An unreadable, malformed or unwritable identity leaves browser drawing unavailable with a diagnostic; it never creates a temporary replacement. Separate development homes have separate identities | App |
 | `~/Library/Application Support/Easl/browser-extensions.json` | `{"extensions": [{"id", "path", "name", "enabled", "reviewed", "permissions", "sites"}]}`: the Safari web extensions added through easl › Browser Extensions (`BrowserExtensionList`), loaded at launch with what the user granted (macOS 15.4 and later). Only `path` is required: an entry added by hand gets an id at the next launch and asks for its permissions before it runs. A file that doesn't decode is left as it is: no extension runs and the menu says why until it's fixed and easl relaunches. Each extension's own storage is WebKit's, under the browser profile's extension controller | App |
 | `~/Library/Application Support/Easl/updates/<version>/` | One update's files (`AppUpdate.Staging`, `AppPaths.updates`): `easl-<version>.zip` as downloaded, `unpacked/easl.app` (verified before it's copied beside the installed app), `previous.app` (the app it replaced, moved here by the helper after a success), `result` (`installed`, `unchanged: …`, `restored: …` or `stranded: <path>`, the helper's outcome) and `helper.log`. `<version>` is a semantic version and the folder must resolve to a direct child of `updates/` before anything in it is deleted or made. Every folder is deleted at the next launch, after its `result` is logged (a failure is also shown), except one easl runs from. docs/design.md "Updates" | App |
+| `~/Library/Application Support/Easl/update-boards.json` | Update-specific `UpdateBoardSnapshot`, version 1, with ordered window groups of local roots and `RemoteReopen` tabs, selected-tab indices, and minimized state (`AppPaths.updateBoards`). Saved before the helper starts. Consumed before normal initial-board opening. Retained if a remote reconnect fails, with a nonactivating notice and **Retry Reopening Update Boards** menu item. Separate from normal local reopen and background remote attachment preferences. `EASL_HOME` relocates it. | App |
+| `~/Library/Application Support/Easl/update-failure.json` | The last persisted updater failure, returned as `app.update` `error` and shown as a nonactivating notice when the user looks. Lives outside per-version staging so launch cleanup does not discard the reason. `EASL_HOME` relocates it. | App |
 | `<the app's folder>/.easl-update-<version>-<uuid>.app`, `.easl-previous-<version>-<uuid>.app` | Beside the installed app, on its volume, named for one update (`Staging.transaction`), so two instances on other homes running one bundle never share them: the verified copy of the new version, with its date set to the copy time and renamed into place by the helper, and the installed app renamed aside with its old date until the new one is in (then moved to `updates/<version>/previous.app`). Launch cleanup (`AppUpdate.removeStaleLeftovers`, `staleLeftovers`) deletes an incoming copy once it is at least an hour old, and a backup only once the newer of its bundle date and its protection directory's date is at least an hour old (the bundle date alone without protection), so another home's update under way is never swept. Never the running bundle or malformed names; an unreadable date is treated as young, keeping the entry and, for a protection, its backup. docs/design.md "Updates" | App |
 | `<the app's folder>/.easl-previous-<version>-<uuid>.app.protection` | Empty directory the helper exclusively creates before its first rename; its fresh date protects this transaction's backup without writing the installed app's metadata. Removed by the helper if the first rename fails (`unchanged`), the backup is restored (`restored`), or the backup successfully moves to `updates/<version>/previous.app`; kept if the backup is stranded or that move fails. An existing protection is never reused or removed by the helper. Launch cleanup deletes a recognized protection, including an orphan, once its own date is at least an hour old, but never the running bundle's protection or a malformed name | App |
 | `<board root>/.easl/board.json` | `board.export` snapshot (default path), for committing with the repo | Written on request only |

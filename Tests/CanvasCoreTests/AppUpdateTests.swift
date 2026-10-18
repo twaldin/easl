@@ -376,7 +376,7 @@ extension TestBundle {
 
     /// Runs the helper for a process that has already exited, relaunching by writing `"$app"`
     /// to `relaunched`; its outcome.
-    static func runHelper(app: URL, staging: AppUpdate.Staging, relaunched: URL, afterBackup: String = "") async throws -> AppUpdate.Outcome? {
+    static func runHelper(app: URL, staging: AppUpdate.Staging, relaunched: URL, afterBackup: String = "", expectedStatus: Int32 = 0) async throws -> AppUpdate.Outcome? {
         try FileManager.default.createDirectory(at: staging.directory, withIntermediateDirectories: true)
         let status = await offPool { () -> Int32 in
             let exited = Process()
@@ -394,7 +394,7 @@ extension TestBundle {
             helper.waitUntilExit()
             return helper.terminationStatus
         }
-        #expect(status == 0)
+        #expect(status == expectedStatus)
         return (try? String(contentsOf: staging.result, encoding: .utf8)).flatMap(AppUpdate.Outcome.init(result:))
     }
 }
@@ -604,17 +604,28 @@ struct UpdateHelperTests {
         #expect(try files.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
     }
 
-    @Test func aUsersRelaunchOpensANewInstanceInFrontWithTheOldEnvironment() {
-        let command = AppUpdate.relaunchCommand(environment: ["EASL_HOME": "/Users/me/my home", "EASL_UPDATE_URL": "https://easl.sh/latest.json"])
-        #expect(command.hasSuffix("/usr/bin/open -n --env 'EASL_HOME=/Users/me/my home' --env EASL_UPDATE_URL=https://easl.sh/latest.json \"$app\""))
-        #expect(!command.contains(" -g"))
-        #expect(AppUpdate.relaunchCommand(environment: [:]).hasSuffix("/usr/bin/open -n \"$app\""))
-        #expect(!AppUpdate.relaunchCommand(environment: ["EASL_NO_ACTIVATE": "0"]).contains(" -g"))
+    @Test func interruptingTheHelperAfterTheFirstRenameRestoresTheOldApp() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        let original = try TestBundle.snapshot(app)
+        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3", executable: Data("new".utf8))
+        let outcome = try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched,
+                                                     afterBackup: "kill -TERM $$", expectedStatus: 1)
+        #expect(outcome == .restored("helper interrupted"))
+        #expect(try TestBundle.snapshot(app) == original)
+        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+        #expect(!FileManager.default.fileExists(atPath: staging.protection(beside: app).path))
     }
 
-    @Test func anInstanceThatMayNotActivateComesBackInTheBackground() {
-        let command = AppUpdate.relaunchCommand(environment: ["EASL_HOME": "/Users/me/dev home", "EASL_NO_ACTIVATE": "1"])
-        #expect(command.hasSuffix("/usr/bin/open -n -g --env 'EASL_HOME=/Users/me/dev home' --env EASL_NO_ACTIVATE=1 \"$app\""))
+    @Test func aFailedCommandAfterTheFirstRenameRestoresTheOldApp() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        let original = try TestBundle.snapshot(app)
+        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
+        let outcome = try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched, afterBackup: "false")
+        #expect(outcome == .restored("helper interrupted"))
+        #expect(try TestBundle.snapshot(app) == original)
+        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
     }
 
     @Test func theResultFileSaysWhatHappened() {
@@ -721,6 +732,39 @@ struct UpdateInstallTests {
         #expect(error?.kind == "team")
         #expect(try FileManager.default.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
     }
+
+    @Test func anUnsignedAppIsRefusedWithoutChangingTheRunningVersion() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(installed, version: "0.2.2", executable: Data("old".utf8))
+        let original = try TestBundle.snapshot(installed)
+        let new = root.appendingPathComponent("new/easl.app", isDirectory: true)
+        try TestBundle.make(new, version: "0.2.3")
+        let (staging, release) = try await stage(new, keepParent: true)
+        let error = await #expect(throws: AppUpdate.InstallProblem.self) {
+            try await AppUpdate.prepareInstall(staging, release: release, replacing: installed, team: nil, gatekeeper: false)
+        }
+        #expect(error?.kind == "signature")
+        #expect(try TestBundle.snapshot(installed) == original)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
+    }
+
+    @Test func tamperingWithTheStagedCopyIsRefusedBeforeInstallation() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(installed, version: "0.2.2", executable: Data("old".utf8))
+        let original = try TestBundle.snapshot(installed)
+        let new = root.appendingPathComponent("new/easl.app", isDirectory: true)
+        try TestBundle.make(new, version: "0.2.3")
+        try await TestBundle.sign(new)
+        let (staging, release) = try await stage(new, keepParent: true)
+        let incoming = try await AppUpdate.prepareInstall(staging, release: release, replacing: installed, team: nil, gatekeeper: false)
+        try Data("tampered".utf8).write(to: incoming.appendingPathComponent("Contents/MacOS/Easl"))
+        let error = await #expect(throws: AppUpdate.InstallProblem.self) {
+            try await AppUpdate.verify(incoming, release: release, team: nil, gatekeeper: false)
+        }
+        #expect(error?.kind == "signature")
+        #expect(try TestBundle.snapshot(installed) == original)
+        #expect(AppUpdate.bundleVersion(of: installed) == "0.2.2")
+    }
 }
 
 struct UpdatePhaseTests {
@@ -780,5 +824,71 @@ struct UpdatePhaseTests {
             #expect(busy.after(.check) == nil, "no check while updating")
             #expect(busy.after(.download) == nil)
         }
+    }
+}
+
+struct AutomaticUpdatePolicyTests {
+    let release = LatestRelease(version: AppVersion("0.2.10")!, url: URL(string: "https://example.com/easl.zip")!,
+                                sha256: String(repeating: "a", count: 64), size: 1, notes: URL(string: "https://example.com/notes")!)
+
+    @Test func stagingDoesNotWaitForIdle() {
+        #expect(AppUpdate.automaticAction(phase: .available(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 0) == .stage)
+        #expect(AppUpdate.automaticAction(phase: .ready(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 0) == .none)
+    }
+
+    @Test func installationRequiresTenFullMinutesWithoutInput() {
+        for seconds: TimeInterval in [0, 60, 599, 599.999, -.infinity, .infinity, .nan] {
+            #expect(AppUpdate.automaticAction(phase: .ready(release), running: AppVersion("0.2.9")!,
+                                             enabled: true, idleSeconds: seconds) == .none)
+        }
+        for seconds: TimeInterval in [600, 601, 3600] {
+            #expect(AppUpdate.automaticAction(phase: .ready(release), running: AppVersion("0.2.9")!,
+                                             enabled: true, idleSeconds: seconds) == .install)
+        }
+    }
+
+    @Test func turningAutomaticUpdatesOffAlsoBlocksAnAlreadyVerifiedUpdate() {
+        for phase in [UpdatePhase.available(release), .ready(release)] {
+            #expect(AppUpdate.automaticAction(phase: phase, running: AppVersion("0.2.9")!,
+                                             enabled: false, idleSeconds: 3600) == .none)
+        }
+        #expect(AppUpdate.automaticAction(phase: .ready(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 3600) == .install)
+    }
+
+    @Test func onlyANewerVersionCanBeStagedOrInstalled() {
+        for phase in [UpdatePhase.available(release), .ready(release)] {
+            for running in ["0.2.10", "0.2.10+build.8", "0.2.11", "1.0.0"] {
+                #expect(AppUpdate.automaticAction(phase: phase, running: AppVersion(running)!,
+                                                 enabled: true, idleSeconds: 600) == .none)
+            }
+        }
+        #expect(AppUpdate.automaticAction(phase: .available(release), running: AppVersion("0.2.10-rc.1")!,
+                                         enabled: true, idleSeconds: 600) == .stage)
+        for running in ["0.2.7", "0.2.8"] {
+            #expect(AppUpdate.automaticAction(phase: .available(release), running: AppVersion(running)!,
+                                             enabled: true, idleSeconds: 0) == .stage)
+        }
+    }
+
+    @Test func aRejectedArtifactDoesNotRetryOnEveryIdleSampleOrCheck() {
+        #expect(AppUpdate.automaticAction(phase: .available(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 600, rejectedSHA256: release.sha256) == .none)
+        #expect(AppUpdate.automaticAction(phase: .failed("bad signature", offered: release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 600) == .none)
+        #expect(AppUpdate.automaticAction(phase: .available(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 600, rejectedSHA256: String(repeating: "b", count: 64)) == .stage)
+    }
+
+    @Test func onlyVerifiedStagingCanBeInstalled() {
+        for phase in [UpdatePhase.downloading(release), .verifying(release), .installing(release), .checking(offered: release)] {
+            #expect(AppUpdate.automaticAction(phase: phase, running: AppVersion("0.2.9")!,
+                                             enabled: true, idleSeconds: 600) == .none)
+        }
+        #expect(UpdatePhase.ready(release).installPending)
+        #expect(UpdatePhase.ready(release).after(.install) == .installing(release))
+        #expect(!UpdatePhase.available(release).installPending)
     }
 }

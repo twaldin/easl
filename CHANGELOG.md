@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- **Install updates while your Mac is idle.** Enable easl › Install Updates Automatically, off by default, to download and verify newer releases and install after 10 minutes without input anywhere in your login session. Updates reopen your local and remote tabs without taking focus or changing Spaces. Agents can check with `easl app.update check` or install immediately with `easl app.update install`. Both paths keep the manual updater's signature, Team ID, and Gatekeeper checks. Failures leave the running version working and report why.
 - Viewers recognize easld running on macOS before choosing browser rendering and client attachment. Scratch servers retain their isolated home, and default-home easld uses its own zmx directory instead of the installed app's.
 - Bundle builds use two Swift jobs, including release bundles.
 - **Undo and restack remote boards.** ⌘Z and ⇧⌘Z replay this viewer's own edits on the host, including create, move, resize, text edit and delete. Guarded field inverses keep concurrent edits by agents and other viewers. Bring to Front, Send to Back and API `object.update z` change the host's order for everyone. History is in memory, scoped per viewer, and requires an updated host.
