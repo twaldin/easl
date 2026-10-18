@@ -40,6 +40,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private var stashed: [HostFrame] = []
     private var lastAcked = 0
     private var video = SurfaceVideoDecoder()
+    private var composition = SurfaceImageComposition()
     private var refreshAssembly = SurfaceRefreshAssembly()
     private var assemblingRefinement: Int?
     private var abandonedRefinement = 0
@@ -289,6 +290,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         stashed.removeAll()
         lastAcked = 0
         video = SurfaceVideoDecoder()
+        composition = SurfaceImageComposition()
         refreshAssembly.reset()
         assemblingRefinement = nil
         abandonedRefinement = 0
@@ -558,9 +560,10 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         let generation = streamEpoch
         let stream = frame.stream
         let video = video
+        let composition = composition
         runStreamTask { [weak self] in
             let decoded = await offPool {
-                DecodedFrame(SurfaceWire.decode(frame, video: video))
+                DecodedFrame(frame, video: video, composition: composition)
             }
             guard let self, generation == self.streamEpoch, self.streamID == stream else { return }
             self.finishDecode(frame, decoded)
@@ -573,6 +576,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             restartStream(reason: "Couldn't read a frame from \(remote.host.name)")
             return
         }
+        composition = decoded.composition
         decodingRefinement = nil
         let sizeChanged = pageSize != frame.size
         pageSize = frame.size
@@ -1525,13 +1529,24 @@ private struct HostNotice {
     var state: String?
 }
 
-/// The decoded CGImage is immutable and can cross the decode task boundary.
+/// The decoded image and value-state composition are isolated until the main actor accepts them.
 private final class DecodedFrame: @unchecked Sendable {
     let image: CGImage?
+    let composition: SurfaceImageComposition
     let bytes: Int
-    init(_ decoded: (CGImage?, Int)) {
-        image = decoded.0
-        bytes = decoded.1
+
+    init(_ frame: HostFrame, video: SurfaceVideoDecoder, composition: SurfaceImageComposition) {
+        var candidate = composition
+        let canvas = frame.canvas ?? CGSize(width: frame.width, height: frame.height)
+        do {
+            let decoded = try SurfaceImageDecoder.decode(frame.data, format: frame.format,
+                width: frame.width, height: frame.height, canvas: canvas, video: video, refinement: frame.refresh)
+            image = try candidate.present(decoded, format: frame.format, canvas: canvas, refinement: frame.refresh)
+        } catch {
+            image = nil
+        }
+        self.composition = candidate
+        bytes = frame.data.count
     }
 }
 
@@ -1567,8 +1582,7 @@ private enum SurfaceWire {
         } else {
             switch format {
             case .h264: limit = 48 * 1024
-            case .jpeg: limit = SurfaceImageEncoder.motionBytes
-            case .png: limit = 16 << 20
+            case .jpeg, .png: limit = 16 << 20
             }
         }
         guard payload.utf8.count <= (limit + 2) / 3 * 4,
@@ -1606,11 +1620,6 @@ private enum SurfaceWire {
                           name: data["name"]?.string, state: data["state"]?.string)
     }
 
-    static func decode(_ frame: HostFrame, video: SurfaceVideoDecoder) -> (CGImage?, Int) {
-        (try? SurfaceImageDecoder.decode(frame.data, format: frame.format, width: frame.width, height: frame.height,
-            canvas: frame.canvas ?? CGSize(width: frame.width, height: frame.height),
-            video: video, refinement: frame.refresh), frame.data.count)
-    }
 
     static func plain(_ value: Any) -> String {
         switch value {

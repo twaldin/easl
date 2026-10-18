@@ -88,10 +88,12 @@ private final class SurfaceImageRefresh: @unchecked Sendable {
         let image: CGImage
         let revision: SurfaceInputRevision
         let imageVersion: UInt64
+        let identity: SurfaceImageIdentity
 
-        init(key: Key, image: CGImage, revision: SurfaceInputRevision, imageVersion: UInt64) {
+        init(key: Key, image: CGImage, identity: SurfaceImageIdentity, revision: SurfaceInputRevision, imageVersion: UInt64) {
             self.key = key
             self.image = image
+            self.identity = identity
             self.revision = revision
             self.imageVersion = imageVersion
         }
@@ -102,6 +104,7 @@ private final class SurfaceImageRefresh: @unchecked Sendable {
         let width: Int
         let height: Int
         let imageVersion: UInt64
+        let identity: SurfaceImageIdentity
     }
 
     private enum State {
@@ -138,7 +141,7 @@ private final class SurfaceImageRefresh: @unchecked Sendable {
         return pending === job
     }
 
-    func start(image: CGImage, imageVersion: UInt64, key: Key, revision: SurfaceInputRevision) -> Bool {
+    func start(image: CGImage, identity: SurfaceImageIdentity, imageVersion: UInt64, key: Key, revision: SurfaceInputRevision) -> Bool {
         lock.lock()
         guard self.key == key else { lock.unlock(); return false }
         guard case .idle = state else {
@@ -150,7 +153,7 @@ private final class SurfaceImageRefresh: @unchecked Sendable {
             lock.unlock()
             return pending
         }
-        let job = Job(key: key, image: image, revision: revision, imageVersion: imageVersion)
+        let job = Job(key: key, image: image, identity: identity, revision: revision, imageVersion: imageVersion)
         state = .pending(job)
         guard !workerRunning else { lock.unlock(); return true }
         workerRunning = true
@@ -182,7 +185,8 @@ private final class SurfaceImageRefresh: @unchecked Sendable {
                 CGImageDestinationAddImage(destination, job.image, nil)
                 guard CGImageDestinationFinalize(destination) else { throw SurfaceImageEncodingError.missingOutput }
                 guard output.length <= SurfaceImageEncoder.refinementBytes else { return nil }
-                return PNG(data: output as Data, width: job.image.width, height: job.image.height, imageVersion: job.imageVersion)
+                return PNG(data: output as Data, width: job.image.width, height: job.image.height,
+                           imageVersion: job.imageVersion, identity: job.identity)
             }
             lock.lock()
             if self.key == job.key, job.revision.value == job.key.inputRevision,
@@ -222,6 +226,8 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
     private let video = SurfaceVideoEncoder()
     private let refresh: SurfaceImageRefresh
     private var observed: SurfaceImageIdentity?
+    private var sharp: SurfaceImageIdentity?
+    private var refreshArmed = false
     private var imageVersion: UInt64 = 0
     private var refreshEpoch: UInt64 = 0
     private var motionVersion: UInt64?
@@ -245,6 +251,8 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
         if mode == .jpeg {
             refresh.synchronize(nil)
             observed = nil
+            sharp = nil
+            refreshArmed = false
             motionVersion = nil
             guard let jpeg = Self.jpeg(source) else { throw SurfaceImageEncodingError.missingOutput }
             guard jpeg.data != lastJPEG || canvas != lastJPEGCanvas || forceState else {
@@ -265,10 +273,16 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
             imageVersion &+= 1
             refreshEpoch &+= 1
             changedAt = now
+            refreshArmed = true
         case .small:
             imageVersion &+= 1
         case .none:
             break
+        }
+        if !refreshArmed, case .large = identity.change(from: sharp) {
+            refreshEpoch &+= 1
+            changedAt = now
+            refreshArmed = true
         }
         let key = SurfaceImageRefresh.Key(epoch: refreshEpoch, inputRevision: revision.value)
         refresh.synchronize(inputActive ? nil : key)
@@ -277,11 +291,14 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
             if let encoded = try refresh.take(key: key, revision: revision) {
                 guard revision.value == key.inputRevision else { return nil }
                 if encoded.imageVersion != imageVersion { motionVersion = nil }
+                sharp = encoded.identity
+                refreshArmed = false
                 captureDelay = 1.0 / 30
                 return SurfaceImageEncoding(format: .png, data: encoded.data, width: encoded.width, height: encoded.height,
                                             canvas: canvas, refresh: true)
             }
-            captureDelay = refresh.start(image: source, imageVersion: imageVersion, key: key, revision: revision) ? 1.0 / 30 : 1
+            captureDelay = refresh.start(image: source, identity: identity, imageVersion: imageVersion,
+                                         key: key, revision: revision) ? 1.0 / 30 : 1
         }
         if motionVersion != imageVersion || forceState {
             guard let encoded = try video.encode(source, width: width, height: height) else { return nil }

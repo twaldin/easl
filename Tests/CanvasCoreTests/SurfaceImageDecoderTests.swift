@@ -129,4 +129,43 @@ struct SurfaceImageDecoderTests {
             try decode(Data([1, 2, 3]), format: .jpeg, video: video, refinement: false)
         }
     }
+
+    @Test func fullJPEGAboveLegacyMotionBudgetDecodesLiteralPixels() throws {
+        let width = 1024, height = 1024
+        var source = [UInt8](repeating: 255, count: width * height * 4)
+        var random: UInt32 = 0x7135_4269
+        for y in 0..<height {
+            for x in 0..<width {
+                random = random &* 1_664_525 &+ 1_013_904_223
+                let value: UInt8 = x < 64 && y < 64 ? 0 :
+                    (x >= 960 && y >= 960 ? 255 : UInt8(truncatingIfNeeded: random >> 24))
+                for channel in 0..<3 { source[(y * width + x) * 4 + channel] = value }
+            }
+        }
+        let provider = try #require(CGDataProvider(data: Data(source) as CFData))
+        let sourceImage = try #require(CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+        let encoded = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(encoded, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, sourceImage,
+            [kCGImageDestinationLossyCompressionQuality: 1.0] as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+        #expect(encoded.length > 265_627)
+        #expect(encoded.length < 16 << 20)
+        let decoded = try decode(encoded as Data, format: .jpeg, width: width, height: height,
+            canvas: CGSize(width: width, height: height), video: SurfaceVideoDecoder(), refinement: false)
+        #expect(decoded.width == 1024)
+        #expect(decoded.height == 1024)
+        let visible = try pixels(decoded)
+        let black = (16 * width + 16) * 4
+        let white = (1000 * width + 1000) * 4
+        #expect(Array(visible[black..<(black + 4)]) == [0, 0, 0, 255])
+        #expect(Array(visible[white..<(white + 4)]) == [255, 255, 255, 255])
+        #expect(throws: (any Error).self) {
+            try decode(encoded as Data, format: .jpeg, width: width - 1, height: height,
+                canvas: CGSize(width: width, height: height), video: SurfaceVideoDecoder(), refinement: false)
+        }
+    }
 }

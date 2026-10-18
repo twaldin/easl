@@ -23,7 +23,7 @@ public enum SurfaceImageDecoder {
                   data.count <= 48 * 1024 else { throw Failure.invalidImage }
             image = try video.decode(data, width: width, height: height)
         } else {
-            let limit = refinement ? SurfaceImageEncoder.refinementBytes : (format == .jpeg ? SurfaceImageEncoder.motionBytes : 16 << 20)
+            let limit = refinement ? SurfaceImageEncoder.refinementBytes : 16 << 20
             guard format == .jpeg || format == .png, !data.isEmpty, data.count <= limit,
                   let source = CGImageSourceCreateWithData(data as CFData, nil),
                   CGImageSourceGetCount(source) == 1,
