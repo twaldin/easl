@@ -56,6 +56,18 @@ final class HostFileFixture: @unchecked Sendable {
                          executable: try Self.launcher.get().path), temps: [temp.path])
     }
 
+    var attempts: [Int32] {
+        ((try? String(contentsOf: directory.appendingPathComponent("attempts"), encoding: .utf8)) ?? "")
+            .split(separator: "\n").compactMap { Int32($0) }
+    }
+
+    func recordingReader(body: String = "exec /bin/sh -c \"$command\"") throws -> HostFiles {
+        try reader(body: """
+        printf '%s\\n' $$ >> \(RemoteHost.quote(directory.appendingPathComponent("attempts").path))
+        \(body)
+        """)
+    }
+
     func reader(running injection: String) throws -> HostFiles {
         let escaped = String(decoding: try JSONEncoder().encode(injection + "\n"), as: UTF8.self).dropFirst().dropLast()
         return try reader(body: """
@@ -368,6 +380,123 @@ struct HostFilesTests {
         try fixture.write("file.txt", Data("host".utf8))
         let broken = try fixture.reader(body: "/bin/sh -c \"$command\"; printf 'truncated'")
         await #expect(throws: HostFileError.unavailable("invalid host file reply")) { try await broken.read(fixture.request("file.txt")) }
+    }
+
+    @Test(arguments: ["", "mux_client_request_session: session request failed: Session open refused by peer"])
+    func aReadRecoversAfterOneTransportExit255(_ diagnostic: String) async throws {
+        let fixture = try HostFileFixture()
+        try fixture.write("chart.png", Data("recovered image".utf8))
+        let first = fixture.directory.appendingPathComponent("first-attempt")
+        let files = try fixture.recordingReader(body: """
+        if [ ! -f \(RemoteHost.quote(first.path)) ]; then
+          touch \(RemoteHost.quote(first.path))
+          printf '%s' \(RemoteHost.quote(diagnostic)) >&2
+          exit 255
+        fi
+        exec /bin/sh -c "$command"
+        """)
+        let result = try await files.read(HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage("chart.png")))
+        #expect(result.data == Data("recovered image".utf8))
+        #expect(fixture.attempts.count == 2)
+        #expect(fixture.attempts.allSatisfy { kill($0, 0) == -1 && errno == ESRCH })
+    }
+
+    @Test func exhaustedSilentTransportFailuresHaveAUsefulReasonAndStopAfterThreeAttempts() async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.recordingReader(body: "exit 255")
+        await #expect(throws: HostFileError.unavailable("the SSH connection to fixture ended unexpectedly")) {
+            try await files.read(fixture.request("chart.png"))
+        }
+        #expect(fixture.attempts.count == 3)
+        #expect(fixture.attempts.allSatisfy { kill($0, 0) == -1 && errno == ESRCH })
+    }
+
+    @Test func fileErrorsAreNotRetried() async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.recordingReader()
+        await #expect(throws: HostFileError.notFound(commit: nil)) {
+            try await files.read(fixture.request("missing.txt"))
+        }
+        #expect(fixture.attempts.count == 1)
+        await #expect(throws: HostFileError.refused) {
+            try await files.read(fixture.request("../outside.txt"))
+        }
+        #expect(fixture.attempts.count == 2)
+        try fixture.write("large.txt", Data(repeating: 65, count: SourceExcerpt.maxFileBytes + 1))
+        await #expect(throws: HostFileError.tooLarge(limit: 4 * 1024 * 1024)) {
+            try await files.read(fixture.request("large.txt"))
+        }
+        #expect(fixture.attempts.count == 3)
+    }
+
+    @Test func applicationUnavailableIsNotRetried() async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.recordingReader(body: """
+        printf '%s' '{"ok":false,"code":"unavailable","message":"git is unavailable"}'
+        """)
+        await #expect(throws: HostFileError.unavailable("git is unavailable")) {
+            try await files.read(fixture.request("chart.png"))
+        }
+        #expect(fixture.attempts.count == 1)
+    }
+
+    @Test func malformedRepliesAndNonTransportExitsAreNotRetried() async throws {
+        let fixture = try HostFileFixture()
+        let malformed = try fixture.recordingReader(body: "printf 'truncated'")
+        await #expect(throws: HostFileError.unavailable("invalid host file reply")) {
+            try await malformed.read(fixture.request("chart.png"))
+        }
+        #expect(fixture.attempts.count == 1)
+        let failed = try fixture.recordingReader(body: "echo 'permission denied' >&2; exit 1")
+        await #expect(throws: HostFileError.unavailable("permission denied")) {
+            try await failed.read(fixture.request("chart.png"))
+        }
+        #expect(fixture.attempts.count == 2)
+    }
+
+    @Test func aContinuouslyArrivingImageCanTakeLongerThanTwentySeconds() async throws {
+        let fixture = try HostFileFixture()
+        let bytes = Data(repeating: 65, count: 81 * 1024)
+        try fixture.write("chart.png", bytes)
+        let files = try fixture.reader(running: """
+        (() => {
+          const write = process.stdout.write.bind(process.stdout);
+          process.stdout.write = value => {
+            const bytes = Buffer.from(value);
+            const chunk = Math.ceil(bytes.length / 23);
+            let offset = 0;
+            const send = () => {
+              write(bytes.subarray(offset, offset + chunk));
+              offset += chunk;
+              if (offset < bytes.length) setTimeout(send, 1000);
+            };
+            send();
+            return true;
+          };
+        })();
+        """)
+        let start = ContinuousClock.now
+        let image = try await files.read(HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage("chart.png")))
+        #expect(image.data == bytes)
+        #expect(ContinuousClock.now - start >= .seconds(22))
+    }
+
+    @Test func cancellingAReadDoesNotRetryAndReapsItsClient() async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.recordingReader(body: "exec /bin/sleep 30")
+        let task = Task { try await files.read(fixture.request("chart.png")) }
+        defer { task.cancel() }
+        let deadline = ContinuousClock.now + .seconds(20)
+        while fixture.attempts.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let pid = try #require(fixture.attempts.first)
+        #expect(kill(pid, 0) == 0)
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(fixture.attempts.count == 1)
+        #expect(kill(pid, 0) == -1 && errno == ESRCH)
     }
 
     @Test func anSshThatTakesOnlyShortCommandsStillReadsFilesAndListsChanges() async throws {

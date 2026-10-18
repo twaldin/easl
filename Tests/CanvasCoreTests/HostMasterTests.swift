@@ -30,6 +30,11 @@ struct HostMasterTests {
         var starts: [String] {
             ((try? String(contentsOf: file("control.starts"), encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
         }
+        var clients: [Int32] {
+            ((try? String(contentsOf: file("control.clients"), encoding: .utf8)) ?? "")
+                .split(separator: "\n").compactMap { Int32($0) }
+        }
+        func release(_ pid: Int32) throws { try flag("release.\(pid)") }
         func close() {
             master.close()
             processes.terminateAll(grace: 0.05)
@@ -73,6 +78,10 @@ struct HostMasterTests {
             [ -f "$control.ready" ] && [ -f "$control.pid" ] || exit 1
             read -r pid < "$control.pid"
             kill -0 "$pid" 2>/dev/null || exit 1
+            if [ -f "$control.read-hold" ]; then
+              printf '%s\n' "$$" >> "$control.clients"
+              while [ ! -f "$control.release.$$" ]; do sleep 0.02; done
+            fi
             exec /bin/sh -c "$1"
             """#
     }
@@ -225,6 +234,63 @@ struct HostMasterTests {
         await #expect(throws: CancellationError.self) { try await next.value }
         #expect(pids.allSatisfy { kill($0, 0) == -1 && errno == ESRCH })
         #expect(kill(replacement, 0) == -1 && errno == ESRCH)
+        #expect(kill(try #require(host.pid()), 0) == 0)
+    }
+
+    @Test func actualFileReadsKeepFourSlotsAndSkipACancelledQueuedRead() async throws {
+        let host = try Host()
+        defer { host.close() }
+        try host.flag("read-hold")
+        let remote = RemoteHost(name: "fixture", sshTarget: "fixture", socketPath: "/unused",
+                                tmpdir: host.directory.path, easlBin: "easl")
+        let files = HostFiles(host: remote, master: host.master)
+        try Data("host image bytes".utf8).write(to: host.file("chart.png"))
+        let request = HostFileRequest(source: .directory(host.directory.path), policy: .boardImage("chart.png"))
+        var active: [Task<HostFile, Error>] = []
+        defer { for task in active { task.cancel() } }
+        for count in 1...4 {
+            active.append(Task { try await files.read(request) })
+            #expect(try await eventually { host.clients.count == count })
+        }
+        let firstFour = host.clients
+        #expect(firstFour.count == 4)
+        #expect(firstFour.allSatisfy { kill($0, 0) == 0 })
+        var entered = false
+        let cancelled = Task {
+            entered = true
+            return try await files.read(request)
+        }
+        defer { cancelled.cancel() }
+        #expect(try await eventually { entered })
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(host.clients.count == 4)
+        cancelled.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+
+        var waiting = false
+        let next = Task {
+            waiting = true
+            return try await files.read(request)
+        }
+        defer { next.cancel() }
+        #expect(try await eventually { waiting })
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(host.clients.count == 4)
+        try host.release(try #require(firstFour.first))
+        #expect(try await active[0].value.data == Data("host image bytes".utf8))
+        #expect(try await eventually { host.clients.count == 5 })
+        #expect(firstFour.dropFirst().allSatisfy { kill($0, 0) == 0 })
+        let replacement = try #require(host.clients.last)
+        #expect(kill(replacement, 0) == 0)
+        for pid in firstFour.dropFirst() { try host.release(pid) }
+        try host.release(replacement)
+        for task in active.dropFirst() {
+            #expect(try await task.value.data == Data("host image bytes".utf8))
+        }
+        #expect(try await next.value.data == Data("host image bytes".utf8))
+        #expect(host.clients.count == 5)
+        #expect(host.clients.allSatisfy { kill($0, 0) == -1 && errno == ESRCH })
+        #expect(host.starts.count == 1)
         #expect(kill(try #require(host.pid()), 0) == 0)
     }
 }
