@@ -42,6 +42,37 @@ struct RemoteHostTests {
         #expect(host?.tmpdir == "/tmp/easl-dev-host/tmp")
     }
 
+    @Test(arguments: ["invalid_params", "internal", "malformed", "silent"])
+    func identifyingAMacDoesNotHideProtocolFailures(_ response: String) async throws {
+        let fixture = try EaslConnectionTests()
+        let server = SocketServer(path: fixture.path) { request, _ in
+            let id = request["id"] ?? .null
+            if request["method"]?.string == "system.ping" {
+                return .object(["id": id, "ok": .bool(true), "result": .object(["version": .number(2)])])
+            }
+            if response == "silent" { return nil }
+            if response == "malformed" {
+                return .object(["id": id, "ok": .bool(true), "result": .object([:])])
+            }
+            return .object(["id": id, "ok": .bool(false),
+                            "error": .object(["code": .string(response), "message": .string("host refused the request")])])
+        }
+        try server.start()
+        defer { server.stop() }
+        let connection = EaslConnection.unixSocket(fixture.path)
+        defer { connection.close() }
+        let host = try #require(RemoteHost.parseDiscovery("os=Darwin\nhome=/Users/lume\ntmpdir=/tmp\n",
+                                                        name: "guest", sshTarget: "guest"))
+        do {
+            let identified = try await host.identified(on: connection, timeout: .milliseconds(200))
+            #expect(response == "invalid_params")
+            #expect(identified == host)
+        } catch let failure as ApiRouter.Failure {
+            #expect(response != "invalid_params")
+            #expect(failure.code == (response == "internal" ? "internal" : "unavailable"))
+        }
+    }
+
     @Test func startOpensTheInstalledBundleOnlyForTheInstanceWhoseSocketWasFound() {
         let mac = "os=Darwin\nhome=/Users/tim\ntmpdir=/var/folders/T/\n"
         let production = RemoteHost.parseDiscovery(mac, name: "work", sshTarget: "work.tail1234.ts.net")

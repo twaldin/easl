@@ -971,14 +971,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try checkRemoteOpen()
         let mirror = BoardMirror(hostName: host.name, board: board, connection: host.connection(), renders: host.connection())
         let loaded: Board
+        let identified: RemoteHost
         do {
             loaded = try await mirror.load()
+            identified = try await host.identified(on: mirror.connection)
             try checkRemoteOpen()
         } catch {
             mirror.close()
             throw error
         }
-        return try await attachRemoteWindow(host: host, mirror: mirror, board: loaded, key: key, as: .shown(select: select))
+        return try await attachRemoteWindow(host: identified, mirror: mirror, board: loaded, key: key, as: .shown(select: select))
     }
 
     private enum RemoteWindow {
@@ -1087,19 +1089,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let host = try await RemoteHost.discover(name: entry.host, sshTarget: entry.sshTarget, support: entry.support(devRemoteHome: AppPaths.devRemoteHome),
                                                      allowDefault: AppPaths.devRemoteHome == nil)
             guard !Task.isCancelled, !terminating else { return }
-            guard host.server == .easld else {
-                return NSLog("easl: background attach skips %@: not an easld host", entry.sshTarget)
-            }
             let mirror = BoardMirror(hostName: host.name, board: entry.board, connection: host.connection(), renders: host.connection())
             let loaded: Board
+            let identified: RemoteHost
             do {
                 loaded = try await mirror.load()
+                identified = try await host.identified(on: mirror.connection)
             } catch {
                 mirror.close()
                 throw error
             }
+            guard !Task.isCancelled, !terminating else { return mirror.close() }
+            guard identified.server == .easld else {
+                mirror.close()
+                return NSLog("easl: background attach skips %@: not an easld host", entry.sshTarget)
+            }
             // A saved address may acquire its server-home identity only after discovery.
-            _ = try await attachRemoteWindow(host: host, mirror: mirror, board: loaded, key: Self.remoteKey(host, entry.board), as: .attached)
+            _ = try await attachRemoteWindow(host: identified, mirror: mirror, board: loaded, key: Self.remoteKey(identified, entry.board), as: .attached)
         } catch {
             guard !Task.isCancelled, !terminating, !(error is CancellationError) else { return }
             let code = (error as? ApiRouter.Failure)?.code ?? (error as? EaslConnection.Failure)?.code ?? "unavailable"

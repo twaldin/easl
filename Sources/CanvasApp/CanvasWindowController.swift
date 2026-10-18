@@ -573,7 +573,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// On an easld host, this window answers the board's delegated calls and attaches as easld's
-    /// client (`BoardMirror.serve`). A Mac host answers them itself: nothing attaches there.
+    /// client (`BoardMirror.serve`). An app server answers them itself: nothing attaches there.
     func serveHost() {
         guard let remote, remote.host.server == .easld else { return }
         let identity = ClientIdentity.thisMac

@@ -634,6 +634,16 @@ final class ApiRouterTests {
         #expect(reply["error"]?["code"] == .string("unsupported"))
     }
 
+    @Test func identifyingTheMacAppKeepsItsOfflineStartCommand() async throws {
+        let host = try #require(RemoteHost.parseDiscovery("os=Darwin\nhome=/Users/lume\ntmpdir=/var/folders/T/\n",
+                                                        name: "guest", sshTarget: "guest"))
+        let connection = EaslConnection.unixSocket(dir.appendingPathComponent("s").path)
+        defer { connection.close() }
+        let identified = try await host.identified(on: connection)
+        #expect(identified == host)
+        #expect(identified.startCommand?.suffix(3) == ["open", "-g", "/Applications/easl.app"])
+    }
+
     @Test func openRemoteChecksItsParamsAndAnswersWithThePickersFailures() async throws {
         let client = try connect()
         client.send(#"{"id":"u","method":"board.open_remote","params":{"host":"twaldin-work","board":"brd_7f94"}}"#)
