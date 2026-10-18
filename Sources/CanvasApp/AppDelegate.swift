@@ -608,7 +608,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 result = BoardCloseResult(board: board, ended: ended)
                 try registry.close(board.id) {
                     do {
-                        try writeOpenBoards(openLocalBoards(excluding: controller?.window))
+                        if updateRestoration == nil { try writeOpenBoards(openLocalBoards(excluding: controller?.window)) }
                     } catch {
                         throw ApiRouter.Failure("unavailable", "cannot save open-boards.json before closing \(board.id): \(error.localizedDescription)")
                     }
@@ -1400,7 +1400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func tabHost(excluding window: NSWindow) -> NSWindow? {
         var preferred: NSWindow?
         func consider(_ controller: CanvasWindowController) -> NSWindow? {
-            guard controller.isBoardOpen, let member = controller.window, member !== window else { return nil }
+            guard controller.isBoardOpen, let member = controller.window, member !== window, isShown(member) else { return nil }
             let host = member.tabGroup?.selectedWindow ?? member
             guard host !== window else { return nil }
             if host.isKeyWindow { return host }
@@ -1584,6 +1584,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateRestoration = Task { @MainActor in
             defer {
                 updateRestoration = nil
+                saveOpenBoards()
                 showPendingUpdateRestoreFailure()
             }
             do {
