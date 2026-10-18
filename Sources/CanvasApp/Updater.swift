@@ -1,6 +1,7 @@
 import AppKit
 import CanvasCore
 
+/// A ready bundle can install without a working feed, but is verified again before handoff.
 @MainActor
 final class Updater {
     static let shared = Updater()
@@ -84,7 +85,20 @@ final class Updater {
     }
 
     func check(manual: Bool) {
-        guard operation == nil, !phase.isUpdating else { return }
+        if let operation {
+            guard manual else { return }
+            Task {
+                await operation.value
+                check(manual: true)
+            }
+            return
+        }
+        guard !phase.isUpdating else {
+            if manual, let release = phase.offered {
+                inform("easl is updating to \(release.version)", "easl quits and reopens when the update is ready.")
+            }
+            return
+        }
         if case .ready = phase {
             if manual { offer(over: nil) }
             return
@@ -100,8 +114,9 @@ final class Updater {
     func apiUpdate(mode: String) async throws -> JSONValue {
         while let operation { await operation.value }
         if case .installing = phase { return status() }
+        var checkError: String?
         operation = Task {
-            await runCheck(manual: false)
+            checkError = await runCheck(manual: false)
             if mode == "install", phase.name != "failed" {
                 await stageIfNeeded()
                 await installReady(automatic: false, delayQuit: true)
@@ -109,26 +124,33 @@ final class Updater {
             operation = nil
         }
         await operation?.value
-        let answer = status()
+        let answer = status(checkError: checkError)
         if mode == "check" { advanceAutomatically() }
         return answer
     }
 
-    private func status() -> JSONValue {
-        .object([
+    private func status(checkError: String? = nil) -> JSONValue {
+        let error: String?
+        switch phase {
+        case .installing: error = nil
+        case let .failed(reason, _): error = reason
+        default: error = checkError ?? failure?.reason
+        }
+        return .object([
             "currentVersion": .string(running ?? ""),
             "availableVersion": latest.map { .string($0.version.description) } ?? .null,
             "installPending": .bool(phase.installPending),
             "phase": .string(phase.name),
-            "error": failure.map { .string($0.reason) } ?? .null,
+            "error": error.map(JSONValue.string) ?? .null,
         ])
     }
 
-    private func runCheck(manual: Bool) async {
+    @discardableResult
+    private func runCheck(manual: Bool) async -> String? {
         let ready: Bool
         if case .ready = phase { ready = true } else { ready = false }
         if !ready {
-            guard let next = phase.after(.check) else { return }
+            guard let next = phase.after(.check) else { return nil }
             phase = next
         }
         lastCheck = Date()
@@ -148,12 +170,20 @@ final class Updater {
                 if newer { offer(over: nil) } else { inform("easl \(running) is up to date", "\(release.version) is the newest version.") }
             }
         } catch {
-            recordFailure(Self.reason(error), rejecting: nil)
-            if manual { inform("Couldn't check for updates", Self.reason(error)) }
+            let reason = Self.reason(error)
+            NSLog("easl: update check failed: %@", reason)
+            if !ready { phase = phase.after(.fail(reason)) ?? phase }
+            if manual { inform("Couldn't check for updates", reason) }
+            return reason
         }
+        return nil
     }
 
     private func automaticAction() -> AppUpdate.AutomaticAction {
+        switch phase {
+        case .available, .ready: break
+        default: return .none
+        }
         guard let running, let current = AppVersion(running) else { return .none }
         return AppUpdate.automaticAction(phase: phase, running: current, enabled: automaticEnabled,
                                          idleSeconds: UserIdleWatch.shared.currentIdleSeconds(), rejectedSHA256: failure?.sha256)
@@ -197,7 +227,14 @@ final class Updater {
     }
 
     private func update(over window: NSWindow?) {
-        guard operation == nil, !phase.isUpdating else { return }
+        if let operation {
+            Task {
+                await operation.value
+                update(over: window)
+            }
+            return
+        }
+        guard !phase.isUpdating else { return }
         operation = Task {
             await stageIfNeeded()
             await installReady(automatic: false, delayQuit: false)
@@ -211,9 +248,8 @@ final class Updater {
               let running, let current = AppVersion(running), release.isNewer(than: current) else { return }
         phase = next
         await discardStaged()
-        let previousFailure = failure
         do {
-            try persistInterruption("The download of easl \(release.version) was interrupted.", release: release)
+            try persistInterruption("The download of easl \(release.version) was interrupted.")
             let app = try Self.replaceable()
             try await Self.requireSoleInstance(of: app)
             let staging = try AppUpdate.Staging(updates: AppPaths.updates, version: release.version.description)
@@ -223,37 +259,56 @@ final class Updater {
             let gatekeeper = !(team == nil && DevInput.enabled)
             let incoming = try await AppUpdate.prepareInstall(staging, release: release, replacing: app, team: team, gatekeeper: gatekeeper)
             staged = StagedUpdate(staging: staging, app: app, incoming: incoming, team: team, gatekeeper: gatekeeper)
-            try restoreFailureRecord(previousFailure)
+            try restoreFailureRecord(nil)
             phase = phase.after(.verified) ?? phase
         } catch {
             await discardStaged()
-            recordFailure(Self.reason(error), rejecting: release.sha256)
+            recordFailure(Self.reason(error), rejecting: Self.rejectsArtifact(error) ? release.sha256 : nil)
         }
     }
 
     private func installReady(automatic: Bool, delayQuit: Bool) async {
         guard case let .ready(release) = phase, let staged else { return }
         if automatic, automaticAction() != .install { return }
+        var prepared: AppDelegate?
         do {
             try await Self.requireSoleInstance(of: staged.app)
             try await AppUpdate.verify(staged.incoming, release: release, team: staged.team, gatekeeper: staged.gatekeeper)
             if automatic, automaticAction() != .install { return }
-            try (NSApp.delegate as? AppDelegate)?.prepareForUpdate()
-            if automatic, automaticAction() != .install { return }
-            try persistInterruption("The update to easl \(release.version) was interrupted before completion.", release: release)
+            guard let delegate = NSApp.delegate as? AppDelegate else {
+                throw UpdateError("easl couldn't save its open boards before updating")
+            }
+            try delegate.prepareForUpdate()
+            prepared = delegate
+            if automatic, automaticAction() != .install {
+                try delegate.cancelPreparedUpdate()
+                prepared = nil
+                return
+            }
+            try persistInterruption("The update to easl \(release.version) was interrupted before completion.")
             try startHelper(staged.staging, replacing: staged.app)
             phase = phase.after(.install) ?? phase
             Task {
                 if delayQuit { try? await Task.sleep(for: .seconds(1)) }
-                NSApp.terminate(nil)
+                AppDelegate.terminateNow()
                 try? await Task.sleep(for: .seconds(30))
                 stopHelper()
+                var reason = "easl didn't quit, so nothing was replaced"
+                do { try delegate.cancelPreparedUpdate() } catch {
+                    reason += ". Couldn't remove the saved update boards: \(Self.reason(error))"
+                }
                 await discardStaged()
-                recordFailure("easl didn't quit, so nothing was replaced", rejecting: release.sha256)
+                recordFailure(reason, rejecting: nil)
             }
         } catch {
+            var reason = Self.reason(error)
+            if let prepared {
+                do { try prepared.cancelPreparedUpdate() } catch {
+                    reason += ". Couldn't remove the saved update boards: \(Self.reason(error))"
+                }
+            }
             await discardStaged()
-            recordFailure(Self.reason(error), rejecting: release.sha256)
+            recordFailure(reason, rejecting: Self.rejectsArtifact(error) ? release.sha256 : nil)
         }
     }
 
@@ -269,9 +324,9 @@ final class Updater {
         self.failure = failure
     }
 
-    private func persistInterruption(_ reason: String, release: LatestRelease) throws {
+    private func persistInterruption(_ reason: String) throws {
         let previous = failure
-        try saveFailure(UpdateFailure(reason: reason, sha256: release.sha256, noticePending: true))
+        try saveFailure(UpdateFailure(reason: reason, sha256: nil, noticePending: true))
         failure = previous
     }
 
@@ -288,7 +343,7 @@ final class Updater {
         NSLog("easl: update failed: %@", reason)
         phase = phase.after(.fail(reason)) ?? .failed(reason, offered: phase.offered)
         do {
-            try saveFailure(UpdateFailure(reason: reason, sha256: sha256 ?? failure?.sha256, noticePending: true))
+            try saveFailure(UpdateFailure(reason: reason, sha256: sha256, noticePending: true))
         } catch {
             failure = UpdateFailure(reason: "\(reason). Couldn't save update failure: \(error.localizedDescription)",
                                     sha256: sha256, noticePending: true)
@@ -478,6 +533,15 @@ final class Updater {
             alert.beginSheetModal(for: window) { response in done(response) }
         } else {
             done(alert.runModal())
+        }
+    }
+
+    private static func rejectsArtifact(_ error: Error) -> Bool {
+        if error is AppUpdate.DownloadProblem { return true }
+        guard let problem = error as? AppUpdate.InstallProblem else { return false }
+        switch problem {
+        case .signature, .team, .gatekeeper, .version, .unpack, .noApp, .notABundle: return true
+        case .outsideUpdates, .copy, .quarantine, .otherInstance: return false
         }
     }
 

@@ -20,6 +20,7 @@ public struct UpdateBoardSnapshot: Codable, Equatable, Sendable {
     }
 
     public var groups: [Group]
+    public var recoveryReason: String?
     private var version = 1
 
     public init(groups: [Group]) {
@@ -76,9 +77,33 @@ public struct UpdateBoardSnapshot: Codable, Equatable, Sendable {
             try JSONEncoder().encode(snapshot).write(to: url, options: .atomic)
         }
 
-        /// Call only after every saved tab has been restored. A failed reconnect keeps the snapshot for retry.
+        /// Removing an aborted preparation never removes a retained recovery.
         public func remove() throws {
-            try FileManager.default.removeItem(at: url)
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile {
+                return
+            }
+        }
+
+        /// Claim only this launch's prepared tabs before any asynchronous restoration.
+        public func retainForRecovery(in directory: URL) throws -> Store? {
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let recovery = Store(url: directory.appendingPathComponent("\(UUID().uuidString).json"))
+            try FileManager.default.moveItem(at: url, to: recovery.url)
+            return recovery
+        }
+
+        public static func recoveries(in directory: URL) throws -> [Store] {
+            do {
+                return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+                    .filter { $0.pathExtension == "json" }
+                    .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                    .map { Store(url: $0) }
+            } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+                return []
+            }
         }
     }
 }

@@ -376,15 +376,17 @@ extension TestBundle {
 
     /// Runs the helper for a process that has already exited, relaunching by writing `"$app"`
     /// to `relaunched`; its outcome.
-    static func runHelper(app: URL, staging: AppUpdate.Staging, relaunched: URL, afterBackup: String = "", expectedStatus: Int32 = 0) async throws -> AppUpdate.Outcome? {
+    static func runHelper(app: URL, staging: AppUpdate.Staging, relaunched: URL, beforeSwap: String = "", afterSwap: String = "", expectedStatus: Int32 = 0) async throws -> AppUpdate.Outcome? {
         try FileManager.default.createDirectory(at: staging.directory, withIntermediateDirectories: true)
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0])
         let status = await offPool { () -> Int32 in
             let exited = Process()
             exited.executableURL = URL(fileURLWithPath: "/usr/bin/true")
             guard (try? exited.run()) != nil else { return -1 }
             exited.waitUntilExit()
             let script = AppUpdate.helperScript(pid: exited.processIdentifier, app: app, staging: staging,
-                                                relaunch: "printf %s \"$app\" > \(RemoteHost.quote(relaunched.path))", afterBackup: afterBackup)
+                                                relaunch: "kill -TERM $$; kill -INT $$; kill -HUP $$; printf %s \"$app\" > \(RemoteHost.quote(relaunched.path))",
+                                                swapExecutable: executable, beforeSwap: beforeSwap, afterSwap: afterSwap)
             let helper = Process()
             helper.executableURL = URL(fileURLWithPath: "/bin/sh")
             helper.arguments = ["-c", script]
@@ -431,73 +433,43 @@ struct UpdateHelperTests {
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
     }
 
-    @Test func aFailedSecondRenamePutsTheOriginalBackByteForByte() async throws {
+    @Test func aFailedSwapLeavesTheOriginalByteForByte() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
-        try TestBundle.make(app, version: "0.2.2", executable: Data((0..<4096).map { _ in UInt8.random(in: 0...255) }))
-        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)], ofItemAtPath: app.path)
-        let oldDate = try FileManager.default.attributesOfItem(atPath: app.path)[.modificationDate] as? Date
-        try await TestBundle.denyTimestampChanges(app)
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
         let original = try TestBundle.snapshot(app)
         let incoming = staging.incoming(beside: app)
         try TestBundle.make(incoming, version: "0.2.3")
-        // An immutable folder can't be renamed: the second rename fails.
         try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: incoming.path)
         defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: incoming.path) }
-        let outcome = try await runHelper()
-        guard case .restored? = outcome else {
-            Issue.record("expected the old app back, got \(String(describing: outcome))")
+        guard case .unchanged? = try await runHelper() else {
+            Issue.record("expected failed atomic exchange to leave installed app unchanged")
             return
         }
         #expect(try TestBundle.snapshot(app) == original)
-        #expect(try FileManager.default.attributesOfItem(atPath: app.path)[.modificationDate] as? Date == oldDate)
-        #expect(!FileManager.default.fileExists(atPath: staging.backup(beside: app).path))
-        #expect(!FileManager.default.fileExists(atPath: staging.protection(beside: app).path))
+        #expect(AppUpdate.bundleVersion(of: incoming) == "0.2.3")
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
     }
 
-    @Test func cleanupAtTheFirstRenameKeepsRollbackThenTheHelperInstalls() async throws {
+    @Test func atomicPrimitiveExchangesBothCompleteBundles() throws {
         defer { try? FileManager.default.removeItem(at: root) }
-        let files = FileManager.default
-        let oldDate = Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)
         try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
-        try files.setAttributes([.modificationDate: oldDate], ofItemAtPath: app.path)
-        try await TestBundle.denyTimestampChanges(app)
-        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
+        let incoming = staging.incoming(beside: app)
+        try TestBundle.make(incoming, version: "0.2.3", executable: Data("new".utf8))
+        let old = try TestBundle.snapshot(app)
+        let new = try TestBundle.snapshot(incoming)
+        try AppUpdate.swapBundles(installed: app, incoming: incoming)
+        #expect(try TestBundle.snapshot(app) == new)
+        #expect(try TestBundle.snapshot(incoming) == old)
+    }
 
-        // Stop the actual shell at its first rename, clean beside it, then let it finish.
-        // Both sides have finite bounds; on any test error the gate is released before unwind.
-        let paused = root.appendingPathComponent("paused")
-        let resume = root.appendingPathComponent("resume")
-        let q = RemoteHost.quote
-        let gate = """
-        : > \(q(paused.path))
-        count=0
-        while [ ! -e \(q(resume.path)) ] && [ "$count" -lt 200 ]; do
-          /bin/sleep 0.05
-          count=$((count + 1))
-        done
-        [ -e \(q(resume.path)) ] || exit 1
-        """
-        async let outcome = TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched, afterBackup: gate)
-        do {
-            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-            while !files.fileExists(atPath: paused.path), ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(20))
-            }
-            try #require(files.fileExists(atPath: paused.path), "the helper must reach its real first rename")
-            #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: app.lastPathComponent).isEmpty)
-            #expect(AppUpdate.bundleVersion(of: staging.backup(beside: app)) == "0.2.2", "cleanup must not take the helper's rollback")
-        } catch {
-            try? Data().write(to: resume)
-            _ = try await outcome
-            throw error
+    @Test func atomicPrimitiveFailureChangesNeitherBundle() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
+        let original = try TestBundle.snapshot(app)
+        #expect(throws: (any Error).self) {
+            try AppUpdate.swapBundles(installed: app, incoming: staging.incoming(beside: app))
         }
-        try Data().write(to: resume)
-        let installed = try await outcome
-        #expect(installed == .installed)
-        #expect(AppUpdate.bundleVersion(of: app) == "0.2.3")
-        #expect(AppUpdate.bundleVersion(of: staging.previous) == "0.2.2")
-        #expect(!files.fileExists(atPath: staging.protection(beside: app).path))
+        #expect(try TestBundle.snapshot(app) == original)
     }
 
     @Test func aBackupInTheWayReplacesNothing() async throws {
@@ -537,7 +509,7 @@ struct UpdateHelperTests {
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
     }
 
-    @Test func aFailedFirstRenameLeavesTheInstalledBundleWholeAndRemovesItsProtection() async throws {
+    @Test func aFailedExchangeLeavesTheInstalledBundleWholeAndRemovesItsProtection() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let files = FileManager.default
         try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
@@ -557,27 +529,6 @@ struct UpdateHelperTests {
         #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
     }
 
-    @Test func aStrandedRollbackKeepsItsProtectionAndIsNeverCleanedWhileRunning() async throws {
-        defer { try? FileManager.default.removeItem(at: root) }
-        let files = FileManager.default
-        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
-        try files.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)], ofItemAtPath: app.path)
-        let original = try TestBundle.snapshot(app)
-        try await TestBundle.denyTimestampChanges(app)
-        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
-        let outcome = try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched, afterBackup: "/bin/mkdir \"$app\"")
-        let backup = staging.backup(beside: app)
-        #expect(outcome == .stranded(backup.path))
-        #expect(try TestBundle.snapshot(backup) == original)
-        #expect(try String(contentsOf: relaunched, encoding: .utf8) == backup.path)
-        #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: app.lastPathComponent).isEmpty)
-        #expect(files.fileExists(atPath: staging.protection(beside: app).path))
-        let expired = Date().addingTimeInterval(AppUpdate.leftoverAge + 1)
-        #expect(AppUpdate.removeStaleLeftovers(beside: applications, running: backup.lastPathComponent, now: expired)
-                == [staging.incoming(beside: app).lastPathComponent])
-        #expect(try TestBundle.snapshot(backup) == original)
-        #expect(files.fileExists(atPath: staging.protection(beside: app).path))
-    }
 
     @Test func anInstalledUpdateKeepsRollbackProtectionIfMovingItToStagingFails() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
@@ -589,7 +540,7 @@ struct UpdateHelperTests {
         try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
         // A file at the archive destination refuses moving a directory there.
         let outcome = try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched,
-                                                     afterBackup: "printf blocked > \"$previous\"")
+                                                     afterSwap: "printf blocked > \"$previous\"")
         let backup = staging.backup(beside: app)
         let protection = staging.protection(beside: app)
         #expect(outcome == .installed)
@@ -604,28 +555,42 @@ struct UpdateHelperTests {
         #expect(try files.contentsOfDirectory(atPath: applications.path) == ["easl.app"])
     }
 
-    @Test func interruptingTheHelperAfterTheFirstRenameRestoresTheOldApp() async throws {
+    @Test func interruptionOnEitherSideOfSwapKeepsCanonicalBundleUsable() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
-        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
-        let original = try TestBundle.snapshot(app)
-        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3", executable: Data("new".utf8))
-        let outcome = try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched,
-                                                     afterBackup: "kill -TERM $$", expectedStatus: 1)
-        #expect(outcome == .restored("helper interrupted"))
-        #expect(try TestBundle.snapshot(app) == original)
-        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
-        #expect(!FileManager.default.fileExists(atPath: staging.protection(beside: app).path))
+        for after in [false, true] {
+            let area = root.appendingPathComponent(after ? "after" : "before")
+            let installed = area.appendingPathComponent("easl.app")
+            let attempt = try AppUpdate.Staging(updates: area.appendingPathComponent("updates"), version: "0.2.3")
+            let relaunched = area.appendingPathComponent("relaunched")
+            try TestBundle.make(installed, version: "0.2.2", executable: Data("old".utf8))
+            try TestBundle.make(attempt.incoming(beside: installed), version: "0.2.3", executable: Data("new".utf8))
+            let result = try await TestBundle.runHelper(app: installed, staging: attempt, relaunched: relaunched,
+                                                      beforeSwap: after ? "" : "kill -TERM $$",
+                                                      afterSwap: after ? "kill -TERM $$" : "", expectedStatus: 1)
+            #expect(result == (after ? .installed : .unchanged("helper interrupted")))
+            #expect(AppUpdate.bundleVersion(of: installed) == (after ? "0.2.3" : "0.2.2"))
+            #expect(try String(contentsOf: relaunched, encoding: .utf8) == installed.path)
+        }
     }
 
-    @Test func aFailedCommandAfterTheFirstRenameRestoresTheOldApp() async throws {
+    @Test func uncatchableInterruptionNeverRemovesCanonicalBundle() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
-        try TestBundle.make(app, version: "0.2.2", executable: Data("old".utf8))
-        let original = try TestBundle.snapshot(app)
-        try TestBundle.make(staging.incoming(beside: app), version: "0.2.3")
-        let outcome = try await TestBundle.runHelper(app: app, staging: staging, relaunched: relaunched, afterBackup: "false")
-        #expect(outcome == .restored("helper interrupted"))
-        #expect(try TestBundle.snapshot(app) == original)
-        #expect(try String(contentsOf: relaunched, encoding: .utf8) == app.path)
+        for after in [false, true] {
+            let area = root.appendingPathComponent(after ? "after" : "before")
+            let installed = area.appendingPathComponent("easl.app")
+            let attempt = try AppUpdate.Staging(updates: area.appendingPathComponent("updates"), version: "0.2.3")
+            try TestBundle.make(installed, version: "0.2.2", executable: Data("old".utf8))
+            let incoming = attempt.incoming(beside: installed)
+            try TestBundle.make(incoming, version: "0.2.3", executable: Data("new".utf8))
+            let old = try TestBundle.snapshot(installed)
+            let new = try TestBundle.snapshot(incoming)
+            let result = try await TestBundle.runHelper(app: installed, staging: attempt, relaunched: area.appendingPathComponent("relaunched"),
+                                                      beforeSwap: after ? "" : "kill -KILL $$",
+                                                      afterSwap: after ? "kill -KILL $$" : "", expectedStatus: 9)
+            #expect(result == nil)
+            #expect(try TestBundle.snapshot(installed) == (after ? new : old))
+            #expect(try TestBundle.snapshot(incoming) == (after ? old : new))
+        }
     }
 
     @Test func theResultFileSaysWhatHappened() {

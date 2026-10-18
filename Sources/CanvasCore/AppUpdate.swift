@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Security
+import Darwin
 
 /// easl's in-app updater (easl › Check for Updates…, the titlebar Update button; docs/design.md
 /// "Updates"): the release `latest.json` offers, whether it's newer than the running app, the
@@ -174,7 +175,7 @@ public enum AppUpdate {
             installed.deletingLastPathComponent().appendingPathComponent("\(AppUpdate.incomingPrefix)\(version)-\(transaction).app", isDirectory: true)
         }
 
-        /// Where the helper renames `installed` while the new app takes its name:
+        /// Where the helper parks the old bundle after the atomic exchange, before archiving:
         /// `.easl-previous-<version>-<transaction>.app`.
         public func backup(beside installed: URL) -> URL {
             installed.deletingLastPathComponent().appendingPathComponent("\(AppUpdate.backupPrefix)\(version)-\(transaction).app", isDirectory: true)
@@ -238,7 +239,10 @@ public enum AppUpdate {
         return files.compactMap { file in
             guard file.name != running, file.name != running + protectionSuffix else { return nil }
             if isLeftover(file.name) {
-                let modified = max(file.modified, protections[file.name + protectionSuffix] ?? file.modified)
+                let protectionName = file.name.hasPrefix(incomingPrefix)
+                    ? backupPrefix + String(file.name.dropFirst(incomingPrefix.count)) + protectionSuffix
+                    : file.name + protectionSuffix
+                let modified = max(file.modified, protections[protectionName] ?? file.modified)
                 return now.timeIntervalSince(modified) >= leftoverAge ? file.name : nil
             }
             guard let modified = protections[file.name] else { return nil }
@@ -435,22 +439,21 @@ public enum AppUpdate {
 
     // MARK: the helper
 
-    /// The detached helper's `/bin/sh` script. It waits for `pid` (the app) to exit, then only
-    /// renames within `app`'s folder: `app` to `staging.backup(beside:)` and
-    /// `staging.incoming(beside:)` (the verified copy) to `app`; if the second rename fails, the
-    /// backup goes straight back. A rename never copies, so a failure leaves each bundle whole;
-    /// `mv` would move into a folder already at the destination, so each destination must be
-    /// free first. Before the first rename it exclusively creates `staging.protection(beside:)`,
-    /// a fresh empty directory whose date protects the rollback bundle from hour-old cleanup,
-    /// without writing the installed app's timestamps. A failure to create it replaces nothing.
-    /// After a success the backup goes to `staging.previous`; its protection stays if that move
-    /// fails, or rollback strands the backup. Otherwise the empty protection is removed.
-    /// It writes the outcome to `staging.result` (`Outcome`) and runs `relaunch`, a shell command
-    /// that opens `"$app"`: the new version, or the old one.
-    /// `relaunch` is `relaunchCommand` in the app; tests pass their own, and `afterBackup`, a
-    /// command run right after the first rename.
-    public static func helperScript(pid: Int32, app: URL, staging: Staging, relaunch: String, afterBackup: String = "") -> String {
+    /// Exchanges complete bundles in one filesystem operation. Failure changes neither path.
+    public static func swapBundles(installed: URL, incoming: URL) throws {
+        try requireBundle(installed)
+        try requireBundle(incoming)
+        guard renamex_np(incoming.path, installed.path, UInt32(RENAME_SWAP)) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+    }
+
+    /// The installed executable performs the atomic exchange before any application bootstrap.
+    /// Filesystem identity resolves interruption even between the exchange and shell bookkeeping.
+    public static func helperScript(pid: Int32, app: URL, staging: Staging, relaunch: String,
+                                    swapExecutable: URL? = nil, beforeSwap: String = "", afterSwap: String = "") -> String {
         let q = RemoteHost.quote
+        let executable = swapExecutable ?? app.appendingPathComponent("Contents/MacOS/Easl")
         return """
         pid=\(pid)
         app=\(q(app.path))
@@ -460,45 +463,38 @@ public enum AppUpdate {
         previous=\(q(staging.previous.path))
         result=\(q(staging.result.path))
         swapping=0
+        original=
         vacant() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
+        identity() { /usr/bin/stat -f '%d:%i' "$1"; }
         unchanged() { printf 'unchanged: %s\\n' "$1" > "$result"; }
         replace() {
           vacant "$backup" || { unchanged "$backup is in the way"; return; }
           err=$(/bin/mkdir "$protection" 2>&1) || { unchanged "$err"; return; }
-          err=$(/bin/mv "$app" "$backup" 2>&1) || { unchanged "$err"; /bin/rmdir "$protection"; return; }
-          if ! {
-            \(afterBackup.isEmpty ? ":" : afterBackup)
-          }; then return; fi
-          if vacant "$app" && err=$(/bin/mv "$new" "$app" 2>&1); then
+          original=$(identity "$app") || { unchanged "cannot identify installed app"; /bin/rmdir "$protection"; return; }
+          \(beforeSwap.isEmpty ? ":" : beforeSwap)
+          if err=$(\(q(executable.path)) --update-swap "$app" "$new" 2>&1); then
+            \(afterSwap.isEmpty ? ":" : afterSwap)
             echo installed > "$result"
-            if /bin/mv "$backup" "$previous"; then
+            if /bin/mv "$new" "$backup" && /bin/mv "$backup" "$previous"; then
               /bin/rmdir "$protection"
             else
-              echo "easl: $backup stays until the next launch"
+              echo "easl: previous app stays beside $app until the next launch"
             fi
-          elif vacant "$app" && /bin/mv "$backup" "$app"; then
-            printf 'restored: %s\\n' "${err:-something else took $app}" > "$result"
-            /bin/rmdir "$protection"
           else
-            printf 'stranded: %s\\n' "$backup" > "$result"
-            app=$backup
+            unchanged "$err"
+            /bin/rmdir "$protection"
           fi
         }
         finish() {
-          trap - 0 1 2 15
+          trap - 0
+          trap '' 1 2 15
           [ "$swapping" = 1 ] || exit 1
           if [ ! -f "$result" ]; then
-            if [ -d "$backup" ]; then
-              if ! vacant "$app" && vacant "$new"; then /bin/mv "$app" "$new"; fi
-              if vacant "$app" && /bin/mv "$backup" "$app"; then
-                printf 'restored: helper interrupted\\n' > "$result"
-                /bin/rmdir "$protection"
-              else
-                printf 'stranded: %s\\n' "$backup" > "$result"
-                app=$backup
-              fi
+            if [ -n "$original" ] && [ "$(identity "$app")" != "$original" ]; then
+              echo installed > "$result"
             else
               unchanged "helper interrupted"
+              [ -z "$original" ] || /bin/rmdir "$protection"
             fi
           fi
           \(relaunch)

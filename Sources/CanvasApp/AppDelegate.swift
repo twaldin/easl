@@ -30,7 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let updateBoards = UpdateBoardSnapshot.Store(url: AppPaths.updateBoards)
     private var updateRestoration: Task<Void, Never>?
     private var updateRestoreFailure: String?
-    private var suppressLaunchActivation = ProcessInfo.processInfo.environment["EASL_UPDATE_RELAUNCH"] == "1"
+    private var restoreNoticePending = false
+    private var suppressLaunchActivation = AppPaths.isUpdateRelaunch
     /// Reopen-list boards being read to attach with no window shown, by `remoteKey`. Cancelling
     /// one (its board opened by the user, the setting off, quit) keeps it from attaching when its read ends.
     private var backgroundLoads: [String: Task<Void, Never>] = [:]
@@ -242,11 +243,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hyper.install()
         let saved = Self.savedOpenBoards()
-        let updateSnapshot: UpdateBoardSnapshot?
+        var updateRecovery: UpdateBoardSnapshot.Store?
+        var updateSnapshot: UpdateBoardSnapshot?
         do {
-            updateSnapshot = try updateBoards.load()
+            if AppPaths.isUpdateRelaunch {
+                updateRecovery = try updateBoards.retainForRecovery(in: AppPaths.updateBoardRecovery)
+                updateSnapshot = try updateRecovery?.load()
+            }
+            if updateRecovery == nil { try refreshUpdateRecovery() }
         } catch {
-            updateSnapshot = nil
             reportUpdateRestoreFailure(error.localizedDescription)
         }
         // Decided before any board opens, so a new home's first board doesn't count as a board
@@ -268,8 +273,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(showHeldTabs), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(showHeldTabs), name: NSWindow.didDeminiaturizeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(showHeldTabs), name: NSWindow.didChangeOcclusionStateNotification, object: nil)
-        if let updateSnapshot {
-            beginUpdateRestoration(updateSnapshot)
+        for name in [NSApplication.didBecomeActiveNotification, NSWindow.didBecomeKeyNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(showPendingUpdateRestoreFailure), name: name, object: nil)
+        }
+        if let updateSnapshot, let updateRecovery {
+            beginUpdateRestoration([(updateRecovery, updateSnapshot)])
         } else {
             let initial = open(root: Self.initialRoot(), select: !suppressLaunchActivation)
             var reopened: Set<BoardID> = [initial.id]
@@ -282,7 +290,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let migration {
                 for (id, controller) in controllers { migration.notice(for: id).map(controller.canvas.showNotice) }
             }
-            if let updateRestoreFailure { reportUpdateRestoreFailure(updateRestoreFailure) }
             if backgroundAttach { attachInBackground() }
             if !suppressLaunchActivation, !CanvasApplication.neverActivate, controllers[initial.id]?.window?.isOnActiveSpace == true {
                 NSApp.activate(ignoringOtherApps: true)
@@ -290,11 +297,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Updater.shared.start()
         suppressLaunchActivation = false
+        showPendingUpdateRestoreFailure()
     }
 
     /// Quit even while a sheet or app-modal dialog is up: cancel them, then terminate once the
     /// modal loop has unwound.
-    private static func terminateNow() {
+    static func terminateNow() {
         for window in NSApp.windows {
             while let sheet = window.attachedSheet { window.endSheet(sheet, returnCode: .cancel) }
         }
@@ -693,8 +701,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func prepareForUpdate() throws {
-        guard updateRestoration == nil, updateRestoreFailure == nil else {
-            throw ApiRouter.Failure("unavailable", "Reopen the saved update boards before installing another update.")
+        guard updateRestoration == nil else {
+            throw ApiRouter.Failure("unavailable", "Update board tabs are still reopening.")
         }
         var remaining = openBoardsInOrder()
         var groups: [UpdateBoardSnapshot.Group] = []
@@ -715,19 +723,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try updateBoards.save(UpdateBoardSnapshot(groups: groups))
     }
 
-    private func beginUpdateRestoration(_ snapshot: UpdateBoardSnapshot) {
+    func cancelPreparedUpdate() throws {
+        try updateBoards.remove()
+    }
+
+    private func beginUpdateRestoration(_ recoveries: [(UpdateBoardSnapshot.Store, UpdateBoardSnapshot)]) {
         guard updateRestoration == nil else { return }
         updateRestoration = Task { @MainActor in
-            await self.restoreUpdateBoards(snapshot)
+            for (store, snapshot) in recoveries {
+                guard !Task.isCancelled, !self.terminating else { break }
+                await self.restoreUpdateBoards(snapshot, in: store)
+            }
             self.updateRestoration = nil
+            do { try self.refreshUpdateRecovery() } catch { self.reportUpdateRestoreFailure(error.localizedDescription) }
             if self.backgroundAttach, !self.terminating { self.attachInBackground() }
         }
     }
 
-    private func restoreUpdateBoards(_ snapshot: UpdateBoardSnapshot) async {
+    private func restoreUpdateBoards(_ snapshot: UpdateBoardSnapshot, in store: UpdateBoardSnapshot.Store) async {
         var failures: [String] = []
+        var failedGroups: [UpdateBoardSnapshot.Group] = []
         for saved in snapshot.groups {
             var restored: [(index: Int, window: NSWindow)] = []
+            var failedTabs: [UpdateBoardSnapshot.Board] = []
+            var failedSelection = 0
             for (index, tab) in saved.tabs.enumerated() {
                 do {
                     try checkRemoteOpen()
@@ -748,9 +767,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 } catch {
                     guard !Task.isCancelled, !terminating else { return }
                     failures.append(error.localizedDescription)
+                    if index == saved.selected { failedSelection = failedTabs.count }
+                    failedTabs.append(tab)
                 }
             }
             guard !Task.isCancelled, !terminating else { return }
+            if !failedTabs.isEmpty {
+                failedGroups.append(.init(tabs: failedTabs, selected: failedSelection, minimized: saved.minimized))
+            }
             // Build the native group while hidden. Selecting an already shown tab can move it to another Space.
             for (_, window) in restored {
                 window.orderOut(nil)
@@ -766,27 +790,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if saved.minimized { selected.miniaturize(nil) }
             }
         }
-        if failures.isEmpty {
-            do {
-                try updateBoards.remove()
-                updateRestoreFailure = nil
-                NSApp.dockTile.badgeLabel = nil
-                saveOpenBoards()
-            } catch {
-                reportUpdateRestoreFailure(error.localizedDescription)
+        do {
+            if !failures.isEmpty {
+                var remaining = UpdateBoardSnapshot(groups: failedGroups)
+                remaining.recoveryReason = failures.joined(separator: "\n")
+                try store.save(remaining)
             }
-        } else {
-            reportUpdateRestoreFailure(failures.joined(separator: "\n"))
+            try writeOpenBoards(openLocalBoards(excluding: nil))
+            if failures.isEmpty { try store.remove() }
+        } catch {
+            reportUpdateRestoreFailure(error.localizedDescription)
         }
     }
 
+    private func refreshUpdateRecovery() throws {
+        let recoveries = try UpdateBoardSnapshot.Store.recoveries(in: AppPaths.updateBoardRecovery)
+        guard !recoveries.isEmpty else {
+            updateRestoreFailure = nil
+            restoreNoticePending = false
+            NSApp.dockTile.badgeLabel = nil
+            return
+        }
+        let reasons = recoveries.map { store -> String in
+            do { return try store.load()?.recoveryReason ?? "Saved update tabs still need attention." }
+            catch { return error.localizedDescription }
+        }
+        reportUpdateRestoreFailure(reasons.joined(separator: "\n"))
+    }
+
     private func reportUpdateRestoreFailure(_ reason: String) {
-        let message = "Some update board tabs could not reopen. Use easl > Retry Reopening Update Boards. \(reason)"
         updateRestoreFailure = reason
+        restoreNoticePending = true
         NSApp.dockTile.badgeLabel = "!"
-        for controller in controllers.values where controller.isBoardOpen { controller.canvas.showNotice(message) }
-        for controller in remoteControllers.values where controller.isBoardOpen { controller.canvas.showNotice(message) }
-        NSLog("easl: %@", message)
+        NSLog("easl: update board recovery: %@", reason)
+        showPendingUpdateRestoreFailure()
+    }
+
+    @objc private func showPendingUpdateRestoreFailure() {
+        guard restoreNoticePending, updateRestoration == nil, NSApp.isActive, let reason = updateRestoreFailure,
+              let controller = CanvasWindowController.frontmost,
+              let window = controller.window, !window.isMiniaturized, window.isVisible, window.isOnActiveSpace else { return }
+        controller.canvas.showNotice("Some update board tabs could not reopen. Use easl > Retry Reopening Update Boards or Discard Update Board Recovery. \(reason)")
+        restoreNoticePending = false
     }
 
     /// A remote board's window by its easl, the host's ssh target and socket, and its board
@@ -1307,7 +1352,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func retryUpdateRestoration(_ sender: Any?) {
         do {
-            if let snapshot = try updateBoards.load() { beginUpdateRestoration(snapshot) }
+            let recoveries = try UpdateBoardSnapshot.Store.recoveries(in: AppPaths.updateBoardRecovery)
+            var readable: [(UpdateBoardSnapshot.Store, UpdateBoardSnapshot)] = []
+            for store in recoveries {
+                do {
+                    if let snapshot = try store.load() { readable.append((store, snapshot)) }
+                } catch {
+                    reportUpdateRestoreFailure(error.localizedDescription)
+                }
+            }
+            beginUpdateRestoration(readable)
+        } catch {
+            reportUpdateRestoreFailure(error.localizedDescription)
+        }
+    }
+
+    @objc func discardUpdateRecovery(_ sender: Any?) {
+        guard updateRestoration == nil else { return }
+        do {
+            for store in try UpdateBoardSnapshot.Store.recoveries(in: AppPaths.updateBoardRecovery) {
+                try store.remove()
+            }
+            try refreshUpdateRecovery()
         } catch {
             reportUpdateRestoreFailure(error.localizedDescription)
         }
@@ -1382,6 +1448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Check for Updates…", #selector(checkForUpdates(_:)), ""),
             item("Install Updates Automatically", #selector(toggleAutomaticUpdates(_:)), ""),
             item("Retry Reopening Update Boards", #selector(retryUpdateRestoration(_:)), ""),
+            item("Discard Update Board Recovery", #selector(discardUpdateRecovery(_:)), ""),
             .separator(),
             // Remote easld boards stay attached with their windows closed, for agents' renders
             // and measures (`toggleBackgroundAttach`).
@@ -1575,7 +1642,7 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(toggleAutomaticUpdates(_:)):
             item.state = settings.load().installUpdatesAutomatically ? .on : .off
             return true
-        case #selector(retryUpdateRestoration(_:)):
+        case #selector(retryUpdateRestoration(_:)), #selector(discardUpdateRecovery(_:)):
             return updateRestoreFailure != nil && updateRestoration == nil
         case #selector(openRemote(_:)), #selector(checkForUpdates(_:)): return true
         default: return keyController?.validate(item) ?? false

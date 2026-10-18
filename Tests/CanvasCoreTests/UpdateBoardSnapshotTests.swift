@@ -72,4 +72,66 @@ struct UpdateBoardSnapshotTests {
         try store.save(.init(groups: [.init(tabs: [.local(root: "/tmp/board")], selected: 0, minimized: false)]))
         #expect(try store.load()?.groups == [.init(tabs: [.local(root: "/tmp/board")], selected: 0, minimized: false)])
     }
+
+    @Test func abortedPreparationCannotReopenTabsOrDeleteEarlierRecovery() throws {
+        defer { try? FileManager.default.removeItem(at: home) }
+        let recoveryDirectory = home.appendingPathComponent("recovery")
+        try store.save(.init(groups: [.init(tabs: [.local(root: "/tmp/earlier")], selected: 0, minimized: true)]))
+        let earlier = try #require(try store.retainForRecovery(in: recoveryDirectory))
+        try store.save(.init(groups: [.init(tabs: [.local(root: "/tmp/aborted")], selected: 0, minimized: false)]))
+        try store.remove()
+        try store.remove()
+        #expect(try store.load() == nil)
+        #expect(try store.retainForRecovery(in: recoveryDirectory)?.url == nil)
+        #expect(try earlier.load()?.groups == [.init(tabs: [.local(root: "/tmp/earlier")], selected: 0, minimized: true)])
+        #expect(try UpdateBoardSnapshot.Store.recoveries(in: recoveryDirectory).map { try $0.load()?.groups } == [
+            [.init(tabs: [.local(root: "/tmp/earlier")], selected: 0, minimized: true)],
+        ])
+    }
+
+    @Test func relaunchClaimsOnlyCurrentPreparationAndKeepsIndependentRecoveries() throws {
+        defer { try? FileManager.default.removeItem(at: home) }
+        let recoveryDirectory = home.appendingPathComponent("recovery")
+        #expect(try UpdateBoardSnapshot.Store.recoveries(in: recoveryDirectory).isEmpty)
+        try store.save(.init(groups: [.init(tabs: [.local(root: "/tmp/first")], selected: 0, minimized: false)]))
+        let first = try #require(try store.retainForRecovery(in: recoveryDirectory))
+        #expect(try store.load() == nil)
+        try store.save(.init(groups: [.init(tabs: [.local(root: "/tmp/second")], selected: 0, minimized: true)]))
+        let second = try #require(try store.retainForRecovery(in: recoveryDirectory))
+        #expect(first.url != second.url)
+        #expect(try second.load()?.groups == [.init(tabs: [.local(root: "/tmp/second")], selected: 0, minimized: true)])
+        try second.remove()
+        #expect(try first.load()?.groups == [.init(tabs: [.local(root: "/tmp/first")], selected: 0, minimized: false)])
+        #expect(try UpdateBoardSnapshot.Store.recoveries(in: recoveryDirectory).map { try $0.load()?.groups } == [
+            [.init(tabs: [.local(root: "/tmp/first")], selected: 0, minimized: false)],
+        ])
+    }
+
+    @Test func partialRecoveryRetainsOnlyFailedTabsAndItsReason() throws {
+        defer { try? FileManager.default.removeItem(at: home) }
+        let recoveryDirectory = home.appendingPathComponent("recovery")
+        let remote = RemoteReopen(host: "guest", sshTarget: "guest", home: "/tmp/server", board: "brd_remote")
+        try store.save(.init(groups: [.init(tabs: [.local(root: "/tmp/restored"), .remote(remote)], selected: 1, minimized: false)]))
+        let recovery = try #require(try store.retainForRecovery(in: recoveryDirectory))
+        var failed = UpdateBoardSnapshot(groups: [.init(tabs: [.remote(remote)], selected: 0, minimized: false)])
+        failed.recoveryReason = "guest is offline"
+        try recovery.save(failed)
+        #expect(try recovery.load()?.groups == [.init(tabs: [.remote(.init(host: "guest", sshTarget: "guest", home: "/tmp/server", board: "brd_remote"))], selected: 0, minimized: false)])
+        #expect(try recovery.load()?.recoveryReason == "guest is offline")
+        #expect(try store.load() == nil)
+    }
+
+    @Test func malformedRecoveryCanBeDiscardedWithoutBlockingNewPreparation() throws {
+        defer { try? FileManager.default.removeItem(at: home) }
+        let recoveryDirectory = home.appendingPathComponent("recovery")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try Data("damaged tabs".utf8).write(to: store.url)
+        let damaged = try #require(try store.retainForRecovery(in: recoveryDirectory))
+        #expect(throws: (any Error).self) { try damaged.load() }
+        #expect(try Data(contentsOf: damaged.url) == Data("damaged tabs".utf8))
+        try store.save(.init(groups: [.init(tabs: [.local(root: "/tmp/current")], selected: 0, minimized: false)]))
+        try damaged.remove()
+        #expect(try UpdateBoardSnapshot.Store.recoveries(in: recoveryDirectory).isEmpty)
+        #expect(try store.load()?.groups == [.init(tabs: [.local(root: "/tmp/current")], selected: 0, minimized: false)])
+    }
 }

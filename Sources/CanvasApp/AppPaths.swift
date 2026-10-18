@@ -1,8 +1,15 @@
 import CanvasCore
 import Foundation
+import Darwin
 
 /// Filesystem locations the app depends on (docs/contracts.md).
 enum AppPaths {
+    /// Consumed at process entry so shells and other children cannot inherit the marker.
+    static let isUpdateRelaunch: Bool = {
+        let marked = ProcessInfo.processInfo.environment["EASL_UPDATE_RELAUNCH"] == "1"
+        unsetenv("EASL_UPDATE_RELAUNCH")
+        return marked
+    }()
     /// `EASL_HOME` relocates sockets and boards so a development build can run beside the
     /// installed app (docs/testing.md).
     static let support: URL = {
@@ -39,6 +46,7 @@ enum AppPaths {
     /// Roots of the boards open as tabs, in tab order, reopened at the next launch.
     static let openBoards = support.appendingPathComponent("open-boards.json")
     static let updateBoards = support.appendingPathComponent("update-boards.json")
+    static let updateBoardRecovery = support.appendingPathComponent("update-board-recovery", isDirectory: true)
     /// The hosts File › Open Remote… connected to, newest first (`RemoteHost.Recents`): how to
     /// reach them, never their boards.
     static let remoteHosts = support.appendingPathComponent("remote-hosts.json")
