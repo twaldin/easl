@@ -931,6 +931,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !failedTabs.isEmpty {
                 failedGroups.append(.init(tabs: failedTabs, selected: failedSelection, minimized: saved.minimized))
             }
+            restored.removeAll { ($0.window.windowController as? CanvasWindowController)?.isBoardOpen != true }
             // Build the native group while hidden. Selecting an already shown tab can move it to another Space.
             for (_, window) in restored {
                 window.orderOut(nil)
