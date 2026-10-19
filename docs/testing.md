@@ -243,6 +243,34 @@ Stop the host to see "easl isn't running"; the viewer reconnects when the host s
 
 `remote-boards.json` stores each easld board's `host`, `sshTarget`, absolute server `home`, and `board`. Restarting without `EASL_DEV_REMOTE_HOME`, or with a different value, keeps the saved server home. Entries predating `home` use the dev override when set and the host's default only without it. With the override set, discovery refuses the default server even if an entry explicitly names it; it never redirects that address to another server. The picker remembers its most recent server home too. A custom Mac home uses its own `zmx` and `tmp` directories and has no known launcher, so Start easl is unavailable. Quit the viewer with the sheet open and verify that its SSH relays end before the app exits.
 
+### Default board directory regression
+
+The native regression links the compiled app and invokes the shared picker action with local,
+remote, and no active board, with valid, unset, and invalid preferences. It intercepts only panel
+presentation and checks the actual `NSOpenPanel.directoryURL`; it is not visual proof.
+
+```sh
+swift build --build-system native -j 2 --product Easl
+python3 Tests/BoardDirectory/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+Use an isolated development instance and its own preference domain, not the installed app's.
+Set `canvas.boardDirectory` in that domain to an existing folder different from both the local
+board's root and the remote board's root, then restart the instance.
+
+1. With a local board selected, invoke File › Open Board… and confirm the initial folder is the
+   configured directory. Cancel, then repeat with the tab bar's + button.
+2. Select a remote board and repeat both entry points. Each must ignore the local preference and
+   retain the picker behavior observed with the preference unset.
+3. Unset the preference and restart. On the local board, both pickers must again start at the
+   active board's root. A missing directory, relative path, or regular file must behave the same.
+4. Launch the isolated bundle from `/` without an explicit root: a valid preference must select
+   the startup board. `EASL_ROOT`, a positional root, and a working directory other than `/` must
+   still win over the preference.
+
+Cancel every picker without opening a folder, then stop the development instance. Never change
+the installed app's preferences or close the user's boards for this regression.
+
 ### Testing the updater
 
 Run this rehearsal only in a claimed GUI guest, on a scratch home whose bundle can be replaced. Never use the checkout's bundle or the installed app. Point easl › Check for Updates… at a local `latest.json` (docs/design.md "Updates"). A development instance with a loopback `EASL_UPDATE_URL` also checks automatically after about a minute and daily. Keep **Install Updates Automatically** off for the manual rehearsal. Two ad-hoc signed development bundles skip `spctl`, which refuses every ad-hoc app. This existing development-only exception does not skip signature validity, Team ID equality, size, checksum, or version verification:
