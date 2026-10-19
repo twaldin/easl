@@ -112,6 +112,7 @@ extension CanvasView {
                 record(group, Frame(x: rect.minX - origin.x, y: rect.minY - origin.y, w: rect.width, h: rect.height))
             }
 
+            board.settleArrows?()
             // `full` targets extend past their frames over whatever lies there, so they paint last,
             // above drawn objects too.
             let extended = request.full ? Set(outlines.keys.filter { renders[$0] != nil }) : []
