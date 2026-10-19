@@ -124,9 +124,21 @@ struct HostHTTPTests {
         let pid = try #require(host.clientPID)
         try await Task.sleep(for: .milliseconds(300))
         #expect(host.large?.outcome == nil, "a paused consumer holds the upstream producer back")
+        let expected = Data("a file read beside a paused HTTP response\n".utf8)
+        try host.fixture.write("independent.txt", expected)
+        let fileBytes = Locked<Data?>(nil)
+        let fileRead = Task {
+            let file = try await host.files.read(host.fixture.request("independent.txt"))
+            fileBytes.withLock { $0 = file.data }
+            return file.data
+        }
+        defer { fileRead.cancel() }
+        #expect(try await eventually(timeout: .seconds(2)) { fileBytes.withLock { $0 } == expected },
+                "file reads finish while an HTTP consumer remains paused")
 
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(try await fileRead.value == expected)
         #expect(kill(pid, 0) == -1 && errno == ESRCH, "the ssh client was reaped")
         try #require(await eventually { host.large != nil })
         let large = try #require(host.large)
@@ -159,8 +171,8 @@ private struct Fetched {
 }
 
 @MainActor
-private func eventually(_ condition: () -> Bool) async throws -> Bool {
-    let deadline = ContinuousClock.now + .seconds(30)
+private func eventually(timeout: Duration = .seconds(30), _ condition: () -> Bool) async throws -> Bool {
+    let deadline = ContinuousClock.now + timeout
     while !condition() {
         if ContinuousClock.now >= deadline { return false }
         try await Task.sleep(for: .milliseconds(10))
