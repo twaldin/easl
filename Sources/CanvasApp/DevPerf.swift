@@ -49,7 +49,8 @@ enum DevPerf {
     }
 
     private static var span: Span?
-    private static var observer: CFRunLoopObserver?
+    private static var wakeObserver: CFRunLoopObserver?
+    private static var sleepObserver: CFRunLoopObserver?
     private static var wokeAt: CFTimeInterval?
     /// The main thread's CPU time (ms) when its current stretch began: `begin` is called inside
     /// a stretch, so a span's first `beforeWaiting` measures from here, not from 0 or an earlier
@@ -171,13 +172,18 @@ enum DevPerf {
     }
 
     private static func installObserver() {
-        guard observer == nil else { return }
-        let activities = CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue
-        let observer = CFRunLoopObserverCreateWithHandler(nil, activities, true, 0) { _, activity in
+        guard wakeObserver == nil else { return }
+        let wake = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue, true, CFIndex.min) { _, activity in
             MainActor.assumeIsolated { runLoop(activity) }
         }
-        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
-        self.observer = observer
+        // AppKit display and Core Animation commit observers run after order zero.
+        let sleep = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, true, CFIndex.max) { _, activity in
+            MainActor.assumeIsolated { runLoop(activity) }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), wake, .commonModes)
+        CFRunLoopAddObserver(CFRunLoopGetMain(), sleep, .commonModes)
+        wakeObserver = wake
+        sleepObserver = sleep
     }
 
     private static func runLoop(_ activity: CFRunLoopActivity) {

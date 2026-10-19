@@ -971,7 +971,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         var frame = selected.frame
                         frame.size.width = min(frame.width, visible.width)
                         frame.size.height = min(frame.height, visible.height)
-                        frame = selected.constrainFrameRect(frame, to: screen)
+                        frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
+                        frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
                         if frame != selected.frame { selected.setFrame(frame, display: false) }
                     }
                     selected.miniaturize(nil)
