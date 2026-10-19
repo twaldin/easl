@@ -75,6 +75,20 @@ func Size(typ model.ObjectType, props map[string]any, width *float64, root strin
 		return 0, 0, false, &Failure{"unavailable", "an html page is measured by the app"}
 	case model.Changes:
 		return 0, 0, false, &NotPorted{What: "measuring a changes tile (ChangeSet.load + ChangesMetrics)"}
+	case model.Video:
+		if problem := VideoProblem(props); problem != "" {
+			return 0, 0, false, &Failure{"invalid_params", problem}
+		}
+		pw, ph, err := VideoNaturalSize(props["path"].(string), root)
+		if err != nil {
+			return 0, 0, false, err
+		}
+		maxWidth := ImageDefaultMaxWidth
+		if natural != nil {
+			maxWidth = *natural
+		}
+		w, h = FittedImage(pw, ph, maxWidth)
+		h += TitleHeight
 	case model.Image:
 		path, _ := props["path"].(string)
 		if path == "" {

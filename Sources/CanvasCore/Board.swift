@@ -759,6 +759,7 @@ public final class Board {
         case .html: (640, 506)
         case .changes: (820, 620)
         case .image: (640, 506)
+        case .video: (640, 386)
         case .diagram: (760, 480)
         // Three options, no context; a new question is sized by its props (`QuestionSpec.size`).
         case .question: (QuestionSpec.width, QuestionSpec.openBase + 3 * QuestionSpec.optionRow)

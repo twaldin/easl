@@ -253,6 +253,7 @@ extension ActivityLog {
         case .html: return "html" + quoted(props["title"]?.string)
         case .changes: return ChangesSpec(props).name + quoted(props["title"]?.string)
         case .image: return "image \(props["path"]?.string ?? "?")" + quoted(props["title"]?.string)
+        case .video: return "video \(props["path"]?.string ?? "?")" + quoted(props["title"]?.string)
         case .diagram: return "diagram" + quoted(DiagramSpec.title(props))
         case .question: return "question" + quoted(props["question"]?.string)
         case .browser: return "browser \(props["url"]?.string ?? "")"

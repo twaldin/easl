@@ -41,6 +41,63 @@ final class HtmlTile: NSView, TileContent {
     private var queuedHover: NSPoint?
     /// Bounds the native work a page can have outstanding; cancelled when the web view goes away.
     private let work = HtmlWorkQueue()
+    private struct AssetDependency: Equatable {
+        var request: HostFileRequest
+        var baseline: HostFileObservation
+    }
+    private var assets: [String: AssetDependency] = [:]
+    private var assetWatch: HostFileWatch?
+    private var assetReload: DispatchWorkItem?
+
+    private func suspendAssetWatch() {
+        assetWatch?.cancel()
+        assetWatch = nil
+        assetReload?.cancel()
+        assetReload = nil
+    }
+
+    func resetAssetWatches() {
+        suspendAssetWatch()
+        assets.removeAll()
+    }
+
+    func observeAsset(_ path: String, request: HostFileRequest, baseline: HostFileObservation) {
+        guard live else { return }
+        var metadata = request
+        metadata.bytes = false
+        metadata.range = nil
+        let dependency = AssetDependency(request: metadata, baseline: baseline)
+        guard assets[path] != dependency else { return }
+        assets[path] = dependency
+        resumeAssetWatch()
+    }
+
+    private func resumeAssetWatch() {
+        suspendAssetWatch()
+        guard live, window != nil, !assets.isEmpty else { return }
+        let dependencies = assets.sorted { $0.key < $1.key }.map(\.value)
+        let requests = dependencies.map(\.request)
+        let files = files
+        assetWatch = HostFileWatch(baseline: dependencies.map(\.baseline), probe: {
+            do {
+                if let files { return try await files.observe(requests) }
+                return try await HostFiles.observeLocal(requests)
+            } catch {
+                return nil
+            }
+        }, changed: { [weak self] _ in
+            guard let self, self.live, self.window != nil else { return }
+            self.assetReload?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.live, self.window != nil, let web = self.webView else { return }
+                    self.loadPage(in: web)
+                }
+            }
+            self.assetReload = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+        })
+    }
     /// A code tile the user opened from this page (`<canvas-link>`, `<canvas-code>`), or one
     /// that already showed the lines (`existing`); the canvas shows it.
     var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
@@ -72,10 +129,7 @@ final class HtmlTile: NSView, TileContent {
     /// being measured runs on a board rooted there already).
     var boardRoot: URL { board.objects[object.id] != nil ? board.linkRoot(of: object) : board.root }
     var html: String { object.props["html"]?.string ?? "" }
-    private var allowNetwork: [String] { object.props["allowNetwork"]?.array?.compactMap(\.string) ?? [] }
-    var document: String {
-        HtmlKit.document(html: html, policy: contentSecurityPolicy)
-    }
+    var allowNetwork: [String] { object.props["allowNetwork"]?.array?.compactMap(\.string) ?? [] }
     var hostImageSource: HostFileRequest.Source { board.hostSource(props: object.props, objects: false) }
     var isRemote: Bool { board.isRemote }
     private var pageURL: URL { HtmlKit.pageURL(tile: object.id) }
@@ -120,12 +174,32 @@ final class HtmlTile: NSView, TileContent {
     static func configuration(rules: WKContentRuleList?, scheme: HtmlSchemeHandler, channel: HtmlChannelHandler) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        if scheme.tile?.isRemote == true {
+            scheme.hostNetworkEnabled = Self.disableDirectTransports(configuration.preferences)
+        }
         if let rules { configuration.userContentController.add(rules) }
         configuration.setURLSchemeHandler(scheme, forURLScheme: HtmlKit.scheme)
         configuration.userContentController.addScriptMessageHandler(channel, contentWorld: .page, name: "canvas")
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.preferences.isFraudulentWebsiteWarningEnabled = false
         return configuration
+    }
+
+    private static func disableDirectTransports(_ preferences: WKPreferences) -> Bool {
+        let featuresSelector = NSSelectorFromString("_features")
+        let setter = NSSelectorFromString("_setEnabled:forFeature:")
+        guard WKPreferences.responds(to: featuresSelector), preferences.responds(to: setter),
+              let features = (WKPreferences.self as AnyObject).perform(featuresSelector)?.takeUnretainedValue() as? [NSObject] else { return false }
+        let required = ["WebTransportEnabled", "PeerConnectionEnabled"]
+        let selected = features.filter {
+            $0.responds(to: NSSelectorFromString("key")) && required.contains($0.value(forKey: "key") as? String ?? "")
+        }
+        guard required.allSatisfy({ key in selected.contains { $0.value(forKey: "key") as? String == key } }) else { return false }
+        typealias SetEnabled = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
+        let setEnabled = unsafeBitCast(preferences.method(for: setter), to: SetEnabled.self)
+        for feature in selected { setEnabled(preferences, setter, false, feature) }
+        return true
     }
 
     private func attach(rules: WKContentRuleList?) {
@@ -147,6 +221,7 @@ final class HtmlTile: NSView, TileContent {
 
     private func detach() {
         unpark()
+        resetAssetWatches()
         snapshotTask?.cancel()
         snapshotTask = nil
         pageShown = false
@@ -154,6 +229,7 @@ final class HtmlTile: NSView, TileContent {
         work.cancelAll()
         guard let web = webView else { return }
         webViewCount = nil
+        (web.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.tile = nil
         web.stopLoading()
         (web.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
         web.configuration.userContentController.removeAllScriptMessageHandlers()
@@ -328,6 +404,9 @@ final class HtmlTile: NSView, TileContent {
         guard hostBoardClosed != closed else { return }
         hostBoardClosed = closed
         if closed {
+            suspendAssetWatch()
+            (webView?.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
+            (renderWebView?.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
             work.cancelAll()
             snapshotTask?.cancel()
             webView?.stopLoading()
@@ -339,13 +418,19 @@ final class HtmlTile: NSView, TileContent {
         guard !live || !hostBoardClosed else { return }
         guard live != self.live else { return }
         self.live = live
+        if !live {
+            suspendAssetWatch()
+            webView?.setAllMediaPlaybackSuspended(true, completionHandler: nil)
+        }
         if live, let web = webView {
             // Back before its release: the page is still loaded. It may have re-rendered while
             // hidden (a `state` change), which parked pages don't capture: refresh the snapshot
             // once the page is on screen again.
             unpark()
+            web.setAllMediaPlaybackSuspended(false, completionHandler: nil)
             web.isHidden = false
             Metrics.shared.record("html.reuse")
+            resumeAssetWatch()
             WebStage.afterNextPresentationUpdate(web) { [weak self] in
                 guard let self, self.live, self.webView === web else { return }
                 self.scheduleSnapshot()
@@ -356,6 +441,15 @@ final class HtmlTile: NSView, TileContent {
             park()
         } else {
             detach()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            suspendAssetWatch()
+        } else if live {
+            resumeAssetWatch()
         }
     }
 
@@ -550,6 +644,7 @@ final class HtmlTile: NSView, TileContent {
             if keepPage { HtmlMeasurePool.give(page) } else { HtmlMeasurePool.discard(page) }
             return
         }
+        (renderWebView?.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.tile = nil
         renderWebView?.stopLoading()
         renderWebView?.configuration.userContentController.removeAllScriptMessageHandlers()
         renderWebView?.removeFromSuperview()
@@ -581,6 +676,7 @@ final class HtmlTile: NSView, TileContent {
         }
         web.navigationDelegate = self
         web.uiDelegate = self
+        web.setAllMediaPlaybackSuspended(true, completionHandler: nil)
         web.appearance = appearance
         web.underPageBackgroundColor = .textBackgroundColor
         WebStage.park(web, frame: NSRect(origin: .zero, size: size))
@@ -624,18 +720,19 @@ final class HtmlTile: NSView, TileContent {
     func update(_ object: CanvasObject) {
         let previous = self.object
         let networkChanged = (object.props["allowNetwork"] ?? .array([])) != (previous.props["allowNetwork"] ?? .array([]))
+        let pageChanged = ["html", "root", "ref"].contains { object.props[$0] != previous.props[$0] }
         self.object = object
         if networkChanged, board.isRemote {
             contentSecurityPolicy = HtmlKit.contentSecurityPolicy(allow: allowNetwork)
         }
         guard let web = webView else { return }
-        if !live, networkChanged || object.props["html"] != previous.props["html"] {
+        if !live, networkChanged || pageChanged {
             // A parked page would load again unseen: release it; the card shows the change.
             detach()
         } else if networkChanged {
             detach()
             build()
-        } else if object.props["html"] != previous.props["html"] {
+        } else if pageChanged {
             Metrics.shared.record("html.reload")
             work.cancelAll()
             loadPage(in: web)
@@ -709,13 +806,6 @@ final class HtmlTile: NSView, TileContent {
 }
 
 extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
-    /// The page may load only its own document and kit; links never navigate the tile away. A
-    /// web link the user just clicked goes to a browser tile beside this one instead
-    /// (`followed`): a link activated in the page's main frame, or a new window (`target=_blank`,
-    /// or a `window.open` the page calls while handling a click: with
-    /// `javaScriptCanOpenWindowsAutomatically` off, WebKit blocks one from a timer before asking).
-    /// Every other navigation off the page (a timer setting `location.href`, an iframe's `src`)
-    /// is cancelled.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard !hostBoardClosed, !board.isClosed else { return .cancel }
         guard let url = action.request.url else { return .cancel }
@@ -723,7 +813,8 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
         let userLink = action.targetFrame == nil || (action.navigationType == .linkActivated && isMain)
         if userLink, followed(action, in: webView) { return .cancel }
         if isMain { return url.scheme == HtmlKit.scheme && url.host == HtmlKit.host && url.path == pageURL.path ? .allow : .cancel }
-        return ["about", "data", "blob", HtmlKit.scheme].contains(url.scheme ?? "") ? .allow : .cancel
+        let schemes = board.isRemote ? ["about", HtmlKit.scheme] : ["about", "data", "blob", HtmlKit.scheme]
+        return schemes.contains(url.scheme ?? "") ? .allow : .cancel
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -749,20 +840,15 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
         nil
     }
 
-    /// Opens the http(s) link of `action` when the user clicked the page just now (a script
-    /// navigating or opening windows by itself is not a click): in a browser tile beside this
-    /// one (`Board.openLink`, a tile already showing it is reused), or in the default browser
-    /// with ⌥ held.
     private func followed(_ action: WKNavigationAction, in webView: WKWebView) -> Bool {
         guard !hostBoardClosed, !board.isClosed else { return false }
-        guard let url = action.request.url, WebLink.isWeb(url), let click = (webView as? HtmlWebView)?.recentClick() else { return false }
+        guard !board.isRemote, let url = action.request.url, WebLink.isWeb(url),
+              let click = (webView as? HtmlWebView)?.recentClick() else { return false }
         if click.union(action.modifierFlags).contains(.option) {
-            ExternalOpen.open(url, because: board.isRemote ? "remote html link (⌥-click)" : "html \(object.id) link (⌥-click)", naming: !board.isRemote)
+            ExternalOpen.open(url, because: "html \(object.id) link (⌥-click)", naming: true)
         } else {
             let opened = board.openLink(url, near: object.id, caller: nil)
-            if !board.isRemote {
-                NSLog("easl: html %@ link %@ → %@ %@", object.id, url.absoluteString, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
-            }
+            NSLog("easl: html %@ link %@ → %@ %@", object.id, url.absoluteString, opened.existing ? "existing browser tile" : "new browser tile", opened.object.id)
             onOpenedLink?(opened.object.id)
         }
         return true

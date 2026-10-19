@@ -6,7 +6,7 @@ description: You are running inside easl (EASL_ENV=1), an infinite board where y
 # Working in easl
 
 Your terminal is one tile on an infinite board the user is looking at.
-Next to it live code tiles, changes (review) tiles, diagram tiles computed from the code, markdown notes, image tiles, browser tiles, sandboxed HTML tiles, and shapes/arrows/ink.
+Next to it live code tiles, changes (review) tiles, diagram tiles computed from the code, markdown notes, image and video tiles, browser tiles, sandboxed HTML tiles, and shapes/arrows/ink.
 You and the user read and change the same objects: the board is the shared working state; your transcript stays in your terminal.
 
 You are in easl when `EASL_ENV=1`. omp, Claude Code (`claude`) and Codex (`codex`) started in a tile all get the integration
@@ -163,11 +163,12 @@ Details and an example: `references/api.md` "Layout".
 | Durable notes, plans, findings | `note`: `{"markdown": "…"}` |
 | Who calls a function, what it calls | `diagram`: `{"symbol": "SocketServer.start", "direction": "incoming"}`, see Diagram tiles |
 | A chart or figure | `image`: `{"path": "out/fig.png", "caption": "…"}`: save the figure to a file and show it; re-save to the same path and the tile reloads. No base64 PNGs in HTML |
+| A gameplay recording or other clip | `video`: `{"path": "clips/demo.mp4", "poster": "clips/poster.png", "muted": true, "autoplay": false, "loop": false, "startTime": 2}`. Paths resolve on the board host; omit `poster` when unnecessary. Local and remote clips stream and seek without a viewer-disk copy. |
 | A plan to approve, a comparison, a decision | `html` tile, see below |
 | Structure: boxes, labels, relations | `shape` / `arrow`, see below |
 | A web page | `browser`: `{"url": "http://localhost:3000"}` (your browser tool opens its own; see Browser tiles) |
 
-A tile's size is its frame; `zoom` in its props (0.25–8, default 1; not on image tiles) is how big its content draws inside that frame, in place: 1.5 is 150%, the frame never changes with it, and the content lays out at the body ÷ zoom (a terminal gets fewer, bigger columns; a page a narrower viewport).
+A tile's size is its frame; `zoom` in its props (0.25–8, default 1; not on image or video tiles) is how big its content draws inside that frame, in place: 1.5 is 150%, the frame never changes with it, and the content lays out at the body ÷ zoom (a terminal gets fewer, bigger columns; a page a narrower viewport).
 To show more or less, resize the tile; don't zoom to make room. A text shape's font is `textSize` (0.25–8, default 1), and its box grows with it.
 Users zoom content themselves (Object › Content Zoom, ⌃⌘= / ⌃⌘-, or the − % + in a tile's title bar); leave their zoom alone unless asked. `props.scale` is gone: it fails with `invalid_params`.
 

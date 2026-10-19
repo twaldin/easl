@@ -336,7 +336,7 @@ func MigratedZoom(o model.Object) model.Object {
 	}
 	delete(o.Props, "scale")
 	key := ""
-	if o.Type.IsTile() && o.Type != model.Image {
+	if o.Type.IsTile() && o.Type != model.Image && o.Type != model.Video {
 		key = "zoom"
 	} else if o.Type == model.Shape && o.Props["kind"] == "text" {
 		key = "textSize"

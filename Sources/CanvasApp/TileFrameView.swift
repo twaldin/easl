@@ -261,7 +261,7 @@ final class TileFrameView: NSView {
         // tooltip has the path.
         switch object.type {
         case .code: titleLabel.toolTip = object.props["path"]?.string.flatMap { PathLabel.short($0) == $0 ? nil : $0 }
-        case .image: titleLabel.toolTip = object.props["path"]?.string.flatMap { ($0 as NSString).lastPathComponent == $0 ? nil : $0 }
+        case .image, .video: titleLabel.toolTip = object.props["path"]?.string.flatMap { ($0 as NSString).lastPathComponent == $0 ? nil : $0 }
         default: titleLabel.toolTip = nil
         }
         z = object.z
@@ -467,6 +467,7 @@ final class TileFrameView: NSView {
         case .html: return props["title"]?.string ?? "HTML"
         // The file name wherever the file is (`ImageProps.title`); the path is the tooltip's.
         case .image: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["path"].flatMap(\.string).map { ($0 as NSString).lastPathComponent } ?? "Image"
+        case .video: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["path"]?.string.map { ($0 as NSString).lastPathComponent } ?? "Video"
         case .diagram: return DiagramSpec.title(props)
         // Who asks; a terminal asking is named in the body (its header's name).
         case .question:
@@ -527,12 +528,16 @@ final class TileFrameView: NSView {
             } else if let html = content as? HtmlTile {
                 html.setHostBoardClosed(true)
                 html.showSnapshot(true)
+            } else if let video = content as? VideoTile {
+                video.setHostBoardClosed(true)
+                video.showSnapshot(true)
             } else {
                 content.showSnapshot(true)
             }
         } else {
             (content as? HtmlTile)?.setHostBoardClosed(false)
             (content as? ChangesTile)?.setHostBoardClosed(false)
+            (content as? VideoTile)?.setHostBoardClosed(false)
             content.setLive(isLive)
             (content as? TerminalTile)?.setHostBoardClosed(false)
             (content as? NoteTile)?.setHostBoardClosed(false)

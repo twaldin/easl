@@ -100,14 +100,14 @@ func Title(o model.Object) string {
 			return s
 		}
 		return changesName(p)
-	case model.Image:
+	case model.Image, model.Video:
 		if s, ok := str(p, "title"); ok {
 			return s
 		}
 		if s, ok := str(p, "path"); ok {
 			return s
 		}
-		return "image"
+		return string(o.Type)
 	case model.Diagram:
 		return diagramTitle(p)
 	case model.Question:

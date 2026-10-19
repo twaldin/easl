@@ -12,10 +12,8 @@ enum HtmlRuleLists {
         try await compile(HtmlKit.networkRules(allow: hosts))
     }
 
-    /// CSP does not constrain DNS prefetch or preconnect. Never compile host data for a remote page.
-    /// WebKit classifies these hints as pings, so this also refuses anchor link pings.
     static func remote() async throws -> WKContentRuleList {
-        try await compile(#"[{"trigger":{"url-filter":"^https?:","resource-type":["ping"]},"action":{"type":"block"}}]"#)
+        try await compile(HtmlKit.remoteNetworkRules)
     }
 
     private static func compile(_ json: String) async throws -> WKContentRuleList {
@@ -29,106 +27,364 @@ enum HtmlRuleLists {
     }
 }
 
-/// Serves `canvas-kit://html/<tileId>` (the tile's html behind the kit head), `/kit/…` from
-/// resources/kit, and images: `<img src="out/chart.png">` (board-relative, resolved against the
-/// page URL) or an absolute path inside the board root or the temp directory
-/// (`LocalImage.pageFile`). Everything else is 404, including other tiles' pages.
 @MainActor
 final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
-    /// The tile whose page this serves; a pooled measure page (`HtmlMeasurePool`) serves one
-    /// tile per measure, and none while it waits.
-    weak var tile: HtmlTile?
+    weak var tile: HtmlTile? {
+        didSet {
+            if oldValue !== tile {
+                for read in reads.values { read.cancel() }
+                reads.removeAll()
+                mediaBlocks.removeAll()
+                hostURLs = HostURLMap(allow: [])
+            }
+        }
+    }
     private static let kitRoot = AppPaths.asset("kit")
-    /// Kit files never change while the app runs; mapped reads keep repeat loads cheap.
     private static var kitCache: [String: Data] = [:]
-    /// Image requests still being read; a task WebKit stopped meanwhile gets no reply.
-    private var reading: Set<ObjectIdentifier> = []
-    private var hostReads: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private static let textLimit = 4 * 1024 * 1024
+    private var reads: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private struct MediaBlock {
+        var path: String
+        var request: HostFileRequest
+        var file: HostFile
+    }
+    private var mediaBlocks: [MediaBlock] = []
+    var hostNetworkEnabled = true
+    private var hostURLs = HostURLMap(allow: [])
+    private var httpActive = 0
+    private var httpWaiters: [CheckedContinuation<Void, Never>] = []
+
+    @MainActor
+    private final class HTTPTransfer {
+        let task: any WKURLSchemeTask
+        let url: URL
+        let method: String
+        var response: HostHTTPHead?
+        var text = Data()
+        var rewrite = false
+
+        init(task: any WKURLSchemeTask, url: URL, method: String) {
+            self.task = task
+            self.url = url
+            self.method = method
+        }
+    }
+
+    func networkURL(_ original: URL, from host: String) -> URL? {
+        guard hostNetworkEnabled, tile?.isRemote == true,
+              host == HtmlKit.host || hostURLs.contains(host: host) else { return nil }
+        return hostURLs.proxyURL(for: original)
+    }
+
+    private func rememberMedia(_ file: HostFile, request: HostFileRequest, path: String) {
+        mediaBlocks.removeAll { $0.path == path && $0.file.offset == file.offset }
+        if mediaBlocks.count == 4 { mediaBlocks.removeFirst() }
+        var metadata = request
+        metadata.bytes = false
+        metadata.range = nil
+        mediaBlocks.append(MediaBlock(path: path, request: metadata, file: file))
+    }
 
     init(tile: HtmlTile?) {
         self.tile = tile
     }
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
-        guard let url = task.request.url, url.host == HtmlKit.host, let tile, !tile.hostBoardClosed else {
+        guard let url = task.request.url, let tile, !tile.hostBoardClosed else {
             return task.didFailWithError(URLError(.fileDoesNotExist))
         }
+        guard !tile.isRemote || tile.files != nil else {
+            return task.didFailWithError(URLError(.cannotConnectToHost))
+        }
+        if url.host != HtmlKit.host {
+            guard hostNetworkEnabled, let original = hostURLs.originalURL(for: url), let files = tile.files else {
+                return task.didFailWithError(URLError(.noPermissionsToReadFile))
+            }
+            return serveHTTP(task, url: url, original: original, files: files, allow: tile.allowNetwork)
+        }
         if url.path == HtmlKit.pageURL(tile: tile.objectID).path {
-            respond(task, url: url, data: Data(tile.document.utf8), type: "text/html", cache: "no-store")
-        } else if let kitRoot = Self.kitRoot, let file = HtmlKit.kitFile(requestPath: url.path, kitRoot: kitRoot),
-                  let data = Self.kitCache[file.path] ?? (try? Data(contentsOf: file, options: .alwaysMapped)) {
+            for read in reads.values { read.cancel() }
+            reads.removeAll()
+            mediaBlocks.removeAll()
+            if webView === tile.webView { tile.resetAssetWatches() }
+            hostURLs = HostURLMap(allow: tile.allowNetwork)
+            let html = tile.isRemote && hostNetworkEnabled && !tile.allowNetwork.isEmpty
+                ? HtmlHostRuntime.script + hostURLs.rewriteHTML(in: tile.html) : tile.html
+            let document = HtmlKit.document(html: html, policy: tile.contentSecurityPolicy)
+            respond(task, url: url, data: Data(document.utf8), type: "text/html", cache: "no-store")
+            return
+        }
+        if let kitRoot = Self.kitRoot, let file = HtmlKit.kitFile(requestPath: url.path, kitRoot: kitRoot),
+           let data = Self.kitCache[file.path] ?? (try? Data(contentsOf: file, options: .alwaysMapped)) {
             Self.kitCache[file.path] = data
             respond(task, url: url, data: data, type: HtmlKit.mimeType(file), cache: "max-age=31536000, immutable")
-        } else if tile.isRemote {
-            guard let files = tile.files,
-                  let request = LocalImage.hostPageFile(requestPath: url.path, source: tile.hostImageSource, temps: files.temps) else {
-                return notFound(task, url: url)
-            }
-            let key = ObjectIdentifier(task)
-            hostReads[key] = Task { @MainActor [weak self] in
-                let result: Result<HostFile, Error>
-                do { result = .success(try await files.read(request)) }
-                catch { result = .failure(error) }
-                guard let self, self.hostReads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
-                switch result {
-                case .success(let file):
-                    self.tile?.hostImageFinished(url, error: nil, in: webView)
-                    self.respond(task, url: url, data: file.data, type: file.mimeType, cache: "no-store")
-                case .failure(let error):
-                    self.tile?.hostImageFinished(url, error: error, in: webView)
+            return
+        }
+        let method = task.request.httpMethod ?? "GET"
+        guard method == "GET" || method == "HEAD" else {
+            return respond(task, url: url, data: Data(), type: "text/plain", cache: "no-store", status: 405)
+        }
+        let key = ObjectIdentifier(task)
+        let files = tile.files
+        let source = tile.isRemote ? tile.hostImageSource : .directory(tile.boardRoot.path)
+        let assetPath = url.path.hasPrefix(tile.boardRoot.path + "/") ? url.path : String(url.path.drop(while: { $0 == "/" }))
+        let assetKey = url.path
+        var request = HostFileRequest(source: source, policy: .boardAsset(assetPath), bytes: false)
+        let live = webView === tile.webView
+        reads[key] = Task { @MainActor [weak self, weak tile] in
+            guard let self, let tile else { return }
+            var began = false
+            var assetFailure: HostFileError?
+            var observed = false
+            do {
+                let metadata: HostFile
+                if let cached = self.mediaBlocks.first(where: { $0.path == assetKey }) {
+                    var file = cached.file
+                    file.data = Data()
+                    file.offset = 0
+                    metadata = file
+                    request = cached.request
+                } else {
+                    do {
+                        let asset = try await Self.readBoardAsset(request, absolutePath: url.path, files: files)
+                        metadata = asset.file
+                        request = asset.request
+                    } catch {
+                        assetFailure = error as? HostFileError ?? .unavailable(String(describing: error))
+                        switch error {
+                        case HostFileError.refused, HostFileError.notFound: break
+                        default: throw error
+                        }
+                        guard let fallback = LocalImage.hostPageFile(requestPath: url.path, source: source,
+                                                                   temps: files?.temps ?? FollowFilter.tempDirectories) else { throw error }
+                        var imageRequest = fallback
+                        imageRequest.bytes = false
+                        metadata = try await Self.read(imageRequest, files: files)
+                        request = imageRequest
+                    }
+                }
+                guard self.reads[key] != nil, !Task.isCancelled else { return }
+                observed = true
+                if live { tile.observeAsset(assetKey, request: request, baseline: .version(metadata.version)) }
+                let selection: MediaByteRange
+                do {
+                    selection = try MediaByteRange(header: task.request.value(forHTTPHeaderField: "Range"), size: metadata.size)
+                } catch {
+                    self.head(task, url: url, type: metadata.mimeType, status: 416,
+                              headers: ["Content-Range": "bytes */\(metadata.size)", "Content-Length": "0", "Accept-Ranges": "bytes"])
+                    task.didFinish()
+                    self.reads.removeValue(forKey: key)
+                    return
+                }
+                let rewrite = tile.isRemote && self.hostNetworkEnabled && !tile.allowNetwork.isEmpty &&
+                    method != "HEAD" && !selection.partial && ["text/html", "text/css"].contains(metadata.mimeType)
+                guard !rewrite || metadata.size <= Int64(Self.textLimit) else { throw URLError(.dataLengthExceedsMaximum) }
+                var text = Data()
+                if rewrite {
+                    text.reserveCapacity(Int(metadata.size))
+                } else {
+                    self.head(task, url: url, type: metadata.mimeType, status: selection.partial ? 206 : 200,
+                              headers: selection.headers(size: metadata.size))
+                    began = true
+                }
+                let media = metadata.mimeType.hasPrefix("video/") || metadata.mimeType.hasPrefix("audio/")
+                if method != "HEAD" {
+                    var offset = selection.bytes.lowerBound
+                    request.bytes = true
+                    while offset < selection.bytes.upperBound {
+                        try Task.checkCancellation()
+                        let chunk: HostFile
+                        if media, let cached = self.mediaBlocks.first(where: {
+                            $0.path == assetKey && $0.file.version == metadata.version &&
+                                offset >= $0.file.offset && offset < $0.file.offset + Int64($0.file.data.count)
+                        }) {
+                            chunk = cached.file
+                        } else {
+                            let start = media ? offset - offset % Int64(HostFileRange.maxLength) : offset
+                            let length = Int(min(Int64(HostFileRange.maxLength), (media ? metadata.size : selection.bytes.upperBound) - start))
+                            request.range = HostFileRange(offset: start, length: length)
+                            chunk = try await Self.read(request, files: files)
+                            guard self.reads[key] != nil, !Task.isCancelled else { return }
+                            guard chunk.version == metadata.version, chunk.size == metadata.size,
+                                  chunk.offset == start, chunk.data.count == length else { throw URLError(.resourceUnavailable) }
+                            if media { self.rememberMedia(chunk, request: request, path: assetKey) }
+                        }
+                        let start = Int(offset - chunk.offset)
+                        let count = Int(min(selection.bytes.upperBound - offset, Int64(chunk.data.count - start)))
+                        guard count > 0 else { throw URLError(.resourceUnavailable) }
+                        if rewrite { text.append(chunk.data[start..<(start + count)]) }
+                        else { task.didReceive(chunk.data[start..<(start + count)]) }
+                        offset += Int64(count)
+                    }
+                }
+                if rewrite {
+                    let transformed = try self.transformedText(text, type: metadata.mimeType, base: url)
+                    self.head(task, url: url, type: metadata.mimeType, status: 200,
+                              headers: ["Content-Length": String(transformed.count)])
+                    began = true
+                    if !transformed.isEmpty { task.didReceive(transformed) }
+                }
+                guard self.reads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
+                tile.hostImageFinished(url, error: nil, in: webView)
+                task.didFinish()
+            } catch {
+                guard self.reads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
+                tile.hostImageFinished(url, error: error, in: webView)
+                if live, !observed {
+                    tile.observeAsset(assetKey, request: request,
+                                      baseline: .failure(assetFailure ?? (error as? HostFileError) ?? .unavailable(String(describing: error))))
+                }
+                if began {
+                    task.didFailWithError(error)
+                } else {
                     let failure = error as? HostFileError ?? .unavailable(String(describing: error))
                     if case .unavailable = failure {
                         task.didFailWithError(NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost,
                                                      userInfo: [NSLocalizedDescriptionKey: HostGit.refusal(failure)]))
                     } else {
-                        self.notFound(task, url: url)
+                        self.respond(task, url: url, data: Data("not found".utf8), type: "text/plain", cache: "no-store", status: 404)
                     }
                 }
             }
-        } else if let file = LocalImage.pageFile(requestPath: url.path, root: tile.boardRoot) {
-            let key = ObjectIdentifier(task)
-            reading.insert(key)
-            Task { @MainActor [weak self] in
-                let data = await offPool { try? Data(contentsOf: file) }
-                guard let self, self.reading.remove(key) != nil else { return }
-                if let data {
-                    self.respond(task, url: url, data: data, type: HtmlKit.mimeType(file), cache: "no-store")
-                } else {
-                    self.notFound(task, url: url)
-                }
-            }
-        } else {
-            notFound(task, url: url)
         }
     }
 
-    private func notFound(_ task: any WKURLSchemeTask, url: URL) {
-        respond(task, url: url, data: Data("not found".utf8), type: "text/plain", cache: "no-store", status: 404)
+    private static func read(_ request: HostFileRequest, files: HostFiles?) async throws -> HostFile {
+        if let files { return try await files.read(request) }
+        return try await HostFiles.readLocal(request)
+    }
+
+    private static func readBoardAsset(_ request: HostFileRequest, absolutePath: String, files: HostFiles?) async throws -> (request: HostFileRequest, file: HostFile) {
+        do {
+            return (request, try await read(request, files: files))
+        } catch let primaryFailure {
+            switch primaryFailure {
+            case HostFileError.refused, HostFileError.notFound:
+                guard request.policy != .boardAsset(absolutePath) else { throw primaryFailure }
+                var absolute = request
+                absolute.policy = .boardAsset(absolutePath)
+                do { return (absolute, try await read(absolute, files: files)) }
+                catch { throw primaryFailure }
+            default:
+                throw primaryFailure
+            }
+        }
+    }
+
+    private func acquireHTTP() async {
+        if httpActive < 2 { httpActive += 1; return }
+        await withCheckedContinuation { httpWaiters.append($0) }
+    }
+
+    private func releaseHTTP() {
+        if httpWaiters.isEmpty { httpActive -= 1 }
+        else { httpWaiters.removeFirst().resume() }
+    }
+
+    private func serveHTTP(_ task: any WKURLSchemeTask, url: URL, original: URL, files: HostFiles, allow: [String]) {
+        let method = task.request.httpMethod ?? "GET"
+        guard method == "GET" || method == "HEAD" else {
+            return respond(task, url: url, data: Data(), type: "text/plain", cache: "no-store", status: 405)
+        }
+        let key = ObjectIdentifier(task)
+        let transfer = HTTPTransfer(task: task, url: url, method: method)
+        let request = HostHTTPRequest(url: original, method: method, range: task.request.value(forHTTPHeaderField: "Range"))
+        reads[key] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.acquireHTTP()
+            defer { self.releaseHTTP() }
+            guard self.reads[key] != nil, !Task.isCancelled else { return }
+            do {
+                try await files.http(request, allow: allow) { [weak self] event in
+                    guard let self else { throw CancellationError() }
+                    try await self.receiveHTTP(event, transfer: transfer, key: key)
+                }
+                guard self.reads[key] != nil, !Task.isCancelled else { return }
+                guard let response = transfer.response else { throw URLError(.badServerResponse) }
+                if transfer.rewrite {
+                    let type = response.headers.first { $0.key.lowercased() == "content-type" }?.value ?? "text/plain"
+                    guard let base = self.hostURLs.proxyURL(for: response.url) else { throw URLError(.noPermissionsToReadFile) }
+                    let data = try self.transformedText(transfer.text, type: type, base: base)
+                    var headers = response.headers.filter {
+                        !["content-length", "content-type", "access-control-allow-origin", "etag", "content-md5", "digest", "content-digest"].contains($0.key.lowercased())
+                    }
+                    headers["Content-Length"] = String(data.count)
+                    headers["Access-Control-Allow-Origin"] = "*"
+                    self.head(task, url: url, type: type, status: response.status, headers: headers)
+                    if !data.isEmpty { task.didReceive(data) }
+                }
+                guard self.reads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
+                task.didFinish()
+            } catch {
+                guard self.reads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
+                task.didFailWithError(error)
+            }
+        }
+    }
+
+    private func receiveHTTP(_ event: HostHTTPEvent, transfer: HTTPTransfer, key: ObjectIdentifier) throws {
+        guard reads[key] != nil, !Task.isCancelled else { throw CancellationError() }
+        switch event {
+        case .response(let response):
+            transfer.response = response
+            let type = response.headers.first { $0.key.lowercased() == "content-type" }?.value ?? "application/octet-stream"
+            let mime = type.lowercased().split(separator: ";", maxSplits: 1).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+            transfer.rewrite = transfer.method != "HEAD" && response.status >= 200 &&
+                ![204, 205, 206, 304].contains(response.status) && ["text/html", "text/css"].contains(mime)
+            if !transfer.rewrite {
+                var headers = response.headers.filter { $0.key.lowercased() != "access-control-allow-origin" }
+                headers["Access-Control-Allow-Origin"] = "*"
+                head(transfer.task, url: transfer.url, type: type, status: response.status, headers: headers)
+            }
+        case .bytes(let data):
+            guard transfer.response != nil else { throw URLError(.badServerResponse) }
+            if transfer.rewrite {
+                guard transfer.text.count + data.count <= Self.textLimit else { throw URLError(.dataLengthExceedsMaximum) }
+                transfer.text.append(data)
+            } else if !data.isEmpty {
+                transfer.task.didReceive(data)
+            }
+        }
+    }
+
+    private func transformedText(_ data: Data, type: String, base: URL) throws -> Data {
+        guard let text = String(data: data, encoding: .utf8) else { throw URLError(.cannotDecodeContentData) }
+        if type.lowercased().hasPrefix("text/html") {
+            return Data(HtmlHostRuntime.document(hostURLs.rewriteHTML(in: text), base: base).utf8)
+        }
+        return Data(hostURLs.rewriteCSS(in: text).utf8)
     }
 
     func cancelHostReads() {
-        for task in hostReads.values { task.cancel() }
-        hostReads.removeAll()
+        for task in reads.values { task.cancel() }
+        reads.removeAll()
     }
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
-        reading.remove(ObjectIdentifier(task))
-        hostReads.removeValue(forKey: ObjectIdentifier(task))?.cancel()
+        reads.removeValue(forKey: ObjectIdentifier(task))?.cancel()
+    }
+
+    private func head(_ task: any WKURLSchemeTask, url: URL, type: String, status: Int, headers: [String: String]) {
+        let upstreamPolicy = headers.first { $0.key.lowercased() == "content-security-policy" }?.value
+        var headers = headers.filter { !["content-type", "cache-control", "content-security-policy"].contains($0.key.lowercased()) }
+        headers["Content-Type"] = type
+        headers["Cache-Control"] = "no-store"
+        if let policy = tile?.contentSecurityPolicy {
+            headers["Content-Security-Policy"] = [upstreamPolicy, policy].compactMap { $0 }.joined(separator: ", ")
+        }
+        task.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)
     }
 
     private func respond(_ task: any WKURLSchemeTask, url: URL, data: Data, type: String, cache: String, status: Int = 200) {
         guard let tile, !tile.hostBoardClosed else { return task.didFailWithError(URLError(.cancelled)) }
         var headers = ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": cache]
-        // A framed SVG is its own active document and does not inherit the page's meta CSP.
         if let policy = tile.contentSecurityPolicy { headers["Content-Security-Policy"] = policy }
         task.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)
-        task.didReceive(data)
+        if !data.isEmpty { task.didReceive(data) }
         task.didFinish()
     }
 }
 
-/// The page's one native channel (`window.webkit.messageHandlers.canvas`). Only the tile's own
-/// top-level canvas-kit document may post; bodies are validated by `HtmlMessage` before use.
 @MainActor
 final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
     /// As `HtmlSchemeHandler.tile`.
@@ -139,9 +395,18 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?) {
-        guard let tile, message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.protocol == HtmlKit.scheme,
+        guard let tile, message.frameInfo.securityOrigin.protocol == HtmlKit.scheme,
               let source = message.webView, source === tile.webView || source === tile.renderWebView else { return (nil, "not allowed") }
-        guard let body = message.body as? [String: Any], JSONSerialization.isValidJSONObject(body),
+        guard let body = message.body as? [String: Any] else { return (nil, HtmlError.malformed("message must be an object").description) }
+        if body["type"] as? String == "network.url" {
+            guard body.count == 2, let value = body["url"] as? String, value.utf8.count <= 8192,
+                  let original = URL(string: value),
+                  let handler = source.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler,
+                  let proxy = handler.networkURL(original, from: message.frameInfo.securityOrigin.host) else { return (nil, "not allowed") }
+            return (["url": proxy.absoluteString], nil)
+        }
+        guard message.frameInfo.isMainFrame else { return (nil, "not allowed") }
+        guard JSONSerialization.isValidJSONObject(body),
               let data = try? JSONSerialization.data(withJSONObject: body) else { return (nil, HtmlError.malformed("message must be an object").description) }
         do {
             let parsed = try HtmlMessage.parse(data)

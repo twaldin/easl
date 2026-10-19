@@ -124,11 +124,13 @@ struct HostFilesTests {
         let files = try fixture.reader()
         let result = try await files.read(fixture.request(name))
         #expect(result.data == bytes)
+        #expect(result.size == 6 && result.offset == 0)
         let path = try #require(result.path)
         #expect(URL(fileURLWithPath: path).resolvingSymlinksInPath() == fixture.root.appendingPathComponent(name).resolvingSymlinksInPath())
         #expect(result.commit == nil)
         let checked = try await files.read(fixture.request(name, bytes: false))
         #expect(checked.path == result.path && checked.data.isEmpty)
+        #expect(checked.size == 6 && checked.offset == 0)
         #expect(checked.version == result.version)
     }
 
@@ -172,7 +174,7 @@ struct HostFilesTests {
         let bytes = Data("board image".utf8)
         try fixture.write("image space.png", bytes)
         let image = fixture.root.appendingPathComponent("image space.png")
-        for path in ["image space.png", image.path, image.absoluteString] {
+        for path in ["image space.png", image.path, image.absoluteString, "FILE:" + image.absoluteString.dropFirst(5)] {
             let result = try await files.read(HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage(path)))
             #expect(result.data == bytes)
         }

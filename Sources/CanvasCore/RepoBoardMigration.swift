@@ -680,6 +680,11 @@ struct Rerooter {
             }
         case .image:
             if let path = props["path"]?.string { props["path"] = .string(worktreePath(path, what: what)) }
+        case .video:
+            for key in ["path", "poster"] {
+                guard let path = props[key]?.string, Board.isRelativeFileReference(path) else { continue }
+                props[key] = .string(worktreePath(path, what: what))
+            }
         case .diagram:
             // Its file, the graph as last computed (node paths and ids, its aim) and the nodes
             // it expanded, as the repository board's next build writes them (`moved`), so that

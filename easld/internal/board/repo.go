@@ -223,6 +223,13 @@ func (b *Board) InCallersCheckout(props map[string]any, typ model.ObjectType, ca
 			break
 		}
 		fields["path"] = store.Standardized(filepath.Join(checkout, path))
+	case model.Video:
+		for _, key := range []string{"path", "poster"} {
+			path, ok := fields[key].(string)
+			if ok && store.IsRelativeFileReference(path) {
+				fields[key] = store.Standardized(filepath.Join(checkout, path))
+			}
+		}
 	case model.Changes, model.Note, model.HTML:
 		if existing != nil {
 			break

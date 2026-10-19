@@ -1,7 +1,9 @@
 package store
 
 import (
+	"encoding/binary"
 	"encoding/json"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
 )
 
@@ -153,6 +156,73 @@ func TestTheTopLevelsBoardsNotesKeepNoRoot(t *testing.T) {
 	got := readStored(t, s, RepoID(commonDir))
 	if len(got.Objects) != 1 || got.Objects[0].Props["root"] != nil {
 		t.Errorf("objects %+v", got.Objects)
+	}
+}
+
+func TestAdoptedVideoReadsOriginalFileURIAndRelativeSource(t *testing.T) {
+	dir := t.TempDir()
+	repo, boards := filepath.Join(dir, "repo"), filepath.Join(dir, "boards")
+	commonDir := repository(t, repo)
+	sub := filepath.Join(repo, "sub")
+	box := func(kind string, body []byte) []byte {
+		value := make([]byte, len(body)+8)
+		binary.BigEndian.PutUint32(value, uint32(len(value)))
+		copy(value[4:], kind)
+		copy(value[8:], body)
+		return value
+	}
+	movie := func(width, height uint32) []byte {
+		header := make([]byte, 84)
+		binary.BigEndian.PutUint32(header[40:], 1<<16)
+		binary.BigEndian.PutUint32(header[56:], 1<<16)
+		binary.BigEndian.PutUint32(header[72:], 1<<30)
+		binary.BigEndian.PutUint32(header[76:], width<<16)
+		binary.BigEndian.PutUint32(header[80:], height<<16)
+		handler := make([]byte, 12)
+		copy(handler[8:], "vide")
+		return box("moov", box("trak", append(box("tkhd", header), box("mdia", box("hdlr", handler))...)))
+	}
+	write := func(path string, data []byte) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	uri := (&url.URL{Scheme: "file", Path: filepath.Join(sub, "clip space.mp4")}).String()
+	clip := "FILE:" + uri[5:]
+	write(filepath.Join(sub, "clip space.mp4"), movie(640, 360))
+	write(filepath.Join(sub, clip), movie(90, 160))
+	write(filepath.Join(sub, "relative.mp4"), movie(800, 600))
+	write(filepath.Join(sub, "~", "clip.mp4"), movie(90, 160))
+	stored(t, boards, &Snapshot{ID: PathID(sub), Root: Standardized(sub), Revision: 1, Objects: []model.Object{
+		adoptedObject("obj_uri", model.Video, 0, map[string]any{"path": clip}),
+		adoptedObject("obj_relative", model.Video, 300, map[string]any{"path": "relative.mp4"}),
+		adoptedObject("obj_refused", model.Video, 600, map[string]any{"path": "~/clip.mp4"}),
+	}})
+	s := New(boards, time.Hour, nil)
+	s.Loading(RepoID(commonDir), commonDir, adoptedAt)
+	got := readStored(t, s, RepoID(commonDir))
+	if len(got.Objects) != 3 {
+		t.Fatalf("adopted objects: %+v", got.Objects)
+	}
+	for _, object := range got.Objects {
+		w, h, err := measure.VideoNaturalSize(object.Props["path"].(string), got.Root)
+		if object.ID == "obj_refused" {
+			if err == nil {
+				t.Fatalf("adoption made a refused source readable: %v x %v", w, h)
+			}
+			continue
+		}
+		wantW, wantH := 640.0, 360.0
+		if object.ID == "obj_relative" {
+			wantW, wantH = 800, 600
+		}
+		if err != nil || w != wantW || h != wantH {
+			t.Fatalf("%s reads %v x %v, %v; want %v x %v", object.ID, w, h, err, wantW, wantH)
+		}
 	}
 }
 

@@ -1,0 +1,14 @@
+{
+  "description": "Video props survive create, get, updates and board save/reopen; invalid playback props are rejected without mutation.",
+  "steps": [
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "video", "props": { "path": "clip.mp4", "poster": "poster.png", "loop": true, "muted": false, "autoplay": false, "startTime": 1.25, "title": "Demo", "key": "demo" }, "frame": { "x": 0, "y": 0, "w": 640, "h": 386 } }, "save": "video", "expect": { "response.ok": true, "response.result.object.type": "video", "response.result.object.props.startTime": 1.25 } },
+    { "call": "object.get", "params": { "id": "{{video.object.id}}" }, "expect": { "response.ok": true, "response.result.object.props.path": "clip.mp4", "response.result.object.props.poster": "poster.png", "response.result.object.props.loop": true, "response.result.object.props.muted": false, "response.result.object.props.autoplay": false } },
+    { "call": "object.update", "params": { "id": "{{video.object.id}}", "props": { "startTime": 2.5, "title": "Edited" } }, "expect": { "response.ok": true, "response.result.object.props.startTime": 2.5, "response.result.object.props.path": "clip.mp4" } },
+    { "call": "object.update", "params": { "id": "{{video.object.id}}", "props": { "startTime": -1 } }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "object.update", "params": { "id": "{{video.object.id}}", "props": { "startTime": "2" } }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "object.update", "params": { "id": "{{video.object.id}}", "props": { "loop": "true" } }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "board.close", "params": { "board": "{{board}}" }, "expect": { "response.ok": true } },
+    { "call": "board.open", "params": { "root": "{{root}}" }, "expect": { "response.ok": true } },
+    { "call": "object.get", "params": { "id": "{{video.object.id}}" }, "expect": { "response.ok": true, "response.result.object.type": "video", "response.result.object.props.path": "clip.mp4", "response.result.object.props.poster": "poster.png", "response.result.object.props.startTime": 2.5, "response.result.object.props.title": "Edited", "response.result.object.props.key": "demo" } }
+  ]
+}

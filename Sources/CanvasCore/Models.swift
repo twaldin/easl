@@ -83,7 +83,7 @@ public enum Actor: Codable, Equatable, Sendable {
 }
 
 public enum ObjectType: String, Codable, Sendable, CaseIterable {
-    case terminal, browser, code, note, html, changes, image, diagram, question, shape, arrow, group
+    case terminal, browser, code, note, html, changes, image, video, diagram, question, shape, arrow, group
 
     /// The props this type defines (schema `TerminalProps` … `GroupProps`), `key` among them for
     /// every type (`Board+Keys.swift`). Others are kept but reported: `object.create`/`object.update`
@@ -97,6 +97,7 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
         case .html: ["html", "title", "root", "ref", "refSha", "allowNetwork", "state", "zoom"]
         case .changes: ["root", "base", "head", "ref", "refSha", "paths", "title", "reviewed", "viewed", "zoom"]
         case .image: ["path", "caption", "title"]
+        case .video: ["path", "poster", "loop", "muted", "autoplay", "startTime", "title"]
         case .diagram: ["kind", "path", "symbol", "line", "direction", "depth", "expanded", "title", "graph", "zoom"]
         case .question: ["question", "options", "recommended", "context", "asker", "status", "expiresAt", "answer", "archived", "keep", "archiveAfter", "zoom"]
         case .shape: ["kind", "text", "points", "color", "fill", "textSize"]

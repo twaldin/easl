@@ -56,6 +56,104 @@ struct HostFileWatchTests {
         #expect(changes == [])
     }
 
+    @Test func nilObservationsPreserveTheBaselineAndContinuePolling() async throws {
+        let observations: [Int?] = [0, nil, 0, nil, 1]
+        let probes = Locked(0)
+        var changes: [Int] = []
+        let watch = HostFileWatch(baseline: 0, interval: .milliseconds(20), probe: {
+            probes.withLock { index in
+                let observation = observations[min(index, observations.count - 1)]
+                index += 1
+                return observation
+            }
+        }, changed: { changes.append($0) })
+        defer { watch.cancel() }
+        try #require(await eventually { !changes.isEmpty })
+        #expect(changes == [1])
+    }
+
+    @Test func batchHelperFailurePreservesAssetBaselinesWithoutHidingSourceChanges() async throws {
+        let fixture = try HostFileFixture()
+        try fixture.write("first.js", Data("first".utf8))
+        try fixture.write("second.js", Data("second".utf8))
+        let failure = fixture.directory.appendingPathComponent("fail-descriptor-reader")
+        let failurePath = String(decoding: try JSONEncoder().encode(failure.path), as: UTF8.self)
+        let files = try fixture.reader(running: """
+        (() => {
+          const fs = require('node:fs');
+          const cp = require('node:child_process');
+          const spawnSync = cp.spawnSync;
+          cp.spawnSync = (command, ...args) => {
+            if (command === 'python3' && fs.existsSync(\(failurePath))) {
+              return { status: 1, stdout: '', stderr: 'descriptor helper failed' };
+            }
+            return spawnSync(command, ...args);
+          };
+        })();
+        """)
+        let requests = ["first.js", "second.js"].map {
+            HostFileRequest(source: .directory(fixture.root.path), policy: .boardAsset($0))
+        }
+        let baseline = try await files.observe(requests)
+        try Data().write(to: failure)
+        await #expect(throws: HostFileError.self) { try await files.observe(requests) }
+        let polls = Locked(0)
+        var changes: [[HostFileObservation]] = []
+        let watch = HostFileWatch(baseline: baseline, interval: .milliseconds(20), probe: {
+            let observation = try? await files.observe(requests)
+            polls.withLock { $0 += 1 }
+            return observation
+        }, changed: { changes.append($0) })
+        defer { watch.cancel() }
+        try #require(await eventually { polls.withLock { $0 } >= 3 })
+        #expect(changes == [])
+
+        try FileManager.default.removeItem(at: failure)
+        let recovering = polls.withLock { $0 }
+        try #require(await eventually { polls.withLock { $0 } >= recovering + 3 })
+        #expect(changes == [])
+        #expect(try await files.observe(requests) == baseline)
+
+        try Data("changed first asset".utf8).write(to: fixture.root.appendingPathComponent("first.js"), options: .atomic)
+        let edited = try await files.observe(requests)
+        #expect(edited[0] != baseline[0])
+        #expect(edited[1] == baseline[1])
+        try #require(await eventually { changes.count == 1 })
+        let settled = polls.withLock { $0 }
+        try #require(await eventually { polls.withLock { $0 } >= settled + 3 })
+        #expect(changes == [edited])
+
+        let second = fixture.root.appendingPathComponent("second.js")
+        try FileManager.default.removeItem(at: second)
+        let missing = [edited[0], HostFileObservation.failure(.notFound(commit: nil))]
+        try #require(await eventually { changes.count == 2 })
+        #expect(changes == [edited, missing])
+
+        let outside = fixture.temp.appendingPathComponent("outside.js")
+        try Data("outside".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: second, withDestinationURL: outside)
+        let refused = [edited[0], HostFileObservation.failure(.refused)]
+        try #require(await eventually { changes.count == 3 })
+        #expect(changes == [edited, missing, refused])
+
+        try Data("changed while second is refused".utf8).write(to: fixture.root.appendingPathComponent("first.js"), options: .atomic)
+        let changedWhileRefused = try await files.observe(requests)
+        #expect(changedWhileRefused[0] != edited[0])
+        #expect(changedWhileRefused[1] == .failure(.refused))
+        try #require(await eventually { changes.count == 4 })
+        #expect(changes == [edited, missing, refused, changedWhileRefused])
+
+        let safe = fixture.directory.appendingPathComponent("restored.js")
+        try Data("restored second asset".utf8).write(to: safe)
+        try #require(rename(safe.path, second.path) == 0)
+        let restored = try await files.observe(requests)
+        #expect(restored[0] == changedWhileRefused[0])
+        #expect(restored[1] == .version(try await files.read(requests[1]).version))
+        #expect(try await files.read(requests[1]).data == Data("restored second asset".utf8))
+        try #require(await eventually { changes.count == 5 })
+        #expect(changes == [edited, missing, refused, changedWhileRefused, restored])
+    }
+
     @Test func nilBaselineUsesMetadataOnlyAndNotifiesOnceForASameSizeEdit() async throws {
         let fixture = try HostFileFixture()
         try fixture.write("chart.png", Data("first".utf8))

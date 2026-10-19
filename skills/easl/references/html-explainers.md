@@ -11,8 +11,9 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
 
 - `html` is a body fragment or a full document. Update it with `object.update` (the tile re-renders in place); keep the same tile rather than creating a new one per revision.
   The tile keeps its height: pass `size="fit"` in the same update (`canvas.object.update(id=tile, props={"html": page}, size="fit")`) to refit it to the new page.
-- Images: `<img src="out/fig.png">` loads a board file (or an absolute path in the temp directory); no base64 needed. A chart on its own belongs in an image tile (`type: image`, api.md). Match the user's `view.get` `appearance` (dark: transparent background, light text).
+- Board files: `fetch('data/series.json')`, CSV, `<script src="chart.js">`, stylesheets, fonts, images and `<video src="clips/demo.mp4" controls>` load relative to the tile's root (the board root unless `root` overrides it). Authorized board assets work locally and from a remote host; loaded-file edits reload the live page without reopening its tile. Temporary-directory fallback is image-only. A standalone chart belongs in an image tile; a standalone clip belongs in a `video` tile. No base64 needed. Match the user's `view.get` `appearance` (dark: transparent background, light text).
 - Sandboxed: no network (list hosts in `allowNetwork: ["localhost:3000", "*.example.com"]` when you truly need them), no native access, no approvals or credentials inside the tile, ever.
+- On a remote board, allowed HTTP(S), including `localhost`, runs on the board host through SSH, never the viewer's localhost. Relative resources keep the page's granted origin. GET/HEAD only, no cookie/session, POST or private WebSocket proxy; unhandled network APIs can fail closed.
 - Preloaded, nothing to include:
   - **Tailwind v4**, themed to the app. Use the semantic colors so the tile matches light and dark mode:
     `bg-background text-foreground`, `bg-card`, `bg-muted text-muted-foreground`, `border-border`, `bg-accent text-accent-foreground`, `bg-code`, `text-warn`, `text-ok`, `font-sans`, `font-mono`.
