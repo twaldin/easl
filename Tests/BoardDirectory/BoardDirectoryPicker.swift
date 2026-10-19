@@ -214,9 +214,13 @@ private enum BoardDirectoryPicker {
                                  board: board.id,
                                  connection: EaslConnection(.unixSocket(absent), backoff: backoff, handshakeTimeout: .seconds(1)),
                                  renders: EaslConnection(.unixSocket(absent), backoff: backoff, handshakeTimeout: .seconds(1)))
-        return CanvasWindowController(board: board,
-                                      registry: registry,
-                                      remote: RemoteSource(host: host, mirror: mirror))
+        let controller = CanvasWindowController(board: board,
+                                                registry: registry,
+                                                viewport: nil,
+                                                composerState: ComposerState(),
+                                                remote: RemoteSource(host: host, mirror: mirror))
+        controller.isBoardOpen = true
+        return controller
     }
 
     /// The picker reads `CanvasWindowController.frontmost`; its window must be visible and front.
