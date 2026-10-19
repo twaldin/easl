@@ -113,9 +113,6 @@ extension CanvasView {
             }
 
             board.settleArrows?()
-            // `full` targets extend past their frames over whatever lies there, so they paint last,
-            // above drawn objects too.
-            let extended = request.full ? Set(outlines.keys.filter { renders[$0] != nil }) : []
             let stacked = board.objects.values.filter { renders[$0.id] != nil || $0.type == .shape || $0.type == .arrow }
                 .sorted { ($0.z, $0.id) < ($1.z, $1.id) }
             @MainActor func paint(_ object: CanvasObject) {
@@ -128,7 +125,7 @@ extension CanvasView {
                 cg.restoreGState()
                 record(object, frame, render)
             }
-            for object in stacked where !extended.contains(object.id) {
+            for object in stacked {
                 if renders[object.id] != nil {
                     paint(object)
                 } else if let layer = shapeLayer as? ShapeLayer,
@@ -136,7 +133,6 @@ extension CanvasView {
                     record(object, Frame(x: bounds.minX - origin.x, y: bounds.minY - origin.y, w: bounds.width, h: bounds.height))
                 }
             }
-            for object in stacked where extended.contains(object.id) { paint(object) }
         }
         NSGraphicsContext.restoreGraphicsState()
 

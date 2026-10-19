@@ -132,7 +132,7 @@ swift build --build-system native -j 2 --product Easl
 python3 Tests/SceneStacking/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
 ```
 
-The runner uses disposable homes and links the prebuilt `CanvasApp`. It checks actual `view.render` pixels and object order, native hit testing, both stacking commands, and unfilled-interior pass-through. It never rebuilds the app. This is not WindowServer proof. Capture the real overlapping note and rectangle locally and in both remote viewers before and after restacking.
+The runner uses disposable homes and links the prebuilt `CanvasApp`. It checks actual `view.render` pixels and object order in normal and full-content modes, snapshot metadata, native hit testing, both stacking commands, arrow and ink transitions, and unfilled-interior pass-through. It never rebuilds the app. This is not WindowServer proof. Capture the real overlapping note and rectangle locally and in both remote viewers before and after restacking.
 
 ### Seeing the window
 
