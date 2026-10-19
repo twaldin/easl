@@ -699,7 +699,22 @@
         "updatedBy": { "$ref": "#/definitions/Actor" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
+        "expires": { "type": "string", "format": "date-time", "description": "absolute RFC3339 deletion deadline, set by the host; absent when no expiry is scheduled" },
         "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | VideoProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)" }
+      },
+      "additionalProperties": false
+    },
+    "StaleObject": {
+      "type": "object",
+      "required": ["id", "type", "title", "createdBy", "updatedAt", "reasons"],
+      "properties": {
+        "id": { "$ref": "#/definitions/Id" },
+        "type": { "$ref": "#/definitions/ObjectType" },
+        "title": { "type": "string" },
+        "key": { "type": "string" },
+        "createdBy": { "$ref": "#/definitions/Actor" },
+        "updatedAt": { "type": "number", "description": "seconds since 2001-01-01T00:00:00Z, matching the object's API updatedAt" },
+        "reasons": { "type": "array", "items": { "enum": ["creator-gone", "expired", "untouched", "exited"] }, "description": "all applicable reasons, in the listed order" }
       },
       "additionalProperties": false
     },
@@ -1243,6 +1258,18 @@
       "params": { "type": "object", "properties": {}, "additionalProperties": false },
       "result": { "type": "object", "required": ["boards"], "properties": { "boards": { "type": "array", "items": { "$ref": "#/definitions/BoardInfo" } } } }
     },
+    "board.stale": {
+      "description": "Read-only cleanup candidates, sorted by id. Reasons are creator-gone (agent creator no longer has a terminal on this board), expired (deadline reached), untouched (updatedAt strictly before now minus olderThan), and exited (terminal process confirmed exited). Does not delete objects or change revisions, timestamps, or events.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "olderThan": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?[smhd]$", "default": "7d", "description": "finite nonnegative duration in seconds, minutes, hours or days; fractions allowed" }
+        },
+        "additionalProperties": false
+      },
+      "result": { "type": "object", "required": ["objects"], "properties": { "objects": { "type": "array", "items": { "$ref": "#/definitions/StaleObject" } } } }
+    },
     "board.open": {
       "description": "Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). A directory in a git repository opens the repository's board (one per repository, rooted at its main checkout), tagged with the worktree it is in: the window names it, New Terminal starts there, and the view goes to its region. The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true.",
       "params": {
@@ -1473,6 +1500,8 @@
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width)" },
           "parent": { "$ref": "#/definitions/Id" },
+          "expires": { "type": ["string", "null"], "format": "date-time", "description": "RFC3339 timestamp with timezone, or null to clear; mutually exclusive with expiresIn" },
+          "expiresIn": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?[smhd]$", "description": "finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires" },
           "viewer": { "$ref": "#/definitions/ViewerId", "description": "With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch." },
           "step": { "type": "integer", "minimum": 1, "description": "The viewer's gesture id; writes with the same id form one undo step." },
           "caller": { "$ref": "#/definitions/Id", "description": "calling tile id; clients fill from EASL_TILE_ID" }
@@ -1493,6 +1522,8 @@
           "z": { "type": "number", "description": "stacking order, back to front; objects with larger values draw above objects with smaller values" },
           "size": { "const": "fit", "description": "measure the frame's size from the content" },
           "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "expires": { "type": ["string", "null"], "format": "date-time", "description": "RFC3339 timestamp with timezone, or null to clear; omission preserves the deadline; mutually exclusive with expiresIn" },
+          "expiresIn": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?[smhd]$", "description": "finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires" },
           "viewer": { "$ref": "#/definitions/ViewerId", "description": "With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch." },
           "step": { "type": "integer", "minimum": 1, "description": "The viewer's gesture id; writes with the same id form one undo step." },
           "caller": { "$ref": "#/definitions/Id" }
@@ -1513,6 +1544,8 @@
           "props": { "type": "object", "description": "the type's props, as for object.create (on an update, merged into the object's)" },
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }], "description": "as for object.create; on an update, as object.update's (any of x, y, w, h). Omit it to leave where the object is (a region the user moved stays moved)" },
           "size": { "const": "fit", "description": "as for object.create and object.update" },
+          "expires": { "type": ["string", "null"], "format": "date-time", "description": "RFC3339 timestamp with timezone, or null to clear; omission preserves an existing deadline; mutually exclusive with expiresIn" },
+          "expiresIn": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?[smhd]$", "description": "finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires" },
           "caller": { "$ref": "#/definitions/Id" }
         },
         "additionalProperties": false
