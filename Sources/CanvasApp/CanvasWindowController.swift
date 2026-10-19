@@ -1438,6 +1438,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 final class CanvasWindow: NSWindow {
     /// A middle-button press on the canvas, and the press itself to hand on if it ends a click.
     private var middlePan: (pan: CanvasDragPan, press: NSEvent)?
+    private(set) var scrollSequence: UInt64 = 0
 
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
@@ -1461,11 +1462,11 @@ final class CanvasWindow: NSWindow {
     }
 
     /// Typing reaches the focused tile through here (`CanvasWindowController.keyTyped`), a
-    /// ⌘-scroll anywhere on the canvas zooms it (`zoomsCanvas`), and a middle-button drag pans it
+    /// ⌘-scroll anywhere on the canvas zooms it (`handleScroll`), and a middle-button drag pans it
     /// (`middleDragPans`). Every event monitor has seen the event by now.
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, let controller = windowController as? CanvasWindowController { controller.keyTyped(event) }
-        if event.type == .scrollWheel, zoomsCanvas(event, at: event.locationInWindow) { return }
+        if event.type == .scrollWheel, handleScroll(event, at: event.locationInWindow) { return }
         if middleDragPans(event) { return }
         super.sendEvent(event)
     }
@@ -1482,9 +1483,10 @@ final class CanvasWindow: NSWindow {
         return canvas
     }
 
-    /// A ⌘-scroll at `point` (window coordinates) over the canvas goes to the canvas
-    /// (`CanvasWheel`), which zooms. The modifiers first: every other scroll event skips the hit test.
-    func zoomsCanvas(_ event: NSEvent, at point: NSPoint) -> Bool {
+    /// Called for both AppKit input and the development replay, which targets a view directly.
+    func handleScroll(_ event: NSEvent, at point: NSPoint) -> Bool {
+        let step = ScrollGesture.Step(event)
+        if step == .began || step == nil { scrollSequence &+= 1 }
         guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
               let canvas = canvas(at: point) else { return false }
         canvas.scrollWheel(with: event)
@@ -1532,6 +1534,20 @@ final class CanvasWindow: NSWindow {
         guard let ended = middlePan else { return }
         middlePan = nil
         if ended.pan.panning { NSCursor.pop() }
+    }
+}
+
+extension ScrollGesture.Step {
+    init?(_ event: NSEvent) {
+        switch (event.phase, event.momentumPhase) {
+        case let (phase, _) where phase.contains(.began) || phase.contains(.mayBegin): self = .began
+        case let (phase, _) where phase.contains(.ended) || phase.contains(.cancelled): self = .ended
+        case let (phase, _) where !phase.isEmpty: self = .changed
+        case let (_, momentum) where momentum.contains(.began): self = .momentumBegan
+        case let (_, momentum) where momentum.contains(.ended) || momentum.contains(.cancelled): self = .momentumEnded
+        case let (_, momentum) where !momentum.isEmpty: self = .momentumChanged
+        default: return nil
+        }
     }
 }
 
