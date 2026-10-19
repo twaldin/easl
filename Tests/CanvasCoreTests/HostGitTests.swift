@@ -235,12 +235,58 @@ struct HostGitTests {
     @Test func anUnreachableHostIsUnavailableNeverAnEmptyListing() async throws {
         let fixture = try HostFileFixture()
         let git = HostGit(files: try fixture.reader(body: "echo 'ssh: connect to host fixture: Connection refused' >&2\nexit 255"))
-        let refused = HostFileError.unavailable("ssh: connect to host fixture: Connection refused")
-        await #expect(throws: refused) { try await git.changes(boardRoot: "/nowhere", spec: ChangesSpec(.object([:])), highlight: false) }
-        await #expect(throws: refused) {
+        await #expect(throws: HostFileError.self) {
+            try await git.changes(boardRoot: "/nowhere", spec: ChangesSpec(.object([:])), highlight: false)
+        }
+        await #expect(throws: HostFileError.self) {
             try await git.code(HostCodeRead(boardRoot: "/nowhere", path: "a.txt", base: .head, pinned: nil, ref: nil, refSha: nil))
         }
-        #expect(await git.stamp(HostGitProbe(boardRoot: "/nowhere", spec: .object(["dir": "/nowhere"]))) == .failure(refused))
+        guard case .failure(.unavailable) = await git.stamp(HostGitProbe(boardRoot: "/nowhere", spec: .object(["dir": "/nowhere"]))) else {
+            Issue.record("an unreachable host must remain an unavailable observation")
+            return
+        }
+    }
+
+    @Test func aChangesReadRecoversFromATransportFailure() async throws {
+        let fixture = try HostFileFixture()
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("app.txt", "base\n")
+        try await repo.commit("base")
+        try await repo.write("app.txt", "edited\n")
+        let marker = fixture.directory.appendingPathComponent("failed-once")
+        let files = try fixture.recordingReader(body: """
+        if [ ! -f \(RemoteHost.quote(marker.path)) ]; then
+          touch \(RemoteHost.quote(marker.path))
+          exit 255
+        fi
+        exec /bin/sh -c "$command"
+        """)
+        let listing = try await HostGit(files: files).changes(boardRoot: repo.root.path, spec: ChangesSpec(.object([:])), highlight: false)
+        #expect(listing.set.files.map(\.path) == ["app.txt"])
+        #expect(listing.set.files.map { $0.new.text } == ["edited\n"])
+        #expect(fixture.attempts.count == 2)
+    }
+
+    @Test func aStageWithALostReplyIsNotAppliedAgain() async throws {
+        let fixture = try HostFileFixture()
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("app.txt", "base\n")
+        try await repo.commit("base")
+        try await repo.write("app.txt", "edited\n")
+        let git = HostGit(files: try fixture.reader())
+        let listing = try await git.changes(boardRoot: repo.root.path, spec: ChangesSpec(.object([:])), highlight: false)
+        let file = try #require(listing.set.files.first)
+        let sides = try #require(listing.sides["app.txt"])
+        let checkout = try #require(listing.checkout)
+        let patch = try await ReviewPatch.stage(nil, of: file, sides: sides, onHost: checkout)
+        let failed = HostGit(files: try fixture.recordingReader(body: "/bin/sh -c \"$command\"\nexit 255"))
+        await #expect(throws: HostFileError.self) {
+            try await failed.apply(patch, to: file, sides: sides, boardRoot: repo.root.path)
+        }
+        #expect(try await repo.git("show", ":app.txt") == "edited")
+        #expect(fixture.attempts.count == 1)
     }
 
     @Test func aWorktreeWhoseBoardFolderLinksOutsideShowsNothingFromThere() async throws {

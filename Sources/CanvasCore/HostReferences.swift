@@ -76,7 +76,7 @@ extension HostFiles {
                               home: HostedTerminal.homeLabel((host.socketPath as NSString).deletingLastPathComponent),
                               zmx: host.zmxBin, zmxDir: host.zmxDir, tmpdir: host.tmpdir,
                               readings: request.candidates.map { Reading(path: $0.reference.path, pytest: $0.reference.test != nil) })
-        let output = try await execute(Self.referenceProgram, request: JSONEncoder().encode(payload), what: "host reference resolver")
+        let output = try await execute(Self.referenceProgram, request: JSONEncoder().encode(payload), retryTransport: true, what: "host reference resolver")
         guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(output.utf8)) else { return .failure(.unavailable) }
         guard reply.ok else { return .failure(HostReferenceOutcome.Failure(rawValue: reply.code ?? "") ?? .unreadable) }
         guard let index = reply.candidate, request.candidates.indices.contains(index), let path = reply.path,
