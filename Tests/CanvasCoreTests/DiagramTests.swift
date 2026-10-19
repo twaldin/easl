@@ -568,6 +568,49 @@ final class DiagramTests {
         await late.stopAll()
     }
 
+    @Test func aMacHostPublishesALateTransportFailureAfterTheReloadWaitEnds() async throws {
+        let release = dir.appendingPathComponent(".release-failing-server")
+        let started = dir.appendingPathComponent(".failing-server-started")
+        let failing = LanguageService(configs: [
+            LanguageServerConfig(language: "swift", command: "/bin/sh",
+                                 arguments: ["-c", "touch \"$1\"; while [ ! -f \"$0\" ]; do sleep 0.01; done; exit 1", release.path, started.path],
+                                 languageIDs: ["swift": "swift"], rootMarkers: ["Package.swift"])
+        ])
+        defer { Task { await failing.stopAll() } }
+        let previous = try await build(Self.callers)
+        let (board, _, server, client) = try api(failing)
+        defer { server.stop() }
+        let diagram = board.create(type: .diagram, props: .object([
+            "path": "Sources/Lib/Spool.swift", "symbol": "Spool.read", "direction": "incoming", "depth": 1, "graph": previous.json
+        ]))
+        let forward = board.onEvent
+        var updates: [CanvasObject] = []
+        board.onEvent = { event in
+            forward?(event)
+            if case .objectUpdated(let object) = event, object.id == diagram.id { updates.append(object) }
+        }
+        client.send(#"{"id":"reload","method":"object.reload","params":{"id":"\#(diagram.id)","timeoutMs":0}}"#)
+        let reply = try await client.next()
+        #expect(reply["ok"] == .bool(true) && reply["result"]?["loaded"] == .bool(false), "\(reply)")
+        #expect(board.objects[diagram.id]?.props["graph"] == previous.json)
+        #expect(updates.isEmpty)
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: started.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(FileManager.default.fileExists(atPath: started.path))
+        try "".write(to: release, atomically: true, encoding: .utf8)
+        for _ in 0..<200 where updates.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        await failing.stopAll()
+        let published = try #require(updates.first)
+        var expected = previous
+        expected.error = "sh exited with status 1. It restarts on the next request."
+        let graph = try #require(DiagramGraph(published.props["graph"]))
+        expected.computedAt = graph.computedAt
+        #expect(graph == expected)
+        #expect(published.rev == diagram.rev && published.updatedAt == diagram.updatedAt && published.updatedBy == diagram.updatedBy)
+        #expect(board.objects[diagram.id]?.props["graph"] == graph.json)
+    }
+
 
     @Test func aViewerComputesEasldsCopyOfADiagramNotItsOwnPreview() async throws {
         let host = DelegatedCallsTests.NoHost()

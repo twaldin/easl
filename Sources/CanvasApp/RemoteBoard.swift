@@ -180,10 +180,27 @@ final class ConnectionBanner: NSVisualEffectView {
 }
 
 @MainActor
-final class ClosedBoardView: NSImageView {
+final class ClosedBoardView: NSView {
+    private let canvas: CanvasView
+
+    init(canvas: CanvasView, frame: NSRect) {
+        self.canvas = canvas
+        super.init(frame: frame)
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
     override var acceptsFirstResponder: Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(convert(point, from: superview)) ? self : nil
+        let local = convert(point, from: superview)
+        guard bounds.contains(local) else { return nil }
+        guard canvas.bounds.contains(canvas.convert(local, from: self)),
+              let parent = canvas.superview,
+              let hit = canvas.hitTest(parent.convert(local, from: self)) else { return self }
+        if hit is CodeRowsView || hit is QuestionPage || hit is NSScroller { return hit }
+        if let text = sequence(first: hit, next: \.superview).first(where: { $0 is NSTextView }) as? NSTextView,
+           text.isSelectable, !text.isEditable { return hit }
+        return canvas
     }
 }

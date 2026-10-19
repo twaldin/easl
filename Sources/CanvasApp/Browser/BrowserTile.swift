@@ -1010,14 +1010,13 @@ final class BrowserTile: NSView, TileContent {
     }
 
     /// The zoomed-out card shows the page as it is; only an agent's render loads one.
-    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
+    func cardSnapshot() async -> NSImage? {
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
                                         appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
-        Task { @MainActor in
-            await MainTurns.next()
-            let render = await self.capture(request)
-            deliver(render.state == .rendered ? render.image : nil)
-        }
+        await MainTurns.next()
+        guard !Task.isCancelled else { return nil }
+        let render = await capture(request)
+        return !Task.isCancelled && render.state == .rendered ? render.image : nil
     }
 
     /// Until the page has loaded and that frame is presented, or the render is cancelled.

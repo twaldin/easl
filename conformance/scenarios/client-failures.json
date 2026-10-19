@@ -1,5 +1,5 @@
 {
-  "description": "Three scripted Mac clients show one board. Ordinary calls go to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call unavailable, naming it, and nothing is retried on another client. Browser object.reload does not use that order: it goes only to the tile's persisted drawingMachine. This records easld's protocol with scripted clients.",
+  "description": "Four scripted Mac clients show one board. Ordinary calls follow focus; browser reload stays with the persisted drawing machine. A timeout or disconnect fails a call without retrying another client. A diagram whose zero-timeout reload returned loaded:false publishes an error when its viewer disconnects later.",
   "steps": [
     {
       "call": "object.create",
@@ -109,6 +109,49 @@
       "call": "view.render",
       "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 }, "inline": true },
       "note": "laptop is gone: studio, which focused the board, comes before mini"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "diagram", "props": { "path": "main.go", "symbol": "main" }, "frame": { "x": 700, "y": 0, "w": 600, "h": 400 } },
+      "save": "lateDiagram"
+    },
+    {
+      "call": "client.attach",
+      "conn": "late",
+      "params": {
+        "version": "{{schemaVersion}}",
+        "schema": "{{schemaHash}}",
+        "app": "0.2.0",
+        "host": "late-viewer",
+        "serves": ["view.render", "object.reload"],
+        "boards": ["{{board}}"],
+        "focused": "{{board}}"
+      },
+      "replies": { "object.reload": [{ "silent": true }], "view.render": [{ "hangUp": true }] },
+      "ignore": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "call": "object.reload",
+      "params": { "id": "{{lateDiagram.object.id}}", "timeoutMs": 0 },
+      "expect": { "response.ok": true, "response.result.loaded": false },
+      "note": "The viewer holds the computation after the caller's zero-timeout wait ends."
+    },
+    {
+      "call": "view.render",
+      "params": { "board": "{{board}}", "target": { "x": 0, "y": 0, "w": 100, "h": 100 } },
+      "expect": { "response.ok": false, "response.error.code": "unavailable" },
+      "mask": { "events.*.data.props.graph.error": { "match": ".+", "as": "<transport failure>", "why": "The graph must carry the failure; transport message wording is not its contract." } },
+      "unordered": { "events": "The disconnected client and pending diagram finish on independent callbacks." },
+      "note": "The same viewer now disconnects. Its pending diagram publishes an error without another reload."
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{lateDiagram.object.id}}" },
+      "expect": { "response.result.object.rev": 1, "response.result.object.props.graph.nodes": [], "response.result.object.props.graph.edges": [] },
+      "mask": { "response.result.object.props.graph.error": { "match": ".+", "as": "<transport failure>", "why": "The graph must carry the failure; transport message wording is not its contract." } }
     }
   ]
 }

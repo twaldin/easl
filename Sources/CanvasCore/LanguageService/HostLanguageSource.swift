@@ -81,13 +81,42 @@ final class HostLanguageSource: LanguageSource {
     }
 
     static let launcher = #"""
-    cd "$2" || exit 126
-    if [ -n "$3" ]; then PATH=$3; export PATH; fi
-    bin=$1
-    shift 3
-    body="{\"jsonrpc\":\"2.0\",\"method\":\"easl/hostProcess\",\"params\":{\"pid\":$$}}"
-    printf "Content-Length: %s\r\n\r\n%s" "${#body}" "$body"
-    exec "$bin" "$@"
+    for b in "$(command -v bun)" "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do
+      if [ -n "$b" ] && [ -x "$b" ]; then
+        exec "$b" --env-file=/dev/null -e '
+    const cp = require("node:child_process");
+    const [binary, directory, searchPath, ...args] = process.argv.slice(2);
+    const child = cp.spawn(binary, args, {
+      cwd: directory, env: searchPath ? { ...process.env, PATH: searchPath } : process.env,
+      detached: true, stdio: ["pipe", "pipe", "inherit"]
+    });
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      process.stdin.unpipe(child.stdin);
+      process.stdin.pause();
+      if (child.pid) cp.spawnSync("/bin/kill", ["-KILL", "--", String(-child.pid)], { stdio: "ignore" });
+    };
+    process.stdin.on("end", stop);
+    process.stdin.on("error", stop);
+    process.stdout.on("error", stop);
+    for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) process.on(signal, stop);
+    child.stdin.on("error", stop);
+    child.on("error", error => { console.error(error.message); process.exit(127); });
+    child.on("exit", stop);
+    child.on("close", code => process.exit(code ?? 1));
+    if (child.pid) {
+      const body = JSON.stringify({ jsonrpc: "2.0", method: "easl/hostProcess", params: { pid: child.pid } });
+      process.stdout.write("Content-Length: " + Buffer.byteLength(body) + "\r\n\r\n" + body);
+    }
+    child.stdout.pipe(process.stdout);
+    process.stdin.pipe(child.stdin);
+    ' -- easl-lsp "$@"
+      fi
+    done
+    echo "bun isn't installed on the host" >&2
+    exit 127
     """#
 
     func documents(_ requests: [DocumentRequest]) async throws -> [URL: DocumentRead] {

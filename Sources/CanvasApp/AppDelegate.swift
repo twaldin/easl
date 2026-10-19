@@ -861,7 +861,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var entries: [NeedsYouTour.Entry] = []
         entries.reserveCapacity(boards.count)
         var waiting: CanvasWindowController?
-        for controller in boards {
+        for controller in boards where !controller.hostBoardClosed {
             let items = controller.canvas.needsYouItems
             if let window = controller.window, canPresentTab(window.tabGroup?.selectedWindow ?? window) {
                 entries.append(NeedsYouTour.Entry(board: tourKey(controller), items: items))
@@ -1242,9 +1242,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return roots.map { URL(fileURLWithPath: $0) }
     }
 
-    /// The requested root, else home (launched from Finder or `open` without a root).
+    /// The requested root, else the configured board directory, else home.
     static func initialRoot() -> URL {
-        requestedRoot() ?? URL(fileURLWithPath: NSHomeDirectory())
+        requestedRoot() ?? configuredBoardDirectory ?? URL(fileURLWithPath: NSHomeDirectory())
+    }
+
+    /// A preferred starting directory, not a restriction on which boards can open.
+    private static var configuredBoardDirectory: URL? {
+        guard let path = UserDefaults.standard.string(forKey: "canvas.boardDirectory") else { return nil }
+        let expanded = (path as NSString).expandingTildeInPath
+        guard expanded.hasPrefix("/"), BoardStore.isDirectory(expanded) else { return nil }
+        return URL(fileURLWithPath: expanded).standardizedFileURL
     }
 
     /// EASL_ROOT, else the first non-flag argument, else the working directory unless it's
@@ -1408,12 +1416,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.prompt = "Open Board"
-        panel.directoryURL = keyController?.board.root
+        let controller = keyController
+        panel.directoryURL = controller?.remote == nil
+            ? (Self.configuredBoardDirectory ?? controller?.board.root)
+            : controller?.board.root
         let chosen: (NSApplication.ModalResponse) -> Void = { [weak self, panel] response in
             guard response == .OK, let url = panel.url else { return }
             self?.open(root: url)
         }
-        if let window = keyController?.window {
+        if let window = controller?.window {
             panel.beginSheetModal(for: window, completionHandler: chosen)
         } else {
             panel.begin(completionHandler: chosen)
@@ -1597,7 +1608,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // ⌘R and ⌥⌘I as in Safari: the focused or selected browser tile's page. Disabled
             // otherwise, so the key goes on to whoever has the keyboard.
             item("Reload Page", #selector(reloadPage(_:)), "r"),
-            // Show or Hide (`CanvasWindowController.validate`), docked under the address bar.
+            // Show or Hide (`CanvasWindowController.validateMenuItem`), docked under the address bar.
             item("Show Web Inspector", #selector(toggleWebInspector(_:)), "i", [.option, .command]),
             // Presenting: toolbar, tray, selection rings, author marks, code headers, markers.
             // ⌥⌘T as AppKit's Show/Hide Toolbar; Ghostty binds nothing to it.
@@ -1645,7 +1656,7 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(retryUpdateRestoration(_:)), #selector(discardUpdateRecovery(_:)):
             return updateRestoreFailure != nil && updateRestoration == nil
         case #selector(openRemote(_:)), #selector(checkForUpdates(_:)): return true
-        default: return keyController?.validate(item) ?? false
+        default: return keyController?.validateMenuItem(item) ?? false
         }
     }
 }
