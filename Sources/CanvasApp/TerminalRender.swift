@@ -1,5 +1,6 @@
 import AppKit
 import CanvasCore
+import CoreText
 
 /// Draws a terminal's screen from `zmx history --vt` text for renders, cards, and
 /// `view.snapshot` covers (Ghostty draws through Metal, which AppKit can't capture): the
@@ -20,11 +21,18 @@ enum TerminalRender {
 
     // MARK: Font
 
+    nonisolated private static let installedFamilies = CTFontManagerCopyAvailableFontFamilyNames() as! [String]
+
+    /// Resolve the font service off main before the synchronous raster and snapshot draws.
+    static func prepareFonts() async {
+        await offPool(qos: .userInitiated) { _ = installedFamilies }
+    }
+
     /// Font families, best first: the user's Ghostty `font-family` (matched loosely, preferring
     /// its single-width "Mono" Nerd Font variant), then any installed Nerd Font Mono, then the
     /// plain JetBrains Mono Ghostty embeds, then Menlo.
     static let families: [String] = {
-        let installed = NSFontManager.shared.availableFontFamilies
+        let installed = installedFamilies
         var wanted: [String] = []
         for configured in TerminalConfig.shared.fontFamilies {
             if installed.contains(configured) { wanted.append(configured) }

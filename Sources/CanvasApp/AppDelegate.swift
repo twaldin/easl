@@ -481,6 +481,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         openingWindows[key]?.controller = controller
         await MainTurns.next()
+        if canShowWindow(of: board), openingWindows[key]?.present == true {
+            await prepareTabHost(excluding: window)
+        }
         showBuiltWindow(controller)
     }
 
@@ -1270,6 +1273,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await MainTurns.next()
         do {
             try stillWanted()
+            if case .shown(_, true) = use {
+                await prepareTabHost(excluding: window)
+                try stillWanted()
+            }
         } catch {
             loaded.onEvent = nil
             retire(controller, savingFrame: false)
@@ -1407,6 +1414,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.orderBack(nil)
         } else {
             controller.showWindow(nil)
+        }
+    }
+
+    /// AppKit's first tab-group lookup resolves its icon and creates the native group.
+    /// Separate it from insertion and selection. Look up the host again when showing:
+    /// a board or native group can close while this opening yields.
+    private func prepareTabHost(excluding window: NSWindow) async {
+        if DevPerf.time("board.tabhost", { tabHost(excluding: window) }) != nil {
+            await MainTurns.next()
         }
     }
 
