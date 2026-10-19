@@ -353,6 +353,7 @@ public final class BoardMirror: BoardHost {
         let previous = self.state
         linkState = state
         if state != .online { refreshFailure = nil }
+        if state == .online { activitySupported = true }
         guard board != nil else { return }
         if state != .online {
             cancelActivity()
@@ -542,9 +543,11 @@ public final class BoardMirror: BoardHost {
         guard !ended, availability == .open, connection.state == .online, activitySupported else { return }
         var params: [String: JSONValue] = ["board": .string(sessionBoardID), "input": .bool(input)]
         if let terminal { params["terminal"] = .string(terminal) }
+        let before = drops
         do {
             _ = try await connection.request("viewer.activity", .object(params))
         } catch let failure as EaslConnection.Failure where failure.code == "unsupported" || failure.message == "unknown method viewer.activity" {
+            guard drops == before else { return }
             activitySupported = false
             pendingActivity.removeAll()
         } catch {

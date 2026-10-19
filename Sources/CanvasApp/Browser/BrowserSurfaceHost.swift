@@ -731,7 +731,7 @@ final class BrowserSurface {
             throw ApiRouter.Failure("not_found", "dialog \(id) is not open on stream \(stream.id)")
         }
         try Self.check(answer, for: pending.dialog)
-        stream.recordInput()
+        RemoteUpdateActivity.shared.record(session: stream.id, kind: .browser, board: stream.board, tile: tile?.objectID)
         dialogs[id] = nil
         switch pending.dialog {
         case .alert(let done):

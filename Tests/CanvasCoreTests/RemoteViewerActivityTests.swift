@@ -25,7 +25,7 @@ final class RemoteViewerActivityTests {
             if request["method"]?.string == "viewer.activity" {
                 reports.withLock { $0.append(request["params"] ?? .null) }
                 if oldServer.withLock({ $0 }) {
-                    return .object(["id": request["id"] ?? .null, "ok": false,
+                    return .object(["id": request["id"] ?? .null, "ok": .bool(false),
                                     "error": .object(["code": "invalid_params", "message": "unknown method viewer.activity"])])
                 }
             }
@@ -105,13 +105,13 @@ final class RemoteViewerActivityTests {
         defer { mirror.close() }
         try await eventually { activity.sessions.array?.count == 1 }
         mirror.userInput()
-        try await eventually { reports.withLock { $0.filter { $0["input"] == true }.count == 1 } }
+        try await eventually { reports.withLock { $0.filter { $0["input"] == .bool(true) }.count == 1 } }
         try await Task.sleep(for: .milliseconds(50))
         mirror.userInput()
         mirror.userInput()
         mirror.userInput()
         let finalInput = ProcessInfo.processInfo.systemUptime
-        try await eventually { reports.withLock { $0.filter { $0["input"] == true }.count == 2 } }
+        try await eventually { reports.withLock { $0.filter { $0["input"] == .bool(true) }.count == 2 } }
         _ = try await mirror.connection.request("system.ping")
         #expect(action(now: finalInput + 599.999) == .none)
     }
@@ -121,7 +121,7 @@ final class RemoteViewerActivityTests {
         defer { link.close() }
         try await eventually { link.state == .online }
         do {
-            _ = try await link.request("viewer.activity", .object(["board": .string(host.id), "input": true]))
+            _ = try await link.request("viewer.activity", .object(["board": .string(host.id), "input": .bool(true)]))
             Issue.record("An unsubscribed connection must not report viewer activity")
         } catch let failure as EaslConnection.Failure {
             #expect(failure.code == "invalid_params")
@@ -131,8 +131,8 @@ final class RemoteViewerActivityTests {
         defer { mirror.close() }
         try await eventually { activity.sessions.array?.count == 1 }
         let invalidReports: [JSONValue] = [
-            .object(["board": .string(host.id), "terminal": .string(note.id), "input": true]),
-            .object(["board": "brd_missing", "input": true]),
+            .object(["board": .string(host.id), "terminal": .string(note.id), "input": .bool(true)]),
+            .object(["board": "brd_missing", "input": .bool(true)]),
         ]
         for params in invalidReports {
             do {
@@ -146,7 +146,7 @@ final class RemoteViewerActivityTests {
         #expect(activity.sessions.array?.map { $0["kind"] } == [.string("board")])
     }
 
-    @Test func anOldHostRefusesOneOptionalReportWithoutBreakingEditing() async throws {
+    @Test func oldHostRefusalPreservesEditingAndReconnectRenegotiatesActivity() async throws {
         oldServer.withLock { $0 = true }
         let note = host.create(type: .note, props: .object(["markdown": "before"]))
         let mirror = try await mirror()
@@ -156,8 +156,17 @@ final class RemoteViewerActivityTests {
         mirror.userInput()
         _ = try mirror.board?.update(note.id, props: .object(["markdown": "after"]))
         try await eventually { host.objects[note.id]?.props["markdown"] == "after" }
-        #expect(reports.withLock { $0 } == [.object(["board": .string(host.id), "input": false])])
+        #expect(reports.withLock { $0 } == [.object(["board": .string(host.id), "input": .bool(false)])])
         #expect(mirror.state == .online)
         #expect(action() == .install)
+        server.stop()
+        try await eventually { mirror.connection.state != .online }
+        oldServer.withLock { $0 = false }
+        try server.start()
+        mirror.reconnect()
+        try await eventually { activity.sessions.array?.map { $0["kind"] } == [.string("board")] }
+        #expect(action() == .install)
+        mirror.userInput()
+        try await eventually { action() == .none }
     }
 }

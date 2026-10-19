@@ -147,7 +147,7 @@ final class Updater {
             operation = nil
         }
         await operation?.value
-        let answer = status(checkError: checkError, warnInterruptions: mode == "install")
+        let answer = status(checkError: checkError, warnInterruptions: acceptedTransaction != nil)
         if mode == "check" { advanceAutomatically() }
         guard let acceptedTransaction else { return ApiRouter.UpdateReply(value: answer) }
         return ApiRouter.UpdateReply(value: answer) { [weak self] sent in

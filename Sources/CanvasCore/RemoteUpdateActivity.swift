@@ -22,6 +22,7 @@ public final class RemoteUpdateActivity {
 
     public func begin(session: String, kind: Kind, board: BoardID, tile: ObjectID? = nil,
                       isLive: (@MainActor () -> Bool)? = nil) {
+        if live[session] == nil { sweep() }
         live[session] = Session(kind: kind, board: board, tile: tile, isLive: isLive)
     }
 
