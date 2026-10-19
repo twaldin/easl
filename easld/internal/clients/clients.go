@@ -27,9 +27,9 @@ import (
 // Delegated are the methods a client can serve (client.attach `serves`).
 // browser.call is the drawing Mac's page commands; without it, and without a
 // persistent identity, a client cannot own a browser tile. surface.stream is a browser tile's
-// stream for another viewer; the other four surface methods name a stream it opened.
+// stream for another viewer; the other surface methods name a stream it opened.
 var Delegated = []string{"view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "object.measure", "text.measure", "browser.call",
-	"surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"}
+	"surface.stream", "surface.ack", "surface.progress", "surface.input", "surface.answer", "surface.stop"}
 
 const (
 	ViewGetDeadline  = 5 * time.Second

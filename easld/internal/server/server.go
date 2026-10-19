@@ -91,7 +91,7 @@ type Conn struct {
 	// mu guards everything below.
 	mu      sync.Mutex
 	wake    *sync.Cond // the writer waits here for queued lines or for the close
-	queue   [][]byte   // lines not yet handed to the writer, in Send order
+	queue   []output   // lines not yet handed to the writer, in Send order
 	pending int        // bytes queued or being written
 	open    bool
 	// stopping: the server is closing and no longer reads requests (see stopReading).
@@ -109,6 +109,49 @@ type Conn struct {
 	// arrival order (guarded by mu): a reply from any path (the handler's return, a direct
 	// Send, a deferred agent.wait) closes its request's `api.<method>` accounting.
 	unanswered []unanswered
+}
+
+type output struct {
+	line  []byte
+	frame *surfaceFrame
+}
+
+type surfaceFrame struct {
+	board, stream   string
+	seq, supersedes int
+	refresh         bool
+}
+
+func queuedSurfaceFrame(line []byte) *surfaceFrame {
+	var head struct {
+		Event string `json:"event"`
+		Board string `json:"board"`
+		Data  struct {
+			Stream     string `json:"stream"`
+			Format     string `json:"format"`
+			Seq        int    `json:"seq"`
+			Supersedes int    `json:"supersedes"`
+			Refresh    bool   `json:"refresh"`
+			Offset     *int   `json:"offset"`
+			Total      *int   `json:"total"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(line, &head) != nil || head.Event != "surface.frame" ||
+		head.Board == "" || head.Data.Stream == "" || head.Data.Format != "h264" ||
+		head.Data.Seq < 1 || head.Data.Seq > 9007199254740991 ||
+		head.Data.Supersedes < 0 || head.Data.Supersedes >= head.Data.Seq {
+		return nil
+	}
+	d := head.Data
+	if d.Refresh {
+		if d.Offset == nil || d.Total == nil || *d.Total < 1 || *d.Total > 576*1024 ||
+			*d.Offset < 0 || *d.Offset >= *d.Total || *d.Offset%(16*1024) != 0 {
+			return nil
+		}
+	} else if d.Offset != nil || d.Total != nil {
+		return nil
+	}
+	return &surfaceFrame{board: head.Board, stream: d.Stream, seq: d.Seq, supersedes: d.Supersedes, refresh: d.Refresh}
 }
 
 type unanswered struct {
@@ -148,20 +191,21 @@ func (c *Conn) Send(v any) bool {
 		return false
 	}
 	c.answered(v, len(data)+1)
-	return c.write(append(data, '\n'))
+	return c.write(output{line: append(data, '\n')})
 }
 
 func (c *Conn) sendRaw(line string) bool {
-	return c.write(append([]byte(line), '\n'))
+	return c.write(output{line: append([]byte(line), '\n')})
 }
 
 // SendLine queues line, one JSON line already encoded and without its newline, as it is: Send's
 // order and output budget apply. line is copied, so the caller may reuse it.
+// A superseding surface frame removes only queued refresh chunks in its canceled sequence range.
 func (c *Conn) SendLine(line []byte) bool {
 	out := make([]byte, len(line)+1)
 	copy(out, line)
 	out[len(line)] = '\n'
-	return c.write(out)
+	return c.write(output{line: out, frame: queuedSurfaceFrame(line)})
 }
 
 // expect starts a request's accounting: `api.<method>` counts it when its reply is sent, with
@@ -194,20 +238,35 @@ func (c *Conn) answered(v any, bytes int) {
 	c.mu.Unlock()
 }
 
-func (c *Conn) write(line []byte) bool {
+func (c *Conn) write(next output) bool {
 	c.mu.Lock()
 	if !c.open {
 		c.mu.Unlock()
 		return false
 	}
-	c.pending += len(line)
+	if frame := next.frame; frame != nil && frame.supersedes > 0 {
+		kept := c.queue[:0]
+		for _, queued := range c.queue {
+			old := queued.frame
+			// supersedes covers canceled refresh sequences, never motion prediction.
+			if old != nil && old.refresh && old.board == frame.board && old.stream == frame.stream &&
+				old.seq >= frame.supersedes && old.seq < frame.seq {
+				c.pending -= len(queued.line)
+				continue
+			}
+			kept = append(kept, queued)
+		}
+		clear(c.queue[len(kept):])
+		c.queue = kept
+	}
+	c.pending += len(next.line)
 	if c.pending > c.limits.pending {
 		c.queue = nil
 		c.mu.Unlock()
 		c.close(true)
 		return false
 	}
-	c.queue = append(c.queue, line)
+	c.queue = append(c.queue, next)
 	c.mu.Unlock()
 	c.wake.Signal()
 	return true
@@ -244,22 +303,20 @@ func (c *Conn) writeLoop() {
 		for len(c.queue) == 0 && c.open {
 			c.wake.Wait()
 		}
-		batch := c.queue
-		c.queue = nil
-		c.mu.Unlock()
-		if len(batch) == 0 {
+		if len(c.queue) == 0 {
+			c.mu.Unlock()
 			return
 		}
-		size := 0
-		for _, line := range batch {
-			size += len(line)
-		}
-		buffers := net.Buffers(batch)
-		_, err := buffers.WriteTo(c.nc)
-		c.mu.Lock()
-		c.pending -= size
+		next := c.queue[0]
+		c.queue[0] = output{}
+		c.queue = c.queue[1:]
 		c.mu.Unlock()
-		if err != nil {
+		// Only this line is committed. Supersession can still remove every queued chunk.
+		n, err := c.nc.Write(next.line)
+		c.mu.Lock()
+		c.pending -= len(next.line)
+		c.mu.Unlock()
+		if err != nil || n != len(next.line) {
 			// The peer is gone; the reader sees EOF too.
 			c.close(true)
 			return

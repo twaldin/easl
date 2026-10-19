@@ -1934,7 +1934,7 @@ final class BoardMirrorTests {
         let attach: JSONValue = .object([
             "version": .number(Double(ApiParams.schemaVersion)), "schema": .string(ApiParams.schemaHash), "app": "0.2.7", "host": "studio", "identity": "mch_01STUDIO",
             "serves": ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure", "browser.call",
-                       "surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"], "boards": [.string(host.id)],
+                       "surface.stream", "surface.ack", "surface.progress", "surface.input", "surface.answer", "surface.stop"], "boards": [.string(host.id)],
         ])
         #expect(easld.attaches == [attach])
         key = true

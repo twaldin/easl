@@ -1,6 +1,5 @@
 import AppKit
 import CanvasCore
-import ImageIO
 import UniformTypeIdentifiers
 
 /// A remote board's browser tile whose page this Mac doesn't run. The Mac that runs it keeps the
@@ -38,8 +37,14 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
 
     private var streamID: String?
     private var credit: Credit = .idle
-    private var stashed: HostFrame?
+    private var stashed: [HostFrame] = []
     private var lastAcked = 0
+    private var video = SurfaceVideoDecoder()
+    private let decoding = DispatchQueue(label: "easl.surface.decode", qos: .userInitiated)
+    private var refreshAssembly = SurfaceRefreshAssembly()
+    private var assemblingRefinement: Int?
+    private var abandonedRefinement = 0
+    private var decodingRefinement: Int?
     private var pageSize: CGSize?
     private var image: NSImage?
     private var linkStatus: String?
@@ -282,8 +287,13 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         streamTasks.removeAll()
         streamID = nil
         credit = .idle
-        stashed = nil
+        stashed.removeAll()
         lastAcked = 0
+        video = SurfaceVideoDecoder()
+        refreshAssembly.reset()
+        assemblingRefinement = nil
+        abandonedRefinement = 0
+        decodingRefinement = nil
         nextSeq = 0
         opening = false
         outbound.removeAll()
@@ -332,7 +342,11 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             guard event.board == subscribedBoard else { continue }
             switch event.name {
             case "surface.frame":
-                if let frame = SurfaceWire.frame(event.data) { receive(frame) }
+                if let frame = SurfaceWire.frame(event.data) {
+                    receive(frame)
+                } else if streamID != nil, event.data["stream"]?.string == streamID {
+                    restartStream(reason: "Couldn't read a frame from \(remote.host.name)")
+                }
             case "surface.dialog":
                 if let dialog = SurfaceWire.dialog(event.data) { receive(dialog) }
             case "surface.notice":
@@ -369,6 +383,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 let result = try await connection.request("surface.stream", .object([
                     "id": .string(id),
                     "scale": .number(scale),
+                    "format": .string(SurfaceFormat.h264.rawValue),
                 ]), timeout: .seconds(15))
                 guard let self else {
                     if let stream = result["stream"]?.string {
@@ -388,7 +403,6 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                     self.failOpen("invalid_params")
                     return
                 }
-                self.retryDelay = 1
                 self.streamID = stream
                 self.pageSize = CGSize(width: w, height: h)
                 self.credit = .owingZero
@@ -457,34 +471,103 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private func ackZeroAccepted() {
         guard credit == .owingZero else { return }
         credit = .waiting
-        guard let stashed else { return }
-        self.stashed = nil
-        receive(stashed)
+        let waiting = stashed
+        stashed.removeAll()
+        waiting.forEach(receive)
     }
 
     // MARK: Frames
+    private func restartStream(reason: String) {
+        let stream = streamID
+        let connection = owned.current()
+        dropStream(reason: reason)
+        if let stream, let connection {
+            Task { _ = try? await connection.request("surface.stop", .object(["stream": .string(stream)]), timeout: .seconds(2)) }
+        }
+        scheduleRetry()
+    }
 
     private func receive(_ frame: HostFrame) {
         guard frame.stream == streamID else { return }
+        if frame.refresh, frame.seq <= abandonedRefinement { return }
         switch credit {
         case .owingZero:
-            stashed = frame
-        case .waiting where frame.seq > lastAcked:
-            beginDecode(frame)
+            guard stashed.count < 2 else {
+                restartStream(reason: "Too many frames from \(remote.host.name)")
+                return
+            }
+            stashed.append(frame)
+        case .waiting where frame.seq == lastAcked + 1:
+            accept(frame)
+        case .waiting where frame.supersedes.map({ $0 <= lastAcked + 1 }) == true && frame.seq > lastAcked + 1:
+            accept(frame)
+        case .waiting where frame.seq > lastAcked + 1:
+            restartStream(reason: "Missed a frame from \(remote.host.name)")
+        case .decoding(let seq) where decodingRefinement == seq && frame.supersedes.map({ $0 <= seq }) == true && frame.seq > seq:
+            accept(frame)
+        case .decoding(let seq) where frame.seq > seq:
+            restartStream(reason: "Missed a frame from \(remote.host.name)")
         case .waiting, .decoding, .idle:
             break
         }
     }
 
+    private func accept(_ frame: HostFrame) {
+        if frame.supersedes != nil, frame.offset == nil || frame.offset == 0 {
+            video = SurfaceVideoDecoder()
+        }
+        guard let offset = frame.offset else {
+            refreshAssembly.reset()
+            assemblingRefinement = nil
+            beginDecode(frame)
+            return
+        }
+        if case .decoding = credit {
+            credit = .waiting
+            decodingRefinement = nil
+        }
+        do {
+            let completed = try refreshAssembly.append(frame: frame)
+            assemblingRefinement = completed == nil ? frame.seq : nil
+            if let connection = owned.current() {
+                sendProgress(frame.seq, offset: offset, stream: frame.stream, connection: connection, generation: streamEpoch)
+            }
+            if let completed { beginDecode(completed) }
+        } catch {
+            restartStream(reason: "Couldn't assemble a frame from \(remote.host.name)")
+        }
+    }
+
+    private func sendProgress(_ frame: Int, offset: Int, stream: String, connection: EaslConnection, generation: Int) {
+        runStreamTask { [weak self] in
+            do {
+                _ = try await connection.request("surface.progress", .object([
+                    "stream": .string(stream), "frame": .number(Double(frame)), "offset": .number(Double(offset)),
+                ]), timeout: .seconds(8))
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, generation == self.streamEpoch, self.streamID == stream else { return }
+                self.endLink()
+                self.setLinkStatus("Refresh transfer failed")
+                self.startLink()
+            }
+        }
+    }
+
     private func beginDecode(_ frame: HostFrame) {
         credit = .decoding(frame.seq)
+        decodingRefinement = frame.refresh ? frame.seq : nil
         let generation = streamEpoch
         let stream = frame.stream
-        let payload = frame.payload
+        let video = video
+        let decoding = decoding
         runStreamTask { [weak self] in
-            let decoded = await Task.detached(priority: .userInitiated) {
-                DecodedFrame(SurfaceWire.decode(payload))
-            }.value
+            let decoded = await withCheckedContinuation { continuation in
+                decoding.async {
+                    continuation.resume(returning: DecodedFrame(frame, video: video))
+                }
+            }
             guard let self, generation == self.streamEpoch, self.streamID == stream else { return }
             self.finishDecode(frame, decoded)
         }
@@ -492,27 +575,28 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
 
     private func finishDecode(_ frame: HostFrame, _ decoded: DecodedFrame) {
         guard case .decoding(frame.seq) = credit, frame.stream == streamID else { return }
+        guard let cg = decoded.image else {
+            restartStream(reason: "Couldn't read a frame from \(remote.host.name)")
+            return
+        }
+        decodingRefinement = nil
         let sizeChanged = pageSize != frame.size
         pageSize = frame.size
         if chrome.canGoBack != frame.back { chrome.canGoBack = frame.back }
         if chrome.canGoForward != frame.forward { chrome.canGoForward = frame.forward }
         if chrome.isLoading != frame.loading { chrome.isLoading = frame.loading }
         linkStatus = nil
-        if let cg = decoded.image {
-            let shown = NSImage(cgImage: cg, size: frame.size)
-            image = shown
-            picture.image = shown
-            if sizeChanged { layoutParts() }
-            Metrics.shared.record("surface.frameAccepted", bytes: decoded.bytes)
-            recordClicks(coveredBy: frame.input)
-            linkStatus = nil
-            refreshStatus()
-            let waiters = readyWaiters
-            readyWaiters.removeAll()
-            waiters.forEach { $0() }
-        } else {
-            setLinkStatus("Couldn't read a frame from \(remote.host.name)")
-        }
+        let shown = NSImage(cgImage: cg, size: frame.size)
+        image = shown
+        retryDelay = 1
+        picture.image = shown
+        if sizeChanged { layoutParts() }
+        Metrics.shared.record("surface.frameAccepted", bytes: decoded.bytes)
+        recordClicks(coveredBy: frame.input)
+        refreshStatus()
+        let waiters = readyWaiters
+        readyWaiters.removeAll()
+        waiters.forEach { $0() }
         credit = .waiting
         lastAcked = frame.seq
         guard let connection = owned.current(), let stream = streamID else { return }
@@ -537,6 +621,19 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     @discardableResult
     private func enqueue(_ event: SurfaceInput) -> Int? {
         guard streamID != nil else { return nil }
+        if decodingRefinement != nil || assemblingRefinement != nil {
+            video = SurfaceVideoDecoder()
+        }
+        if let decodingRefinement {
+            abandonedRefinement = max(abandonedRefinement, decodingRefinement)
+            self.decodingRefinement = nil
+            credit = .waiting
+        }
+        if let assemblingRefinement {
+            abandonedRefinement = max(abandonedRefinement, assemblingRefinement)
+            refreshAssembly.reset()
+            self.assemblingRefinement = nil
+        }
         if coalesce(event) { return outbound.last?.seq }
         while outbound.count >= 128, dropOldestMotion() {}
         guard outbound.count < 128 else {
@@ -1191,7 +1288,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     private func receive(_ notice: HostNotice) {
-        guard notice.stream == streamID || notice.stream == stashed?.stream else { return }
+        guard notice.stream == streamID || notice.stream == stashed.first?.stream else { return }
         switch notice.kind {
         case "dialogClosed":
             guard notice.stream == streamID, let id = notice.dialog, dialogs[id] == false else { return }
@@ -1207,7 +1304,8 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             guard notice.stream == streamID else { return }
             dropStream(reason: closedLine(notice.reason))
             // Reopen transient failures without replaying accepted input.
-            if notice.reason == "drawing machine offline" || notice.reason == "drawing moved" || notice.reason == "page input unavailable" { scheduleRetry() }
+            if notice.reason == "drawing machine offline" || notice.reason == "drawing moved" ||
+               notice.reason == "page input unavailable" || notice.reason == "surface encoding failed" { scheduleRetry() }
         default:
             setNotice("Host notice (\(notice.kind))")
         }
@@ -1412,16 +1510,7 @@ private enum SurfaceInput {
     }
 }
 
-private struct HostFrame {
-    var stream: String
-    var seq: Int
-    var input: Int
-    var size: CGSize
-    var back: Bool
-    var forward: Bool
-    var loading: Bool
-    var payload: String
-}
+private typealias HostFrame = SurfaceEvent.Frame
 
 private struct HostDialog {
     var stream: String
@@ -1445,13 +1534,19 @@ private struct HostNotice {
     var state: String?
 }
 
-/// CGImage is immutable after `CGImageSource` returns it, so the box can cross the decode task.
 private final class DecodedFrame: @unchecked Sendable {
     let image: CGImage?
     let bytes: Int
-    init(_ decoded: (CGImage?, Int)) {
-        image = decoded.0
-        bytes = decoded.1
+
+    init(_ frame: HostFrame, video: SurfaceVideoDecoder) {
+        let canvas = frame.canvas ?? CGSize(width: frame.width, height: frame.height)
+        do {
+            image = try SurfaceImageDecoder.decode(frame.data, format: frame.format,
+                width: frame.width, height: frame.height, canvas: canvas, video: video, refinement: frame.refresh)
+        } catch {
+            image = nil
+        }
+        bytes = frame.data.count
     }
 }
 
@@ -1466,10 +1561,46 @@ private enum SurfaceWire {
               let seq = integer(data["seq"]), seq > 0,
               let input = integer(data["input"]), input >= 0,
               let w = data["size"]?["w"]?.number, let h = data["size"]?["h"]?.number, w.isFinite, h.isFinite, w > 0, h > 0,
+              let scale = data["scale"]?.number, scale.isFinite, scale > 0, scale <= SurfaceRequest.maxScale,
               let payload = data["data"]?.string, !payload.isEmpty,
+              let formatName = data["format"]?.string, let format = SurfaceFormat(rawValue: formatName),
+              let width = integer(data["width"]), let height = integer(data["height"]),
+              width > 0, height > 0, width <= SurfaceEvent.Frame.maxPixels / height,
               let back = data["back"]?.bool, let forward = data["forward"]?.bool, let loading = data["loading"]?.bool else { return nil }
-        return HostFrame(stream: stream, seq: seq, input: input, size: CGSize(width: w, height: h),
-                         back: back, forward: forward, loading: loading, payload: payload)
+        let refresh = data["refresh"]?.bool ?? false
+        guard data["refresh"] == nil || data["refresh"]?.bool != nil, !refresh || format == .h264 else { return nil }
+        let supersedes = integer(data["supersedes"])
+        guard data["supersedes"] == nil || supersedes.map({ $0 > 0 && $0 < seq }) == true else { return nil }
+        let offset = integer(data["offset"]), total = integer(data["total"])
+        guard (data["offset"] == nil && data["total"] == nil) ||
+              (refresh && offset != nil && total != nil) else { return nil }
+        let limit: Int
+        if refresh {
+            guard let offset, let total, total > 0, total <= SurfaceImageEncoder.refinementBytes,
+                  offset >= 0, offset < total, offset % SurfaceRefreshTransmission.chunkBytes == 0 else { return nil }
+            limit = min(SurfaceRefreshTransmission.chunkBytes, total - offset)
+        } else {
+            switch format {
+            case .h264: limit = 48 * 1024
+            case .jpeg, .png: limit = 16 << 20
+            }
+        }
+        guard payload.utf8.count <= (limit + 2) / 3 * 4,
+              let bytes = Data(base64Encoded: payload), !bytes.isEmpty, bytes.count <= limit,
+              !refresh || bytes.count == limit else { return nil }
+        var frame = HostFrame(stream: stream, seq: seq, input: input, size: CGSize(width: w, height: h),
+                              scale: scale, format: format, data: bytes, width: width, height: height,
+                              back: back, forward: forward, loading: loading)
+        frame.refresh = refresh
+        frame.supersedes = supersedes
+        frame.offset = offset
+        frame.total = total
+        if let value = data["canvas"] {
+            guard let cw = integer(value["w"]), let ch = integer(value["h"]),
+                  cw > 0, ch > 0, cw <= SurfaceEvent.Frame.maxPixels / ch else { return nil }
+            frame.canvas = CGSize(width: cw, height: ch)
+        }
+        return frame
     }
 
     static func dialog(_ data: JSONValue) -> HostDialog? {
@@ -1487,17 +1618,6 @@ private enum SurfaceWire {
         guard kind != "dialogClosed" || (dialog?.isEmpty == false) else { return nil }
         return HostNotice(stream: stream, kind: kind, dialog: dialog, reason: data["reason"]?.string,
                           name: data["name"]?.string, state: data["state"]?.string)
-    }
-
-    static func decode(_ payload: String) -> (CGImage?, Int) {
-        guard let data = Data(base64Encoded: payload) else { return (nil, 0) }
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
-              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
-              width > 0, height > 0, width <= SurfaceEvent.Frame.maxPixels / height,
-              let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else { return (nil, data.count) }
-        return (image, data.count)
     }
 
     static func plain(_ value: Any) -> String {

@@ -140,7 +140,7 @@ func (s *Registry) Open(lock sync.Locker, k Key, viewer Viewer, hears []string, 
 	return result, nil
 }
 
-// Forward is surface.ack, .input, .answer or .stop from viewer, with params unchanged, to the
+// Forward is surface.ack, .progress, .input, .answer or .stop from viewer, with params unchanged, to the
 // link its stream was opened on, never another link of the same Mac; the result is the Mac's.
 // A stream viewer didn't open, or that ended, is not_found, as on a Mac host, and so is one the
 // Mac answers not_found for. A stop ends the stream before it is sent, so nothing the Mac

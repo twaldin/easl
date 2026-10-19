@@ -6,10 +6,10 @@ enum SurfaceOwner: Hashable, Sendable {
     case link(EaslConnection.Origin)
 
     @discardableResult
-    func send(_ line: EventLine) -> Bool {
+    func send(_ line: EventLine, whileCurrent: (@Sendable () -> Bool)? = nil) -> Bool {
         switch self {
-        case .socket(let connection): connection.send(encoded: line.line)
-        case .link(let origin): origin.push(line)
+        case .socket(let connection): connection.send(encoded: line.line, whileCurrent: whileCurrent)
+        case .link(let origin): origin.push(line, whileCurrent: whileCurrent)
         }
     }
 
