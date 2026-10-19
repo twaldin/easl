@@ -288,10 +288,10 @@ final class VideoTile: NSView, TileContent {
         }
     }
 
-    private func thumbnail(at time: Double, pixels: CGSize) async throws -> NSImage {
+    private func thumbnail(at time: Double, pixels: CGSize, priority: HostReadPriority = .interactive) async throws -> NSImage {
         try Task.checkCancellation()
         guard !hostBoardClosed else { throw CancellationError() }
-        let source = HostVideoAsset(request: request(object.props["path"]?.string ?? ""), files: files)
+        let source = HostVideoAsset(request: request(object.props["path"]?.string ?? ""), files: files, priority: priority)
         let generator = AVAssetImageGenerator(asset: source.asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: min(4096, max(1, pixels.width)), height: min(4096, max(1, pixels.height)))
@@ -369,7 +369,7 @@ final class VideoTile: NSView, TileContent {
                 frame = cached
             } else {
                 frame = try await thumbnail(at: object.props["startTime"]?.number ?? 0,
-                                            pixels: CGSize(width: request.size.width * request.scale, height: request.size.height * request.scale))
+                                            pixels: CGSize(width: request.size.width * request.scale, height: request.size.height * request.scale), priority: request.priority)
             }
             let image = request.image { bounds in
                 NSColor.black.setFill()
@@ -393,7 +393,7 @@ final class VideoTile: NSView, TileContent {
             return frame
         }
         if hostBoardClosed { return lastSnapshot }
-        let frame = try? await thumbnail(at: currentPosition, pixels: pixels)
+        let frame = try? await thumbnail(at: currentPosition, pixels: pixels, priority: .background)
         guard !Task.isCancelled else { return nil }
         if let frame { lastSnapshot = frame }
         return frame
@@ -452,9 +452,9 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
     private var cancelled = false
     private(set) var failure: String?
 
-    init(request: HostFileRequest, files: HostFiles?) {
+    init(request: HostFileRequest, files: HostFiles?, priority: HostReadPriority = .interactive) {
         self.request = request
-        self.files = files
+        self.files = files?.prioritized(priority)
         var url = URLComponents()
         url.scheme = HtmlKit.scheme
         url.host = "video"
@@ -466,7 +466,7 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
     }
 
     static func read(_ request: HostFileRequest, files: HostFiles?) async throws -> HostFile {
-        if let files { return try await files.read(request, priority: .interactive) }
+        if let files { return try await files.read(request) }
         return try await HostFiles.readLocal(request)
     }
 

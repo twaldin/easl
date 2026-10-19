@@ -125,7 +125,7 @@ public struct HostFiles: Sendable {
     private let channelRoute: HostRoute
     private let channelMaster: HostMaster?
     private let fileReads: HostFileReads?
-    private var readPriority: HostReadPriority = .visible
+    private var readPriority: HostReadPriority?
 
     @MainActor
     public init(host: RemoteHost, master: HostMaster) {
@@ -163,7 +163,7 @@ public struct HostFiles: Sendable {
         try Task.checkCancellation()
         try request.range?.validate()
         let value = try payload(request)
-        let urgency = priority ?? (request.range == nil ? readPriority : .interactive)
+        let urgency = priority ?? readPriority ?? (request.range == nil ? .visible : .interactive)
         if let fileReads, case .directory = request.source, request.range == nil {
             return try await fileReads.read(request, payload: value, files: self, priority: urgency)
         }
@@ -245,6 +245,7 @@ public struct HostFiles: Sendable {
     func execute(_ program: HostProgram, request: Data, timeout: TimeInterval = 20, retryTransport: Bool = false,
                  priority: HostReadPriority? = nil, members: Int = 1, what: String) async throws -> String {
         let input = program.frame + request
+        let urgency = priority ?? readPriority ?? .visible
         var attempt = 0
         while true {
             attempt += 1
@@ -255,7 +256,7 @@ public struct HostFiles: Sendable {
             let interrupt: (@Sendable () -> Void)?
             do {
                 if let master {
-                    let lease = try await master.fileSession(priority: priority ?? readPriority)
+                    let lease = try await master.fileSession(priority: urgency)
                     transport = lease
                     queueMs = (Metrics.now() - queued) * 1000
                     Metrics.shared.record("host.files.queue", ms: queueMs)
@@ -292,8 +293,8 @@ public struct HostFiles: Sendable {
             Metrics.shared.record("host.files.request", bytes: input.count)
             Metrics.shared.record("host.files.members", count: members)
             if Self.traceReads {
-                NSLog("easl: host-read %@ queueMs=%.3f setupMs=%.3f channelMs=%.3f inputBytes=%ld bytes=%ld members=%ld status=%d timedOut=%d",
-                      what, queueMs, (started - queued) * 1000 - queueMs, elapsed, input.count, result.output.utf8.count, members, result.status, result.timedOut ? 1 : 0)
+                NSLog("easl: host-read %@ queueMs=%.3f setupMs=%.3f channelMs=%.3f inputBytes=%ld bytes=%ld members=%ld status=%d timedOut=%d priority=%ld",
+                      what, queueMs, (started - queued) * 1000 - queueMs, elapsed, input.count, result.output.utf8.count, members, result.status, result.timedOut ? 1 : 0, urgency.rawValue)
             }
             if result.status != 0, Self.retryableSSHFailure(status: result.status, errors: result.errors) { interrupt?() }
             if let transport, let master { await master.endFileSession(transport) }
@@ -327,7 +328,7 @@ public struct HostFiles: Sendable {
         let interrupt: (@Sendable () -> Void)?
         do {
             if let master {
-                let lease = try await master.fileSession(priority: readPriority)
+                let lease = try await master.fileSession(priority: readPriority ?? .visible)
                 transport = lease
                 try await lease.ready()
                 interrupt = try await lease.interruption()
