@@ -74,7 +74,7 @@
     return response;
   };
   if (initialLoad) {
-    track(new Promise((resolve) => addEventListener('load', () => { initialLoad = false; resolve(); }, { once: true })));
+    track(new Promise((resolve) => addEventListener('load', () => setTimeout(() => { initialLoad = false; resolve(); }), { once: true })));
   }
   addEventListener('scroll', settle, { passive: true });
   addEventListener('resize', settle);
