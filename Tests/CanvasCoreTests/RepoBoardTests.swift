@@ -255,8 +255,8 @@ struct RepoBoardTests {
             }
         }
         let store = BoardStore(directory: boards)
-        _ = try #require(store.migrateToRepoBoards())
-        let board = BoardRegistry(store: store).open(root: repo.root)
+        _ = try #require(await store.migrateToRepoBoards())
+        let board = await BoardRegistry(store: store).open(root: repo.root)
         for (id, result) in expected {
             let props = try board.object(id).props
             let path = try #require(props["path"]?.string)
