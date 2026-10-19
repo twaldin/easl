@@ -48,14 +48,33 @@
     pending++;
     try { return await work; } finally { pending--; settle(); }
   };
+  let initialLoad = document.readyState !== 'complete';
+  const initialFiles = new WeakSet();
   const fetch = window.fetch;
-  window.fetch = function (...args) { return track(fetch.apply(this, args)); };
+  window.fetch = function (...args) {
+    const work = fetch.apply(this, args);
+    if (!initialLoad) return work;
+    try {
+      const url = new URL(args[0]?.url ?? args[0], document.baseURI);
+      if (url.protocol !== 'canvas-kit:' || url.host !== location.host) return work;
+    } catch { return work; }
+    return track(work.then((response) => { initialFiles.add(response); return response; }));
+  };
   for (const method of ['arrayBuffer', 'blob', 'formData', 'json', 'text']) {
     const read = Response.prototype[method];
-    Response.prototype[method] = function (...args) { return track(read.apply(this, args)); };
+    Response.prototype[method] = function (...args) {
+      const work = read.apply(this, args);
+      return initialFiles.has(this) ? track(work) : work;
+    };
   }
-  if (document.readyState !== 'complete') {
-    track(new Promise((resolve) => addEventListener('load', resolve, { once: true })));
+  const clone = Response.prototype.clone;
+  Response.prototype.clone = function (...args) {
+    const response = clone.apply(this, args);
+    if (initialFiles.has(this)) initialFiles.add(response);
+    return response;
+  };
+  if (initialLoad) {
+    track(new Promise((resolve) => addEventListener('load', () => { initialLoad = false; resolve(); }, { once: true })));
   }
   addEventListener('scroll', settle, { passive: true });
   addEventListener('resize', settle);
