@@ -339,10 +339,11 @@ type inversePlan struct {
 }
 
 type fieldPatch struct {
-	id    string
-	frame *model.Frame
-	z     *float64
-	props map[string]any
+	id     string
+	frame  *model.Frame
+	z      *float64
+	props  map[string]any
+	expiry []Expiry
 }
 
 func guardedInverse(step []change, b *Board) inversePlan {
@@ -406,7 +407,7 @@ func guardedInverse(step []change, b *Board) inversePlan {
 			if changedSince {
 				keep(id)
 			}
-			if patch.frame != nil || patch.z != nil || patch.props != nil {
+			if patch.frame != nil || patch.z != nil || patch.props != nil || len(patch.expiry) > 0 {
 				plan.patches = append(plan.patches, patch)
 			}
 		}
@@ -464,6 +465,13 @@ func fieldsBack(before, after, current model.Object, b *Board) (fieldPatch, bool
 			patch.z = &z
 		}
 	}
+	if !sameExpiry(before.Expires, after.Expires) {
+		if !sameExpiry(current.Expires, after.Expires) {
+			changedSince = true
+		} else {
+			patch.expiry = []Expiry{{At: before.Expires}}
+		}
+	}
 	was, now, is := contentProps(before), contentProps(after), contentProps(current)
 	keys := slices.Collect(maps.Keys(was))
 	for k := range now {
@@ -514,7 +522,7 @@ func (b *Board) applyInverse(plan inversePlan) error {
 		b.recreate(o)
 	}
 	for _, p := range plan.patches {
-		if _, err := b.Update(p.id, nil, p.frame, p.z, p.props, "", ""); err != nil {
+		if _, err := b.Update(p.id, nil, p.frame, p.z, p.props, "", "", p.expiry...); err != nil {
 			return err
 		}
 	}

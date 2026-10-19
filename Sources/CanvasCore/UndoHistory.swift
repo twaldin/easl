@@ -194,11 +194,12 @@ public final class UndoHistory {
         var frame: Frame
         var z: Double
         var parent: ObjectID?
+        var expires: ObjectExpiry?
         var props: JSONValue
     }
 
     static func content(_ object: CanvasObject) -> Content {
-        Content(frame: object.frame, z: object.z, parent: object.parent, props: contentProps(object))
+        Content(frame: object.frame, z: object.z, parent: object.parent, expires: object.expires, props: contentProps(object))
     }
 
     static func contentProps(_ object: CanvasObject) -> JSONValue {
@@ -217,6 +218,7 @@ public final class UndoHistory {
         object.frame = target.frame
         object.z = target.z
         object.parent = target.parent
+        object.expires = target.expires
         var props = contentProps(target).object ?? [:]
         if let live = current.props.object {
             for key in bookkeeping(current) { props[key] = live[key] }

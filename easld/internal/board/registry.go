@@ -135,6 +135,7 @@ func (r *Registry) Open(root string) (*Board, error) {
 		r.Frontmost = id
 	}
 	r.replayAgentReports(b)
+	b.ExpireObjects(time.Now())
 	// Questions that expired while the board was closed expire now. Closed ones already past
 	// their archive delay were archived while loading, with no revision change.
 	b.ScheduleQuestionExpiry()

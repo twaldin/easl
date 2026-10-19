@@ -76,8 +76,7 @@ public final class BoardRegistry {
                               summary: "easl started (pid \(ProcessInfo.processInfo.processIdentifier)); board opened with \(board.objects.count) objects")
         frontmost = frontmost ?? id
         replayAgentReports(on: board)
-        // Questions that expired while the board was closed expire now; closed ones archive once
-        // what is left of their delay runs out (`BoardStore.load` archived those already past it).
+        board.expireObjects()
         board.scheduleQuestionExpiry()
         broadcast("board.opened", data: .object([:]), board: board.id)
         return board
@@ -409,6 +408,7 @@ public final class ApiRouter {
                 return nil
             case "board.open_remote": return Self.ok(id, try await openRemote(params))
             case "board.close": return Self.ok(id, try await close(params))
+            case "board.stale": return Self.ok(id, try await stale(params))
             case "object.measure": return Self.ok(id, try await measure(params))
             case "object.reload": return Self.ok(id, try await reload(params))
             case "object.batch": return Self.ok(id, try await batch(params))
@@ -1618,6 +1618,7 @@ public final class ApiRouter {
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
             guard var props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
             try Self.checkProps(p)
+            let expiry = try ObjectExpiryPatch(p)
             let edit = try ViewerEdit(p)
             // Just w and h: that size, placed as a create without a frame is (near the caller).
             let frame = try p["frame"].map { value in
@@ -1632,13 +1633,15 @@ public final class ApiRouter {
             if type == .video, let problem = LocalVideo.problem(props) { throw Failure("invalid_params", problem) }
             if type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             if type == .question { props = try board.questionToCreate(props, caller: caller(p)) }
-            let object = try board.asViewerEdit(edit) { board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p)) }
+            let expires: ObjectExpiry? = if case .set(let value) = expiry { value } else { nil }
+            let object = try board.asViewerEdit(edit) { board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p), expires: expires) }
             return Self.withWarnings(["object": JSONValue(board.reported(object))], type.unknownPropWarnings(props))
 
         case "object.update":
             let id = try string(p, "id")
             let board = try board(forObject: id)
             try Self.checkProps(p)
+            let expiry = try ObjectExpiryPatch(p)
             let edit = try ViewerEdit(p)
             let z = try p["z"].map { value -> Double in
                 guard let z = value.number, z.isFinite else { throw Failure("invalid_params", "z must be a finite number") }
@@ -1656,7 +1659,7 @@ public final class ApiRouter {
             }
             if try board.object(id).type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             (props, frame) = try board.questionUpdate(id, props: props, frame: frame, caller: caller(p))
-            let object = try board.asViewerEdit(edit) { try board.update(id, rev: p["rev"]?.int, frame: frame, z: z, props: props, caller: caller(p)) }
+            let object = try board.asViewerEdit(edit) { try board.update(id, rev: p["rev"]?.int, frame: frame, z: z, props: props, caller: caller(p), expires: expiry) }
             return Self.withWarnings(["object": JSONValue(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
         case "object.delete":
@@ -2047,7 +2050,7 @@ public final class ApiRouter {
         if !given.isEmpty { update["props"] = .object(given) }
         if let frame = p["frame"] { update["frame"] = frame }
         if let size = p["size"] { update["size"] = size }
-        for key in ["viewer", "step"] { update[key] = p[key] }
+        for key in ["viewer", "step", "expires", "expiresIn"] { update[key] = p[key] }
         return .object(update)
     }
 

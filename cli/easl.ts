@@ -104,6 +104,8 @@ function usage(help = false): never {
       "--json @file reads the params from a file (@- or - reads stdin); --key value pairs combine with it, later ones win.",
       "An array param takes one item, a JSON array, comma-separated strings, or a repeated flag (--until working,blocked).",
       "object.create/update print prop values over 1 KB elided; --full prints them whole.",
+      "object.create/update/upsert --expires 2h sets a host-resolved deletion deadline; RFC3339 sets it absolutely; null clears it.",
+      "`easl board.stale [--older-than 7d]` lists cleanup candidates without changing the board.",
       "`easl browser` drives browser tiles over the cmux subset (docs/contracts.md): `open [url]` opens one beside",
       "this terminal, `list` lists this board's, `close <tile>` closes one, any other verb sends browser.<verb> to <tile>",
       "(e.g. `easl browser snapshot obj_… --interactive`, `easl browser click obj_… --selector @e2`).",
@@ -203,7 +205,7 @@ function takesOnlyArrays(schema: Schema | undefined): schema is Schema {
  * keep the text as typed, and arrays: see `arrayItems`; repeating an array param's flag appends),
  * `--json '{...}'`/`@file`/`@-`, and bare `--flag` (true).
  */
-function parseArgs(args: string[], params?: Schema): Record<string, unknown> {
+function parseArgs(args: string[], params?: Schema, method?: string): Record<string, unknown> {
   let result: Record<string, unknown> = {};
   const lists = new Map<string, unknown[]>();
   for (let i = 0; i < args.length; i++) {
@@ -221,7 +223,10 @@ function parseArgs(args: string[], params?: Schema): Record<string, unknown> {
       lists.clear();
       continue;
     }
-    const path = arg.slice(2);
+    let path = arg.slice(2);
+    if (method === "board.stale" && path === "older-than") path = "olderThan";
+    const objectExpiry = method === "object.create" || method === "object.update" || method === "object.upsert";
+    if (objectExpiry && path === "expires" && /^[0-9]+(?:\.[0-9]+)?[smhd]$/.test(value)) path = "expiresIn";
     const schema = schemaAt(params, path.split("."));
     if (takesOnlyArrays(schema)) {
       const list = [...(lists.get(path) ?? []), ...arrayItems(schema, value)];
@@ -230,6 +235,10 @@ function parseArgs(args: string[], params?: Schema): Record<string, unknown> {
       continue;
     }
     let parsed: unknown = value;
+    if (objectExpiry && path === "expires" && value === "null") {
+      setPath(result, path, null);
+      continue;
+    }
     if (!takesOnlyStrings(schema)) {
       try {
         parsed = JSON.parse(value);
@@ -1034,7 +1043,7 @@ try {
   if (method === "app.update" && rest[0] !== undefined && !rest[0].startsWith("-")) {
     rest = ["--mode", rest[0], ...rest.slice(1)];
   }
-  const params = parseArgs(rest, spec.params);
+  const params = parseArgs(rest, spec.params, method);
   if (target !== undefined) params.target = target;
   if (method === "object.get" && params.as === "image") {
     throw new CanvasError("invalid_params", "`get --as image` was removed; use `easl render <id>` (view.render)");

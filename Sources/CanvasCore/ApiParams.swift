@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 2
-    static let schemaHash = "126d8fb018b8888a"
+    static let schemaHash = "2602431cd1be80b4"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "surface.stream": (["id", "scale", "format"], ["id"]),
@@ -22,15 +22,16 @@ enum ApiParams {
         "board.redo": (["board", "viewer", "step"], ["viewer", "step"]),
         "board.history": (["board", "since", "limit", "kinds"], []),
         "board.list": ([], []),
+        "board.stale": (["board", "olderThan"], []),
         "board.open": (["root", "select"], ["root"]),
         "board.open_remote": (["host", "board", "select"], ["host", "board"]),
         "board.close": (["board", "endSessions"], []),
         "board.export": (["board", "path"], []),
         "object.get": (["id", "as", "since"], ["id"]),
         "object.find": (["board", "key", "keyPrefix", "type", "status", "as"], []),
-        "object.create": (["board", "type", "props", "frame", "size", "parent", "viewer", "step", "caller"], ["type", "props"]),
-        "object.update": (["id", "rev", "frame", "z", "size", "props", "viewer", "step", "caller"], ["id"]),
-        "object.upsert": (["board", "key", "type", "props", "frame", "size", "caller"], ["key", "type", "props"]),
+        "object.create": (["board", "type", "props", "frame", "size", "parent", "expires", "expiresIn", "viewer", "step", "caller"], ["type", "props"]),
+        "object.update": (["id", "rev", "frame", "z", "size", "props", "expires", "expiresIn", "viewer", "step", "caller"], ["id"]),
+        "object.upsert": (["board", "key", "type", "props", "frame", "size", "expires", "expiresIn", "caller"], ["key", "type", "props"]),
         "object.delete": (["id", "viewer", "step", "caller"], ["id"]),
         "object.measure": (["board", "type", "props", "width", "caller"], ["type", "props"]),
         "object.reload": (["id", "timeoutMs", "caller"], ["id"]),

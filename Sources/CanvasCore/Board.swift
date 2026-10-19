@@ -203,7 +203,6 @@ public final class Board {
     /// Per terminal, the code tile its last ⌘-click opened or re-aimed and that tile's `rev`
     /// then (`openCode`); in memory only.
     var codePreviews: [ObjectID: (tile: ObjectID, rev: Int)] = [:]
-    /// The pending check for the earliest open question's `expiresAt` or closed one's `archiveAt` (Question.swift).
     var questionExpiry: DispatchWorkItem?
     /// The `archiveAfter` a new question that names none gets (`questionToCreate`): its host's
     /// setting, given by the registry that opened it (`BoardRegistry.open`); in memory, never saved.
@@ -403,16 +402,16 @@ public final class Board {
     // MARK: Objects
 
     @discardableResult
-    public func create(type: ObjectType, props: JSONValue, frame: Frame? = nil, parent: ObjectID? = nil, caller: ObjectID? = nil) -> CanvasObject {
-        guard isRemote, hostWriteDepth == 0 else { return creating(type: type, props: props, frame: frame, parent: parent, caller: caller) }
+    public func create(type: ObjectType, props: JSONValue, frame: Frame? = nil, parent: ObjectID? = nil, caller: ObjectID? = nil, expires: ObjectExpiry? = nil) -> CanvasObject {
+        guard isRemote, hostWriteDepth == 0 else { return creating(type: type, props: props, frame: frame, parent: parent, caller: caller, expires: expires) }
         return stepping { step in
-            let object = creating(type: type, props: props, frame: frame, parent: parent, caller: caller)
+            let object = creating(type: type, props: props, frame: frame, parent: parent, caller: caller, expires: expires)
             host?.send(.create(object, step: step))
             return object
         }
     }
 
-    private func creating(type: ObjectType, props: JSONValue, frame: Frame?, parent: ObjectID?, caller: ObjectID?) -> CanvasObject {
+    private func creating(type: ObjectType, props: JSONValue, frame: Frame?, parent: ObjectID?, caller: ObjectID?, expires: ObjectExpiry?) -> CanvasObject {
         let size: (w: Double, h: Double)
         if type == .question {
             size = QuestionSpec.size(props)
@@ -427,6 +426,7 @@ public final class Board {
         if type == .browser, !isRemote, let hostMachine { stamped = props.merging(.object(["drawingMachine": hostMachine.json])) }
         var object = CanvasObject(id: IDs.make("obj"), type: type, frame: frame ?? Frame(x: 0, y: 0, w: size.w, h: size.h), z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(),
                                   props: stamped)
+        object.expires = expires
         if let fitted = fittedFrame(ofGroup: object) {
             object.frame = fitted
         } else if frame == nil {
@@ -445,18 +445,18 @@ public final class Board {
     /// write-backs are `.system`, which ⌘Z skips: `Board.unrecorded`). On a remote board the
     /// user's patch is a preview sent to the host, and the app's write-backs are the host's to make.
     @discardableResult
-    public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil, actor: ActivityActor? = nil) throws -> CanvasObject {
+    public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil, actor: ActivityActor? = nil, expires: ObjectExpiryPatch = .unchanged) throws -> CanvasObject {
         if isRemote {
             if actor == .system { return try object(id) }
             return try stepping { step in
                 let seen = objects[id]?.rev
-                let object = try toHost { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: []) }
-                if hostWriteDepth == 0 { host?.send(.update(id, step: step, seen: seen, frame: frame, z: z, props: props)) }
+                let object = try toHost { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, expires: expires, refitting: []) }
+                if hostWriteDepth == 0 { host?.send(.update(id, step: step, seen: seen, frame: frame, z: z, props: props, expires: expires)) }
                 return object
             }
         }
-        if actor == .system { return try unrecorded { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: []) } }
-        return try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: [])
+        if actor == .system { return try unrecorded { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, expires: expires, refitting: []) } }
+        return try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, expires: expires, refitting: [])
     }
 
     /// Runs a remote board's local preview of the user's write one level deeper, so whatever it
@@ -535,11 +535,12 @@ public final class Board {
     /// `update`, re-bounding the groups that contain the object in the same undo step.
     /// `refitting` holds the groups already being re-bounded (nested groups, cycles). `cause`
     /// marks a cascade of another change (credited to that change's actor) and says why.
-    func write(_ id: ObjectID, rev: Int?, frame: Frame?, z: Double?, props: JSONValue?, caller: ObjectID?, actor: ActivityActor? = nil, cause: String? = nil, refitting: Set<ObjectID>) throws -> CanvasObject {
+    func write(_ id: ObjectID, rev: Int?, frame: Frame?, z: Double?, props: JSONValue?, caller: ObjectID?, actor: ActivityActor? = nil, cause: String? = nil, expires: ObjectExpiryPatch = .unchanged, refitting: Set<ObjectID>) throws -> CanvasObject {
         let before = try object(id)
         if let rev, rev != before.rev { throw BoardError.conflict("object \(id) is at rev \(before.rev), not \(rev)") }
         try checkKey(props, for: id)
         var object = before
+        if case .set(let deadline) = expires { object.expires = deadline }
         if let frame { object.frame = frame }
         if let z { object.z = z }
         if let props {
@@ -582,17 +583,18 @@ public final class Board {
     /// terminal takes its follow tile with it; a closed follow tile stops its terminal following
     /// (`props.follow` false) so the next report doesn't bring it back. Undo and redo replay
     /// exactly what was recorded. On a remote board the delete is a preview sent to the host.
-    public func delete(_ id: ObjectID, caller: ObjectID? = nil) throws {
-        guard isRemote, hostWriteDepth == 0 else { return try deleting(id, caller: caller) }
+    public func delete(_ id: ObjectID, caller: ObjectID? = nil, actor: ActivityActor? = nil) throws {
+        if actor == .system { return try unrecorded { try deleting(id, caller: caller, actor: actor) } }
+        guard isRemote, hostWriteDepth == 0 else { return try deleting(id, caller: caller, actor: actor) }
         try stepping { step in
-            try toHost { try deleting(id, caller: caller) }
+            try toHost { try deleting(id, caller: caller, actor: actor) }
             host?.send(.delete(id, step: step))
         }
     }
 
-    private func deleting(_ id: ObjectID, caller: ObjectID?) throws {
+    private func deleting(_ id: ObjectID, caller: ObjectID?, actor: ActivityActor? = nil) throws {
         guard objects[id] != nil else { throw BoardError.notFound("object \(id)") }
-        let actor = ActivityActor(caller: caller)
+        let actor = actor ?? ActivityActor(caller: caller)
         // Arrows bound to it detach within the same undo step, so one ⌘Z restores both.
         history.begin()
         defer { endStep() }
@@ -616,13 +618,14 @@ public final class Board {
         forgetComposerPrompts(of: id)
         let marked = attention.removeValue(forKey: id) != nil
         onChange?()
+        scheduleQuestionExpiry()
         onEvent?(.objectDeleted(id))
         if tray.count != before { trayChanged() }
         if marked { onEvent?(.attentionChanged(object: id, attention: nil)) }
         refitGroups(containing: id, actor: actor, caller: caller)
         guard !history.replaying else { return }
         if removed.type == .terminal {
-            for follow in followTiles(of: id) { try delete(follow.id, caller: caller) }
+            for follow in followTiles(of: id) { try deleting(follow.id, caller: caller, actor: actor) }
         } else if let terminal = removed.props["followOf"]?.string.flatMap({ objects[$0] }), terminal.props["follow"]?.bool != false {
             _ = try write(terminal.id, rev: nil, frame: nil, z: nil, props: .object(["follow": .bool(false)]), caller: caller, actor: actor,
                           cause: "its follow tile was closed", refitting: [])
@@ -705,7 +708,7 @@ public final class Board {
         changedAt[object.id] = revision
         revHighWater[object.id] = max(revHighWater[object.id] ?? 0, object.rev)
         onChange?()
-        if object.type == .question { scheduleQuestionExpiry() }
+        scheduleQuestionExpiry()
     }
 
     private func reindexKey(_ id: ObjectID, from old: JSONValue?, to new: JSONValue?) {
@@ -1173,6 +1176,7 @@ public final class Board {
         reindexKey(object.id, from: previous?.props, to: object.props)
         objects[object.id] = object
         changedAt[object.id] = revision
+        scheduleQuestionExpiry()
         guard let previous else {
             onEvent?(.objectCreated(object))
             return
@@ -1205,6 +1209,7 @@ public final class Board {
         bumpRevision()
         changedAt.removeValue(forKey: id)
         reindexKey(id, from: removed.props, to: nil)
+        scheduleQuestionExpiry()
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
         let marked = attention.removeValue(forKey: id) != nil

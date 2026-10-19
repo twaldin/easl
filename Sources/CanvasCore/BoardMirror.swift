@@ -6,7 +6,7 @@ public enum RemoteWrite: Equatable, Sendable {
     /// A provisional object (its id is this board's own until the host answers with its id).
     case create(CanvasObject, step: Int?)
     /// `seen`: the object's revision as the board showed it when the user made the change.
-    case update(ObjectID, step: Int?, seen: Int?, frame: Frame?, z: Double?, props: JSONValue?)
+    case update(ObjectID, step: Int?, seen: Int?, frame: Frame?, z: Double?, props: JSONValue?, expires: ObjectExpiryPatch = .unchanged)
     case delete(ObjectID, step: Int?)
     /// A browser tile's page as this Mac runs it (`Board.reportPage`): the one write-back of the
     /// app's own that a remote board sends to its host.
@@ -17,7 +17,7 @@ public enum RemoteWrite: Equatable, Sendable {
     var object: ObjectID {
         switch self {
         case .create(let object, _): object.id
-        case .update(let id, _, _, _, _, _), .delete(let id, _), .page(let id, _), .seen(let id, _, _): id
+        case .update(let id, _, _, _, _, _, _), .delete(let id, _), .page(let id, _), .seen(let id, _, _): id
         }
     }
 }
@@ -932,7 +932,7 @@ public final class BoardMirror: BoardHost {
         var base: Int?
         while let write = queues[key]?.first {
             guard !ended, generation == self.generation, availability == .open else { return }
-            if base == nil, case .update(_, _, let seen, _, _, _) = write { base = seen }
+            if base == nil, case .update(_, _, let seen, _, _, _, _) = write { base = seen }
             let done = await perform(write, base: base, generation: generation)
             guard !ended, generation == self.generation else { return }
             if let target = done.target { touched.insert(target) }
@@ -966,6 +966,7 @@ public final class BoardMirror: BoardHost {
                 "frame": RenderMath.json(provisional.frame),
             ]
             if let parent = provisional.parent { params["parent"] = .string(parent) }
+            if let expires = provisional.expires { params["expires"] = .string(expires.stamp) }
             if provisional.type == .browser, case .agent(let tile) = provisional.createdBy { params["caller"] = .string(tile) }
             mark(&params, step: step)
             // Its object's event, ahead of the answer, waits for it (`creating`).
@@ -989,15 +990,19 @@ public final class BoardMirror: BoardHost {
                 notice("Not created on \(hostName): \(Self.reason(error))")
                 return (nil, nil)
             }
-        case .update(let id, let step, _, let frame, let z, let props):
+        case .update(let id, let step, _, let frame, let z, let props, let expires):
             guard let target = target(id) else { return (nil, nil) }
             let z = hostSpeaksQueue ? z : nil
-            guard frame != nil || z != nil || props != nil else { return (target, nil) }
+            guard frame != nil || z != nil || props != nil || expires != .unchanged else { return (target, nil) }
             var params: [String: JSONValue] = ["id": .string(target)]
             if let frame { params["frame"] = RenderMath.json(frame) }
             if let z { params["z"] = .number(z) }
             if let props {
                 params["props"] = props
+                if let base { params["rev"] = .number(Double(base)) }
+            }
+            if case .set(let deadline) = expires {
+                params["expires"] = deadline.map { .string($0.stamp) } ?? .null
                 if let base { params["rev"] = .number(Double(base)) }
             }
             mark(&params, step: step)

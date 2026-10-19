@@ -33,6 +33,8 @@ func (r *Router) dispatch(method string, p map[string]any, from Conn) (any, erro
 		return r.boardGet(p)
 	case "board.history":
 		return r.boardHistory(p)
+	case "board.stale":
+		return r.boardStale(p)
 	case "board.list":
 		return r.boardList(), nil
 	case "board.open":

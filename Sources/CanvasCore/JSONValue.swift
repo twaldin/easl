@@ -106,6 +106,7 @@ extension JSONValue {
         ]
         if let parent = object.parent { fields["parent"] = .string(parent) }
         if let updatedBy = object.updatedBy { fields["updatedBy"] = JSONValue(updatedBy) }
+        if let expires = object.expires { fields["expires"] = .string(expires.stamp) }
         self = .object(fields)
     }
 

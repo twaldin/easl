@@ -42,6 +42,35 @@ class CliParamsTest(unittest.TestCase):
         self.assertEqual(len(self.app.requests), 1)
         return self.app.requests[0][1]
 
+    def test_object_expiry_flags_preserve_absolute_clear_and_host_relative_values(self) -> None:
+        for method, required in [
+            ("object.create", ["--type", "note", "--props.markdown", "temporary"]),
+            ("object.update", ["--id", "obj_x"]),
+            ("object.upsert", ["--key", "task/status", "--type", "note", "--props.markdown", "temporary"]),
+        ]:
+            for value, field, expected in [
+                ("2h", "expiresIn", "2h"),
+                ("0.5s", "expiresIn", "0.5s"),
+                ("0s", "expiresIn", "0s"),
+                ("2027-01-01T01:02:03.456+02:00", "expires", "2027-01-01T01:02:03.456+02:00"),
+                ("null", "expires", None),
+            ]:
+                with self.subTest(method=method, value=value):
+                    self.app.requests.clear()
+                    result = self.run_cli(method, *required, "--expires", value)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    params = self.sent()
+                    self.assertEqual(params[field], expected)
+                    self.assertNotIn("expires" if field == "expiresIn" else "expiresIn", params)
+
+    def test_stale_older_than_alias_is_scoped_to_board_stale(self) -> None:
+        for method, field in [("board.stale", "olderThan"), ("object.find", "older-than")]:
+            with self.subTest(method=method):
+                self.app.requests.clear()
+                result = self.run_cli(method, "--older-than", "1.5d")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.sent(), {field: "1.5d"})
+
     def test_json_at_file_reads_params_relative_to_the_cwd(self) -> None:
         html = "<h1>" + "x" * 5000 + "</h1>"
         (self.dir / "params.json").write_text(json.dumps({"type": "html", "props": {"html": html}}))

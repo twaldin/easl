@@ -219,6 +219,7 @@ type Object struct {
 	UpdatedBy *Actor
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	Expires   *time.Time
 	Props     map[string]any
 	// Unknown is a stored object's keys easld doesn't know (written by a newer app); FileJSON
 	// writes them back, the API doesn't report them. Never changed, so copies share it.
@@ -228,7 +229,7 @@ type Object struct {
 // ObjectKeys are the keys of a CanvasObject.
 var ObjectKeys = map[string]bool{
 	"id": true, "type": true, "frame": true, "z": true, "rev": true, "parent": true, "createdBy": true,
-	"updatedBy": true, "createdAt": true, "updatedAt": true, "props": true,
+	"updatedBy": true, "createdAt": true, "updatedAt": true, "expires": true, "props": true,
 }
 
 // Clone copies the object deeply (props included), so a copy can be changed freely.
@@ -241,6 +242,10 @@ func (o Object) Clone() Object {
 	if o.UpdatedBy != nil {
 		u := *o.UpdatedBy
 		c.UpdatedBy = &u
+	}
+	if o.Expires != nil {
+		at := *o.Expires
+		c.Expires = &at
 	}
 	return c
 }
@@ -284,6 +289,9 @@ func (o Object) encode(timeOf func(time.Time) any) map[string]any {
 	}
 	if o.UpdatedBy != nil {
 		m["updatedBy"] = o.UpdatedBy.JSON()
+	}
+	if o.Expires != nil {
+		m["expires"] = o.Expires.UTC().Format(time.RFC3339Nano)
 	}
 	return m
 }
@@ -330,6 +338,18 @@ func ObjectFromJSON(v any) (Object, error) {
 	}
 	o.CreatedAt = parseFileTime(m["createdAt"])
 	o.UpdatedAt = parseFileTime(m["updatedAt"])
+	if value, present := m["expires"]; present && value != nil {
+		text, ok := value.(string)
+		if !ok {
+			return Object{}, fmt.Errorf("expires must be an RFC3339 timestamp")
+		}
+		at, err := time.Parse(time.RFC3339Nano, text)
+		if err != nil {
+			return Object{}, fmt.Errorf("invalid expires: %w", err)
+		}
+		at = at.UTC()
+		o.Expires = &at
+	}
 	o.Props, _ = Clone(m["props"]).(map[string]any)
 	if o.Props == nil {
 		o.Props = map[string]any{}

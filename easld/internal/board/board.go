@@ -162,12 +162,9 @@ type Board struct {
 	// settled is the drawing layer's last routing (Board.settledRouting).
 	settled *route.Result
 
-	// Lock is what serialises this board's work with everyone else's (the registry's Mu); the
-	// question timer takes it to expire or archive questions as a request would. A board without
-	// one (outside a registry) sets no timer: ExpireQuestions and ArchiveQuestions are the caller's.
+	// Lock serialises timer callbacks with requests. A standalone board without one
+	// leaves expiry to its caller.
 	Lock sync.Locker
-	// questionExpiry is the pending check for the earliest open expiresAt or closed archive
-	// deadline (Board.questionExpiry); expirySeq tells a timer that was replaced.
 	questionExpiry    *time.Timer
 	expirySeq         int
 	composerExpiry    *time.Timer
@@ -487,10 +484,14 @@ func (b *Board) changed() {
 func DefaultSize(t model.ObjectType) (float64, float64) { return model.DefaultSize(t) }
 
 // --- objects ---
+// Expiry changes a deadline when supplied. At nil clears it; omission keeps it.
+type Expiry struct {
+	At *time.Time
+}
 
 // Create adds an object (Board.create). Without a frame it is placed beside the caller, or at
 // the viewport's center (the origin without one); a group's frame follows its members.
-func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.Frame, parent, caller string) model.Object {
+func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.Frame, parent, caller string, expiry ...Expiry) model.Object {
 	z := 0.0
 	first := true
 	for _, o := range b.objects {
@@ -520,6 +521,10 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 	}
 	now := time.Now()
 	o := model.Object{ID: model.NewID("obj"), Type: typ, Z: z, Rev: 1, Parent: parent, CreatedBy: model.ActorFor(caller), CreatedAt: now, UpdatedAt: now, Props: props}
+	if len(expiry) > 0 && expiry[0].At != nil {
+		at := *expiry[0].At
+		o.Expires = &at
+	}
 	if frame != nil {
 		o.Frame = *frame
 	} else {
@@ -546,8 +551,8 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 // Update patches an object (Board.update); a group's frame is never taken from frame. actor
 // credits the activity log entry to someone other than the caller ("" for the caller); the
 // system's writes are never recorded.
-func (b *Board) Update(id string, rev *int, frame *model.Frame, z *float64, props map[string]any, caller string, actor Actor) (model.Object, error) {
-	return b.update(id, rev, frame, z, props, caller, actor, false)
+func (b *Board) Update(id string, rev *int, frame *model.Frame, z *float64, props map[string]any, caller string, actor Actor, expiry ...Expiry) (model.Object, error) {
+	return b.update(id, rev, frame, z, props, caller, actor, false, expiry...)
 }
 
 // ReportBrowserURL records an observed page commit without creating navigation intent.
@@ -555,17 +560,17 @@ func (b *Board) ReportBrowserURL(id, url, caller string, actor Actor) (model.Obj
 	return b.update(id, nil, nil, nil, map[string]any{"url": url}, caller, actor, true)
 }
 
-func (b *Board) update(id string, rev *int, frame *model.Frame, z *float64, props map[string]any, caller string, actor Actor, observedURL bool) (model.Object, error) {
+func (b *Board) update(id string, rev *int, frame *model.Frame, z *float64, props map[string]any, caller string, actor Actor, observedURL bool, expiry ...Expiry) (model.Object, error) {
 	if actor == SystemActor {
 		var out model.Object
 		err := b.unrecorded(func() error {
 			var err error
-			out, err = b.write(id, rev, frame, z, props, caller, actor, "", nil, observedURL)
+			out, err = b.write(id, rev, frame, z, props, caller, actor, "", nil, observedURL, expiry...)
 			return err
 		})
 		return out, err
 	}
-	return b.write(id, rev, frame, z, props, caller, actor, "", nil, observedURL)
+	return b.write(id, rev, frame, z, props, caller, actor, "", nil, observedURL, expiry...)
 }
 
 // Announce sends an ephemeral event. Nothing is stored.
@@ -634,7 +639,7 @@ func (b *Board) commitBookkeeping(before model.Object, props map[string]any) {
 
 // write is update, re-bounding the groups that contain the object in the same step. refitting
 // holds the groups already being re-bounded; cause marks a cascade of another change.
-func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props map[string]any, caller string, actor Actor, cause string, refitting map[string]bool, observedURL bool) (model.Object, error) {
+func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props map[string]any, caller string, actor Actor, cause string, refitting map[string]bool, observedURL bool, expiry ...Expiry) (model.Object, error) {
 	before, err := b.Object(id)
 	if err != nil {
 		return before, err
@@ -646,6 +651,13 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 		return before, err
 	}
 	o := before.Clone()
+	if len(expiry) > 0 {
+		o.Expires = nil
+		if expiry[0].At != nil {
+			at := *expiry[0].At
+			o.Expires = &at
+		}
+	}
 	if frame != nil {
 		o.Frame = *frame
 	}
@@ -740,10 +752,13 @@ func jsonEqualKey(a, b map[string]any, key string) bool {
 // Delete removes an object (Board.delete). In the same step arrows bound to it detach; a
 // deleted terminal takes its follow tile; a closed follow tile stops its terminal following.
 func (b *Board) Delete(id, caller string) error {
+	return b.delete(id, caller, ActorFor(caller))
+}
+
+func (b *Board) delete(id, caller string, actor Actor) error {
 	if _, ok := b.objects[id]; !ok {
 		return NotFound("object %s", id)
 	}
-	actor := ActorFor(caller)
 	b.history.begin()
 	defer b.endStep()
 	b.detachArrows(id, actor, caller)
@@ -785,6 +800,7 @@ func (b *Board) Delete(id, caller string) error {
 	_, marked := b.attention[id]
 	delete(b.attention, id)
 	b.changed()
+	b.ScheduleQuestionExpiry()
 	b.emit(EventObjectDeleted, map[string]any{"id": id})
 	if len(b.tray) != before {
 		b.trayChanged()
@@ -798,7 +814,7 @@ func (b *Board) Delete(id, caller string) error {
 	}
 	if removed.Type == model.Terminal {
 		for _, f := range b.FollowTiles(id) {
-			if err := b.Delete(f.ID, caller); err != nil {
+			if err := b.delete(f.ID, caller, actor); err != nil {
 				return err
 			}
 		}
@@ -905,9 +921,7 @@ func (b *Board) commit(o model.Object) {
 		b.revHighWater[o.ID] = o.Rev
 	}
 	b.changed()
-	if o.Type == model.Question {
-		b.ScheduleQuestionExpiry()
-	}
+	b.ScheduleQuestionExpiry()
 }
 
 // countWrite counts a change to the board's objects for `app.metrics`: `board.write` (and the

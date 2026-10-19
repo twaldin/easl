@@ -551,7 +551,7 @@ func TestParseListsCanvasSessions(t *testing.T) {
 	if !got[0].Unreachable || got[0].PID != 0 || got[0].Tile != "obj_1" {
 		t.Errorf("unreachable session %+v", got[0])
 	}
-	if got[1].PID != 22 || got[1].Clients != 1 || got[1].Labels[HomeLabel] != "mac-1" || len(got[1].Labels) != 2 || got[1].Unreachable {
+	if got[1].PID != 22 || got[1].Clients != 1 || got[1].Labels[HomeLabel] != "mac-1" || len(got[1].Labels) != 2 || got[1].Unreachable || !got[1].Ended {
 		t.Errorf("session %+v", got[1])
 	}
 	if len(Parse("no sessions found in /tmp/zmx-1000\n")) != 0 {

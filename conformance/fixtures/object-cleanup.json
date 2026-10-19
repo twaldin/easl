@@ -1,0 +1,1283 @@
+{
+  "scenario": "object-cleanup",
+  "description": "Object deadlines normalize durations, clear and renew through update/upsert, delete through host events on two connections, and board.stale reports leftovers without writing.",
+  "recordedOn": "easld scratch preliminary, replaced by Swift guest recording before merge",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "second",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 180,
+          "w": 300,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "markdown": "Keep this",
+          "title": "Live note"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "Keep this",
+              "title": "Live note"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "Keep this",
+              "title": "Live note"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "markdown": "Keep this",
+              "title": "Live note"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.stale",
+      "method": "board.stale",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "objects": []
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "expires": "tomorrow",
+        "props": {
+          "markdown": "Invalid deadline"
+        },
+        "type": "note"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r4",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "expires": null,
+        "expiresIn": "2h",
+        "props": {
+          "markdown": "Ambiguous deadline"
+        },
+        "type": "note"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r5",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.stale",
+      "method": "board.stale",
+      "request": {
+        "board": "<board>",
+        "olderThan": "-1d"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r6",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 180,
+          "w": 300,
+          "x": 10000,
+          "y": 10000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "name": "cleanup-author"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 10000,
+              "y": 10000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "name": "cleanup-author"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 10000,
+              "y": 10000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "name": "cleanup-author"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 10000,
+              "y": 10000
+            },
+            "id": "<obj:2>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "name": "cleanup-author"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:2>",
+        "frame": {
+          "h": 180,
+          "w": 300,
+          "x": 400,
+          "y": 0
+        },
+        "key": "cleanup-leftover",
+        "props": {
+          "markdown": "Task scratch",
+          "title": "Leftover"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "created": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "cleanup-leftover",
+              "markdown": "Task scratch",
+              "title": "Leftover"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 3
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "cleanup-leftover",
+              "markdown": "Task scratch",
+              "title": "Leftover"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "cleanup-leftover",
+              "markdown": "Task scratch",
+              "title": "Leftover"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 3
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.stale",
+      "method": "board.stale",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "objects": []
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:2>"
+          },
+          "event": "object.deleted"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "id": "<obj:2>"
+          },
+          "event": "object.deleted"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 180,
+                "w": 300,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:1>",
+              "props": {
+                "markdown": "Keep this",
+                "title": "Live note"
+              },
+              "rev": "<rev:1>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "z": 1
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "agent",
+                "tile": "<obj:2>"
+              },
+              "frame": {
+                "h": 180,
+                "w": 300,
+                "x": 400,
+                "y": 0
+              },
+              "id": "<obj:3>",
+              "props": {
+                "key": "cleanup-leftover",
+                "markdown": "Task scratch",
+                "title": "Leftover"
+              },
+              "rev": "<rev:1>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "z": 3
+            }
+          ],
+          "revision": "<board:1>",
+          "root": "<root>"
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.stale",
+      "method": "board.stale",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "objects": [
+            {
+              "createdBy": {
+                "kind": "agent",
+                "tile": "<obj:2>"
+              },
+              "id": "<obj:3>",
+              "key": "cleanup-leftover",
+              "reasons": [
+                "creator-gone"
+              ],
+              "title": "Leftover",
+              "type": "note",
+              "updatedAt": "<time:number>"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.get",
+      "method": "board.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r13",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": [
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 180,
+                "w": 300,
+                "x": 0,
+                "y": 0
+              },
+              "id": "<obj:1>",
+              "props": {
+                "markdown": "Keep this",
+                "title": "Live note"
+              },
+              "rev": "<rev:1>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "z": 1
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "agent",
+                "tile": "<obj:2>"
+              },
+              "frame": {
+                "h": 180,
+                "w": 300,
+                "x": 400,
+                "y": 0
+              },
+              "id": "<obj:3>",
+              "props": {
+                "key": "cleanup-leftover",
+                "markdown": "Task scratch",
+                "title": "Leftover"
+              },
+              "rev": "<rev:1>",
+              "type": "note",
+              "updatedAt": "<time:number>",
+              "z": 3
+            }
+          ],
+          "revision": "<board:1>",
+          "root": "<root>"
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:3>"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:3>"
+          },
+          "event": "object.deleted"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "id": "<obj:3>"
+          },
+          "event": "object.deleted"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.stale",
+      "method": "board.stale",
+      "request": {
+        "board": "<board>",
+        "olderThan": "0s"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "objects": [
+            {
+              "createdBy": {
+                "kind": "user"
+              },
+              "id": "<obj:1>",
+              "reasons": [
+                "untouched"
+              ],
+              "title": "Live note",
+              "type": "note",
+              "updatedAt": "<time:number>"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "expiresIn": "2s",
+        "frame": {
+          "h": 180,
+          "w": 300,
+          "x": 400,
+          "y": 0
+        },
+        "key": "cleanup-cancel",
+        "props": {
+          "markdown": "Must survive",
+          "title": "Cancel expiry"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {
+          "created": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "expires": "<time:iso>",
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "key": "cleanup-cancel",
+              "markdown": "Must survive",
+              "title": "Cancel expiry"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "expires": "<time:iso>",
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "key": "cleanup-cancel",
+              "markdown": "Must survive",
+              "title": "Cancel expiry"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "expires": "<time:iso>",
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "key": "cleanup-cancel",
+              "markdown": "Must survive",
+              "title": "Cancel expiry"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "expires": null,
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r17",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "key": "cleanup-cancel",
+              "markdown": "Must survive",
+              "title": "Cancel expiry"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "key": "cleanup-cancel",
+              "markdown": "Must survive",
+              "title": "Cancel expiry"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "key": "cleanup-cancel",
+              "markdown": "Must survive",
+              "title": "Cancel expiry"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:4>"
+      },
+      "response": {
+        "id": "r18",
+        "ok": true,
+        "result": {
+          "fences": [],
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "key": "cleanup-cancel",
+              "markdown": "Must survive",
+              "title": "Cancel expiry"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "expiresIn": "1s",
+        "key": "cleanup-cancel",
+        "props": {},
+        "type": "note"
+      },
+      "response": {
+        "id": "r19",
+        "ok": true,
+        "result": {
+          "created": false,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "expires": "<time:iso>",
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "key": "cleanup-cancel",
+              "markdown": "Must survive",
+              "title": "Cancel expiry"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "expires": "<time:iso>",
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "key": "cleanup-cancel",
+              "markdown": "Must survive",
+              "title": "Cancel expiry"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:4>"
+          },
+          "event": "object.deleted"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "expires": "<time:iso>",
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:4>",
+            "props": {
+              "key": "cleanup-cancel",
+              "markdown": "Must survive",
+              "title": "Cancel expiry"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 2
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "id": "<obj:4>"
+          },
+          "event": "object.deleted"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:4>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found"
+        },
+        "id": "r20",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "expires": "<time:iso>",
+        "frame": {
+          "h": 180,
+          "w": 300,
+          "x": 400,
+          "y": 0
+        },
+        "props": {
+          "markdown": "Already due",
+          "title": "Absolute expiry"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "expires": "<time:iso>",
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:5>",
+            "props": {
+              "markdown": "Already due",
+              "title": "Absolute expiry"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "expires": "<time:iso>",
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:5>",
+            "props": {
+              "markdown": "Already due",
+              "title": "Absolute expiry"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:5>"
+          },
+          "event": "object.deleted"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "expires": "<time:iso>",
+            "frame": {
+              "h": 180,
+              "w": 300,
+              "x": 400,
+              "y": 0
+            },
+            "id": "<obj:5>",
+            "props": {
+              "markdown": "Already due",
+              "title": "Absolute expiry"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "id": "<obj:5>"
+          },
+          "event": "object.deleted"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:5>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found"
+        },
+        "id": "r22",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.stale",
+      "method": "board.stale",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r23",
+        "ok": true,
+        "result": {
+          "objects": []
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    }
+  ]
+}

@@ -497,24 +497,33 @@ extension Board {
         return due
     }
 
-    /// Sets the board's question timer for its earliest open `expiresAt` or closed `archiveAt`
-    /// (at most a day out, then again); a question already past it expires, or archives, on the
-    /// next turn, expiries first. Called when the board opens and whenever a question changes.
-    /// None on a remote board: its host's timer runs them.
+    @discardableResult
+    public func expireObjects(now: Date = Date()) -> [ObjectID] {
+        guard !isRemote, !isClosed else { return [] }
+        let due = objects.values.filter { $0.expires.map { $0.date <= now } == true }.map(\.id).sorted()
+        for id in due where objects[id] != nil { try? delete(id, actor: .system) }
+        return due
+    }
+
     public func scheduleQuestionExpiry(now: Date = Date()) {
         questionExpiry?.cancel()
         questionExpiry = nil
         guard !isRemote, !isClosed else { return }
-        let next = objects.values.compactMap { object -> Date? in
-            guard object.type == .question else { return nil }
+        var next: Date?
+        for object in objects.values {
+            if let deadline = object.expires?.date { next = next.map { min($0, deadline) } ?? deadline }
+            guard object.type == .question else { continue }
             let spec = QuestionSpec(object.props)
-            return spec.status == .open ? spec.expiresAt : spec.archiveAt(object.updatedAt)
-        }.min()
+            if let deadline = spec.status == .open ? spec.expiresAt : spec.archiveAt(object.updatedAt) {
+                next = next.map { min($0, deadline) } ?? deadline
+            }
+        }
         guard let next else { return }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.questionExpiry = nil
+                self.expireObjects()
                 self.expireQuestions()
                 self.archiveQuestions()
                 self.scheduleQuestionExpiry()

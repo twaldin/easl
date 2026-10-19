@@ -87,11 +87,11 @@ final class RemoteReplayQueue {
 
     func rebase(_ id: ObjectID, from before: Int, to after: Int, target: (ObjectID) -> ObjectID?) {
         guard let first = writes.first(where: { target($0.write.object) == id }),
-              case .update(_, _, let seen, _, _, _) = first.write, seen == before else { return }
+              case .update(_, _, let seen, _, _, _, _) = first.write, seen == before else { return }
         for index in writes.indices {
-            guard case .update(let local, let step, let seen?, let frame, let z, let props) = writes[index].write,
+            guard case .update(let local, let step, let seen?, let frame, let z, let props, let expires) = writes[index].write,
                   target(local) == id else { continue }
-            writes[index].write = .update(local, step: step, seen: seen + after - before, frame: frame, z: z, props: props)
+            writes[index].write = .update(local, step: step, seen: seen + after - before, frame: frame, z: z, props: props, expires: expires)
         }
     }
 

@@ -37,6 +37,14 @@ Read these before you build anything; each one cost earlier agents a round trip.
 - **Params are checked.** A param a method doesn't take (a typo, or `board` where the schema has none), or a missing required one, fails with `invalid_params` listing every param the method takes.
   Objects you create or change on another board (`board`) are credited to your terminal; placement there goes near the view's centre.
 
+## Keep the board clean
+
+- Give task-owned tiles a stable `props.key` and use `object.upsert` on repeat runs. Do not create duplicates.
+- Give transient status tiles, scratch renders, and one-off answers an expiry. `easl object.update --id obj_… --expires 2h` sets a host deletion deadline. The API takes `expiresIn: "2h"` or an absolute RFC3339 `expires`; `expires: null` clears it.
+- Delete your task-owned tiles with `object.delete` when the task ends, unless the user wants to keep them.
+- Run `easl board.stale --older-than 7d` to list cleanup candidates without changing the board. Inspect the reasons and `createdBy`. Delete only your own tiles unless the user asks for broader cleanup.
+- `easl ask --expires` still closes an unanswered question. It does not set the tile's deletion deadline.
+
 ## Pick a client
 
 - **You have a persistent Python REPL (e.g. an `eval` tool): use the Python SDK.** One connection, typed methods, compositions.
