@@ -9,7 +9,6 @@ enum HostFileReadResult: Sendable {
 @MainActor
 final class HostFileReads {
     private struct Pending {
-        let id: UUID
         let request: HostFileRequest
         let payload: JSONValue
         let priority: HostReadPriority
@@ -36,7 +35,7 @@ final class HostFileReads {
         let id = UUID()
         let file = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                pending[id] = Pending(id: id, request: request, payload: payload, priority: priority,
+                pending[id] = Pending(request: request, payload: payload, priority: priority,
                                       files: files, continuation: continuation)
                 waiting.append(id)
                 if !scheduled {
