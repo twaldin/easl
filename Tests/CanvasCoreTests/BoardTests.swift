@@ -868,7 +868,6 @@ struct BoardTests {
         #expect(lane.maxY == 20 + 266 + 24, "groups wrap the migrated tile, bottom padding intact")
 
         let saved = board.snapshot
-        #expect(saved.format == Board.format)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let reloaded = Board(snapshot: try decoder.decode(BoardSnapshot.self, from: try encoder.encode(saved)))

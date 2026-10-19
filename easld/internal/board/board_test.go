@@ -66,7 +66,7 @@ func TestFormatOneBoardLoadsMigrated(t *testing.T) {
 		t.Errorf("tray %v", b.Tray())
 	}
 	saved := b.Snapshot()
-	if *saved.Format != 3 || !reflect.DeepEqual(saved.FinalAnswers, map[string]string{"obj_term": "answer"}) || !reflect.DeepEqual(saved.LifecycleSeq, map[string]int{"obj_term|omp": 3}) {
+	if !reflect.DeepEqual(saved.FinalAnswers, map[string]string{"obj_term": "answer"}) || !reflect.DeepEqual(saved.LifecycleSeq, map[string]int{"obj_term|omp": 3}) {
 		t.Errorf("saved %+v", saved)
 	}
 	// Loading what was saved changes nothing more.

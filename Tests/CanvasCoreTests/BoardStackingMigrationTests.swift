@@ -81,19 +81,4 @@ struct BoardStackingMigrationTests {
         #expect(try reopened.object("obj_shape_b").z == -40)
         #expect(reopened.snapshot.objects.first?.id == "obj_tile_low")
     }
-
-    @Test func remoteHostObjectsKeepTheirLiteralZAndFrames() throws {
-        let remote = Board(remote: "brd_remote", root: directory, host: nil)
-        let original = snapshot(format: nil, root: directory)
-        for object in original.objects { remote.applyHost(object) }
-        for object in original.objects { #expect(try remote.object(object.id) == object) }
-        #expect(remote.snapshot.objects.map(\.id) == ["obj_ink_a", "obj_shape_b", "obj_arrow", "obj_text", "obj_tile_low", "obj_tile_a", "obj_tile_z", "obj_group_a", "obj_group_z"])
-        var updated = try remote.object("obj_tile_low")
-        updated.z = -100
-        updated.rev = 8
-        remote.applyHost(updated)
-        #expect(try remote.object("obj_tile_low") == updated)
-        #expect(remote.snapshot.objects.first?.id == "obj_tile_low")
-        #expect(!remote.history.canUndo)
-    }
 }

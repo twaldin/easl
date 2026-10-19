@@ -290,7 +290,7 @@
     {
       "step": "read .easl/board.json",
       "content": {
-        "format": 2,
+        "format": 3,
         "id": "<board>",
         "objects": [
           {
@@ -337,7 +337,7 @@
     {
       "step": "read out/snap.json",
       "content": {
-        "format": 2,
+        "format": 3,
         "id": "<board>",
         "objects": [
           {

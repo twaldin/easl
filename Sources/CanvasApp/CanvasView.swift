@@ -366,7 +366,7 @@ final class CanvasView: NSScrollView {
             let carried = rekeyed.removeValue(forKey: object.id)
             let provisional = carried?.browser?.objectID
             add(object, reusing: carried?.browser)
-            restack()
+            if object.type != .shape && object.type != .arrow { restack() }
             scheduleGeometry()
             if let carried {
                 if carried.selected {
@@ -403,7 +403,7 @@ final class CanvasView: NSScrollView {
             } else {
                 // Unarchived (or Archive undone): back in its place in the stack, not on top.
                 add(object)
-                restack()
+                if object.type != .shape && object.type != .arrow { restack() }
             }
             scheduleGeometry()
         case .objectDeleted(let id):
