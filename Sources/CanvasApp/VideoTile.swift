@@ -45,7 +45,6 @@ final class VideoTile: NSView, TileContent {
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
         player.allowsExternalPlayback = false
-        player.automaticallyWaitsToMinimizeStalling = false
         playerView.frame = bounds
         playerView.autoresizingMask = [.width, .height]
         playerView.controlsStyle = .inline

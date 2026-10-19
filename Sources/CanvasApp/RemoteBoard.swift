@@ -9,6 +9,13 @@ final class RemoteSource {
     let git: HostGit
     let languages: LanguageService
     private static var languagePool: [(route: HostRoute, service: LanguageService)] = []
+    private static var snapshotPool: [String: HostBrowserSnapshots] = [:]
+    lazy var browserSnapshots: HostBrowserSnapshots = {
+        if let snapshots = Self.snapshotPool[host.sshTarget] { return snapshots }
+        let snapshots = HostBrowserSnapshots()
+        Self.snapshotPool[host.sshTarget] = snapshots
+        return snapshots
+    }()
 
     static var languageServices: [LanguageService] { languagePool.map(\.service) }
 

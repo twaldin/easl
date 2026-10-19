@@ -1412,31 +1412,20 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             let drawn = draw(image, request: request)
             return TileRender(image: drawn, contentSize: request.size, state: drawn == nil ? .failed : .rendered)
         }
-        return await snapshot(request, deadline: deadline)
+        return await snapshotBrowserOnly(request, deadline: deadline)
     }
 
-    /// A single-browser render already routes to its drawing Mac. Excluding every type keeps
-    /// overlapping tiles out of that capture and prevents recursive board compositions.
-    private func snapshot(_ request: TileRenderRequest, deadline: ContinuousClock.Instant) async -> TileRender {
+    private func snapshotBrowserOnly(_ request: TileRenderRequest, deadline: ContinuousClock.Instant) async -> TileRender {
         let source = object
         let board = remote.mirror.sessionBoardID
         guard remote.mirror.availability == .open, !board.isEmpty else {
             return TileRender(image: nil, contentSize: request.size, state: .failed, reason: "the host board is closed")
         }
-        let remaining = ContinuousClock.now.duration(to: deadline)
-        guard remaining > .zero else { return .placeholder(request, "timed out") }
-        let components = remaining.components
-        let milliseconds = min(60_000, max(1, Int(components.seconds * 1000 + components.attoseconds / 1_000_000_000_000_000)))
-        let connection = remote.host.connection()
-        defer { connection.close() }
         do {
-            try Task.checkCancellation()
-            let result = try await connection.request("view.render", .object([
-                "board": .string(board), "target": .string(source.id), "inline": .bool(true),
-                "format": .string("png"), "scale": .number(min(4, max(0.1, Double(request.scale) / source.zoom))),
-                "exclude": .array(ObjectType.allCases.map { .string($0.rawValue) }),
-                "timeoutMs": .number(Double(milliseconds)),
-            ]), timeout: remaining)
+            let result = try await remote.browserSnapshots.render(
+                host: remote.host, board: board, browser: source.id,
+                scale: min(4, max(0.1, Double(request.scale) / source.zoom)),
+                priority: request.priority, deadline: deadline)
             try Task.checkCancellation()
             guard ContinuousClock.now < deadline else { return .placeholder(request, "timed out") }
             guard remote.mirror.availability == .open, remote.mirror.sessionBoardID == board,
@@ -1477,7 +1466,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
 
     func cardSnapshot() async -> NSImage? {
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
-                                        appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
+                                        appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance, priority: .background)
         await MainTurns.next()
         guard !Task.isCancelled, let image else { return nil }
         return draw(image, request: request)

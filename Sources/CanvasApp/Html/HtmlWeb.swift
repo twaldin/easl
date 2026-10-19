@@ -190,6 +190,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                     began = true
                 }
                 let media = metadata.mimeType.hasPrefix("video/") || metadata.mimeType.hasPrefix("audio/")
+                let rangeFiles = media && self.priority == .visible ? files?.prioritized(.interactive) : files
                 if method != "HEAD" {
                     var offset = selection.bytes.lowerBound
                     request.bytes = true
@@ -205,7 +206,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                             let start = media ? offset - offset % Int64(HostFileRange.maxLength) : offset
                             let length = Int(min(Int64(HostFileRange.maxLength), (media ? metadata.size : selection.bytes.upperBound) - start))
                             request.range = HostFileRange(offset: start, length: length)
-                            chunk = try await Self.read(request, files: files)
+                            chunk = try await Self.read(request, files: rangeFiles)
                             guard self.reads[key] != nil, !Task.isCancelled else { return }
                             guard chunk.version == metadata.version, chunk.size == metadata.size,
                                   chunk.offset == start, chunk.data.count == length else { throw URLError(.resourceUnavailable) }
