@@ -289,11 +289,11 @@ extension CanvasView {
     func visibleObjects(pixelsPerPoint: Double) -> [RenderedObject] {
         let region = viewport.rect
         let scale = pixelsPerPoint * magnification
-        var objects: [(z: (Int, Double), object: CanvasObject, frame: Frame)] = []
+        var objects: [(z: (Int, Double, ObjectID), object: CanvasObject, frame: Frame)] = []
         for object in board.objects.values {
             guard let frame = outline(of: object.id), frame.intersects(region) else { continue }
-            let layer = object.type == .group ? 0 : TileFactory.hasTile(object.type) ? 1 : 2
-            objects.append(((layer, object.z), object, frame))
+            let layer = object.type == .group ? 0 : 1
+            objects.append(((layer, object.z, object.id), object, frame))
         }
         return objects.sorted { $0.z < $1.z }.map { entry in
             RenderedObject(id: entry.object.id, type: entry.object.type, pixelRect: RenderMath.pixelRect(entry.frame, in: region, scale: scale), state: .rendered)
