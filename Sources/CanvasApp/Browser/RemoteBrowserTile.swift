@@ -1400,6 +1400,14 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
+        if drawingOffline {
+            return TileRender(image: nil, contentSize: request.size, state: .failed, reason: drawingStatus)
+        }
+        guard streamID != nil, owned.current()?.state == .online else {
+            return TileRender(image: nil, contentSize: request.size, state: .failed,
+                              reason: linkStatus ?? "not streaming from \(remote.host.name)")
+        }
+        guard lastAcked > 0 else { return .placeholder(request, "waiting for the current browser stream's first frame") }
         guard let image else { return .placeholder(request, relayed ? drawingStatus : "not streamed from \(remote.host.name) yet") }
         let pageSize = self.pageSize
         let drawn = request.image { bounds in

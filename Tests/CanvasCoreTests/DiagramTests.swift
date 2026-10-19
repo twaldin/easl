@@ -621,7 +621,7 @@ final class DiagramTests {
         try board.update(easlds.id, props: .object(["symbol": "Registry.replay"]))
         let calls = DelegatedCalls(board: board, window: ViewerWindow(
             focused: { false }, viewState: { nil },
-            render: { _, _ in throw ApiRouter.Failure("unavailable", "no canvas") }, hostPicture: { _ in false },
+            render: { _, _ in throw ApiRouter.Failure("unavailable", "no canvas") },
             measureHTML: { _, _ in throw ApiRouter.Failure("unavailable", "no page") },
             reload: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser") },
             browse: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser") },

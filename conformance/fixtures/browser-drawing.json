@@ -1,7 +1,7 @@
 {
   "scenario": "browser-drawing",
-  "description": "browser.call and browser.report on an easld board. A new browser takes the creating Mac when that connection is an eligible attached client. browser.call and object.reload go only to that persisted identity. Another attached Mac cannot report the page. URL credit follows caller; pageTitle is bookkeeping. No page body is stored.",
-  "recordedOn": "scratch easld schema2 remote edits and composer receipts",
+  "description": "browser.call, browser.report and view.render on an easld board. A new browser takes the creating Mac when that connection is an eligible attached client. browser.call, object.reload and named-browser view.render go only to that persisted identity, even when another viewer focused the board last. Another attached Mac cannot report the page. URL credit follows caller; pageTitle is bookkeeping. No page body is stored.",
+  "recordedOn": "easl-g9-real-tiles-1 integrated scratch easld",
   "steps": [
     {
       "step": "board.open",
@@ -46,7 +46,8 @@
         "identity": "mch_home",
         "serves": [
           "browser.call",
-          "object.reload"
+          "object.reload",
+          "view.render"
         ],
         "version": 2
       },
@@ -74,7 +75,8 @@
                 "identity": "mch_home",
                 "serves": [
                   "browser.call",
-                  "object.reload"
+                  "object.reload",
+                  "view.render"
                 ]
               }
             ]
@@ -96,11 +98,13 @@
         "boards": [
           "<board>"
         ],
+        "focused": "<board>",
         "host": "work",
         "identity": "mch_work",
         "serves": [
           "browser.call",
-          "object.reload"
+          "object.reload",
+          "view.render"
         ],
         "version": 2
       },
@@ -128,7 +132,8 @@
                 "identity": "mch_home",
                 "serves": [
                   "browser.call",
-                  "object.reload"
+                  "object.reload",
+                  "view.render"
                 ]
               },
               {
@@ -136,12 +141,14 @@
                 "boards": [
                   "<board>"
                 ],
+                "focused": "<board>",
                 "host": "work",
                 "id": "<cli:2>",
                 "identity": "mch_work",
                 "serves": [
                   "browser.call",
-                  "object.reload"
+                  "object.reload",
+                  "view.render"
                 ]
               }
             ]
@@ -485,6 +492,36 @@
             "z": 1
           },
           "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "inline": true,
+        "target": "<obj:1>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+          "format": "png",
+          "height": 1,
+          "width": 1
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "home",
+          "method": "view.render",
+          "params": {
+            "board": "<board>",
+            "format": "png",
+            "inline": true,
+            "target": "<obj:1>"
+          }
         }
       ]
     }

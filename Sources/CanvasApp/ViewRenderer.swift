@@ -10,14 +10,9 @@ extension CanvasView {
         let object: CanvasObject
         let content: any TileContent
         let request: TileRenderRequest
-        /// Why the tile is reported failed without its `render` called.
-        let refused: String?
     }
 
-    /// `hostPictures` false: a tile that only shows its host's picture (`showsHostPicture`) is
-    /// reported failed and its `render` never called, as in a render the board's host asked for
-    /// (`DelegatedCalls`), which must not pass the host's pixels off as this Mac's drawing.
-    func render(_ request: RenderRequest, format: ImageFormat, hostPictures: Bool = true) async throws -> RenderOutput {
+    func render(_ request: RenderRequest, format: ImageFormat) async throws -> RenderOutput {
         let appearance = window?.effectiveAppearance ?? NSApp.effectiveAppearance
         let deadline = ContinuousClock.now + request.timeout
         let excluded = request.exclude
@@ -35,7 +30,7 @@ extension CanvasView {
             region = RenderMath.snapped(rect, padding: request.padding)
         case .objects(let ids):
             let scale = RenderMath.fittedScale(request.scale, for: RenderMath.union(ids.compactMap { outline(of: $0) }) ?? Frame(x: 0, y: 0, w: 1, h: 1))
-            let jobs = ids.compactMap { id in tileJob(id, scale: scale, full: request.full, appearance: appearance, hostPictures: hostPictures) }
+            let jobs = ids.compactMap { id in tileJob(id, scale: scale, full: request.full, appearance: appearance) }
             renders = await renderTiles(jobs, deadline: deadline)
             for id in ids {
                 guard var frame = outline(of: id) else { continue }
@@ -67,7 +62,7 @@ extension CanvasView {
             TileFactory.hasTile(object.type) && renders[object.id] == nil && !excluded.hides(object)
                 && object.frame.intersects(region)
         }
-        let otherRenders = await renderTiles(others.compactMap { tileJob($0.id, scale: scale, full: false, appearance: appearance, hostPictures: hostPictures) }, deadline: deadline)
+        let otherRenders = await renderTiles(others.compactMap { tileJob($0.id, scale: scale, full: false, appearance: appearance) }, deadline: deadline)
         renders.merge(otherRenders) { first, _ in first }
 
         let size = RenderMath.pixelSize(region, scale: scale)
@@ -178,16 +173,10 @@ extension CanvasView {
     }
 
     /// A tile's content at its natural size, at enough pixels per point for its zoom.
-    private func tileJob(_ id: ObjectID, scale: Double, full: Bool, appearance: NSAppearance, hostPictures: Bool) -> TileJob? {
+    private func tileJob(_ id: ObjectID, scale: Double, full: Bool, appearance: NSAppearance) -> TileJob? {
         guard let object = board.objects[id], let tile = tiles[id] else { return nil }
         let request = TileRenderRequest(size: RenderMath.body(of: object), scale: scale * object.zoom, full: full, appearance: appearance)
-        let refused = !hostPictures && showsHostPicture(id) ? "not drawn by this viewer: it shows the host's picture" : nil
-        return TileJob(object: object, content: tile.content, request: request, refused: refused)
-    }
-
-    func showsHostPicture(_ id: ObjectID) -> Bool {
-        guard let content = tiles[id]?.content else { return false }
-        return content is RemoteBrowserTile
+        return TileJob(object: object, content: tile.content, request: request)
     }
 
     /// Renders tiles concurrently (interleaved on the main actor); one that misses the deadline
@@ -202,7 +191,6 @@ extension CanvasView {
     /// At the deadline the render is cancelled (tiles then return what they have); one that
     /// still hasn't answered a second later is reported without it.
     private static func render(_ job: TileJob, deadline: ContinuousClock.Instant) async -> TileRender {
-        if let refused = job.refused { return TileRender(image: nil, contentSize: job.request.size, state: .failed, reason: refused) }
         return await withCheckedContinuation { (continuation: CheckedContinuation<TileRender, Never>) in
             let once = Once()
             let work = Task {

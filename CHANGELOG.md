@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Remote renders use native viewer tiles and the browser's drawing Mac; disconnected browser streams report failure instead of exporting a stale frame as fresh.
 - **HTML tiles load board data and scripts.** JSON, CSV, JavaScript, stylesheets, fonts, images and media use the board's host-file policy on local and remote boards. Loaded-file edits refresh the live page without reopening its tile; briefly parked pages resume without an unnecessary reload.
 - **Video clips play on the board.** Create a `video` tile with a board path, optional poster and playback flags, or use `<video>` inside HTML. Both hosts serve seekable bytes in bounded reads, without a viewer-disk copy. MP4/MOV dimensions support exact fitting on easld as well as the Mac. Video file-URI references keep their original source across caller checkouts and repository-board adoption.
 - **GIF image tiles animate** while live, locally and remotely, and stop their timers when parked.

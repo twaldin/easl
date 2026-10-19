@@ -197,7 +197,7 @@ private enum BoardDirectoryPicker {
         let mirror = BoardMirror(hostName: host.name,
                                  board: board.id,
                                  connection: EaslConnection(.unixSocket(absent), backoff: backoff, handshakeTimeout: .seconds(1)),
-                                 renders: EaslConnection(.unixSocket(absent), backoff: backoff, handshakeTimeout: .seconds(1)))
+                                 diagrams: EaslConnection(.unixSocket(absent), backoff: backoff, handshakeTimeout: .seconds(1)))
         return CanvasWindowController(board: board,
                                       registry: registry,
                                       remote: RemoteSource(host: host, mirror: mirror))

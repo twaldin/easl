@@ -3,10 +3,6 @@ import Foundation
 import Testing
 @testable import CanvasCore
 
-/// A remote board's window answering its easld's delegated calls (`DelegatedCalls`). Its
-/// terminal's surface is `screen`: a prompt goes onto it as the agent's input line, and the
-/// agent's `reply` follows. It draws renders as `drawing`, its tiles of `hostPictures` show only
-/// the host's picture, and its WebKit lays a page out as `page` lays it out.
 @MainActor
 final class DelegatedCallsTests {
     final class NoHost: BoardHost {
@@ -21,7 +17,6 @@ final class DelegatedCallsTests {
     var screen = ["$ omp", "> ready"]
     var reply: [String] = []
     var view: ViewState?
-    var hostPictures: Set<ObjectID> = []
     var drawing = RenderOutput(image: Data([0x89, 0x50, 0x4E, 0x47]), format: .png, width: 40, height: 30,
                                canvasRect: Frame(x: 0, y: 0, w: 20, h: 15), scale: 2, objects: [])
     /// What the window was asked to draw, in order.
@@ -52,7 +47,6 @@ final class DelegatedCallsTests {
                 output.format = format
                 return output
             },
-            hostPicture: { [unowned self] id in hostPictures.contains(id) },
             measureHTML: { [unowned self] props, width in
                 laidOut.append(width)
                 return page(props, width)
@@ -185,15 +179,6 @@ final class DelegatedCallsTests {
             "board": "brd_host", "viewport": .object(["rect": .object(["x": 0, "y": 0, "w": 1200, "h": 800]), "zoom": 1]),
             "selection": ["obj_note"], "visible": .bool(true), "appearance": "dark", "promptTarget": .string(terminal),
         ]))
-    }
-
-    @Test func aHostBrowserPictureCannotBeRenderedByTheViewer() async throws {
-        tile("obj_note", .note, at: 0)
-        tile("obj_browser", .browser, at: 400)
-        hostPictures = ["obj_browser"]
-        let calls = delegated()
-        let named = await answer(calls, "view.render", .object(["board": "brd_host", "target": ["obj_note", "obj_browser"], "inline": .bool(true)]))
-        #expect(code(named) == "unavailable")
     }
 
     @Test func aViewerRefusesFileDelivery() async throws {

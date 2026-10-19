@@ -1029,7 +1029,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Reads the board, then shows its window (`openRemoteBoard(host:board:select:)`).
     private func loadRemoteBoard(host: RemoteHost, board: BoardID, key: String, select: Bool, present: Bool) async throws -> CanvasWindowController {
         try checkRemoteOpen()
-        let mirror = BoardMirror(hostName: host.name, board: board, connection: host.connection(), renders: host.connection())
+        let mirror = BoardMirror(hostName: host.name, board: board, connection: host.connection(), diagrams: host.connection())
         let loaded: Board
         let identified: RemoteHost
         do {
@@ -1107,7 +1107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let host = try await RemoteHost.discover(name: entry.host, sshTarget: entry.sshTarget, support: entry.support(devRemoteHome: AppPaths.devRemoteHome),
                                                      allowDefault: AppPaths.devRemoteHome == nil)
             guard !Task.isCancelled, !terminating else { return }
-            let mirror = BoardMirror(hostName: host.name, board: entry.board, connection: host.connection(), renders: host.connection())
+            let mirror = BoardMirror(hostName: host.name, board: entry.board, connection: host.connection(), diagrams: host.connection())
             let loaded: Board
             let identified: RemoteHost
             do {
