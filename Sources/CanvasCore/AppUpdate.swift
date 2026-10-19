@@ -26,14 +26,18 @@ public enum AppUpdate {
 
     /// Staging does not wait for idle. A failed artifact needs an explicit retry or a new checksum.
     public static func automaticAction(phase: UpdatePhase, running: AppVersion, enabled: Bool,
-                                       idleSeconds: TimeInterval, rejectedSHA256: String? = nil,
+                                       idleSeconds: TimeInterval,
+                                       remoteIdleSeconds: TimeInterval = automaticIdleThreshold,
+                                       rejectedSHA256: String? = nil,
                                        retryAfter: Date? = nil, now: Date = .now) -> AutomaticAction {
         guard enabled, retryAfter.map({ $0 <= now }) ?? true,
               let release = phase.offered, release.isNewer(than: running),
               release.sha256 != rejectedSHA256 else { return .none }
         switch phase {
         case .available: return .stage
-        case .ready: return idleSeconds.isFinite && idleSeconds >= automaticIdleThreshold ? .install : .none
+        case .ready:
+            return idleSeconds.isFinite && idleSeconds >= automaticIdleThreshold
+                && remoteIdleSeconds.isFinite && remoteIdleSeconds >= automaticIdleThreshold ? .install : .none
         default: return .none
         }
     }

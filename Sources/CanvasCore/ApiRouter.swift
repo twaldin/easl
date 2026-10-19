@@ -200,6 +200,7 @@ public final class ApiRouter {
     }
 
     public let registry: BoardRegistry
+    private let remoteActivity: RemoteUpdateActivity
     /// Types text into a terminal tile (bracketed paste) and presses Enter once the paste landed;
     /// false when the surface isn't attached.
     public var submitToTerminal: ((Board, ObjectID, String) async -> Bool)?
@@ -377,7 +378,8 @@ public final class ApiRouter {
     /// escape is no turn, and text the agent didn't take as a prompt starts none.
     public var promptStartGrace: TimeInterval = 60
 
-    public init(registry: BoardRegistry) {
+    public init(registry: BoardRegistry, remoteActivity: RemoteUpdateActivity = .shared) {
+        self.remoteActivity = remoteActivity
         self.registry = registry
         registry.routerHook = { [weak self] board, event in self?.observe(event, on: board) }
         registry.messagesBounced = { [weak self] board, bounce in self?.bounce(bounce, on: board) }
@@ -402,6 +404,7 @@ public final class ApiRouter {
                 connection.send(.object(["id": id, "ok": .bool(true), "result": .object([:])]))
                 return nil
             }
+            if method == "viewer.activity" { return Self.ok(id, try viewerActivity(params, connection)) }
             if let request = try SurfaceRequest(method: method, params: params) { return Self.ok(id, try await serveSurface(request, connection)) }
             if method == "agent.wait" { return try wait(id, params, connection) }
             if method == "agent.inbox" { return try await inbox(id, params, connection) }
@@ -462,6 +465,39 @@ public final class ApiRouter {
         } catch {
             return Self.error(id, Self.failure(for: error))
         }
+    }
+
+    private func viewerActivity(_ params: JSONValue, _ connection: SocketServer.Connection) throws -> JSONValue {
+        guard let id = params["board"]?.string, Self.isBoardID(id), let input = params["input"]?.bool else {
+            throw Failure("invalid_params", "board and input are required")
+        }
+        guard let board = registry.board(id: id), registry.windowIsOpen(board.id) else {
+            throw Failure("not_found", "board \(id) is not open")
+        }
+        guard connection.isOpen, registry.subscribes(connection, to: "object.updated", on: board.id) else {
+            throw Failure("invalid_params", "viewer.activity requires this connection's subscription to the board's object.updated events")
+        }
+        let terminal: ObjectID?
+        if let value = params["terminal"] {
+            guard let id = value.string, board.objects[id]?.type == .terminal else {
+                throw Failure("not_found", "terminal is not on board \(board.id)")
+            }
+            terminal = id
+        } else {
+            terminal = nil
+        }
+        let session = "viewer:\(ObjectIdentifier(connection)):\(board.id):\(terminal ?? "board")"
+        let live: @MainActor () -> Bool = { [weak connection, weak registry, weak board] in
+            guard connection?.isOpen == true, let registry, let board,
+                  registry.board(id: board.id) === board, registry.windowIsOpen(board.id) else { return false }
+            return terminal.map { board.objects[$0]?.type == .terminal } ?? true
+        }
+        if input {
+            remoteActivity.record(session: session, kind: terminal == nil ? .board : .terminal, board: board.id, tile: terminal, isLive: live)
+        } else {
+            remoteActivity.begin(session: session, kind: terminal == nil ? .board : .terminal, board: board.id, tile: terminal, isLive: live)
+        }
+        return .object([:])
     }
 
     /// What a method's error answers: a `Failure` as it is, a board's or a measurement's under

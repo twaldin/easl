@@ -105,6 +105,7 @@ final class BrowserSurfaceHost: NSObject {
     /// Ends `stream`; `reason` tells a viewer still connected why this Mac ended it.
     private func close(_ stream: SurfaceStream, reason: String?) {
         guard streams.removeValue(forKey: stream.id) != nil else { return }
+        RemoteUpdateActivity.shared.end(session: stream.id)
         if let reason { stream.push("surface.notice", SurfaceEvent.notice(stream: stream.id, kind: .closed, reason: reason)) }
         let surface = stream.surface
         surface.remove(stream)
@@ -767,6 +768,7 @@ final class BrowserSurface {
             throw ApiRouter.Failure("not_found", "dialog \(id) is not open on stream \(stream.id)")
         }
         try Self.check(answer, for: pending.dialog)
+        RemoteUpdateActivity.shared.record(session: stream.id, kind: .browser, board: stream.board, tile: tile?.objectID)
         dialogs[id] = nil
         switch pending.dialog {
         case .alert(let done):

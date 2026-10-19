@@ -46,17 +46,16 @@ final class UserIdleWatch {
 
     func pin(_ state: String) {
         switch state {
-        case "on": pinned = true; timer?.cancel(); timer = nil; apply(idleSeconds: AppUpdate.automaticIdleThreshold)
-        case "off": pinned = true; timer?.cancel(); timer = nil; apply(idleSeconds: 0)
+        case "on": pinned = true; apply(idleSeconds: AppUpdate.automaticIdleThreshold)
+        case "off": pinned = true; apply(idleSeconds: 0)
         default: pinned = false; sample()
         }
-        if pinned { NotificationCenter.default.post(name: Self.sampled, object: self) }
+        if pinned { sample(notifyUpdater: true) }
     }
 
     private func sample(notifyUpdater: Bool = false) {
         timer?.cancel()
         timer = nil
-        guard !pinned else { return }
         let idle = currentIdleSeconds()
         apply(idleSeconds: idle)
         if notifyUpdater { NotificationCenter.default.post(name: Self.sampled, object: self) }
