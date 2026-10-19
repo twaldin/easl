@@ -311,6 +311,24 @@ board's root and the remote board's root, then restart the instance.
 Cancel every picker without opening a folder, then stop the development instance. Never change
 the installed app's preferences or close the user's boards for this regression.
 
+To check new-board creation, use the same isolated instance and disposable directories:
+
+1. Select a local board. In a parent **outside any Git repository**, invoke File › Open Board…,
+   choose **New Folder**, give it a fresh name, then choose **Open Board**. Confirm that an empty,
+   independent board opens on that folder. Repeat with the tab bar's + button and a different
+   fresh name. Reopen both folders and confirm that each selects its existing board without a
+   duplicate.
+2. Select a remote board and invoke both File › Open Board… and the tab bar's + button.
+   **New Folder** must be absent or disabled: this local picker must not offer folder creation
+   under a remote-titled window. Existing folders must remain selectable, and the starting
+   directory must retain its previous remote-board behavior. Cancel both pickers.
+3. Initialize a disposable Git repository and open its root as a board. With that local board
+   active, create and open a child folder inside that repository's root through each picker entry
+   point. Both child folders must select the repository's board (same board ID and repository
+   root), not independent boards.
+
+Stop the isolated instance and remove only these disposable directories.
+
 ### Testing the updater
 
 Run this rehearsal only in a claimed GUI guest, on a scratch home whose bundle can be replaced. Never use the checkout's bundle or the installed app. Point easl › Check for Updates… at a local `latest.json` (docs/design.md "Updates"). A development instance with a loopback `EASL_UPDATE_URL` also checks automatically after about a minute and daily. Keep **Install Updates Automatically** off for the manual rehearsal. Two ad-hoc signed development bundles skip `spctl`, which refuses every ad-hoc app. This existing development-only exception does not skip signature validity, Team ID equality, size, checksum, or version verification:
