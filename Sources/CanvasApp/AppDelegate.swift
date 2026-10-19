@@ -1708,6 +1708,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let panel = NSOpenPanel()
             panel.canChooseFiles = false
             panel.canChooseDirectories = true
+            panel.canCreateDirectories = controller?.remote == nil
             panel.prompt = "Open Board"
             panel.directoryURL = controller?.remote == nil ? (preferred ?? controller?.board.root) : controller?.board.root
             let chosen: (NSApplication.ModalResponse) -> Void = { [weak self, panel] response in
