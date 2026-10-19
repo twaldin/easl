@@ -296,7 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             reportUpdateRestoreFailure(error.localizedDescription)
         }
-        let initialRoot = Self.initialRoot()
+        let initialRoot = await offPool { Self.initialRoot() }
         let getStarted = await offPool {
             GetStarted.Store(url: AppPaths.getStarted).launch(boards: AppPaths.boards)
         }
@@ -392,12 +392,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var terminating = false
 
-    /// Not while background attach keeps a remote board attached with its window closed, or is
-    /// still reading one to attach.
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !holdsBackgroundAttachments }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !keepsRunningWithoutWindows
+    }
 
-    var holdsBackgroundAttachments: Bool {
-        !backgroundLoads.isEmpty || remoteControllers.values.contains { !$0.isBoardOpen }
+    var keepsRunningWithoutWindows: Bool {
+        updateRestoration != nil || !backgroundLoads.isEmpty || remoteControllers.values.contains { !$0.isBoardOpen }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -408,7 +408,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             Task { @MainActor in
                 let saved = await Self.savedOpenBoards()
-                await open(root: saved.first ?? keyController?.board.root ?? Self.initialRoot())
+                let root: URL
+                if let saved = saved.first ?? keyController?.board.root {
+                    root = saved
+                } else {
+                    root = await offPool { Self.initialRoot() }
+                }
+                await open(root: root)
             }
         }
         return false
@@ -553,7 +559,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             throw ApiRouter.Failure("invalid_params", "board \(id) is a remote tab: its host owns its sessions, so omit endSessions")
         }
         func refuseLastBoard() throws {
-            if target.controller?.isLastOpenBoard == true, !holdsBackgroundAttachments {
+            if target.controller?.isLastOpenBoard == true, !keepsRunningWithoutWindows {
                 throw ApiRouter.Failure("conflict", "board \(id) is easl's last open board: closing it would quit easl; open another board first")
             }
         }
@@ -1461,12 +1467,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// The requested root, else the configured board directory, else home.
-    static func initialRoot() -> URL {
+    nonisolated static func initialRoot() -> URL {
         requestedRoot() ?? configuredBoardDirectory ?? URL(fileURLWithPath: NSHomeDirectory())
     }
 
     /// A preferred starting directory, not a restriction on which boards can open.
-    private static var configuredBoardDirectory: URL? {
+    nonisolated private static var configuredBoardDirectory: URL? {
         guard let path = UserDefaults.standard.string(forKey: "canvas.boardDirectory") else { return nil }
         let expanded = (path as NSString).expandingTildeInPath
         guard expanded.hasPrefix("/"), BoardStore.isDirectory(expanded) else { return nil }
@@ -1475,7 +1481,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// EASL_ROOT, else the first non-flag argument, else the working directory unless it's
     /// `/` (Finder and `open` launch there, so it names no directory).
-    static func requestedRoot() -> URL? {
+    nonisolated static func requestedRoot() -> URL? {
         let env = ProcessInfo.processInfo.environment
         if let root = env["EASL_ROOT"] { return URL(fileURLWithPath: root) }
         if let argument = CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("-") }) { return URL(fileURLWithPath: argument) }
@@ -1635,22 +1641,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// One canvas per directory: choosing a folder opens (or brings forward) its board. A sheet,
     /// not `runModal`: a modal run loop would stall every socket request until the user answers.
     @objc func openBoard(_ sender: Any?) {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.prompt = "Open Board"
-        let controller = keyController
-        panel.directoryURL = controller?.remote == nil
-            ? (Self.configuredBoardDirectory ?? controller?.board.root)
-            : controller?.board.root
-        let chosen: (NSApplication.ModalResponse) -> Void = { [weak self, panel] response in
-            guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in await self?.open(root: url) }
-        }
-        if let window = controller?.window {
-            panel.beginSheetModal(for: window, completionHandler: chosen)
-        } else {
-            panel.begin(completionHandler: chosen)
+        Task { @MainActor in
+            let controller = keyController
+            let preferred = controller?.remote == nil ? await offPool { Self.configuredBoardDirectory } : nil
+            guard !terminating else { return }
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.prompt = "Open Board"
+            panel.directoryURL = controller?.remote == nil ? (preferred ?? controller?.board.root) : controller?.board.root
+            let chosen: (NSApplication.ModalResponse) -> Void = { [weak self, panel] response in
+                guard response == .OK, let url = panel.url else { return }
+                Task { @MainActor in await self?.open(root: url) }
+            }
+            if let controller, controller.isBoardOpen, let window = controller.window {
+                panel.beginSheetModal(for: window, completionHandler: chosen)
+            } else {
+                panel.begin(completionHandler: chosen)
+            }
         }
     }
 

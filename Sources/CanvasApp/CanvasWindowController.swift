@@ -623,7 +623,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         let terminals = canvas.tiles.values.compactMap { $0.content as? TerminalTile }.sorted { $0.objectID < $1.objectID }
         guard !terminals.isEmpty else { return true }
         let tabs = sender.tabbedWindows?.count ?? 1
-        let last = isLastOpenBoard && (NSApp.delegate as? AppDelegate)?.holdsBackgroundAttachments != true
+        let last = isLastOpenBoard && (NSApp.delegate as? AppDelegate)?.keepsRunningWithoutWindows != true
         let keep = SessionProcesses.keepRunningText(terminals.map { $0.sessionProcesses() })
         let alert = NSAlert()
         alert.messageText = "Close “\(board.root.lastPathComponent)” and keep \(terminals.count == 1 ? "its terminal" : "its terminals") running?"

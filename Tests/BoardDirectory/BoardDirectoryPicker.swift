@@ -116,15 +116,25 @@ private enum BoardDirectoryPicker {
         registry = BoardRegistry(store: BoardStore(directory: home.appendingPathComponent("remote-registry", isDirectory: true)))
         PickerProbe.install()
 
-        let localExpected = preference == .valid ? preferredRoot : localRoot
-        check(context: .local, expected: localExpected)
-        check(context: .remote, expected: remoteRoot)
-        check(context: .noBoard, expected: preference == .valid ? preferredRoot : nil)
+        Task { @MainActor in
+            let localExpected = preference == .valid ? preferredRoot : localRoot
+            await check(context: .local, expected: localExpected)
+            await check(context: .remote, expected: remoteRoot)
+            await check(context: .noBoard, expected: preference == .valid ? preferredRoot : nil)
 
-        print("PASS board picker preference=\(preference.rawValue) home=\(home.path)")
+            print("PASS board picker preference=\(preference.rawValue) home=\(home.path)")
+            exit(0)
+        }
+        application.run()
     }
 
-    private static func check(context: Context, expected: URL?) {
+    private static func check(context: Context, expected: URL?) async {
+        let timeout = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(30))
+            guard !Task.isCancelled else { return }
+            PickerProbe.require(false, "openBoard \(context.rawValue) timed out")
+        }
+        defer { timeout.cancel() }
         let delegate = AppDelegate()
         NSApp.delegate = delegate
         defer {
@@ -132,38 +142,44 @@ private enum BoardDirectoryPicker {
             resetWindows()
         }
 
-        var remoteRetained: CanvasWindowController?
+        var retainedController: CanvasWindowController?
+        defer { withExtendedLifetime(retainedController) {} }
         let expectedSheet: Bool
         switch context {
         case .local:
-            let board = delegate.open(root: localRoot)
+            let board = await delegate.open(root: localRoot)
             guard let controller = NSApp.windows.compactMap({ $0.windowController as? CanvasWindowController })
                 .first(where: { $0.board.id == board.id && $0.isBoardOpen }) else {
                 PickerProbe.require(false, "local board window was not created")
                 return
             }
-            bringToFront(controller, "local")
+            retainedController = controller
+            await bringToFront(controller, "local")
             PickerProbe.require(controller.remote == nil, "local controller unexpectedly has a RemoteSource")
             expectedSheet = true
         case .remote:
             // A real remote window: a real BoardMirror and RemoteSource. Nothing is loaded, so no
             // host connection is needed; the picker only needs the controller's remote flag and root.
             let controller = remoteController()
-            remoteRetained = controller
+            retainedController = controller
             PickerProbe.require(controller.remote != nil, "remote controller has no RemoteSource")
             PickerProbe.require(controller.board.root.standardizedFileURL.path == remoteRoot.standardizedFileURL.path,
                                 "remote controller has the wrong board root")
             controller.showWindow(nil)
-            bringToFront(controller, "remote")
+            await bringToFront(controller, "remote")
             expectedSheet = true
         case .noBoard:
             expectedSheet = false
         }
 
         PickerProbe.presentations.removeAll()
-        withExtendedLifetime(remoteRetained) {
-            delegate.openBoard(nil)
+        delegate.openBoard(nil)
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while PickerProbe.presentations.isEmpty, clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
         }
+        await settle()
 
         PickerProbe.require(PickerProbe.presentations.count == 1,
                             "openBoard \(context.rawValue) presented \(PickerProbe.presentations.count) panels, expected 1")
@@ -204,16 +220,16 @@ private enum BoardDirectoryPicker {
     }
 
     /// The picker reads `CanvasWindowController.frontmost`; its window must be visible and front.
-    private static func bringToFront(_ controller: CanvasWindowController, _ stage: String) {
+    private static func bringToFront(_ controller: CanvasWindowController, _ stage: String) async {
         guard let window = controller.window else {
             PickerProbe.require(false, "\(stage) has no window")
             return
         }
         window.makeKeyAndOrderFront(nil)
-        pump()
+        await settle()
         if CanvasWindowController.frontmost !== controller {
             window.orderFrontRegardless()
-            pump()
+            await settle()
         }
         PickerProbe.require(CanvasWindowController.frontmost === controller,
                             "\(stage) controller is not frontmost (visible=\(window.isVisible))")
@@ -228,10 +244,9 @@ private enum BoardDirectoryPicker {
                 controller.discard()
             }
         }
-        pump()
     }
 
-    private static func pump() {
-        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    private static func settle() async {
+        try? await Task.sleep(for: .milliseconds(50))
     }
 }
