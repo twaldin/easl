@@ -218,7 +218,9 @@ public struct HostFiles: Sendable {
             }
             observations.append(contentsOf: try replies.map { reply in
                 guard reply.ok else {
-                    return .failure(HostFileError(code: reply.code, message: reply.message, commit: reply.commit, limit: reply.limit))
+                    let error = HostFileError(code: reply.code, message: reply.message, commit: reply.commit, limit: reply.limit)
+                    if case .unavailable = error { throw error }
+                    return .failure(error)
                 }
                 guard let root = reply.root else { throw HostFileError.unavailable("invalid host file observation") }
                 return .version(HostFileVersion(root: root, path: reply.path, commit: reply.commit, stamp: reply.stamp))
