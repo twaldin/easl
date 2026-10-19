@@ -620,6 +620,7 @@ final class EaslConnectionTests {
         IFS= read -r start < '\(request.path)'
         printf '%s\\n' '{"id":"\(callID)","method":"\(method)","params":{}}'
         IFS= read -r release < '\(gate.path)'
+        exec 3>&1
         exec cat > '\(captured.path)'
         """
         return (EaslConnection.process("/bin/sh", ["-c", script], backoff: fast), request, gate, captured)
