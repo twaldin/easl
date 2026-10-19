@@ -322,9 +322,10 @@ final class CanvasView: NSScrollView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard let window, mouseMonitor == nil else { return }
-        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .otherMouseDown, .scrollWheel, .magnify, .keyDown]) { [weak self] event in
             // Not `self?.handleMouse(event) ?? event`: that turns "consumed" (nil) back into the event.
             guard let self else { return event }
+            self.reportViewerInput(event)
             return self.handleMouse(event)
         }
         let center = NotificationCenter.default
@@ -495,6 +496,9 @@ final class CanvasView: NSScrollView {
         let content = preserved?.content ?? TileFactory.make(object, board: board, remote: remote)
         if chromeHidden { (content as? CodeTile)?.setPresenting(true) }
         if let terminal = content as? TerminalTile {
+            if let remote {
+                terminal.terminal.onUserInput = { [weak mirror = remote.mirror] in mirror?.userInput(terminal: id) }
+            }
             terminal.onTitle = { [weak self] title in
                 self?.tiles[id]?.setTitle(title)
                 // The tray names the target and, when typing goes elsewhere, the terminal typing goes to.
@@ -800,6 +804,16 @@ final class CanvasView: NSScrollView {
     }
 
     // MARK: Mouse
+
+    private func reportViewerInput(_ event: NSEvent) {
+        guard let remote, !isHiddenOrHasHiddenAncestor, event.window === window else { return }
+        if event.type == .keyDown {
+            guard let responder = window?.firstResponder as? NSView, responder.isDescendant(of: self) else { return }
+        } else {
+            guard event.type != .leftMouseUp, let hit = hitView(event), hit.isDescendant(of: self) else { return }
+        }
+        remote.mirror.userInput()
+    }
 
     /// Clicks that land on tiles or drawings, seen before any view: tile bodies select their tile
     /// and still receive the click (a terminal keeps focusing); drawn objects are selected and

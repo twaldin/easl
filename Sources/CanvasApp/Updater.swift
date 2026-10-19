@@ -45,6 +45,7 @@ final class Updater {
         }
 
         let transaction: String
+        let automatic: Bool
         var helper: pid_t?
         let delegate: AppDelegate
         let retryAfter: Date
@@ -134,7 +135,7 @@ final class Updater {
 
     func apiUpdate(mode: String) async throws -> ApiRouter.UpdateReply {
         while let operation { await operation.value }
-        if case .installing = phase { return ApiRouter.UpdateReply(value: status()) }
+        if case .installing = phase { return ApiRouter.UpdateReply(value: status(warnInterruptions: mode == "install")) }
         var checkError: String?
         var acceptedTransaction: String?
         operation = Task {
@@ -146,7 +147,7 @@ final class Updater {
             operation = nil
         }
         await operation?.value
-        let answer = status(checkError: checkError)
+        let answer = status(checkError: checkError, warnInterruptions: acceptedTransaction != nil)
         if mode == "check" { advanceAutomatically() }
         guard let acceptedTransaction else { return ApiRouter.UpdateReply(value: answer) }
         return ApiRouter.UpdateReply(value: answer) { [weak self] sent in
@@ -154,12 +155,21 @@ final class Updater {
         }
     }
 
-    private func status(checkError: String? = nil) -> JSONValue {
+    private func status(checkError: String? = nil, warnInterruptions: Bool = false) -> JSONValue {
         let error: String?
         switch phase {
         case .installing: error = nil
         case let .failed(reason, _): error = reason
         default: error = checkError ?? failure?.reason
+        }
+        let interruptions = RemoteUpdateActivity.shared.sessions
+        let hasInterruptions = interruptions.array?.isEmpty == false
+        let deferred: Bool
+        if case .ready = phase {
+            deferred = automaticEnabled
+                && RemoteUpdateActivity.shared.idleSeconds() < AppUpdate.automaticIdleThreshold
+        } else {
+            deferred = false
         }
         return .object([
             "currentVersion": .string(running ?? ""),
@@ -167,6 +177,10 @@ final class Updater {
             "installPending": .bool(phase.installPending),
             "phase": .string(phase.name),
             "error": error.map(JSONValue.string) ?? .null,
+            "deferred": deferred ? .string("remote viewer active") : .null,
+            "interruptions": warnInterruptions ? interruptions : .array([]),
+            "warning": warnInterruptions && hasInterruptions
+                ? .string("Installing now interrupts these remote sessions while easl restarts.") : .null,
         ])
     }
 
@@ -204,14 +218,17 @@ final class Updater {
         return nil
     }
 
-    private func automaticAction() -> AppUpdate.AutomaticAction {
-        switch phase {
+    private func automaticAction(for candidate: UpdatePhase? = nil) -> AppUpdate.AutomaticAction {
+        let candidate = candidate ?? phase
+        switch candidate {
         case .available, .ready: break
         default: return .none
         }
         guard let running, let current = AppVersion(running) else { return .none }
-        return AppUpdate.automaticAction(phase: phase, running: current, enabled: automaticEnabled,
-                                         idleSeconds: UserIdleWatch.shared.currentIdleSeconds(), rejectedSHA256: failure?.sha256,
+        return AppUpdate.automaticAction(phase: candidate, running: current, enabled: automaticEnabled,
+                                         idleSeconds: UserIdleWatch.shared.currentIdleSeconds(),
+                                         remoteIdleSeconds: RemoteUpdateActivity.shared.idleSeconds(),
+                                         rejectedSHA256: failure?.sha256,
                                          retryAfter: failure?.retryAfter, now: .now)
     }
 
@@ -321,12 +338,8 @@ final class Updater {
             let retryDeadline = Date.now.addingTimeInterval(AppUpdate.checkInterval)
             retryAfter = retryDeadline
             try persistInterruption("The update to easl \(release.version) was interrupted before completion.", retryAfter: retryDeadline)
-            var helper: pid_t? = nil
-            if !awaitingReply {
-                helper = try startHelper(staged.staging, replacing: staged.app, lease: staged.lease)
-            }
             let transaction = staged.staging.transaction
-            installation = Installation(transaction: transaction, helper: helper, delegate: delegate,
+            installation = Installation(transaction: transaction, automatic: automatic, helper: nil, delegate: delegate,
                                         retryAfter: retryDeadline, handoff: awaitingReply ? .awaitingReply : .quitting)
             phase = phase.after(.install) ?? phase
             if !awaitingReply { quitForInstall(transaction: transaction, afterReply: false) }
@@ -362,6 +375,18 @@ final class Updater {
             if afterReply { try? await Task.sleep(for: .seconds(1)) }
             guard let installation, installation.transaction == transaction,
                   case .quitting = installation.handoff else { return }
+            if installation.automatic, let release = phase.offered,
+               automaticAction(for: .ready(release)) != .install {
+                do {
+                    try installation.delegate.cancelPreparedUpdate()
+                    try restoreFailureRecord(failure)
+                    self.installation = nil
+                    phase = .ready(release)
+                } catch {
+                    abortInstallation(transaction: transaction, reason: Self.reason(error))
+                }
+                return
+            }
             if afterReply {
                 guard let staged, staged.staging.transaction == transaction else {
                     abortInstallation(transaction: transaction, reason: "The prepared update is no longer available. Nothing was replaced.")
@@ -372,12 +397,16 @@ final class Updater {
                                       reason: "Couldn't save the current open boards before updating: \(Self.reason(error))")
                     return
                 }
-                do {
-                    self.installation?.helper = try startHelper(staged.staging, replacing: staged.app, lease: staged.lease)
-                } catch {
-                    abortInstallation(transaction: transaction, reason: Self.reason(error))
-                    return
-                }
+            }
+            guard let staged, staged.staging.transaction == transaction else {
+                abortInstallation(transaction: transaction, reason: "The prepared update is no longer available. Nothing was replaced.")
+                return
+            }
+            do {
+                self.installation?.helper = try startHelper(staged.staging, replacing: staged.app, lease: staged.lease)
+            } catch {
+                abortInstallation(transaction: transaction, reason: Self.reason(error))
+                return
             }
             AppDelegate.terminateNow()
             try? await Task.sleep(for: .seconds(30))

@@ -61,6 +61,7 @@ final class SurfaceStream {
         self.scale = scale
         self.format = format
         flow = SurfaceFrameFlow(adaptive: format == .h264)
+        RemoteUpdateActivity.shared.begin(session: id, kind: .browser, board: board, tile: surface.tile?.objectID)
     }
 
     /// The seq the next frame takes, while one may go.
@@ -125,7 +126,7 @@ final class SurfaceStream {
             throw ApiRouter.Failure("unavailable", "this Mac hasn't delivered the stream's last \(queued) batches yet (a menu or drag here holds its event queue); nothing in this batch was accepted")
         }
         accepted = last.seq
-        lastInput = ProcessInfo.processInfo.systemUptime
+        recordInput()
         inputRevision.advance()
         _ = flow.supersedeRefinement()
         refinementTransfer = nil
@@ -142,6 +143,12 @@ final class SurfaceStream {
             result["text"] = .string(text)
         }
         return .object(result)
+    }
+
+    func recordInput() {
+        lastInput = ProcessInfo.processInfo.systemUptime
+        RemoteUpdateActivity.shared.record(session: id, kind: .browser, board: board,
+                                           tile: surface.tile?.objectID, now: lastInput)
     }
 
     /// Batches reach the page one after another, each once the one before is through.
@@ -225,7 +232,7 @@ final class SurfaceStream {
     private func deliver(_ frame: SurfaceEvent.Frame) {
         let owner = owner, board = board, revision = inputRevision
         let ticket = revision.value
-        delivery.async {
+        delivery.async { [weak self] in
             guard !frame.refresh || revision.value == ticket,
                   let line = try? EventLine("surface.frame", board: board, frame.json),
                   !frame.refresh || revision.value == ticket else { return }
@@ -233,7 +240,15 @@ final class SurfaceStream {
             if frame.refresh { whileCurrent = { revision.value == ticket } }
             else { whileCurrent = nil }
             if owner.send(line, whileCurrent: whileCurrent) {
+                let sentAt = ProcessInfo.processInfo.systemUptime
                 Metrics.shared.record("surface.frameWire", bytes: line.data.count)
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, !self.closed, self.peer.isOpen else { return }
+                        RemoteUpdateActivity.shared.record(session: self.id, kind: .browser, board: self.board,
+                                                           tile: self.surface.tile?.objectID, now: sentAt)
+                    }
+                }
             }
         }
     }

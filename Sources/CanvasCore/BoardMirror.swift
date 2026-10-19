@@ -246,6 +246,9 @@ public final class BoardMirror: BoardHost {
     private var ended = false
     private var lastHostAvailability: Availability = .open
     private var lifecycleBoards: Set<BoardID> = []
+    private var activitySupported = true
+    private var pendingActivity: Set<ObjectID?> = []
+    private var activityTask: Task<Void, Never>?
 
     public init(hostName: String, board: BoardID, connection: EaslConnection, diagrams: EaslConnection) {
         self.hostName = hostName
@@ -286,6 +289,7 @@ public final class BoardMirror: BoardHost {
         reading = nil
         redrawDue = diagramsState == .offline
         release()
+        registerActivity()
         return board
     }
     private func manifest() async throws -> JSONValue {
@@ -308,6 +312,7 @@ public final class BoardMirror: BoardHost {
     public func close() {
         guard !ended else { return }
         ended = true
+        cancelActivity()
         invalidate()
         for task in listeners { task.cancel() }
         listeners = []
@@ -339,8 +344,10 @@ public final class BoardMirror: BoardHost {
         let previous = self.state
         linkState = state
         if state != .online { refreshFailure = nil }
+        if state == .online { activitySupported = true }
         guard board != nil else { return }
         if state != .online {
+            cancelActivity()
             failAwaitingEvents(ApiRouter.Failure("unavailable", "\(hostName) disconnected before applying the browser target"))
             stale = true
             drops += 1
@@ -491,6 +498,54 @@ public final class BoardMirror: BoardHost {
         }
     }
 
+    /// Called only for viewer input, including keys sent through a terminal's SSH attachment.
+    public func userInput(terminal: ObjectID? = nil) {
+        guard !ended, availability == .open, connection.state == .online, activitySupported else { return }
+        if let terminal, board?.objects[terminal]?.type != .terminal { return }
+        pendingActivity.insert(terminal)
+        guard activityTask == nil else { return }
+        activityTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled, !self.pendingActivity.isEmpty {
+                let pending = self.pendingActivity
+                self.pendingActivity.removeAll(keepingCapacity: true)
+                for terminal in pending {
+                    await self.reportActivity(terminal: terminal, input: true)
+                }
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
+            self?.activityTask = nil
+        }
+    }
+
+    private func registerActivity() {
+        Task { @MainActor [weak self] in
+            guard let self, self.board != nil else { return }
+            await self.reportActivity(terminal: nil, input: false)
+        }
+    }
+
+    private func reportActivity(terminal: ObjectID?, input: Bool) async {
+        guard !ended, availability == .open, connection.state == .online, activitySupported else { return }
+        var params: [String: JSONValue] = ["board": .string(sessionBoardID), "input": .bool(input)]
+        if let terminal { params["terminal"] = .string(terminal) }
+        let before = drops
+        do {
+            _ = try await connection.request("viewer.activity", .object(params))
+        } catch let failure as EaslConnection.Failure where failure.code == "unsupported" || failure.message == "unknown method viewer.activity" {
+            guard drops == before else { return }
+            activitySupported = false
+            pendingActivity.removeAll()
+        } catch {
+            // Optional reports must never interrupt editing or terminal input on an older host.
+        }
+    }
+
+    private func cancelActivity() {
+        activityTask?.cancel()
+        activityTask = nil
+        pendingActivity.removeAll(keepingCapacity: true)
+    }
+
     /// `client.attach` on the board's link, preserving a focus event even if the user has
     /// already moved to another window while the previous attach was outstanding.
     private func attach(focused: Bool = false) {
@@ -626,6 +681,7 @@ public final class BoardMirror: BoardHost {
     }
 
     private func invalidate() {
+        cancelActivity()
         let written = Array(queues.keys) + replays.discardWrites().map(\.object)
         let touched = Set(written).union(written.compactMap { hostIDs[$0] })
         generation += 1
@@ -758,6 +814,7 @@ public final class BoardMirror: BoardHost {
             attach()
             listClients()
         }
+        if !stale, availability == .open { registerActivity() }
         drawAgainIfDue()
     }
 
@@ -1191,6 +1248,7 @@ public final class BoardMirror: BoardHost {
         guard connection.state == .online, connection.schemaVersion != nil else {
             throw ApiRouter.Failure("unavailable", "\(hostName) is offline (agent.prompt was not sent)")
         }
+        userInput(terminal: terminal)
         var params: [String: JSONValue] = ["target": .string(terminal), "text": .string(text), "composer": .bool(true)]
         if answer { params["answer"] = .bool(true) }
         let staged = !answer && !mentions.isEmpty

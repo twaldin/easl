@@ -1018,6 +1018,17 @@ struct AutomaticUpdatePolicyTests {
         }
     }
 
+    @Test func installationRequiresFiniteRemoteIdleAsWellAsLocalIdle() {
+        for remote: TimeInterval in [0, 599.999, -.infinity, .infinity, .nan] {
+            #expect(AppUpdate.automaticAction(phase: .ready(release), running: AppVersion("0.2.9")!,
+                                             enabled: true, idleSeconds: 600, remoteIdleSeconds: remote) == .none)
+        }
+        #expect(AppUpdate.automaticAction(phase: .ready(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 600, remoteIdleSeconds: 600) == .install)
+        #expect(AppUpdate.automaticAction(phase: .available(release), running: AppVersion("0.2.9")!,
+                                         enabled: true, idleSeconds: 0, remoteIdleSeconds: 0) == .stage)
+    }
+
     @Test func turningAutomaticUpdatesOffAlsoBlocksAnAlreadyVerifiedUpdate() {
         for phase in [UpdatePhase.available(release), .ready(release)] {
             #expect(AppUpdate.automaticAction(phase: phase, running: AppVersion("0.2.9")!,
