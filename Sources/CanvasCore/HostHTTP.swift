@@ -36,8 +36,9 @@ extension HostFiles {
         guard HostHTTP.methods.contains(request.method), HostNetworkPolicy.permits(request.url, rules: rules),
               request.range.map(HostHTTP.isRange) ?? true else { throw HostFileError.refused }
         let payload = HostHTTP.Payload(url: request.url.absoluteString, method: request.method, range: request.range, rules: rules)
-        let command = invocation(HostHTTP.program, request: try JSONEncoder().encode(payload))
-        try await session {
+        let input = try JSONEncoder().encode(payload)
+        try await httpSession { route in
+            let command = invocation(HostHTTP.program, request: input, route: route)
             let client = HostHTTPClient(command)
             try await withTaskCancellationHandler {
                 try await client.run(initialURL: request.url, rules: rules, receive: receive)

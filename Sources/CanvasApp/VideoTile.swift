@@ -21,6 +21,7 @@ final class VideoTile: NSView, TileContent {
     private var endedObserver: NSObjectProtocol?
     private var playTask: Task<Void, Never>?
     private var posterTask: Task<Void, Never>?
+    private var thumbnails: [UUID: (source: HostVideoAsset, generator: AVAssetImageGenerator)] = [:]
     private var posterView: NSImageView?
     private var snapshotCover: NSImageView?
     private var lastSnapshot: NSImage?
@@ -67,12 +68,16 @@ final class VideoTile: NSView, TileContent {
         posterTask?.cancel()
         MainActor.assumeIsolated {
             source?.cancel()
+            for job in thumbnails.values {
+                job.generator.cancelAllCGImageGeneration()
+                job.source.cancel()
+            }
             if let endedObserver { NotificationCenter.default.removeObserver(endedObserver) }
         }
     }
 
-    private func request(_ path: String, policy: HostFileRequest.Policy? = nil) -> HostFileRequest {
-        HostFileRequest(source: .directory(board.root.path), policy: policy ?? .boardAsset(path), bytes: false)
+    private func request(_ path: String) -> HostFileRequest {
+        HostFileRequest(source: .directory(board.root.path), policy: .boardAsset(path), bytes: false)
     }
 
     private func start() {
@@ -168,7 +173,7 @@ final class VideoTile: NSView, TileContent {
         posterView?.removeFromSuperview()
         posterView = nil
         guard let path = object.props["poster"]?.string, !path.isEmpty else { return }
-        var request = request(path, policy: .boardImage(path))
+        var request = request(path)
         request.bytes = true
         let files = files
         posterTask = Task { @MainActor [weak self] in
@@ -203,8 +208,8 @@ final class VideoTile: NSView, TileContent {
         let label = NSTextField(wrappingLabelWithString: message)
         label.font = .systemFont(ofSize: 12)
         label.textColor = .systemRed
-        label.frame = bounds.insetBy(dx: 12, dy: 12)
-        label.autoresizingMask = [.width, .height]
+        label.frame = CGRect(x: 12, y: 12, width: max(0, bounds.width - 24), height: 42)
+        label.autoresizingMask = [.width]
         addSubview(label)
         failureLabel = label
         reveal()
@@ -229,7 +234,8 @@ final class VideoTile: NSView, TileContent {
             time = CMTime(seconds: max(0, duration - 1 / 600.0), preferredTimescale: 600)
         }
         guard let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else { return nil }
-        var image = CIImage(cvPixelBuffer: buffer).transformed(by: transform)
+        let imageTransform = CGAffineTransform(a: transform.a, b: -transform.b, c: -transform.c, d: transform.d, tx: transform.tx, ty: transform.ty)
+        var image = CIImage(cvPixelBuffer: buffer).transformed(by: imageTransform)
         let extent = image.extent
         let scale = min(1, min(4096, max(1, pixels.width)) / extent.width, min(4096, max(1, pixels.height)) / extent.height)
         if scale < 1 { image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) }
@@ -250,24 +256,38 @@ final class VideoTile: NSView, TileContent {
             posterTask?.cancel()
             player.pause()
             source?.cancel()
+            cancelThumbnails()
         }
         hostBoardClosed = closed
+    }
+
+    private func cancelThumbnails() {
+        for job in thumbnails.values {
+            job.generator.cancelAllCGImageGeneration()
+            job.source.cancel()
+        }
     }
 
     private func thumbnail(at time: Double, pixels: CGSize) async throws -> NSImage {
         guard !hostBoardClosed else { throw CancellationError() }
         let source = HostVideoAsset(request: request(object.props["path"]?.string ?? ""), files: files)
-        defer { source.cancel() }
         let generator = AVAssetImageGenerator(asset: source.asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: min(4096, max(1, pixels.width)), height: min(4096, max(1, pixels.height)))
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
+        let id = UUID()
+        thumbnails[id] = (source, generator)
+        defer {
+            thumbnails[id] = nil
+            source.cancel()
+        }
         return try await withTaskCancellationHandler {
             let duration = try await source.asset.load(.duration).seconds
             let end = duration.isFinite && duration > 0 ? max(0, duration - 1 / 600.0) : time
             let frame = try await generator.image(at: CMTime(seconds: min(max(0, time), end), preferredTimescale: 600))
             try Task.checkCancellation()
+            guard !hostBoardClosed else { throw CancellationError() }
             return NSImage(cgImage: frame.image, size: CGSize(width: frame.image.width, height: frame.image.height))
         } onCancel: {
             generator.cancelAllCGImageGeneration()
@@ -310,7 +330,7 @@ final class VideoTile: NSView, TileContent {
                 if shouldPlay { player.play() } else { player.pause() }
             }
         }
-        player.isMuted = object.props["muted"] == .bool(true)
+        if previous.props["muted"] != object.props["muted"] { player.isMuted = object.props["muted"] == .bool(true) }
         if live {
             seek()
             if previous.props["poster"] != object.props["poster"] { loadPoster() }

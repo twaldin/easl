@@ -210,6 +210,7 @@ private final class ScratchHost {
         let processes = RemoteProcesses()
         let master = HostMaster(route: HostRoute(target: "fixture", controlPath: ssh.arguments[1], executable: ssh.executable), processes: processes)
         try FileManager.default.copyItem(atPath: ssh.arguments[1], toPath: master.fileReader.route.controlPath)
+        try FileManager.default.copyItem(atPath: ssh.arguments[1], toPath: master.httpReader.route.controlPath)
         let server = Process()
         let diagnosticURL = fixture.directory.appendingPathComponent("server.stderr")
         try Data().write(to: diagnosticURL)

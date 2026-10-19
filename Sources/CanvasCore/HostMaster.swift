@@ -63,6 +63,7 @@ public final class HostMaster {
     private var lastFailure: Failure?
     private var closed = false
     private var cachedFileReader: HostMaster?
+    private var cachedHTTPReader: HostMaster?
 
     var fileReader: HostMaster {
         if let cachedFileReader { return cachedFileReader }
@@ -76,6 +77,19 @@ public final class HostMaster {
         cachedFileReader = reader
         return reader
     }
+    var httpReader: HostMaster {
+        if let cachedHTTPReader { return cachedHTTPReader }
+        let key = HostedTerminal.instance(hostname: "http", support: route.controlPath)
+        let path = URL(fileURLWithPath: route.controlPath).deletingLastPathComponent().appendingPathComponent("easl-ssh-\(key)").path
+        let reader = HostMaster(
+            route: HostRoute(target: route.target, controlPath: path, executable: route.executable),
+            processes: processes
+        )
+        if closed { reader.close() }
+        cachedHTTPReader = reader
+        return reader
+    }
+
 
     // SSH can withhold a channel's first bytes behind another reply. File reads use one dedicated channel.
     private var fileBusy = false
@@ -248,6 +262,7 @@ public final class HostMaster {
     func close() {
         closed = true
         cachedFileReader?.close()
+        cachedHTTPReader?.close()
         starting?.cancel()
         if let master { RemoteProcesses.stop(master.process) }
         let waiting = fileWaiters

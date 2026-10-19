@@ -100,7 +100,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
-        guard let url = task.request.url, url.host == HtmlKit.host, let tile, !tile.hostBoardClosed else {
+        guard let url = task.request.url, let tile, !tile.hostBoardClosed else {
             return task.didFailWithError(URLError(.fileDoesNotExist))
         }
         guard !tile.isRemote || tile.files != nil else {

@@ -274,7 +274,9 @@ public struct HostFiles: Sendable {
         }
     }
 
-    func session<T: Sendable>(_ body: () async throws -> T) async throws -> T {
+    func httpSession<T: Sendable>(_ body: (HostRoute) async throws -> T) async throws -> T {
+        let master = await channelMaster?.httpReader
+        let route = master?.route ?? channelRoute
         var admitted = false
         let interrupt: (@Sendable () -> Void)?
         do {
@@ -296,7 +298,7 @@ public struct HostFiles: Sendable {
             throw HostFileError.unavailable(Self.sshRefused(message) ? "the host refused the SSH connection" : message)
         }
         do {
-            let value = try await body()
+            let value = try await body(route)
             if let master { await master.endFileSession() }
             return value
         } catch {
@@ -306,7 +308,7 @@ public struct HostFiles: Sendable {
         }
     }
 
-    func invocation(_ program: HostProgram, request: Data) -> (executable: String, arguments: [String], input: Data) {
+    func invocation(_ program: HostProgram, request: Data, route: HostRoute) -> (executable: String, arguments: [String], input: Data) {
         (route.executable, route.ssh(Self.command), program.frame + request)
     }
 
