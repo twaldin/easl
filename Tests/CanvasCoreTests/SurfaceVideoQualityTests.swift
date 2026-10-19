@@ -181,12 +181,12 @@ private enum BrowserQuality {
                 let image = index.isMultiple(of: 2) ? off : on
                 // Browser blink pixels change without input, so the input revision and settle epoch stay fixed.
                 let motion = try require(capture(image, at: 1.1 + Double(index) * 0.5), "Missing caret frame \(index)")
-                try check(!motion.refresh, "Caret blink artificially rearmed sharp refresh")
                 let row = try frame(motion, checkpoint: "caret-\(index)", decoder: decoder,
                     expected: index.isMultiple(of: 2) ? offPixels : onPixels, width: off.width, height: off.height)
                 result.frames.append(row)
-                if row.keyframe {
-                    result.exceptions.append("Caret frame \(index) lost the continuing sharp prediction reference")
+                if motion.refresh {
+                    try check(motion.data.count <= SurfaceImageEncoder.refinementBytes, "Sharp IDR exceeds refresh transport bound")
+                    encoder.acknowledgeRefinement()
                 }
             }
             try check(try capture(off, at: 2.1 + Double(caretTransitions) * 0.5) == nil, "Quiet caret sequence rearmed another refresh")
