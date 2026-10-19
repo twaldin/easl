@@ -379,11 +379,6 @@ final class HtmlTile: NSView, TileContent {
             try? await Task.sleep(for: .milliseconds(150))
             // A parked (hidden) page draws nothing worth keeping: the card keeps its last image.
             guard !Task.isCancelled, let self, self.live, let web = self.webView, !web.bounds.isEmpty else { return }
-            if self.object.type == .video {
-                let image = await Self.videoFrame(web)
-                if !Task.isCancelled, self.webView === web, let image { self.lastSnapshot = image }
-                return
-            }
             let configuration = WKSnapshotConfiguration()
             configuration.snapshotWidth = NSNumber(value: min(web.bounds.width, 1200))
             if let image = try? await web.takeSnapshot(configuration: configuration), !Task.isCancelled {
@@ -444,14 +439,6 @@ final class HtmlTile: NSView, TileContent {
 
     /// Card image: the live page's last capture, else an offscreen render.
     func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
-        if object.type == .video, let web = webView {
-            Task { @MainActor [weak self] in
-                let image = await Self.videoFrame(web)
-                if let self, self.webView === web, let image { self.lastSnapshot = image }
-                deliver(image ?? self?.lastSnapshot)
-            }
-            return
-        }
         if let lastSnapshot { return deliver(lastSnapshot) }
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
                                         appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
@@ -461,53 +448,6 @@ final class HtmlTile: NSView, TileContent {
             let render = await self.render(request)
             deliver(render.state == .rendered ? render.image : nil)
         }
-    }
-
-    func prepareSnapshot() async {
-        guard object.type == .video, let web = webView, let image = await Self.videoFrame(web), webView === web else { return }
-        lastSnapshot = image
-    }
-
-    private static func videoFrame(_ web: WKWebView, loadFirst: Bool = false) async -> NSImage? {
-        let script = """
-        const video = document.querySelector('video');
-        if (!video) return null;
-        if (loadFirst && video.readyState < 2) {
-          const seek = () => {
-            if (!video.seeking && video.currentTime === 0 && Number.isFinite(video.duration) && video.duration > 0)
-              video.currentTime = Math.min(0.001, video.duration / 2);
-          };
-          if (video.readyState >= 1) seek();
-          else video.addEventListener('loadedmetadata', seek, {once:true});
-        }
-        if (video.readyState < 2 && !video.error) {
-          await new Promise(resolve => {
-            const done = () => {
-              clearTimeout(timer);
-              video.removeEventListener('loadeddata', done);
-              video.removeEventListener('error', done);
-              resolve();
-            };
-            const timer = setTimeout(done, 8000);
-            video.addEventListener('loadeddata', done, {once:true});
-            video.addEventListener('error', done, {once:true});
-          });
-        }
-        if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) return null;
-        const canvas = document.createElement('canvas');
-        const scale = Math.min(1, 1200 / Math.max(video.clientWidth, video.clientHeight, 1));
-        canvas.width = Math.max(1, Math.round(video.clientWidth * scale));
-        canvas.height = Math.max(1, Math.round(video.clientHeight * scale));
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#111';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        const fit = Math.min(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
-        ctx.drawImage(video, (canvas.width-video.videoWidth*fit)/2, (canvas.height-video.videoHeight*fit)/2, video.videoWidth*fit, video.videoHeight*fit);
-        return canvas.toDataURL('image/png').split(',')[1];
-        """
-        guard let encoded = try? await web.callAsyncJavaScript(script, arguments: ["loadFirst": loadFirst], contentWorld: .page) as? String,
-              let data = Data(base64Encoded: encoded) else { return nil }
-        return NSImage(data: data)
     }
 
     // MARK: Offscreen render
@@ -538,11 +478,6 @@ final class HtmlTile: NSView, TileContent {
         case .failure(.unsettled(let reason)): return .placeholder(request, reason)
         }
         guard let web = renderWebView else { return .placeholder(request, "timed out") }
-        if object.type == .video {
-            guard let frame = await Self.videoFrame(web, loadFirst: true) else { return .placeholder(request, "video frame unavailable") }
-            let image = request.image { bounds in frame.drawUpright(in: bounds) }
-            return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered)
-        }
         if request.full, content.height > request.size.height + 1 {
             offscreenSettled = false
             let size = CGSize(width: request.size.width, height: min(content.height, RenderMath.maxContentExtent))
@@ -766,7 +701,6 @@ final class HtmlTile: NSView, TileContent {
         let networkChanged = (object.props["allowNetwork"] ?? .array([])) != (previous.props["allowNetwork"] ?? .array([]))
         let pageChanged = ["html", "root", "ref"].contains { object.props[$0] != previous.props[$0] }
         self.object = object
-        if pageChanged, object.type == .video { lastSnapshot = nil }
         if networkChanged, board.isRemote {
             contentSecurityPolicy = HtmlKit.contentSecurityPolicy(allow: allowNetwork)
         }

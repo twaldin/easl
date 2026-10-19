@@ -99,16 +99,6 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
         self.tile = tile
     }
 
-
-    static func boardFileURL(path: String) -> URL {
-        var url = URLComponents()
-        url.scheme = HtmlKit.scheme
-        url.host = HtmlKit.host
-        url.path = "/_file"
-        url.queryItems = [URLQueryItem(name: "path", value: path)]
-        return url.url!
-    }
-
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
         guard let url = task.request.url, let tile else {
             return task.didFailWithError(URLError(.fileDoesNotExist))
@@ -147,10 +137,8 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
         let key = ObjectIdentifier(task)
         let files = tile.files
         let source = tile.isRemote ? tile.hostImageSource : .directory(tile.boardRoot.path)
-        let explicitPath = url.path == "/_file"
-            ? URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "path" })?.value : nil
-        let assetPath = explicitPath ?? (url.path.hasPrefix(tile.boardRoot.path + "/") ? url.path : String(url.path.drop(while: { $0 == "/" })))
-        let assetKey = explicitPath == nil ? url.path : url.absoluteString
+        let assetPath = url.path.hasPrefix(tile.boardRoot.path + "/") ? url.path : String(url.path.drop(while: { $0 == "/" }))
+        let assetKey = url.path
         var request = HostFileRequest(source: source, policy: .boardAsset(assetPath), bytes: false)
         let live = webView === tile.webView
         reads[key] = Task { @MainActor [weak self, weak tile] in
@@ -168,9 +156,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                     request = cached.request
                 } else {
                     do {
-                        let asset: (request: HostFileRequest, file: HostFile)
-                        if explicitPath != nil { asset = (request, try await Self.read(request, files: files)) }
-                        else { asset = try await Self.readBoardAsset(request, absolutePath: url.path, files: files) }
+                        let asset = try await Self.readBoardAsset(request, absolutePath: url.path, files: files)
                         metadata = asset.file
                         request = asset.request
                     } catch {
@@ -179,9 +165,8 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                         case HostFileError.refused, HostFileError.notFound: break
                         default: throw error
                         }
-                        guard explicitPath == nil,
-                              let fallback = LocalImage.hostPageFile(requestPath: url.path, source: source,
-                                                                    temps: files?.temps ?? FollowFilter.tempDirectories) else { throw error }
+                        guard let fallback = LocalImage.hostPageFile(requestPath: url.path, source: source,
+                                                                   temps: files?.temps ?? FollowFilter.tempDirectories) else { throw error }
                         var imageRequest = fallback
                         imageRequest.bytes = false
                         metadata = try await Self.read(imageRequest, files: files)

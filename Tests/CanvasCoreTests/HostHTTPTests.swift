@@ -132,18 +132,6 @@ struct HostHTTPTests {
         let large = try #require(host.large)
         #expect(large.outcome == "aborted" && large.sent < ScratchHost.largeBytes, "the host's HTTP client closed its connection")
 
-        let acquired = Locked(0)
-        let sessions = Task {
-            for _ in 0..<HostMaster.maxFileSessions {
-                try await host.master.fileSession()
-                acquired.withLock { $0 += 1 }
-            }
-        }
-        let released = try await eventually { acquired.withLock { $0 } == HostMaster.maxFileSessions }
-        sessions.cancel()
-        _ = await sessions.result
-        for _ in 0..<acquired.withLock({ $0 }) { host.master.endFileSession() }
-        #expect(released, "the cancelled stream gave back its file session")
         #expect(try await host.fetch(HostHTTPRequest(url: host.url("/missing"))).heads.map(\.status) == [404])
     }
 }
