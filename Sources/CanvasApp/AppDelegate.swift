@@ -955,6 +955,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 first.tabGroup?.selectedWindow = restored.first { $0.index == saved.selected }?.window ?? first
             }
             if let selected = restored.first(where: { $0.index == saved.selected })?.window ?? restored.first?.window {
+                let tabbing = selected.tabbingMode
+                selected.tabbingMode = .disallowed
+                defer { selected.tabbingMode = tabbing }
                 selected.orderBack(nil)
                 if saved.minimized { selected.miniaturize(nil) }
             }

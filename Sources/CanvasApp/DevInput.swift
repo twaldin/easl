@@ -183,6 +183,8 @@ enum DevInput {
                     "board": .string(controller.board.id),
                     "closed": .bool(controller.hostBoardClosed),
                     "selected": .bool(window.tabGroup?.selectedWindow === window || window.tabGroup == nil),
+                    "minimized": .bool(window.isMiniaturized),
+                    "tabs": .array((window.tabGroup?.windows ?? [window]).map { .number(Double($0.windowNumber)) }),
                     "selectedObjects": .array(controller.canvas.selection.sorted().map(JSONValue.string)),
                     "viewport": controller.canvas.viewport.json,
                     "responder": .string(window.firstResponder.map { String(describing: type(of: $0)) } ?? ""),
