@@ -212,6 +212,12 @@ python3 Tests/RemoteClosedBoard/run.py --checkout "$PWD" --viewer-home "$EASL_DE
 
 With probes enabled, `applicationDidFinishLaunching` begins a `launch restore` span before scheduling board restoration. The first explicit perf or input-burst span ends and logs it; ending a span includes its still-open partial wake. The launch span initially has no window or display link, so zero frames does not mean no main-thread work. Bootstrap before that callback is not covered. For startup measurements, leave this single span active through held Git, completed restoration, and settle; a later idle span is not startup coverage. The lifetime `app.metrics` monitor also observes timer boundaries and is not a substitute for the same unsplit awake interval. Keep `sample`, accessibility walks, and pixel captures in separate diagnostic runs; their measured overruns remain evidence, not plain timing passes. Native tab switching and window-manager minimize/restore controls run after the board-load timing span, in the claimed GUI guest.
 
+`DevPerf` brackets a wake with separate Core Foundation observers: `afterWaiting` at the lowest order and `beforeWaiting` at the highest. An order-zero end observer misses later AppKit/Core Animation commits; timings from that older probe are lower bounds, not display-inclusive passes. `app.metrics` still uses its older monitor and remains diagnostic for this gate.
+
+`DevPerfWake` logs wall and CPU duration for each stretch of at least 50 ms, its offset within the span, and the scoped timers it ran. Parent and child timers can overlap: neither summing them nor subtracting their totals identifies an unmeasured wait. Pair the longest wall wake with its own CPU value, not the independent maximum-CPU wake.
+
+Predeclare fresh-process runs and retain every row, including the first launch after boot and harness seed processes. Record the actual native window bounds for both artifacts; a launcher frame request is not proof that an older app honored it. Different-sized windows do not support a size-matched painting comparison. Samples, native inspectors and Cua captures are separate functional/attribution diagnostics, with their overhead and capture-geometry limits recorded.
+
 ```text
 DevPerf: idle idle 6041 ms: frames 0 missed 0 (vsync 16.7 ms, longest frame 0.0 ms), main busy 259 ms, hitches 6 (longest 54.0 ms), main cpu 208 ms (longest 52.7 ms); longest wake: start+424.2 ms cpu 52.7 ms; counts: …; timings (n/total/max ms): …
 ```
