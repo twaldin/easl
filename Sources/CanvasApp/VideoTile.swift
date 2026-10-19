@@ -149,7 +149,7 @@ final class VideoTile: NSView, TileContent {
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
-                self?.showFailure(HostGit.refusal(error))
+                self?.showFailure(HostVideoAsset.message(error))
             }
         }
     }
@@ -262,7 +262,7 @@ final class VideoTile: NSView, TileContent {
             }
             return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered, reason: image == nil ? "bitmap allocation failed" : nil)
         } catch {
-            return TileRender(image: nil, contentSize: request.size, state: .failed, reason: HostGit.refusal(error))
+            return TileRender(image: nil, contentSize: request.size, state: .failed, reason: HostVideoAsset.message(error))
         }
     }
 
@@ -334,6 +334,11 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
         return try await HostFiles.readLocal(request)
     }
 
+    static func message(_ error: Error) -> String {
+        if let error = error as? HostFileError { return HostGit.refusal(error) }
+        return error.localizedDescription
+    }
+
     private func metadata() async throws -> HostFile {
         if let metadataTask { return try await metadataTask.value }
         let request = request
@@ -401,7 +406,7 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
                     try Task.checkCancellation()
                     if !loadingRequest.isCancelled { loadingRequest.finishLoading() }
                 } catch {
-                    if !(error is CancellationError) { self.failure = HostGit.refusal(error) }
+                    if !(error is CancellationError) { self.failure = Self.message(error) }
                     if !loadingRequest.isCancelled { loadingRequest.finishLoading(with: error) }
                 }
             }
