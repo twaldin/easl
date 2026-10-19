@@ -255,6 +255,23 @@ Stop the host to see "easl isn't running"; the viewer reconnects when the host s
 
 `remote-boards.json` stores each easld board's `host`, `sshTarget`, absolute server `home`, and `board`. Restarting without `EASL_DEV_REMOTE_HOME`, or with a different value, keeps the saved server home. Entries predating `home` use the dev override when set and the host's default only without it. With the override set, discovery refuses the default server even if an entry explicitly names it; it never redirects that address to another server. The picker remembers its most recent server home too. A custom Mac home uses its own `zmx` and `tmp` directories and has no known launcher, so Start easl is unavailable. Quit the viewer with the sheet open and verify that its SSH relays end before the app exits.
 
+### Terminal pixel alignment regression
+
+Run the native AppKit harness in an isolated macOS GUI session. It links the real app and uses a
+Ghostty in-memory terminal. It checks exact body sizes after fractional resizing, window-space
+alignment through flipped and magnified ancestors, unchanged tile geometry, the link underline,
+and a Hyper-click just above a terminal row boundary.
+
+```sh
+swift build --build-system native -j 2 --product Easl
+python3 Tests/TerminalPixels/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+For pixel proof, use a real 1x display mode and confirm the window's backing scale is 1.
+Compare WindowServer crops of the same terminal lines against main after ⌘-scroll, a pan and ⌘0,
+then after a pinch and ⌘0. Use whole-device-pixel body sizes at 100% board and content zoom.
+Fractional body sizes can still stretch Ghostty's drawable. An in-process render is not pixel proof.
+
 ### Default board directory regression
 
 The native regression links the compiled app and invokes the shared picker action with local,

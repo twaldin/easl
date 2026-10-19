@@ -2416,6 +2416,9 @@ final class CanvasView: NSScrollView {
         updateGrid()
         layoutPills()
         if !selection.isEmpty { placeHandles() }
+        // The scroll origin stays where the pan or zoom put it, fractions and all; live terminals
+        // move their surfaces onto device pixels instead (`TerminalTile.alignToPixels`).
+        for tile in tiles.values where tile.isLive { tile.content.alignToPixels() }
         board.activity.viewportChanged(viewport, actor: viewportMover, rev: board.revision)
         scheduleViewportSave()
         scheduleActivitySettle()
