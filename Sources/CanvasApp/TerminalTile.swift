@@ -41,6 +41,7 @@ final class TerminalTile: NSView, TileContent {
     func sessionShutdownChanged() {
         if endingSession {
             terminal.cancelImageInput()
+            terminal.controller = nil
         } else if !discarded, !board.isClosed, board.objects[objectID] != nil, terminal.controller == nil {
             terminal.controller = TerminalConfig.shared.controller
             host?.add(self)
