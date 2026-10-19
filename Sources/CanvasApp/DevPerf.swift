@@ -118,6 +118,7 @@ enum DevPerf {
 
     static func end() {
         guard enabled, let span else { return }
+        finishWake(at: CACurrentMediaTime(), cpu: threadCpu)
         span.link?.invalidate()
         self.span = nil
         let period = span.period * 1000
@@ -175,6 +176,10 @@ enum DevPerf {
             wokeCpu = cpu
             return
         }
+        finishWake(at: now, cpu: cpu)
+    }
+
+    private static func finishWake(at now: CFTimeInterval, cpu: Double) {
         guard let woke = wokeAt, let span else { return }
         wokeAt = nil
         let index = span.phases.count - 1

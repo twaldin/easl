@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        DevPerf.begin("launch", phase: "restore", window: nil)
         localRestore = Task { @MainActor in await restoreBoardsAtLaunch() }
         NSApp.mainMenu = Self.makeMenu()
         registry.drawingMachine = ClientIdentity.thisMac.drawingMachine
