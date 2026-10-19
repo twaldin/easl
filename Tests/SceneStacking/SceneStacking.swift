@@ -89,9 +89,34 @@ private enum SceneStacking {
         let edge = NSPoint(x: 80, y: 140)
         require(canvas.shape(atWindowPoint: windowPoint(edge, in: canvas)) == shape.id,
                 "unfilled shape stroke must still hit the front shape")
+        try board.delete(shape.id)
+        let drawings: [(name: String, type: ObjectType, props: JSONValue)] = [
+            ("arrow", .arrow, ArrowSpec(from: .point(CGPoint(x: 80, y: 140)), to: .point(CGPoint(x: 240, y: 140)), color: "#ff0000").props),
+            ("ink", .shape, .object(["kind": "ink", "color": "#ff0000", "points": [[0, 0], [80, 0], [160, 0]]])),
+        ]
+        for fixture in drawings {
+            let drawing = board.create(type: fixture.type, props: fixture.props, frame: Frame(x: 80, y: 140, w: 160, h: 1))
+            canvas.setSelection([drawing.id])
+            canvas.bringToFront()
+            canvas.setSelection([])
+            let front = try await render(canvas)
+            require(front.objects.map(\.id) == [image.id, drawing.id], "\(fixture.name) must render above the tile")
+            require(canvas.visibleObjects(pixelsPerPoint: 1).map(\.id) == [image.id, drawing.id], "\(fixture.name) front snapshot order must match")
+            checkHit(canvas, image: image.id, shape: drawing.id, label: "\(fixture.name) front")
+            canvas.setSelection([drawing.id])
+            canvas.sendToBack()
+            canvas.setSelection([])
+            let back = try await render(canvas)
+            require(back.objects.map(\.id) == [drawing.id, image.id], "\(fixture.name) must render below the tile")
+            require(canvas.visibleObjects(pixelsPerPoint: 1).map(\.id) == [drawing.id, image.id], "\(fixture.name) back snapshot order must match")
+            requireCyan(try pixel(back), "\(fixture.name) must not cover the foreground tile")
+            checkHit(canvas, image: image.id, shape: nil, label: "\(fixture.name) back")
+            try board.delete(drawing.id)
+        }
 
         if failures > 0 { exit(1) }
         print("PASS mixed shape/tile render pixels, bottom-to-top order, native hit testing, reverse stacking commands, and unfilled interior pass-through")
+        print("PASS snapshot stacking metadata and arrow/ink front/back transitions")
     }
 
     private static func writeFixture(to url: URL) throws {
@@ -140,6 +165,8 @@ private enum SceneStacking {
         let expected = shapeInFront ? [image, shape] : [shape, image]
         require(output.objects.map(\.id) == expected,
                 "\(label) rendered bottom-to-top order must be \(expected), got \(output.objects.map(\.id))")
+        require(canvas.visibleObjects(pixelsPerPoint: 1).map(\.id) == expected,
+                "\(label) snapshot metadata must report the same bottom-to-top order")
         require(output.objects.first(where: { $0.id == image })?.state == .rendered,
                 "\(label) must render the real image tile, not a placeholder")
         let color = try pixel(output)
