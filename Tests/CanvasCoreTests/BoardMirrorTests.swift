@@ -42,7 +42,7 @@ final class BoardMirrorTests {
         // The whole suite keeps the main actor (the router's) busy for seconds at a time.
         let fast = EaslConnection.Backoff(initial: .milliseconds(50), maximum: .milliseconds(200))
         func link(_ path: String) -> EaslConnection { .unixSocket(path, backoff: fast, handshakeTimeout: .seconds(60)) }
-        let mirror = BoardMirror(hostName: "home", board: board ?? host.id, connection: link(socket), renders: link(socket))
+        let mirror = BoardMirror(hostName: "home", board: board ?? host.id, connection: link(socket), diagrams: link(socket))
         mirrors.append(mirror)
         return (mirror, try await mirror.load())
     }
@@ -1447,7 +1447,7 @@ final class BoardMirrorTests {
         try await eventually { reads.withLock { $0 > before } && mirror.reading == nil }
         #expect(mirror.availability == .closed)
         #expect(board.objects[edited.id] == edited)
-        let initiallyClosed = BoardMirror(hostName: "home", board: host.id, connection: .unixSocket(socket), renders: .unixSocket(socket))
+        let initiallyClosed = BoardMirror(hostName: "home", board: host.id, connection: .unixSocket(socket), diagrams: .unixSocket(socket))
         defer { initiallyClosed.close() }
         await #expect(throws: ApiRouter.Failure.self) { _ = try await initiallyClosed.load() }
         _ = await registry.open(root: host.root)
@@ -1879,7 +1879,7 @@ final class BoardMirrorTests {
     /// A board's window for `serve`: key while `focused` says, its terminals typed into by `submit`.
     func window(focused: @escaping () -> Bool = { false }, submit: @escaping (ObjectID, String) async -> Bool = { _, _ in false }) -> ViewerWindow {
         ViewerWindow(focused: focused, viewState: { nil },
-                     render: { _, _ in throw ApiRouter.Failure("unavailable", "nothing is drawn here") }, hostPicture: { _ in false },
+                     render: { _, _ in throw ApiRouter.Failure("unavailable", "nothing is drawn here") },
                      measureHTML: { _, _ in throw ApiRouter.Failure("unavailable", "no page is laid out here") },
                      reload: { id, _, _ in throw ApiRouter.Failure("unavailable", "browser tile \(id) isn't shown here") },
                      browse: { id, _, _ in throw ApiRouter.Failure("unavailable", "browser tile \(id) isn't shown here") },

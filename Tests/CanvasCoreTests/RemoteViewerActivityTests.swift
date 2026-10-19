@@ -41,7 +41,7 @@ final class RemoteViewerActivityTests {
 
     func mirror() async throws -> BoardMirror {
         let mirror = BoardMirror(hostName: "host", board: host.id,
-                                 connection: .unixSocket(socket), renders: .unixSocket(socket))
+                                 connection: .unixSocket(socket), diagrams: .unixSocket(socket))
         _ = try await mirror.load()
         return mirror
     }

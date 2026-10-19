@@ -1400,16 +1400,35 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
-        guard let image else { return .placeholder(request, relayed ? drawingStatus : "not streamed from \(remote.host.name) yet") }
+        if drawingOffline {
+            return TileRender(image: nil, contentSize: request.size, state: .failed, reason: drawingStatus)
+        }
+        guard streamID != nil, owned.current()?.state == .online else {
+            return TileRender(image: nil, contentSize: request.size, state: .failed,
+                              reason: linkStatus ?? "not streaming from \(remote.host.name)")
+        }
+        guard lastAcked > 0, let image else { return .placeholder(request, "waiting for the current browser stream's first frame") }
+        let drawn = draw(image, request: request)
+        return TileRender(image: drawn, contentSize: request.size, state: drawn == nil ? .failed : .rendered)
+    }
+
+    func cardSnapshot() async -> NSImage? {
+        let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
+                                        appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
+        await MainTurns.next()
+        guard !Task.isCancelled, let image else { return nil }
+        return draw(image, request: request)
+    }
+
+    private func draw(_ image: NSImage, request: TileRenderRequest) -> NSImage? {
         let pageSize = self.pageSize
-        let drawn = request.image { bounds in
+        return request.image { bounds in
             NSColor.controlBackgroundColor.setFill()
             bounds.fill()
             let bar = min(BrowserTile.chromeHeight, bounds.height)
             let page = NSRect(x: 0, y: bar, width: bounds.width, height: max(0, bounds.height - bar))
             image.drawUpright(in: Self.fitted(pageSize ?? image.size, in: page))
         }
-        return TileRender(image: drawn, contentSize: request.size, state: drawn == nil ? .failed : .rendered)
     }
 
     private static func fitted(_ size: CGSize, in page: NSRect) -> NSRect {

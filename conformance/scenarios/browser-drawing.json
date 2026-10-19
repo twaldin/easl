@@ -1,5 +1,5 @@
 {
-  "description": "browser.call and browser.report on an easld board. A new browser takes the creating Mac when that connection is an eligible attached client. browser.call and object.reload go only to that persisted identity. Another attached Mac cannot report the page. URL credit follows caller; pageTitle is bookkeeping. No page body is stored.",
+  "description": "browser.call, browser.report and view.render on an easld board. A new browser takes the creating Mac when that connection is an eligible attached client. browser.call, object.reload and named-browser view.render go only to that persisted identity, even when another viewer focused the board last. Another attached Mac cannot report the page. URL credit follows caller; pageTitle is bookkeeping. No page body is stored.",
   "steps": [
     {
       "call": "client.attach",
@@ -10,13 +10,14 @@
         "app": "0.2.0",
         "host": "home",
         "identity": "mch_home",
-        "serves": ["browser.call", "object.reload"],
+        "serves": ["browser.call", "object.reload", "view.render"],
         "boards": ["{{board}}"],
         "focused": "{{board}}"
       },
       "replies": {
         "browser.call": [{ "result": { "url": "https://example.com/drawn" } }],
-        "object.reload": [{ "result": { "loaded": true, "url": "https://example.com/drawn" } }]
+        "object.reload": [{ "result": { "loaded": true, "url": "https://example.com/drawn" } }],
+        "view.render": [{ "result": { "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "format": "png", "width": 1, "height": 1 } }]
       },
       "ignore": {
         "request.schema": "the schema's hash changes with every schema edit",
@@ -32,8 +33,9 @@
         "app": "0.2.0",
         "host": "work",
         "identity": "mch_work",
-        "serves": ["browser.call", "object.reload"],
-        "boards": ["{{board}}"]
+        "serves": ["browser.call", "object.reload", "view.render"],
+        "boards": ["{{board}}"],
+        "focused": "{{board}}"
       },
       "replies": {
         "browser.call": [{ "result": { "url": "https://wrong.example/" } }]
@@ -77,6 +79,11 @@
       "conn": "home",
       "params": { "id": "{{web.object.id}}", "url": "https://example.com/drawn", "caller": "{{term.object.id}}", "pageTitle": "Drawn" },
       "expect": { "response.ok": true, "response.result.object.props.url": "https://example.com/drawn", "response.result.object.props.pageTitle": "Drawn", "response.result.object.props.drawingMachine.id": "mch_home" }
+    },
+    {
+      "call": "view.render",
+      "params": { "target": "{{web.object.id}}", "inline": true },
+      "expect": { "response.ok": true, "response.result.data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "response.result.format": "png", "response.result.width": 1, "response.result.height": 1 }
     }
   ]
 }

@@ -136,12 +136,12 @@ func TestOfflineDrawingMachineIsNotRetriedOnAnotherClient(t *testing.T) {
 	attached := f.as(home, "client.attach", map[string]any{
 		"version": float64(api.SchemaVersion), "schema": api.SchemaHash,
 		"app": "0.2.0", "host": "home", "identity": "mch_home",
-		"serves": []any{"browser.call", "object.reload"}, "boards": []any{f.board.ID()},
+		"serves": []any{"browser.call", "object.reload", "view.render"}, "boards": []any{f.board.ID()},
 	})
 	if attached["ok"] != true {
 		t.Fatalf("attach: %v", attached)
 	}
-	attachDrawing(f, other, "mch_other", "work", true, "browser.call", "object.reload")
+	attachDrawing(f, other, "mch_other", "work", true, "browser.call", "object.reload", "view.render")
 	page := f.result("object.create", map[string]any{
 		"type": "browser", "props": map[string]any{"url": "https://example.com/"}, "frame": browserFrame(),
 	})["object"].(map[string]any)["id"].(string)
@@ -162,6 +162,10 @@ func TestOfflineDrawingMachineIsNotRetriedOnAnotherClient(t *testing.T) {
 	code, message = errorOf(f.call("object.reload", map[string]any{"id": page}))
 	if code != "unavailable" || message != "draws on home, which is offline" {
 		t.Fatalf("offline reload: %s %q", code, message)
+	}
+	code, message = errorOf(f.call("view.render", map[string]any{"target": page, "inline": true}))
+	if code != "unavailable" || message != "draws on home, which is offline" {
+		t.Fatalf("offline render: %s %q", code, message)
 	}
 	if len(other.asked) != 0 {
 		t.Fatalf("dropped call was retried on %v", other.asked)

@@ -65,9 +65,9 @@ protocol BoardHost: AnyObject {
 /// so a failed write puts the host's object back (and says why in `onNotice`). A created object
 /// takes the host's id when its create is answered (`Board.rekeyHost`). Back online after a drop,
 /// the board is read again and the difference applied; the host's events wait while it is read
-/// and follow it, so none is undone by the read. Once both links are back, `onRedraw` tells the
-/// tiles that show the host's drawings to ask for new ones. On an easld host the board's window
-/// answers easld's delegated calls, attached as its client on the board's link (`serve`).
+/// and follow it, so none is undone by the read. Once both links are back, `onRedraw` refreshes
+/// diagram graphs. On an easld host the board's window answers easld's delegated calls,
+/// attached as its client on the board's link (`serve`).
 @MainActor
 public final class BoardMirror: BoardHost {
     /// The host as the user knows it, for titles and notices.
@@ -81,7 +81,7 @@ public final class BoardMirror: BoardHost {
     public private(set) var mergedBoards: [BoardID] = []
     /// Subscriptions, reads, writes and prompts.
     public let connection: EaslConnection
-    private let renders: EaslConnection
+    private let diagrams: EaslConnection
     /// Nil until `load` succeeded.
     public private(set) var board: Board?
     public enum Availability: Equatable, Sendable {
@@ -98,10 +98,7 @@ public final class BoardMirror: BoardHost {
     public var onState: ((EaslConnection.State) -> Void)?
     /// Something to tell the user (a write the host refused, a create that failed).
     public var onNotice: ((String) -> Void)?
-    /// A link dropped and is back, the board has been read again, and the render link is online:
-    /// the tiles that show the host's drawing of an object ask for a fresh one (once). The read
-    /// announces only objects that changed, so a drawing that failed or went stale while a link
-    /// was down would otherwise stay as it is until the object changes.
+    /// Refresh diagram graphs after reconnect, including objects unchanged by the board read.
     public var onRedraw: (() -> Void)?
     /// This viewer as the board's easld's client (docs/design/next.md "The client protocol");
     /// nil until `serve`, and on an app server, which answers those calls itself.
@@ -238,12 +235,8 @@ public final class BoardMirror: BoardHost {
     /// The host's events that arrived while the board was being read or a create was in flight,
     /// applied in order once neither is (`release`), so nothing they say is undone or doubled.
     private var held: [EaslConnection.Event] = []
-    /// The tiles' drawings may be stale or failed: a link dropped after the board loaded, or the
-    /// render link was offline when it did, and `onRedraw` hasn't been told since.
     private var redrawDue = false
-    /// `renders`' state as last heard (the board's own link is `state`). It starts as the first
-    /// connect's, `connecting`, whether or not that was heard yet.
-    private(set) var rendersState: EaslConnection.State = .connecting
+    private var diagramsState: EaslConnection.State = .connecting
     /// The link went down after the board loaded: read it again once back online.
     private var stale = false
     /// How many times the link went down after the board loaded (a read that spans one reads again).
@@ -257,12 +250,12 @@ public final class BoardMirror: BoardHost {
     private var pendingActivity: Set<ObjectID?> = []
     private var activityTask: Task<Void, Never>?
 
-    public init(hostName: String, board: BoardID, connection: EaslConnection, renders: EaslConnection) {
+    public init(hostName: String, board: BoardID, connection: EaslConnection, diagrams: EaslConnection) {
         self.hostName = hostName
         boardID = board
         sessionBoardID = board
         self.connection = connection
-        self.renders = renders
+        self.diagrams = diagrams
     }
 
     /// Subscribes, reads the board and returns it; throws the host's failure (`not_found`: no such
@@ -294,9 +287,7 @@ public final class BoardMirror: BoardHost {
         installAttention(manifest["attention"], on: board)
         installComposerReceipts(manifest["composerReceipts"])
         reading = nil
-        // The tiles are made now: they ask over a render link that is offline and fail at once, and
-        // that is a drawing to ask for again. (A drop heard before the board was read is no debt.)
-        redrawDue = rendersState == .offline
+        redrawDue = diagramsState == .offline
         release()
         registerActivity()
         return board
@@ -331,11 +322,11 @@ public final class BoardMirror: BoardHost {
         composerOrigins = RemoteComposerOrigins()
         connection.serve(nil)
         connection.close()
-        renders.close()
+        diagrams.close()
     }
 
     private func listen() {
-        let events = connection.events(), states = connection.states(), renderStates = renders.states()
+        let events = connection.events(), states = connection.states(), diagramStates = diagrams.states()
         listeners.append(Task { @MainActor [weak self] in
             for await event in events { self?.received(event) }
         })
@@ -343,7 +334,7 @@ public final class BoardMirror: BoardHost {
             for await state in states { self?.changed(state) }
         })
         listeners.append(Task { @MainActor [weak self] in
-            for await state in renderStates { self?.rendersChanged(state) }
+            for await state in diagramStates { self?.diagramsChanged(state) }
         })
     }
 
@@ -379,22 +370,16 @@ public final class BoardMirror: BoardHost {
         if state == .online, stale { Task { await reread() } }
     }
 
-    /// The render link's next state. Only `offline` is a drop (a link that went down, or an attempt
-    /// that failed: drawings asked for meanwhile failed, or came from before); `connecting` is the
-    /// first connect, or the next attempt after a drop, and heard late it is no reason to draw
-    /// again. Internal for the tests, which hear it where the stream would.
-    func rendersChanged(_ state: EaslConnection.State) {
+    private func diagramsChanged(_ state: EaslConnection.State) {
         guard !ended else { return }
-        guard state != rendersState else { return }
-        rendersState = state
+        guard state != diagramsState else { return }
+        diagramsState = state
         if state == .offline { redrawDue = true }
         drawAgainIfDue()
     }
 
-    /// Tells `onRedraw` once both links are online and the board is as the host has it: after a
-    /// read, or when the render link is the last to come back.
     private func drawAgainIfDue() {
-        guard !ended, availability == .open, redrawDue, board != nil, reading == nil, !stale, state == .online, rendersState == .online else { return }
+        guard !ended, availability == .open, redrawDue, board != nil, reading == nil, !stale, state == .online, diagramsState == .online else { return }
         redrawDue = false
         onRedraw?()
     }
@@ -410,7 +395,7 @@ public final class BoardMirror: BoardHost {
         } else {
             connection.reconnect()
         }
-        renders.reconnect()
+        diagrams.reconnect()
     }
 
     // MARK: The client protocol
@@ -1253,8 +1238,6 @@ public final class BoardMirror: BoardHost {
         return .applied(reply)
     }
 
-    // MARK: Prompts and renders
-
     /// The composer's send to one terminal on the host: `agent.prompt` with `composer` (the host
     /// sends it as its own composer would). Throws `ApiRouter.Failure` with the host's reason.
     public func prompt(_ text: String, to terminal: ObjectID, mentions: [Mention], answer: Bool) async throws {
@@ -1316,7 +1299,7 @@ public final class BoardMirror: BoardHost {
     /// diagram once this viewer's writes to it are answered, so a reload the user's expansion
     /// started computes that expansion. The host writes the graph, which arrives as the object's
     /// update: the answer comes once the computation started (`loaded` false), and the
-    /// computation goes on there however long it takes. Sent on `renders`, as the host answers a
+    /// computation goes on there however long it takes. Sent on `diagrams`, as the host answers a
     /// link's requests one at a time: the board's own link never waits behind it. Throws
     /// `ApiRouter.Failure` with the host's reason (`unavailable`: easld has no client to compute it).
     public func reloadDiagram(_ id: ObjectID) async throws -> JSONValue {
@@ -1327,7 +1310,7 @@ public final class BoardMirror: BoardHost {
         try requireCurrent(generation)
         guard let target = target(id) else { throw ApiRouter.Failure("not_found", "\(id) isn't on \(hostName)") }
         do {
-            let result = try await renders.request("object.reload", .object(["id": .string(target), "timeoutMs": .number(0)]), timeout: Self.diagramReloadDeadline)
+            let result = try await diagrams.request("object.reload", .object(["id": .string(target), "timeoutMs": .number(0)]), timeout: Self.diagramReloadDeadline)
             try requireCurrent(generation)
             return result
         } catch let failure as EaslConnection.Failure {

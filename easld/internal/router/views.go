@@ -115,7 +115,19 @@ func (r *Router) render(id any, p map[string]any) (any, error) {
 	params["inline"] = true
 	params["format"] = format
 	delete(params, "out")
-	c, err := r.client("view.render", b.ID(), "view.render is drawn by the app, as the user sees the board")
+	var c *clients.Client
+	if len(ids) == 1 && b.Objects()[ids[0]].Type == model.Browser {
+		machine, host, has := drawingOf(b.Objects()[ids[0]])
+		if !has {
+			return nil, noDrawingMac(ids[0])
+		}
+		c = r.clients.ChooseExact(machine, b.ID(), "view.render")
+		if c == nil {
+			return nil, r.drawingUnavailable(machine, host, b.ID(), "view.render")
+		}
+	} else {
+		c, err = r.client("view.render", b.ID(), "view.render is drawn by the app, as the user sees the board")
+	}
 	if err != nil {
 		return nil, err
 	}

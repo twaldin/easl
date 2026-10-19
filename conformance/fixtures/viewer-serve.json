@@ -1,7 +1,7 @@
 {
   "scenario": "viewer-serve",
-  "description": "A scripted Mac client serves object.measure, view.render and browser object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a host-picture refusal is the caller's. client.list names attached clients. easld only.",
-  "recordedOn": "scratch easld schema2 remote edits and composer receipts",
+  "description": "A scripted Mac client serves object.measure, view.render and browser object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a client refusal is relayed unchanged. client.list names attached clients. easld only.",
+  "recordedOn": "easl-g9-real-tiles-1 integrated scratch easld",
   "steps": [
     {
       "step": "board.open",
@@ -1043,7 +1043,7 @@
       "response": {
         "error": {
           "code": "unavailable",
-          "message": "<obj:1> is only a host picture: view.render cannot draw it"
+          "message": "<obj:1> could not be rendered by the client"
         },
         "id": "r17",
         "ok": false

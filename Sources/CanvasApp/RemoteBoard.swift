@@ -67,9 +67,8 @@ extension ViewerWindow {
             viewState: { [weak controller] in controller?.canvas.viewState },
             render: { [weak controller] request, format in
                 guard let canvas = controller?.canvas else { throw ApiRouter.Failure("unavailable", "this board's window closed") }
-                return try await canvas.render(request, format: format, hostPictures: false)
+                return try await canvas.render(request, format: format)
             },
-            hostPicture: { [weak controller] id in controller?.canvas.showsHostPicture(id) ?? false },
             measureHTML: { [weak controller] props, width in
                 guard let controller, let files = controller.remote?.files else { throw ApiRouter.Failure("unavailable", "this board's window closed") }
                 return try await HtmlTile.measure(props: props, width: width, remote: controller.board, files: files)

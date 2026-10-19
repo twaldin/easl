@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "7d90277f4d738450"
+const SchemaHash = "126d8fb018b8888a"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (

@@ -322,7 +322,7 @@ func TestViewRenderWritesTheDaemonFileAndRelaysTargetErrors(t *testing.T) {
 		jpegAnswer,
 		jpegAnswer,
 		pixelAnswer(),
-		{"ok": false, "error": map[string]any{"code": "unavailable", "message": id + " is only a host picture: view.render cannot draw it"}},
+		{"ok": false, "error": map[string]any{"code": "unavailable", "message": id + " could not be rendered by the client"}},
 		{"ok": true, "result": map[string]any{"data": "not-base64", "format": "png", "width": 1.0, "height": 1.0}},
 		{"ok": true, "result": map[string]any{"data": pixelPNG + "!", "format": "png", "width": 1.0, "height": 1.0}},
 		{"ok": true, "result": map[string]any{"data": pixelPNG, "format": "png", "width": 9.0, "height": 1.0}},
@@ -369,8 +369,8 @@ func TestViewRenderWritesTheDaemonFileAndRelaysTargetErrors(t *testing.T) {
 	}
 
 	code, message = errorOf(f.call("view.render", map[string]any{"target": id, "out": filepath.Join(t.TempDir(), "nope.png")}))
-	if code != "unavailable" || message != id+" is only a host picture: view.render cannot draw it" {
-		t.Fatalf("host picture: %s %s", code, message)
+	if code != "unavailable" || message != id+" could not be rendered by the client" {
+		t.Fatalf("client refusal: %s %s", code, message)
 	}
 	code, message = errorOf(f.call("view.render", map[string]any{"target": id, "inline": true}))
 	if code != "internal" || !strings.Contains(message, "not base64") {
@@ -383,6 +383,88 @@ func TestViewRenderWritesTheDaemonFileAndRelaysTargetErrors(t *testing.T) {
 	code, message = errorOf(f.call("view.render", map[string]any{"target": id, "inline": true}))
 	if code != "internal" || !strings.Contains(message, "1×1") || !strings.Contains(message, "not 9×1") {
 		t.Fatalf("wrong size: %s %s", code, message)
+	}
+}
+
+func TestViewRenderRoutesNamedBrowserToItsDrawingClient(t *testing.T) {
+	f := newFixture(t)
+	home := &scriptedClient{router: f.router, replies: []map[string]any{pixelAnswer(), pixelAnswer()}}
+	viewer := &scriptedClient{router: f.router, replies: []map[string]any{pixelAnswer(), pixelAnswer(), pixelAnswer()}}
+	attachDrawing(f, home, "mch_home", "home", false, "browser.call", "view.render")
+	attachDrawing(f, viewer, "mch_viewer", "viewer", true, "browser.call", "view.render")
+	page := idOf(f.result("object.create", map[string]any{
+		"type": "browser", "props": map[string]any{"url": "https://example.com/"}, "frame": browserFrame(),
+	}))
+	other := idOf(f.result("object.create", map[string]any{
+		"type": "browser", "props": map[string]any{
+			"url": "https://example.org/", "drawingMachine": map[string]any{"id": "mch_elsewhere", "host": "elsewhere"},
+		}, "frame": browserFrame(),
+	}))
+	noteID := idOf(f.result("object.create", note(0, map[string]any{"markdown": "draw"})))
+	for _, target := range []any{page, []any{page}} {
+		result := f.result("view.render", map[string]any{"target": target, "inline": true})
+		if result["data"] != pixelPNG || result["format"] != "png" || result["width"] != 1.0 {
+			t.Fatalf("named browser render = %v", result)
+		}
+	}
+	for _, target := range []any{[]any{page, other}, []any{page, noteID}, browserFrame()} {
+		result := f.result("view.render", map[string]any{"target": target, "inline": true})
+		if result["data"] != pixelPNG || result["width"] != 1.0 {
+			t.Fatalf("viewer composition = %v", result)
+		}
+	}
+	wantHome := []map[string]any{
+		{"board": f.board.ID(), "target": page, "inline": true, "format": "png"},
+		{"board": f.board.ID(), "target": []any{page}, "inline": true, "format": "png"},
+	}
+	wantViewer := []map[string]any{
+		{"board": f.board.ID(), "target": []any{page, other}, "inline": true, "format": "png"},
+		{"board": f.board.ID(), "target": []any{page, noteID}, "inline": true, "format": "png"},
+		{"board": f.board.ID(), "target": browserFrame(), "inline": true, "format": "png"},
+	}
+	if !reflect.DeepEqual(askedParams(home), wantHome) || !reflect.DeepEqual(askedParams(viewer), wantViewer) {
+		t.Fatalf("render routing home=%#v viewer=%#v", askedParams(home), askedParams(viewer))
+	}
+}
+
+func TestViewRenderDoesNotReplaceAnUnavailableDrawingClientWithTheViewer(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		owner   map[string]any
+		attach  bool
+		message string
+	}{
+		{"unassigned", nil, false, ""},
+		{"offline", map[string]any{"id": "mch_home", "host": "home"}, false, "draws on home, which is offline"},
+		{"unsupported", map[string]any{"id": "mch_home", "host": "home"}, true, "draws on home, which does not serve view.render"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			props := map[string]any{"url": "https://example.com/"}
+			if tc.owner != nil {
+				props["drawingMachine"] = tc.owner
+			}
+			page := idOf(f.result("object.create", map[string]any{"type": "browser", "props": props, "frame": browserFrame()}))
+			if tc.attach {
+				home := &scriptedClient{router: f.router}
+				attachDrawing(f, home, "mch_home", "home", false, "browser.call")
+			}
+			viewer := &scriptedClient{router: f.router, replies: []map[string]any{pixelAnswer()}}
+			attachDrawing(f, viewer, "mch_viewer", "viewer", true, "view.render")
+			want := tc.message
+			if want == "" {
+				want = page + " has no drawing Mac yet"
+			}
+			code, message := errorOf(f.call("view.render", map[string]any{"target": page, "inline": true}))
+			if code != "unavailable" || message != want {
+				t.Fatalf("render failure = %s %q, want unavailable %q", code, message, want)
+			}
+			result := f.result("view.render", map[string]any{"target": browserFrame(), "inline": true})
+			wantParams := []map[string]any{{"board": f.board.ID(), "target": browserFrame(), "inline": true, "format": "png"}}
+			if result["data"] != pixelPNG || !reflect.DeepEqual(askedParams(viewer), wantParams) {
+				t.Fatalf("viewer composition = %v, requests = %#v", result, askedParams(viewer))
+			}
+		})
 	}
 }
 

@@ -1,5 +1,5 @@
 {
-  "description": "A scripted Mac client serves object.measure, view.render and browser object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a host-picture refusal is the caller's. client.list names attached clients. easld only.",
+  "description": "A scripted Mac client serves object.measure, view.render and browser object.reload. HTML object.measure and size fit return the client's frame (approximate only when the client says so); with no client they stay unavailable. view.render is asked inline with no out: an inline caller gets the image, a caller with out gets that file written on easld, and a client refusal is relayed unchanged. client.list names attached clients. easld only.",
   "steps": [
     {
       "call": "object.measure",
@@ -55,7 +55,7 @@
         "view.render": [
           { "result": { "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "format": "png", "width": 1, "height": 1, "scale": 1, "objects": [] } },
           { "result": { "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "format": "png", "width": 1, "height": 1, "scale": 1, "objects": [] } },
-          { "error": { "code": "unavailable", "message": "{{n.object.id}} is only a host picture: view.render cannot draw it" } }
+          { "error": { "code": "unavailable", "message": "{{n.object.id}} could not be rendered by the client" } }
         ],
         "object.reload": [
           { "result": { "id": "{{web.object.id}}", "loaded": true, "url": "https://example.com/" } }
@@ -139,8 +139,7 @@
     {
       "call": "view.render",
       "params": { "board": "{{board}}", "target": "{{n.object.id}}", "inline": true },
-      "expect": { "response.ok": false, "response.error.code": "unavailable", "response.error.message": "{{n.object.id}} is only a host picture: view.render cannot draw it" },
-      "note": "a target the viewer has only as a host picture fails the whole call; the reason is the client's, and no file is written"
+      "expect": { "response.ok": false, "response.error.code": "unavailable", "response.error.message": "{{n.object.id}} could not be rendered by the client" }
     },
     {
       "call": "object.reload",
