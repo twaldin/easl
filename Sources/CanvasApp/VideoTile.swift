@@ -268,7 +268,7 @@ final class VideoTile: NSView, TileContent {
             let scale = window?.backingScaleFactor ?? 2
             if let frame = captureFrame(pixels: CGSize(width: bounds.width * scale, height: bounds.height * scale)) { lastSnapshot = frame }
             position = currentPosition
-            if player.currentItem?.status == .readyToPlay { shouldPlay = player.rate != 0 }
+            if !pendingSeek, playTask == nil, player.currentItem?.status == .readyToPlay { shouldPlay = player.rate != 0 }
             playbackGeneration += 1
             playTask?.cancel()
             playTask = nil
@@ -325,7 +325,7 @@ final class VideoTile: NSView, TileContent {
             start()
         } else {
             position = currentPosition
-            if !hostBoardClosed, player.currentItem?.status == .readyToPlay { shouldPlay = player.rate != 0 }
+            if !hostBoardClosed, !pendingSeek, playTask == nil, player.currentItem?.status == .readyToPlay { shouldPlay = player.rate != 0 }
             readyWaiters.removeAll()
             stop()
         }
@@ -343,9 +343,9 @@ final class VideoTile: NSView, TileContent {
             return
         }
         if previous.props["startTime"] != object.props["startTime"] {
+            if !pendingSeek, playTask == nil, player.currentItem?.status == .readyToPlay { shouldPlay = player.rate != 0 }
             position = object.props["startTime"]?.number ?? 0
             pendingSeek = true
-            if player.currentItem?.status == .readyToPlay { shouldPlay = player.rate != 0 }
         }
         if previous.props["autoplay"] != object.props["autoplay"] {
             shouldPlay = object.props["autoplay"] == .bool(true)
@@ -378,9 +378,8 @@ final class VideoTile: NSView, TileContent {
                 frame.drawUpright(in: CGRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height))
             }
             return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered, reason: image == nil ? "bitmap allocation failed" : nil)
-        } catch is CancellationError {
-            return .placeholder(request, "cancelled")
         } catch {
+            if Task.isCancelled || hostBoardClosed || error is CancellationError { return .placeholder(request, "cancelled") }
             return TileRender(image: nil, contentSize: request.size, state: .failed, reason: HostVideoAsset.message(error))
         }
     }
