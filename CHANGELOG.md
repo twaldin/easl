@@ -15,6 +15,8 @@ Each version's section is its GitHub release's notes.
 ### Fixed
 
 - Remote diagrams leave "Asking" and show late delegated failures after a zero-timeout reload returns. The last graph stays visible when its aim still matches. Requires the easld host update.
+- Budget-capped streamed browser tiles remain eligible for a sharp reference: capture fitting includes H.264's coded-dimension alignment and minimum size.
+- Native delegated replies larger than 32 MiB no longer disconnect the drawing Mac. The bounded output queue accommodates one legal 64 MiB reply in addition to 32 MiB of queued work.
 - **Scrolling up or down over a terminal no longer moves the board.** Over a terminal you hadn't clicked into, scrolling up or down panned the board unless the terminal had scrollback, so a full-screen program such as an agent's TUI, or a fresh shell, moved the board out from under the pointer. Vertical scrolling over a terminal now stays with it, focused or not: it scrolls the scrollback or reaches a program that reads the mouse, and over a full-screen program that doesn't it does nothing until you click in, so no stray ↑/↓ reaches a program you aren't typing in. Scrolling sideways still pans, ⇧-scroll with a mouse too, a trackpad gesture keeps whichever it started with, and scrolling over empty board pans as before.
 - ⇧-wheel pans the board sideways over overflowing code and changes tiles too. Terminals and changes tiles keep a board pan when they missed both the previous gesture's end and the next gesture's start.
 - Host language servers stop when their viewer's SSH link ends, including before the viewer receives the host PID. The viewer-supplied launcher owns cleanup on Linux and macOS.

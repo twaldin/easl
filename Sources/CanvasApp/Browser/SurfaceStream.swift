@@ -68,6 +68,8 @@ final class SurfaceStream {
     /// The seq the next frame takes, while one may go.
     var next: Int? { flow.next }
 
+    var captureFormat: SurfaceFormat { format == .h264 && flow.mode == .jpeg ? .jpeg : format }
+
     var holdsInput: Bool { heldButton != nil || !heldKeys.isEmpty }
 
     func markDelivered(_ seq: Int) {

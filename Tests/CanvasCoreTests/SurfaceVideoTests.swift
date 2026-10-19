@@ -65,6 +65,26 @@ struct SurfaceVideoTests {
         #expect(try center(black) == originalPixel)
     }
 
+    @Test func budgetCappedCaptureRastersProduceVisibleSharpReferences() throws {
+        for (width, height, expectedWidth, expectedHeight) in [
+            (2530, 1581, 2530, 1580),
+            (2560, 1600, 2528, 1580),
+            (1, 64, 16, 64),
+            (1, 1, 16, 16),
+        ] {
+            let raster = SurfaceEvent.Frame.fittedPixels(width: width, height: height, ratio: 1, format: .h264)
+            let source = try image(width: raster.width, height: raster.height, red: true)
+            let encoder = SurfaceVideoEncoder()
+            let packet = try #require(try encoder.encode(source, width: raster.width, height: raster.height, refresh: true))
+            #expect(packet.width == expectedWidth && packet.height == expectedHeight)
+            #expect(packet.data.count <= 576 * 1024)
+            let decoded = try SurfaceVideoDecoder().decode(packet.data, width: packet.width, height: packet.height)
+            #expect(decoded.width == expectedWidth && decoded.height == expectedHeight)
+            let visible = try center(decoded)
+            #expect(visible[0] > visible[1] && visible[0] > visible[2])
+        }
+    }
+
     @Test func aCanceledSharpFrameCannotBecomeAnUnpublishedPredictionReference() throws {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()

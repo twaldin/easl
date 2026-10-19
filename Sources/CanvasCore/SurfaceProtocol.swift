@@ -247,15 +247,17 @@ public enum SurfaceEvent {
     public struct Frame: Sendable, Equatable {
         public static let maxPixels: Int = 4_000_000
 
-        /// Fits positive source dimensions at a finite positive relative ratio within the frame budget.
-        public static func fittedPixels(width: Int, height: Int, ratio: Double) -> (width: Int, height: Int) {
+        /// Fits positive source dimensions at a finite positive relative ratio within the coded frame budget.
+        public static func fittedPixels(width: Int, height: Int, ratio: Double, format: SurfaceFormat) -> (width: Int, height: Int) {
+            let (alignment, minimum) = format == .h264 ? (2, 16) : (1, 1)
             let w = Double(width), h = Double(height), budget = Double(maxPixels)
-            // Single-axis caps account for the other axis's minimum of one pixel.
-            let scale = min(ratio, (budget / w / h).squareRoot(), budget / w, budget / h)
-            var fittedWidth = max(1, Int(min(budget, (w * scale).rounded(.down))))
-            let fittedHeight = max(1, Int(min(budget, (h * scale).rounded(.down))))
-            // Integer division keeps the bound exact even at floating-point rounding boundaries.
-            fittedWidth = min(fittedWidth, maxPixels / fittedHeight)
+            // Single-axis caps include the codec's minimum size on the other axis.
+            let axisBudget = budget / Double(minimum)
+            let scale = min(ratio, (budget / w / h).squareRoot(), axisBudget / w, axisBudget / h)
+            var fittedWidth = max(minimum, Int(min(axisBudget, (w * scale).rounded(.down))) / alignment * alignment)
+            let fittedHeight = max(minimum, Int(min(axisBudget, (h * scale).rounded(.down))) / alignment * alignment)
+            // Integer division keeps both the budget and alignment exact at rounding boundaries.
+            fittedWidth = min(fittedWidth, maxPixels / fittedHeight / alignment * alignment)
             return (fittedWidth, fittedHeight)
         }
 

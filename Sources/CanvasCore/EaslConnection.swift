@@ -656,10 +656,13 @@ public final class EaslConnection: @unchecked Sendable {
         }
     }
 
+    /// Room for ordinary queued output plus one maximum delegated reply and its newline.
+    private static let maxPending = SocketServer.Connection.maxPending + DelegatedCalls.maxReply + 1
+
     /// Sends `line` after what `link` hasn't written yet; dropped once the link stopped writing.
     private func write(_ line: Data, on link: Link, whileCurrent: (@Sendable () -> Bool)? = nil) {
         guard link.writer != nil else { return }
-        guard line.count <= SocketServer.Connection.maxPending - link.pendingBytes else {
+        guard line.count <= Self.maxPending - link.pendingBytes else {
             link.stopWriting()
             let generation = link.generation
             queue.async { [weak self] in self?.lost(generation, reason: "pending output exceeded its byte budget") }

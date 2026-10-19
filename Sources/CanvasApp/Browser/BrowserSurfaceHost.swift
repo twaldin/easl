@@ -334,7 +334,8 @@ final class BrowserSurface {
         for (stream, fence) in zip(targets, fences) {
             guard !stream.closed, let seq = stream.next else { continue }
             let targetScale = min(stream.scale, fitted)
-            let raster = SurfaceEvent.Frame.fittedPixels(width: pixels.width, height: pixels.height, ratio: targetScale / scale)
+            let raster = SurfaceEvent.Frame.fittedPixels(width: pixels.width, height: pixels.height,
+                ratio: targetScale / scale, format: stream.captureFormat)
             // A timeout is not evidence that WebKit presented the delivered input.
             let input = presented ? fence : stream.fence
             var frame = SurfaceEvent.Frame(stream: stream.id, seq: seq, input: input, size: size, scale: targetScale, format: stream.format,
