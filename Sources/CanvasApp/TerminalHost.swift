@@ -272,12 +272,11 @@ final class TerminalHost {
         return sessions.contains { $0["tile"]?.string == tile }
     }
 
-    /// The tiles whose sessions run on the host, started by this instance (labelled with its
-    /// home): agent.list `live` for hosted terminals. Nil while the host isn't online (a listing
-    /// never opens a connection) or its easld can't be asked.
-    func liveSessions() async -> Set<ObjectID>? {
+    /// Listed terminal names and ownership-confirmed running sessions. Nil while offline or
+    /// when easld can't be asked; a listing never opens a connection.
+    func sessions() async -> TerminalSessions? {
         guard state == .online, let result = try? await call("session.list", .object([:])), let sessions = result["sessions"]?.array else { return nil }
-        return Set(sessions.compactMap { $0["labels"]?["canvas.home"]?.string == TerminalTile.homeLabel ? $0["tile"]?.string : nil })
+        return TerminalSessions.hosted(sessions, home: TerminalTile.homeLabel)
     }
 
     /// agent.restart of hosted `tile`: `killing` (which throws to call it off), then easld ends

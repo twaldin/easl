@@ -201,14 +201,13 @@ public final class ApiRouter {
     /// A terminal tile's live title (OSC 0/2), foreground program (`TerminalName.program`) and
     /// last finished command, as its tile knows them now; nil without the app UI.
     public var terminalStatus: ((Board, ObjectID) -> TerminalStatus)?
-    /// This instance's zmx sessions on this Mac now, by tile (their `canvas.tile` label), each
-    /// with its board and foreground process (agent.list `live`, `pid`); nil without zmx. Runs
-    /// `zmx list` off the main actor.
-    public var terminalSessions: (() async -> [ObjectID: TerminalSession]?)?
-    /// Hosted terminals' sessions (`props.host`): for each of `hosts` whose easld this app is
-    /// connected to and answered `session.list`, the tiles whose sessions run there (agent.list
-    /// `live`). A host left out can't be asked now.
-    public var hostedSessions: ((_ hosts: [String]) async -> [String: Set<ObjectID>])?
+    /// This instance's local zmx session snapshot, including listed but unverified sessions.
+    /// Running sessions carry their board and foreground process (agent.list `live`, `pid`).
+    /// Nil means unavailable. Runs `zmx list` off the main actor.
+    public var terminalSessions: (() async -> TerminalSessions?)?
+    /// Hosted session snapshots (`props.host`) from each connected easld that answered
+    /// `session.list`. A host left out can't be asked now.
+    public var hostedSessions: ((_ hosts: [String]) async -> [String: TerminalSessions])?
     /// Kills terminal `tile`'s session (a hosted tile's through its host's easld) and starts a
     /// new one running `argv` in the same tile (agent.restart). `killing` runs just before the
     /// kill and throws to call it off with nothing touched; `ended` runs once the old session is

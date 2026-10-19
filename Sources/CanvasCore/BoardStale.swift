@@ -25,7 +25,7 @@ extension ApiRouter {
         let generations = board.agentSessions
         let local = board.isRemote ? nil : await terminalSessions?()
         let hosts = Set(observed.values.compactMap { HostedTerminal.host(of: $0) })
-        let hosted: [String: Set<ObjectID>] = hosts.isEmpty || board.isRemote ? [:] : await hostedSessions?(hosts.sorted()) ?? [:]
+        let hosted: [String: TerminalSessions] = hosts.isEmpty || board.isRemote ? [:] : await hostedSessions?(hosts.sorted()) ?? [:]
         guard try self.board(.object(["board": .string(board.id)])) === board else {
             throw Failure("not_found", "board \(board.id) was replaced while the request was pending")
         }
@@ -35,15 +35,16 @@ extension ApiRouter {
                   let identity = identities[object.id], board.terminalSessionStates[object.id]?.identity == identity,
                   generations[object.id] == board.agentSessions[object.id],
                   board.restartingAgents[object.id] == nil else { continue }
-            let running: Bool?
+            let snapshot: TerminalSessions?
             if let host = identity.host {
-                running = hosted[host].map { $0.contains(object.id) }
+                snapshot = hosted[host]
             } else {
-                running = local.map { $0[object.id] != nil }
+                snapshot = local
             }
-            if running == true {
+            guard let snapshot else { continue }
+            if snapshot.running[object.id] != nil {
                 board.observeRunningTerminalSession(identity)
-            } else if running == false, sessions[object.id]?.observedRunning == true {
+            } else if !snapshot.lists(object.id), sessions[object.id]?.observedRunning == true {
                 exited.insert(object.id)
             }
         }

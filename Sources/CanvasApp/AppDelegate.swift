@@ -126,9 +126,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return await offPool { Zmx.sessions(home: home, legacy: legacy) }
         }
         router.hostedSessions = { hosts in
-            var live: [String: Set<ObjectID>] = [:]
+            var live: [String: TerminalSessions] = [:]
             for target in hosts {
-                if let host = TerminalHost.existing(target), let running = await host.liveSessions() { live[target] = running }
+                if let host = TerminalHost.existing(target), let sessions = await host.sessions() { live[target] = sessions }
             }
             return live
         }

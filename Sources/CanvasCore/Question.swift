@@ -530,7 +530,7 @@ extension Board {
             }
         }
         questionExpiry = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + min(max(0, next.timeIntervalSince(now)), 24 * 3600), execute: work)
+        DispatchQueue.main.asyncAfter(wallDeadline: .now() + min(max(0, next.timeIntervalSince(now)), 24 * 3600), execute: work)
     }
 
     /// Questions still waiting on the user, oldest first (the board's open-asks count).

@@ -131,7 +131,7 @@ final class AgentControlTests {
         let here = terminal()
 
         // zmx knows the reviewer's session (running its agent) and not the shell's.
-        router.terminalSessions = { [reviewer] in [reviewer: TerminalSession(board: otherID, pid: 5151)] }
+        router.terminalSessions = { [reviewer] in TerminalSessions(running: [reviewer: TerminalSession(board: otherID, pid: 5151)]) }
         let agents = try await call("agent.list")["result"]?["agents"]?.array ?? []
         #expect(agents.compactMap { $0["tile"]?.string } == [here, min(reviewer, shell), max(reviewer, shell)], "open boards first")
         let byTile = Dictionary(uniqueKeysWithValues: agents.compactMap { entry in entry["tile"]?.string.map { ($0, entry) } })
@@ -156,10 +156,10 @@ final class AgentControlTests {
         try await report(hosted, "idle", seq: 1, ["pid": .number(Self.alive)])
         // Even a foreground pid this Mac's process table happened to give is no process of the host's.
         foreground[hosted] = 4242
-        router.terminalSessions = { [:] }
+        router.terminalSessions = { TerminalSessions() }
         router.hostedSessions = { [unowned self] hosts in
             hostsAsked.append(hosts)
-            return ["deckbox": [hosted]]
+            return ["deckbox": TerminalSessions(running: [hosted: TerminalSession(board: nil, pid: nil)])]
         }
         var entry = try #require(try await listed()[hosted])
         #expect(entry["live"] == .bool(true) && entry["pid"] == nil, "\(entry)")
@@ -167,6 +167,32 @@ final class AgentControlTests {
         router.hostedSessions = { _ in [:] }
         entry = try #require(try await listed()[hosted])
         #expect(entry["live"] == nil && entry["pid"] == nil, "its host can't be asked: unknown, never this Mac's zmx")
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func unverifiedOrUnavailableAgentListSnapshotsDoNotEstablishExitAuthority(hosted: Bool, available: Bool) async throws {
+        let tile = board.create(type: .terminal, props: hosted ? .object(["host": "scratch-host"]) : .object([:])).id
+        foreground[tile] = 4242
+        let snapshot: TerminalSessions
+        if hosted {
+            let wire = """
+            {"sessions":[{"session":"canvas-\(tile)","tile":"\(tile)","labels":{},"unreachable":true}]}
+            """
+            let response = try JSONDecoder().decode(JSONValue.self, from: Data(wire.utf8))
+            snapshot = TerminalSessions.hosted(try #require(response["sessions"]?.array), home: dir.path)
+        } else {
+            snapshot = TerminalSessions.zmx("name=canvas-\(tile)\terr=Timeout\tstatus=unreachable\n",
+                                            home: dir.path, legacy: [], foregroundPID: { _ in nil })
+        }
+        router.terminalSessions = { hosted || !available ? nil : snapshot }
+        router.hostedSessions = { _ in hosted && available ? ["scratch-host": snapshot] : [:] }
+        let entry = try #require(try await listed()[tile])
+        #expect(entry["live"] == (available ? .bool(false) : nil))
+        #expect(entry["pid"] == (hosted || available ? nil : .number(4242)))
+        router.terminalSessions = { TerminalSessions() }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions()] }
+        let stale = try await call("board.stale", ["board": .string(board.id)])
+        #expect(stale["result"]?["objects"] == .array([]))
     }
 
     // MARK: agent.restart

@@ -38,23 +38,9 @@ enum Zmx {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// This instance's terminal sessions now (agent.list `live`, `pid`): every session labelled
-    /// `canvas.tile=<tile>` whose `canvas.home` is `home` or one of `legacy` (docs/contracts.md),
-    /// with its `canvas.board` label and the foreground process of its shell
-    /// (`ForegroundProgram.foregroundPid`); nil when zmx is missing or fails.
-    static func sessions(home: String, legacy: [String]) -> [ObjectID: TerminalSession]? {
+    /// Listed terminal names and ownership-confirmed running sessions; nil when zmx fails.
+    static func sessions(home: String, legacy: [String]) -> TerminalSessions? {
         guard let list = list() else { return nil }
-        var sessions: [ObjectID: TerminalSession] = [:]
-        for line in list.split(whereSeparator: \.isNewline) {
-            var fields: [Substring: Substring] = [:]
-            for field in line.drop(while: { $0 == " " || $0 == "*" }).split(separator: "\t") {
-                guard let equals = field.firstIndex(of: "=") else { continue }
-                fields[field[..<equals]] = field[field.index(after: equals)...]
-            }
-            guard let tile = fields["canvas.tile"], let owner = fields["canvas.home"], owner == home || legacy.contains(String(owner)) else { continue }
-            let shell = fields["pid"].flatMap { pid_t($0) }
-            sessions[String(tile)] = TerminalSession(board: fields["canvas.board"].map(String.init), pid: shell.flatMap(ForegroundProgram.foregroundPid))
-        }
-        return sessions
+        return TerminalSessions.zmx(list, home: home, legacy: legacy, foregroundPID: ForegroundProgram.foregroundPid)
     }
 }

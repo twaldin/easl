@@ -200,16 +200,16 @@ final class ObjectExpiryTests {
         router.terminalSessions = { nil }
         let unknown = try await call("board.stale", ["board": .string(board.id)])
         #expect(unknown["result"]?["objects"] == .array([]))
-        router.terminalSessions = { [:] }
+        router.terminalSessions = { TerminalSessions() }
         let unstarted = try await call("board.stale", ["board": .string(board.id)])
         #expect(unstarted["result"]?["objects"] == .array([]))
-        router.terminalSessions = { [terminal.id: TerminalSession(board: self.board.id, pid: nil)] }
+        router.terminalSessions = { TerminalSessions(running: [terminal.id: TerminalSession(board: self.board.id, pid: nil)]) }
         let running = try await call("board.stale", ["board": .string(board.id)])
         #expect(running["result"]?["objects"] == .array([]))
         router.terminalSessions = { nil }
         let unavailable = try await call("board.stale", ["board": .string(board.id)])
         #expect(unavailable["result"]?["objects"] == .array([]))
-        router.terminalSessions = { [:] }
+        router.terminalSessions = { TerminalSessions() }
         let ended = try await call("board.stale", ["board": .string(board.id)])
         #expect(ended["result"]?["objects"]?.array?.map { $0["id"] } == [.string(terminal.id)])
         #expect(ended["result"]?["objects"]?.array?.first?["reasons"] == .array(["exited"]))
@@ -226,23 +226,57 @@ final class ObjectExpiryTests {
 
     @Test func staleHostedSessionsRequireRunningObservationAndKnownHostSnapshot() async throws {
         let terminal = board.create(type: .terminal, props: .object(["host": "scratch-host"]))
-        router.terminalSessions = { [boardID = board.id] in [terminal.id: TerminalSession(board: boardID, pid: nil)] }
+        router.terminalSessions = { [boardID = board.id] in TerminalSessions(running: [terminal.id: TerminalSession(board: boardID, pid: nil)]) }
         router.hostedSessions = { _ in [:] }
         let unknown = try await call("board.stale", ["board": .string(board.id)])
         #expect(unknown["result"]?["objects"] == .array([]))
-        router.hostedSessions = { _ in ["scratch-host": []] }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions()] }
         let unstarted = try await call("board.stale", ["board": .string(board.id)])
         #expect(unstarted["result"]?["objects"] == .array([]))
-        router.hostedSessions = { _ in ["scratch-host": [terminal.id]] }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions(running: [terminal.id: TerminalSession(board: nil, pid: nil)])] }
         let running = try await call("board.stale", ["board": .string(board.id)])
         #expect(running["result"]?["objects"] == .array([]))
         router.hostedSessions = { _ in [:] }
         let unavailable = try await call("board.stale", ["board": .string(board.id)])
         #expect(unavailable["result"]?["objects"] == .array([]))
-        router.hostedSessions = { _ in ["scratch-host": []] }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions()] }
         let ended = try await call("board.stale", ["board": .string(board.id)])
         #expect(ended["result"]?["objects"]?.array?.map { $0["id"] } == [.string(terminal.id)])
         #expect(ended["result"]?["objects"]?.array?.first?["reasons"] == .array(["exited"]))
+    }
+
+    @Test(arguments: [false, true])
+    func staleKeepsListedUnreachableSessionsUntilAuthoritativeAbsence(hosted: Bool) async throws {
+        let props: JSONValue = hosted ? .object(["host": "scratch-host"]) : .object([:])
+        let observed = board.create(type: .terminal, props: props)
+        let unstarted = board.create(type: .terminal, props: props)
+        let running = TerminalSessions(running: [observed.id: TerminalSession(board: board.id, pid: nil)])
+        router.terminalSessions = { hosted ? nil : running }
+        router.hostedSessions = { _ in hosted ? ["scratch-host": running] : [:] }
+        _ = try await call("board.stale", ["board": .string(board.id)])
+        let unreachable: TerminalSessions
+        if hosted {
+            let wire = """
+            {"sessions":[{"session":"canvas-\(observed.id)","tile":"\(observed.id)","labels":{},"unreachable":true},
+                         {"session":"canvas-\(unstarted.id)","tile":"\(unstarted.id)","labels":{},"unreachable":true}]}
+            """
+            let response = try JSONDecoder().decode(JSONValue.self, from: Data(wire.utf8))
+            unreachable = TerminalSessions.hosted(try #require(response["sessions"]?.array), home: dir.path)
+        } else {
+            let output = [observed.id, unstarted.id].map {
+                "name=canvas-\($0)\terr=Timeout\tstatus=unreachable"
+            }.joined(separator: "\n") + "\n"
+            unreachable = TerminalSessions.zmx(output, home: dir.path, legacy: [], foregroundPID: { _ in nil })
+        }
+        router.terminalSessions = { hosted ? nil : unreachable }
+        router.hostedSessions = { _ in hosted ? ["scratch-host": unreachable] : [:] }
+        let listed = try await call("board.stale", ["board": .string(board.id)])
+        #expect(listed["result"]?["objects"] == .array([]))
+        router.terminalSessions = { TerminalSessions() }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions()] }
+        let absent = try await call("board.stale", ["board": .string(board.id)])
+        #expect(absent["result"]?["objects"]?.array?.map { $0["id"] } == [.string(observed.id)])
+        #expect(absent["result"]?["objects"]?.array?.first?["reasons"] == .array(["exited"]))
     }
 
     @Test func staleFirstCallReportsSessionsPreviouslyObservedByApp() async throws {
@@ -252,8 +286,8 @@ final class ObjectExpiryTests {
         board.observeRunningTerminalSession(try #require(board.terminalSessionIdentity(local.id)))
         board.observeRunningTerminalSession(try #require(board.terminalSessionIdentity(hosted.id)))
         _ = board.terminalSessionIdentity(failed.id)
-        router.terminalSessions = { [:] }
-        router.hostedSessions = { _ in ["scratch-host": []] }
+        router.terminalSessions = { TerminalSessions() }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions()] }
         let reply = try await call("board.stale", ["board": .string(board.id)])
         let entries = try #require(reply["result"]?["objects"]?.array)
         #expect(entries.compactMap { $0["id"]?.string } == [local.id, hosted.id].sorted())
@@ -263,12 +297,12 @@ final class ObjectExpiryTests {
     @Test func staleUsesRunningSessionsObservedByAgentList() async throws {
         let local = board.create(type: .terminal, props: .object([:]))
         let hosted = board.create(type: .terminal, props: .object(["host": "scratch-host"]))
-        router.terminalSessions = { [local.id: TerminalSession(board: self.board.id, pid: nil)] }
-        router.hostedSessions = { _ in ["scratch-host": [hosted.id]] }
+        router.terminalSessions = { TerminalSessions(running: [local.id: TerminalSession(board: self.board.id, pid: nil)]) }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions(running: [hosted.id: TerminalSession(board: nil, pid: nil)])] }
         let agents = try await call("agent.list", [:])
         #expect(agents["result"]?["agents"]?.array?.filter { $0["live"] == .bool(true) }.count == 2)
-        router.terminalSessions = { [:] }
-        router.hostedSessions = { _ in ["scratch-host": []] }
+        router.terminalSessions = { TerminalSessions() }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions()] }
         let reply = try await call("board.stale", ["board": .string(board.id)])
         #expect(reply["result"]?["objects"]?.array?.compactMap { $0["id"]?.string } == [local.id, hosted.id].sorted())
     }
@@ -278,11 +312,11 @@ final class ObjectExpiryTests {
         let identity = try #require(board.terminalSessionIdentity(terminal.id))
         router.terminalSessions = {
             self.board.observeRunningTerminalSession(identity)
-            return [:]
+            return TerminalSessions()
         }
         let pending = try await call("board.stale", ["board": .string(board.id)])
         #expect(pending["result"]?["objects"] == .array([]))
-        router.terminalSessions = { [:] }
+        router.terminalSessions = { TerminalSessions() }
         let next = try await call("board.stale", ["board": .string(board.id)])
         #expect(next["result"]?["objects"]?.array?.map { $0["id"] } == [.string(terminal.id)])
     }
@@ -429,7 +463,7 @@ extension ObjectExpiryTests {
             _ = self.board.create(type: .terminal, props: .object(["name": "new session"]))
             self.board.agentRestartBegan(restartedDuringRead.id)
             self.board.agentRestartEnded(restartedDuringRead.id)
-            return [:]
+            return TerminalSessions()
         }
         let reply = try await call("board.stale", ["board": .string(board.id)])
         #expect(reply["result"]?["objects"]?.array?.compactMap { $0["id"]?.string } == [ended.id])
@@ -437,8 +471,8 @@ extension ObjectExpiryTests {
     }
 
     @Test func staleDeleteRestoreEraseAndRecreationDropSessionAuthority() async throws {
-        router.terminalSessions = { [:] }
-        router.hostedSessions = { _ in ["scratch-host": []] }
+        router.terminalSessions = { TerminalSessions() }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions()] }
         for props: JSONValue in [.object([:]), .object(["host": "scratch-host"])] {
             let terminal = board.create(type: .terminal, props: props)
             let identity = try #require(board.terminalSessionIdentity(terminal.id))
@@ -472,8 +506,8 @@ extension ObjectExpiryTests {
 
     @Test func staleHostChangesDropSessionAuthorityIncludingReturningToAnEarlierHost() async throws {
         let terminal = board.create(type: .terminal, props: .object([:]))
-        router.terminalSessions = { [:] }
-        router.hostedSessions = { _ in ["scratch-a": [], "scratch-b": []] }
+        router.terminalSessions = { TerminalSessions() }
+        router.hostedSessions = { _ in ["scratch-a": TerminalSessions(), "scratch-b": TerminalSessions()] }
         for host: JSONValue in ["scratch-a", "scratch-b", .null, "scratch-a"] {
             let identity = try #require(board.terminalSessionIdentity(terminal.id))
             board.observeRunningTerminalSession(identity)
@@ -487,8 +521,8 @@ extension ObjectExpiryTests {
     }
 
     @Test func staleRestartRequiresFreshSessionObservation() async throws {
-        router.terminalSessions = { [:] }
-        router.hostedSessions = { _ in ["scratch-host": []] }
+        router.terminalSessions = { TerminalSessions() }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions()] }
         for props: JSONValue in [.object([:]), .object(["host": "scratch-host"])] {
             let terminal = board.create(type: .terminal, props: props)
             let identity = try #require(board.terminalSessionIdentity(terminal.id))
@@ -522,8 +556,8 @@ extension ObjectExpiryTests {
         let reopened = registry.open(root: board.root)
         #expect(reopened.terminalSessionIdentity(local.id, continuing: localIdentity) == nil)
         #expect(reopened.terminalSessionIdentity(hosted.id, continuing: hostedIdentity) == nil)
-        router.terminalSessions = { [:] }
-        router.hostedSessions = { _ in ["scratch-host": []] }
+        router.terminalSessions = { TerminalSessions() }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions()] }
         let unknown = try await call("board.stale", ["board": .string(board.id)])
         #expect(unknown["result"]?["objects"] == .array([]))
         reopened.observeRunningTerminalSession(try #require(reopened.terminalSessionIdentity(local.id)))
@@ -544,20 +578,20 @@ extension ObjectExpiryTests {
             self.board.agentRestartBegan(restarted.id)
             self.board.agentRestartEnded(restarted.id)
             let new = self.board.create(type: .terminal, props: .object([:]))
-            return Dictionary(uniqueKeysWithValues: [changed.id, recreated.id, restarted.id, new.id].map {
+            return TerminalSessions(running: Dictionary(uniqueKeysWithValues: [changed.id, recreated.id, restarted.id, new.id].map {
                 ($0, TerminalSession(board: self.board.id, pid: nil))
-            })
+            }))
         }
         router.hostedSessions = { _ in
             var moved = hosted
             moved.props = moved.props.merging(.object(["host": "scratch-other"]))
             self.board.restore(moved)
-            return ["scratch-host": [hosted.id]]
+            return ["scratch-host": TerminalSessions(running: [hosted.id: TerminalSession(board: nil, pid: nil)])]
         }
         let pending = try await call("board.stale", ["board": .string(board.id)])
         #expect(pending["result"]?["objects"] == .array([]))
-        router.terminalSessions = { [:] }
-        router.hostedSessions = { _ in ["scratch-host": [], "scratch-other": []] }
+        router.terminalSessions = { TerminalSessions() }
+        router.hostedSessions = { _ in ["scratch-host": TerminalSessions(), "scratch-other": TerminalSessions()] }
         let next = try await call("board.stale", ["board": .string(board.id)])
         #expect(next["result"]?["objects"] == .array([]))
     }
@@ -578,7 +612,7 @@ extension ObjectExpiryTests {
         router.terminalSessions = {
             try? self.registry.close(self.board.id)
             _ = self.registry.open(root: self.board.root)
-            return [:]
+            return TerminalSessions()
         }
         let reply = try await call("board.stale", ["board": .string(board.id)])
         #expect(reply["error"]?["code"] == "not_found")
