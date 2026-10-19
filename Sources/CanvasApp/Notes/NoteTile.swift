@@ -44,6 +44,8 @@ final class NoteTile: NSView, TileContent {
     private var resolveGeneration = 0
     private var pendingResolve: DispatchWorkItem?
     private var live = true
+    private var hostBoardClosed = false
+    private var closureGeneration = 0
 
     private var session: NoteEditSession?
     var isEditing: Bool { session != nil }
@@ -108,6 +110,18 @@ final class NoteTile: NSView, TileContent {
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    func setHostBoardClosed(_ closed: Bool) {
+        guard hostBoardClosed != closed else { return }
+        hostBoardClosed = closed
+        closureGeneration += 1
+        if closed {
+            suspendWork()
+        }
+        display.isSelectable = closed
+        editor.isEditable = !closed
+        if !closed, live { resolve() }
+    }
 
     private func configure(_ scroll: NSScrollView, document: NSTextView) {
         document.isVerticallyResizable = true
@@ -204,7 +218,7 @@ final class NoteTile: NSView, TileContent {
         pendingResolve?.cancel()
         pendingResolve = nil
         resolveTask?.cancel()
-        guard live, window != nil else { return }
+        guard live, !hostBoardClosed, !board.isClosed, window != nil else { return }
         if board.isRemote {
             resolveHost()
             return
@@ -258,6 +272,7 @@ final class NoteTile: NSView, TileContent {
         let generation = resolveGeneration
         let captured = captured
         resolveTask = Task { [weak self] in
+            guard !Task.isCancelled else { return }
             let read = await files.loadNote(request, captured: captured)
             let pictures = await NoteImages.decode(read.images)
             guard !Task.isCancelled, let self, self.resolveGeneration == generation else { return }
@@ -303,17 +318,21 @@ final class NoteTile: NSView, TileContent {
     /// note that isn't live watches nothing, so a render or `object.get` of it must not trust
     /// what it resolved last (a source restored since would still show its stale badge).
     func resolvedExcerpts() async -> [String: NoteExcerpt] {
+        guard !Task.isCancelled, !hostBoardClosed, !board.isClosed else { return excerpts }
+        let generation = closureGeneration
         if board.isRemote {
             guard !fences.isEmpty, let files else { return [:] }
             let read = await files.loadNote(hostRequest(), captured: captured)
+            guard !Task.isCancelled, generation == closureGeneration, !hostBoardClosed, !board.isClosed else { return excerpts }
             return read.observation.isUnavailable && !excerpts.isEmpty ? excerpts : read.excerpts
         }
         let jobs = fences
         let reading = await board.linkSource(of: object)
+        guard !Task.isCancelled, generation == closureGeneration, !hostBoardClosed, !board.isClosed else { return excerpts }
         self.reading = reading
         let results = await NoteSource.excerpts(for: reading.fences(jobs), root: reading.root, captured: captured)
         // The markdown changed meanwhile: its own resolution is on its way.
-        guard jobs == fences, !Task.isCancelled else { return results }
+        guard jobs == fences, !Task.isCancelled, generation == closureGeneration, !hostBoardClosed, !board.isClosed else { return excerpts }
         capture(results)
         if results != excerpts {
             excerpts = results
@@ -384,6 +403,7 @@ final class NoteTile: NSView, TileContent {
 
     /// Stop everything that runs on this note's behalf: resolution, file events, edit monitors.
     private func suspendWork() {
+        resolveGeneration += 1
         pendingResolve?.cancel()
         pendingResolve = nil
         resolveTask?.cancel()
@@ -409,7 +429,7 @@ final class NoteTile: NSView, TileContent {
     // MARK: Mouse
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard !isEditing else { return super.hitTest(point) }
+        guard !isEditing, !display.isSelectable else { return super.hitTest(point) }
         let local = convert(point, from: superview)
         guard bounds.contains(local) else { return nil }
         if let scroller = displayScroll.verticalScroller, !scroller.isHidden, scroller.bounds.contains(scroller.convert(local, from: self)) {
@@ -505,6 +525,7 @@ final class NoteTile: NSView, TileContent {
     /// Return on the selected note: editing, the caret at the end; Esc or ⌘↩ gives the keyboard
     /// back to the canvas with the note selected.
     func enterKeyboard() -> Bool {
+        if display.isSelectable { return window?.makeFirstResponder(display) == true }
         guard session == nil else { return false }
         beginEditing(at: nil)
         enteredByKeyboard = true
@@ -542,7 +563,7 @@ final class NoteTile: NSView, TileContent {
 
     /// Editing, the caret where `point` is (nil: at the end).
     private func beginEditing(at point: NSPoint?) {
-        guard session == nil else { return }
+        guard session == nil, !display.isSelectable else { return }
         session = NoteEditSession(object)
         enteredByKeyboard = false
         let text = markdown
@@ -589,6 +610,7 @@ final class NoteTile: NSView, TileContent {
     }
 
     private func endEditing(_ end: EditEnd, returningFocus: Bool = true) {
+        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
         guard let session else { return }
         if end == .keepTheirs {
             if session.keepTheirs(discarding: editor.string, on: board) {
@@ -718,9 +740,14 @@ final class NoteTile: NSView, TileContent {
     /// the note is live and caught up (watching its files, nothing pending): an offscreen note's
     /// last resolution may predate any number of changes.
     func render(_ request: TileRenderRequest) async -> TileRender {
+        guard !Task.isCancelled else { return .placeholder(request, "cancelled") }
+        let generation = closureGeneration
         let resolved: [String: NoteExcerpt]
         let pictures: [String: NSImage]
-        if board.isRemote {
+        if hostBoardClosed || board.isClosed {
+            resolved = excerpts
+            pictures = images
+        } else if board.isRemote {
             let host = hostRequest()
             let current = live && window != nil && hostWatch != nil && pendingResolve == nil && resolveTask == nil && fences.allSatisfy { excerpts[$0.key] != nil }
             if host.fences.isEmpty && host.images.isEmpty {
@@ -731,13 +758,22 @@ final class NoteTile: NSView, TileContent {
                 pictures = images
             } else {
                 let read = await files?.loadNote(host, captured: captured)
+                guard !Task.isCancelled, generation == closureGeneration, !hostBoardClosed, !board.isClosed else {
+                    return .placeholder(request, "board availability changed while rendering")
+                }
                 resolved = read?.observation.isUnavailable == true ? excerpts : read?.excerpts ?? [:]
                 pictures = read?.observation.isUnavailable == true ? images : await NoteImages.decode(read?.images ?? [:])
             }
         } else {
             let current = live && window != nil && pendingResolve == nil && resolveTask == nil && fences.allSatisfy { excerpts[$0.key] != nil }
             resolved = current ? excerpts : await resolvedExcerpts()
+            guard !Task.isCancelled, generation == closureGeneration, !hostBoardClosed, !board.isClosed else {
+                return .placeholder(request, "board availability changed while rendering")
+            }
             pictures = await NoteImages.load(NoteImages.sources(in: document), root: linkRoot)
+        }
+        guard !Task.isCancelled, generation == closureGeneration else {
+            return .placeholder(request, "board availability changed while rendering")
         }
         let inset = NSSize(width: 8, height: 10)
         let text = NoteRenderer(excerpts: resolved, images: pictures, width: request.size.width - 2 * inset.width).render(document, placeholder: Self.placeholder)
@@ -887,10 +923,22 @@ final class NoteTile: NSView, TileContent {
 /// A note is short; lay all of it out once per content change instead. Older SDKs do not expose
 /// this viewport delegate method to Swift.
 final class NoteDisplayView: NSTextView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func copy(_ sender: Any?) {
+        guard isSelectable else { return super.copy(sender) }
+        let range = selectedRange()
+        guard range.length > 0 else { return }
+        NSPasteboard.general.clear(privately: true)
+        NSPasteboard.general.setString((string as NSString).substring(with: range), forType: .string)
+    }
+
     /// The text's context menu leads with Mention: the block under the right-click.
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = (super.menu(for: event)?.copy() as? NSMenu) ?? NSMenu()
-        CanvasView.insertMention(into: menu, in: self, for: event)
+        if (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true {
+            CanvasView.insertMention(into: menu, in: self, for: event)
+        }
         return menu
     }
 

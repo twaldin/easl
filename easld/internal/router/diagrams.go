@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"time"
 
@@ -175,6 +176,16 @@ func (r *Router) finishDiagram(job *diagramJob, err error) {
 		return
 	}
 	delete(r.diagrams, job.id)
+	if err != nil {
+		b, open := r.reg.Board(job.board.ID())
+		object, live := job.board.Objects()[job.id]
+		if open && b == job.board && live && object.Type == model.Diagram && object.Rev == job.rev && job.spec.equal(diagramSpecOf(object.Props)) {
+			graph := failedDiagramGraph(job.spec.aim, object.Props["graph"], err.Error())
+			if writeErr := b.WriteBookkeeping(job.id, map[string]any{"graph": graph}); writeErr != nil {
+				err = writeErr
+			}
+		}
+	}
 	job.err = err
 	job.finishedAt = time.Now()
 	job.cancel()
@@ -196,6 +207,29 @@ func (r *Router) observeDiagrams(b *board.Board, event model.Event) {
 	} else if object.Type != model.Diagram || object.Rev != job.rev || !job.spec.equal(diagramSpecOf(object.Props)) {
 		r.finishDiagram(job, board.Conflict("diagram %s changed while computing", id))
 	}
+}
+
+func failedDiagramGraph(aim diagramAim, previous any, reason string) map[string]any {
+	graph, valid := checkedDiagramGraph(previous)
+	var result map[string]any
+	if valid && graph.aim == aim {
+		result = maps.Clone(graph.raw)
+	} else {
+		target := map[string]any{"kind": aim.kind, "direction": aim.direction}
+		if aim.path != "" {
+			target["path"] = aim.path
+		}
+		if aim.symbol != "" {
+			target["symbol"] = aim.symbol
+		}
+		if aim.line > 0 {
+			target["line"] = float64(aim.line)
+		}
+		result = map[string]any{"aim": target, "nodes": []any{}, "edges": []any{}}
+	}
+	result["error"] = reason
+	result["computedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+	return result
 }
 
 type diagramGraph struct {

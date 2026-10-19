@@ -3,7 +3,7 @@ import CanvasCore
 
 /// One window per board: the canvas scene plus the composer (the tray bar).
 @MainActor
-final class CanvasWindowController: NSWindowController, NSWindowDelegate {
+final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
     let board: Board
     let canvas: CanvasView
     private let tray: ComposerBar
@@ -275,33 +275,18 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             banner.isHidden = true
             window?.makeFirstResponder(nil)
             for tile in canvas.tiles.values {
-                if let terminal = tile.content as? TerminalTile {
-                    terminal.setHostBoardClosed(true)
-                } else {
-                    tile.content.showSnapshot(true)
-                }
-                (tile.content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
+                tile.setHostBoardClosed(true)
             }
-            let request = TileRenderRequest(size: container.bounds.size, scale: window?.backingScaleFactor ?? 2,
-                                            full: false, appearance: container.effectiveAppearance)
-            let cover = ClosedBoardView(frame: container.bounds)
-            cover.image = request.image(of: container)
-            cover.imageScaling = .scaleProportionallyUpOrDown
+            let cover = ClosedBoardView(canvas: canvas, frame: container.bounds)
             cover.autoresizingMask = [.width, .height]
-            for tile in canvas.tiles.values where !(tile.content is TerminalTile) { tile.content.showSnapshot(false) }
-            for tile in canvas.tiles.values { tile.content.setLive(false) }
             container.addSubview(cover, positioned: .below, relativeTo: banner)
             closedBoardView = cover
-            canvas.isHidden = true
             window?.makeFirstResponder(cover)
         } else {
             closedBoardView?.removeFromSuperview()
             closedBoardView = nil
-            canvas.isHidden = false
             for tile in canvas.tiles.values {
-                tile.content.setLive(tile.isLive)
-                (tile.content as? TerminalTile)?.setHostBoardClosed(false)
-                (tile.content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
+                tile.setHostBoardClosed(false)
             }
         }
         banner.show(remote.mirror.state, availability: remote.mirror.availability, host: remote.host.name, problem: remote.mirror.problem)
@@ -1007,6 +992,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// Edit ▸ Select All reaching the board: a text field or view holding the keyboard (a browser
     /// tile's address, a filter, a note being edited) selects its own text; else every object.
     @objc func selectAllObjects(_ sender: Any?) {
+        guard !hostBoardClosed else { return }
         if let text = window?.firstResponder as? NSText { return text.selectAll(sender) }
         canvas.selectAll()
     }
@@ -1176,9 +1162,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// View ▸ Leave Tile (⌘Esc): the one way out of a terminal, whose Esc belongs to its program.
     @objc func leaveTile(_ sender: Any?) { canvas.focusedTile.map(canvas.leaveTile) }
 
-    /// Whether a menu item applies now (AppDelegate forwards the menu bar's validation here).
-    func validate(_ item: NSMenuItem) -> Bool {
-        if hostBoardClosed, let action = item.action, responds(to: action) { return false }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if hostBoardClosed, let action = item.action, !Self.closedBoardActions.contains(action) { return false }
         let selection = canvas.selection
         if remote != nil, let action = item.action, Self.localOnly.contains(action) { return false }
         switch item.action {
@@ -1267,6 +1252,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private static let localOnly: Set<Selector> = [
         #selector(openCodeTile(_:)), #selector(reviewChanges(_:)), #selector(reviewBranch(_:)), #selector(toggleGetStarted(_:)),
         #selector(snapshotPage(_:)),
+    ]
+
+    private static let closedBoardActions: Set<Selector> = [
+        #selector(zoomToFit(_:)), #selector(zoomToActual(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:)),
+        #selector(leaveTile(_:)), #selector(goToNextNeedsYou(_:)), #selector(AppDelegate.openBoard(_:)),
+        #selector(NSText.copy(_:)), #selector(NSText.selectAll(_:)),
     ]
 
     /// A text view with its own undo history holding the keyboard (a note being edited).
@@ -1366,7 +1357,30 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// beat Ghostty's own bindings (its defaults bind ⌘T, ⌘N, ⌘Q, ⌘⇧[ and ⌘⇧] to tab, window and
     /// app actions the embedded library can't perform, so the key would do nothing).
     func handleKeyEquivalent(_ event: NSEvent) -> Bool {
-        guard !hostBoardClosed else { return false }
+        if hostBoardClosed {
+            if let action = Self.navigationAction(for: event), Self.closedBoardActions.contains(action) {
+                perform(action, with: self)
+                return true
+            }
+            let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+            if flags == .command, let key = event.charactersIgnoringModifiers, key == "a" || key == "c" {
+                let action = key == "a" ? #selector(NSText.selectAll(_:)) : #selector(NSText.copy(_:))
+                if let responder = window?.firstResponder,
+                   responder is CodeRowsView || responder is QuestionTile || (responder as? NSTextView)?.isEditable == false,
+                   responder.responds(to: action) {
+                    responder.perform(action, with: nil)
+                }
+                return true
+            }
+            if Self.menuItem(for: event, in: NSApp.mainMenu) != nil {
+                _ = NSApp.mainMenu?.performKeyEquivalent(with: event)
+                return true
+            }
+            if flags.isEmpty || flags == .shift {
+                if [53, 115, 116, 119, 121, 123, 124, 125, 126].contains(event.keyCode) { return false }
+            }
+            return true
+        }
         if let action = Self.navigationAction(for: event) {
             perform(action, with: self)
             return true

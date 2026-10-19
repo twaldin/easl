@@ -7,6 +7,7 @@ protocol CodeNavigationHost: AnyObject {
     /// Board-relative path of the file shown.
     var navigationPath: String { get }
     var navigationUnavailableReason: String? { get }
+    var navigationEnabled: Bool { get }
     var navigationText: SideText? { get }
     /// The view showing the code; hover, ⌘-click, and right-click are handled over it.
     var navigationView: NSView { get }
@@ -107,6 +108,7 @@ final class CodeNavigation: NSObject {
     /// Hover tracking exists only while the host's view is live: a tracking area on a tile the
     /// canvas has zoomed out or scrolled away is rebuilt on every frame of a pan.
     func setActive(_ active: Bool) {
+        if !active { dismissAll() }
         guard active != (hoverArea != nil), let codeView else { return }
         if active {
             let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
@@ -115,7 +117,6 @@ final class CodeNavigation: NSObject {
         } else if let hoverArea {
             codeView.removeTrackingArea(hoverArea)
             self.hoverArea = nil
-            dismissAll()
         }
     }
 
@@ -182,12 +183,14 @@ final class CodeNavigation: NSObject {
             return
         }
         hoverScheduled = false
-        guard let pointer, let codeView, let file, host?.navigationUnavailableReason == nil, let position = position(atWindowPoint: pointer) else { return }
+        guard host?.navigationEnabled == true, let pointer, let codeView, let file, host?.navigationUnavailableReason == nil,
+              let position = position(atWindowPoint: pointer) else { return }
         let anchor = codeView.convert(pointer, from: nil)
         let root = board.root
         lease(file)
         let generation = hoverGeneration
         hoverTask = Task { [weak self, languages] in
+            guard !Task.isCancelled, self?.host?.navigationEnabled == true else { return }
             do {
                 let hover = try await languages.hover(file: file, boardRoot: root, at: position)
                 guard let self, let hover, !Task.isCancelled, self.hoverGeneration == generation else { return }
@@ -201,7 +204,7 @@ final class CodeNavigation: NSObject {
 
     /// Shows hover docs for `position` below `anchor` (in the text view's coordinates).
     private func showHover(_ markdown: String, range: LSPRange?, at position: LSPPosition, anchor: NSPoint) {
-        guard let codeView else { return }
+        guard host?.navigationEnabled == true, !Task.isCancelled, let codeView else { return }
         let panel = NavigationPanel.hover(markdown)
         panel.onPointerExit = { [weak self, weak panel] in
             guard let self, let panel, self.hoverPanel === panel else { return }
@@ -248,6 +251,7 @@ final class CodeNavigation: NSObject {
             guard let locations = try await self.serverAnswer({
                 try await self.languages.definition(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
             }, else: { try await self.textDefinition(at: position, file: file, root: root, anchor: anchor, newTile: newTile, reason: $0) }) else { return }
+            guard !Task.isCancelled, self.host?.navigationEnabled == true else { return }
             switch locations.count {
             case 0: await self.showEmpty("No definition found", file: file, root: root, anchor: anchor)
             case 1: self.open(locations[0], newTile: newTile)
@@ -267,6 +271,7 @@ final class CodeNavigation: NSObject {
             guard let answer = try await self.serverAnswer({
                 try await self.languages.references(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
             }, else: { try await self.textReferences(at: position, file: file, root: root, anchor: anchor, reason: $0) }) else { return }
+            guard !Task.isCancelled, self.host?.navigationEnabled == true else { return }
             var seen = Set<String>()
             let locations = answer.filter {
                 let path = self.languages.hostName == nil ? $0.url.resolvingSymlinksInPath().path : $0.url.standardizedFileURL.path
@@ -285,8 +290,9 @@ final class CodeNavigation: NSObject {
                                openAll: (title: String, run: @MainActor () -> Void)? = nil, note: String? = nil) {
         let rows = zip(locations, lines).map { location, line in
             NavigationPanel.Row(title: "\(languages.relativePath(location.url.path, boardRoot: board.root)):\(location.range.start.line + 1)", detail: line) { [weak self] in
+                guard let self, self.host?.navigationEnabled == true else { return }
                 NavigationPanel.current?.dismiss()
-                self?.open(location, newTile: newTile)
+                self.open(location, newTile: newTile)
             }
         }
         present(NavigationPanel.filterList(title: title, rows: rows, headerAction: openAll, note: note), anchor: anchor)
@@ -372,8 +378,9 @@ final class CodeNavigation: NSObject {
     private func showOutline(_ title: String, _ entries: [(name: String, kind: String, line: Int, depth: Int)], anchor: NSPoint, note: String? = nil) {
         let rows = entries.map { entry in
             NavigationPanel.Row(title: entry.name, detail: "\(entry.kind) · L\(entry.line)", indent: entry.depth) { [weak self] in
+                guard let self, self.host?.navigationEnabled == true else { return }
                 NavigationPanel.current?.dismiss()
-                self?.host?.reveal(line: entry.line)
+                self.host?.reveal(line: entry.line)
             }
         }
         present(NavigationPanel.filterList(title: title, rows: rows, note: note), anchor: anchor)
@@ -386,26 +393,30 @@ final class CodeNavigation: NSObject {
     /// with `referenceContext` lines around it), in one group beside this tile, as one undo step,
     /// panned into view.
     private func openAll(_ locations: [LSPLocation], name: String?) {
+        guard host?.navigationEnabled == true else { return }
         NavigationPanel.current?.dismiss()
         let root = board.root
         let languages = languages
         let entries = locations.map { (path: languages.relativePath($0.url.path, boardRoot: root), line: $0.range.start.line + 1, url: $0.url) }
         let subject = name.map { " to `\($0)`" } ?? ""
-        Task { [weak self] in
+        actionTask?.cancel()
+        actionTask = Task { [weak self] in
+            guard let self, !Task.isCancelled, self.host?.navigationEnabled == true else { return }
             let urls = Set(entries.map(\.url))
             var texts: [URL: [String]] = [:]
             for url in urls {
                 do {
                     let text = try await languages.text(file: url, boardRoot: root)
+                    guard !Task.isCancelled, self.host?.navigationEnabled == true else { return }
                     texts[url] = text.components(separatedBy: "\n")
                 } catch {
                     guard !Task.isCancelled else { return }
                     guard languages.hostName != nil else { continue }
-                    self?.showMessage((error as? LocalizedError)?.errorDescription ?? "\(error)", anchor: .zero)
+                    self.showMessage((error as? LocalizedError)?.errorDescription ?? "\(error)", anchor: .zero)
                     return
                 }
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.host?.navigationEnabled == true else { return }
             var excerpts: [CodeExcerpt] = []
             for (index, entry) in entries.enumerated() {
                 let text = texts[entry.url]
@@ -419,7 +430,7 @@ final class CodeNavigation: NSObject {
                 excerpts.append(CodeExcerpt(path: entry.path, lines: lines, caption: caption, size: size))
             }
             let title = "\(entries.count == 1 ? "1 reference" : "\(entries.count) references")\(name.map { " to \($0)" } ?? "")"
-            guard let self, let opened = try? self.board.openExcerpts(excerpts, title: title, beside: self.tile) else { return }
+            guard let opened = try? self.board.openExcerpts(excerpts, title: title, beside: self.tile) else { return }
             // The least pan that shows the first reference (the group's title sits just above it);
             // a long list runs on below and to the right. One step of Navigate Back.
             guard let canvas = self.canvas else { return }
@@ -447,6 +458,7 @@ final class CodeNavigation: NSObject {
     /// answers from fallback settings and an empty index until then) says so, instead of
     /// claiming there is nothing.
     private func showEmpty(_ text: String, file: URL, root: URL, anchor: NSPoint) async {
+        guard !Task.isCancelled, host?.navigationEnabled == true else { return }
         let server = await languages.existingServer(for: file, boardRoot: root)
         let busy = await server?.activity ?? []
         if !busy.isEmpty { return showMessage("\(text) yet — \(busy.joined(separator: ", ")) in progress", anchor: anchor) }
@@ -460,7 +472,7 @@ final class CodeNavigation: NSObject {
     /// that file, else a new tile beside this one, shown with the least pan that keeps this one
     /// in view. `newTile` (⌥⌘) always opens a new tile. One step of Navigate Back.
     private func open(_ location: LSPLocation, newTile: Bool) {
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, host?.navigationEnabled == true else { return }
         let aim = CodeAim(path: languages.relativePath(location.url.path, boardRoot: board.root), range: location.range.lines)
         let board = board, tile = tile
         let go = { [weak self] () -> CodeReaim? in
@@ -548,7 +560,9 @@ final class CodeNavigation: NSObject {
     private static func controller(at event: NSEvent) -> CodeNavigation? {
         guard let contentView = event.window?.contentView,
               let hit = contentView.hitTest(contentView.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow) else { return nil }
-        return controllers.allObjects.first { $0.codeView.map { hit.isDescendant(of: $0) } ?? false }
+        return controllers.allObjects.first { controller in
+            controller.host?.navigationEnabled == true && (controller.codeView.map { hit.isDescendant(of: $0) } ?? false)
+        }
     }
 
     private func menu(for event: NSEvent) -> NSMenu? {
@@ -598,6 +612,7 @@ final class CodeNavigation: NSObject {
     /// Runs one explicit action (superseding the previous one and any hover) and shows its
     /// failure where it was asked for: an uninstalled or crashed server is reported, not swallowed.
     private func run(anchor: NSPoint, _ action: @escaping @MainActor (URL, URL) async throws -> Void) {
+        guard host?.navigationEnabled == true else { return }
         cancelPendingHover()
         dismissHover()
         if let reason = host?.navigationUnavailableReason { return showMessage(reason, anchor: anchor) }
@@ -607,6 +622,7 @@ final class CodeNavigation: NSObject {
         actionTask?.cancel()
         actionTask = Task { [weak self] in
             do {
+                guard let self, !Task.isCancelled, self.host?.navigationEnabled == true else { return }
                 try await action(file, root)
             } catch is CancellationError {
             } catch {
@@ -622,7 +638,7 @@ final class CodeNavigation: NSObject {
 
     /// Shows `panel` below `anchor`. A list takes the keyboard until it closes: the user asked for it.
     private func present(_ panel: NavigationPanel, anchor: NSPoint) {
-        guard !Task.isCancelled, let codeView else { return }
+        guard !Task.isCancelled, host?.navigationEnabled == true, let codeView else { return }
         panel.show(below: anchor, lineHeight: lineHeight, in: codeView)
         observeTileFrame(codeView)
         self.panel = panel
@@ -655,6 +671,7 @@ final class CodeNavigation: NSObject {
     /// A clicked URL: in a browser tile beside this code tile (`Board.openLink`; one already
     /// showing it is reused), shown like any link the user followed, or in the default browser.
     private func open(_ url: URL, inDefaultBrowser: Bool) {
+        guard host?.navigationEnabled == true else { return }
         if inDefaultBrowser {
             ExternalOpen.open(url, because: "code \(tile) link (⌥-click)")
             return

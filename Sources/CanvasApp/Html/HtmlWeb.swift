@@ -50,7 +50,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
-        guard let url = task.request.url, url.host == HtmlKit.host, let tile else {
+        guard let url = task.request.url, url.host == HtmlKit.host, let tile, !tile.hostBoardClosed else {
             return task.didFailWithError(URLError(.fileDoesNotExist))
         }
         if url.path == HtmlKit.pageURL(tile: tile.objectID).path {
@@ -117,7 +117,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     private func respond(_ task: any WKURLSchemeTask, url: URL, data: Data, type: String, cache: String, status: Int = 200) {
-        guard let tile else { return task.didFailWithError(URLError(.cancelled)) }
+        guard let tile, !tile.hostBoardClosed else { return task.didFailWithError(URLError(.cancelled)) }
         var headers = ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": cache]
         // A framed SVG is its own active document and does not inherit the page's meta CSP.
         if let policy = tile.contentSecurityPolicy { headers["Content-Security-Policy"] = policy }

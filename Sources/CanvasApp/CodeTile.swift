@@ -30,6 +30,7 @@ final class CodeTile: NSView, TileContent {
     private var flashTimer: Timer?
 
     private var isLive = true
+    private var hostBoardClosed = false
     private var needsLoad = true
     private var loadTask: Task<Void, Never>?
     private var anchorTask: Task<Void, Never>?
@@ -323,6 +324,7 @@ final class CodeTile: NSView, TileContent {
     /// The user scrolled, clicked, or selected in the tile: a ⌘-click preview becomes a tile
     /// they keep (`Board.keepCode`); a follow tile holds its re-aims.
     private func userInteracted() {
+        guard !hostBoardClosed else { return }
         board.keepCode(object.id)
         guard followOf != nil else { return }
         lock.interact(at: Self.now)
@@ -350,12 +352,14 @@ final class CodeTile: NSView, TileContent {
     }
 
     private func catchUp() {
+        guard !hostBoardClosed else { return }
         if let aim = lock.catchUp() { apply(aim) }
         refreshHeader()
     }
 
     /// The user picked a location (history strip): shown at once, as navigation (no undo step).
     private func userAim(_ aim: Aim) {
+        guard !hostBoardClosed else { return }
         lock.userAimed(aim)
         apply(aim)
         board.reaimForNavigation(object.id, to: CodeAim(path: aim.path, range: aim.range, pinnedCommit: pinnedCommit, ref: RefSource.ref(of: object.props)))
@@ -368,7 +372,7 @@ final class CodeTile: NSView, TileContent {
     private func load() {
         anchorTask?.cancel()
         generation += 1
-        guard isLive, git == nil || window != nil else {
+        guard !hostBoardClosed, isLive, git == nil || window != nil else {
             needsLoad = true
             return
         }
@@ -484,6 +488,7 @@ final class CodeTile: NSView, TileContent {
 
     /// The model without holding the repository, for renders and cards of tiles that aren't live.
     private func loadOffscreen() async -> CodeDocument? {
+        if hostBoardClosed { return document }
         if documentIsCurrent, let document { return document }
         let path = displayed.path, source = source, current = generation
         let document: CodeDocument
@@ -499,7 +504,7 @@ final class CodeTile: NSView, TileContent {
             document = await source.document(path: path, located: located, boardRoot: boardRoot)
         }
         await MainTurns.next()
-        guard !Task.isCancelled, current == generation, path == displayed.path, source == self.source else { return nil }
+        guard !Task.isCancelled, !hostBoardClosed, current == generation, path == displayed.path, source == self.source else { return nil }
         // A live host tile installs only from its own load. This read answers the card or render
         // that asked, and must not replace the document, watch baseline, or ref cache.
         if git != nil, isLive { return document }
@@ -917,7 +922,7 @@ extension CodeTile {
     // MARK: Actions
 
     private func setBase(_ base: String) {
-        guard base != diffBaseProp else { return }
+        guard !hostBoardClosed, base != diffBaseProp else { return }
         _ = try? board.update(object.id, props: .object(["diffBase": .string(base)]))
     }
 
@@ -945,6 +950,7 @@ extension CodeTile {
 
     /// Keep what the follow tile shows as a permanent code tile beside it.
     private func pin() {
+        guard !hostBoardClosed else { return }
         _ = try? board.pin(object.id, path: displayed.path, range: displayed.range)
     }
 
@@ -1029,9 +1035,33 @@ extension CodeTile {
 // MARK: TileContent
 
 extension CodeTile {
+    func setHostBoardClosed(_ closed: Bool) {
+        guard hostBoardClosed != closed else { return }
+        let live = isLive
+        if closed {
+            navigation?.setActive(false)
+            resumeWork?.cancel()
+            resumeWork = nil
+        }
+        setLive(false)
+        hostBoardClosed = closed
+        setLive(live)
+        if !closed { scheduleResume() }
+    }
+
     func setLive(_ live: Bool) {
         guard live != isLive else { return }
         isLive = live
+        if hostBoardClosed {
+            if live {
+                addSubview(rowsView)
+                addSubview(header)
+            } else {
+                rowsView.removeFromSuperview()
+                header.removeFromSuperview()
+            }
+            return
+        }
         if live {
             if watcherSuspended { watcher?.resume() }
             watcherSuspended = false
@@ -1194,7 +1224,7 @@ extension CodeTile {
     /// when there is nothing to act on (a deleted file, nothing loaded yet).
     @discardableResult
     func navigate(_ action: KeyboardNavigation) -> Bool {
-        guard let navigation, let document, showsCurrent, let painter = rowsView.painter else { return false }
+        guard !hostBoardClosed, let navigation, let document, showsCurrent, let painter = rowsView.painter else { return false }
         let topRow = rowsView.topRow
         if action == .outline {
             navigation.showOutline(anchor: NSPoint(x: painter.gutterWidth + 8, y: CodePainter.rowTop(topRow)))
@@ -1230,7 +1260,7 @@ extension CodeTile {
     }
 
     /// Whether `navigate` has anything to act on (menu validation).
-    var canNavigate: Bool { document != nil && showsCurrent && rowsView.painter != nil }
+    var canNavigate: Bool { !hostBoardClosed && document != nil && showsCurrent && rowsView.painter != nil }
 
     // MARK: Offscreen drawing
 
@@ -1307,18 +1337,16 @@ extension CodeTile {
     /// Cards requested together (a pinch out over a dozen live tiles) render one per wake:
     /// drawn back to back in the liveness pass, ~5 ms each held the first frame after the pinch
     /// for ~45 ms. The live view stays up until its card arrives.
-    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
+    func cardSnapshot() async -> NSImage? {
         let appearance = effectiveAppearance
         let size = bounds.size
-        Task { [weak self] in
-            await MainTurns.next()
-            guard let self else { return deliver(nil) }
-            if self.documentIsCurrent, let document = self.document {
-                return deliver(self.image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image)
-            }
-            guard let document = await self.loadOffscreen() else { return deliver(nil) }
-            deliver(self.image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image)
+        await MainTurns.next()
+        guard !Task.isCancelled else { return nil }
+        if documentIsCurrent, let document {
+            return image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image
         }
+        guard let document = await loadOffscreen(), !Task.isCancelled else { return nil }
+        return image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image
     }
 }
 
@@ -1327,6 +1355,7 @@ extension CodeTile {
 extension CodeTile: CodeNavigationHost {
     var navigationPath: String { showsCurrent ? document?.readPath ?? displayed.path : displayed.path }
     var navigationText: SideText? { showsCurrent ? document?.text : nil }
+    var navigationEnabled: Bool { !hostBoardClosed }
 
     var navigationUnavailableReason: String? {
         guard git != nil else { return nil }

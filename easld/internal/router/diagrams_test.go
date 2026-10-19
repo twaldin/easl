@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -154,6 +155,119 @@ func TestDiagramTimeoutZeroPublishesLateGraphAsAuthoritativeBookkeeping(t *testi
 	}
 }
 
+func TestDiagramLateFailurePublishesAuthoritativeError(t *testing.T) {
+	for _, timeout := range []float64{0, 1} {
+		for _, previous := range []bool{false, true} {
+			for _, failure := range []string{"error", "disconnect", "invalid result"} {
+				t.Run(fmt.Sprintf("timeout%g/previous%t/%s", timeout, previous, failure), func(t *testing.T) {
+					f := newFixture(t)
+					id := createDiagram(f)
+					peer := attachDiagramPeer(t, f)
+					if previous {
+						initial := diagramReload(f, id, 1000)
+						answerDiagram(f, peer, diagramMessage(t, peer.incoming), id, diagramObject(f, id)["rev"], computedDiagram())
+						if reply := diagramMessage(t, initial); reply["ok"] != true {
+							t.Fatalf("initial diagram = %v", reply)
+						}
+					}
+					before := diagramObject(f, id)
+					history := f.result("board.history", map[string]any{})
+					updates := diagramUpdates(t, f)
+					waiting := diagramReload(f, id, timeout)
+					request := diagramMessage(t, peer.incoming)
+					if reply := diagramMessage(t, waiting); reply["ok"] != true || asMap(reply["result"])["loaded"] != false {
+						t.Fatalf("reload did not return before host failure: %v", reply)
+					}
+					f.router.reg.Mu.Lock()
+					job := f.router.diagrams[id]
+					f.router.reg.Mu.Unlock()
+					reason := "host transport failed"
+					switch failure {
+					case "error":
+						f.router.clients.Answer(peer, map[string]any{"id": request["id"], "ok": false, "error": map[string]any{
+							"code": "unavailable", "message": reason,
+						}})
+					case "disconnect":
+						reason = job.client.Name() + " disconnected before answering object.reload"
+						peer.close()
+					case "invalid result":
+						reason = job.client.Name() + " answered object.reload with an invalid diagram result"
+						f.router.clients.Answer(peer, map[string]any{"id": request["id"], "ok": true, "result": map[string]any{}})
+					}
+					select {
+					case <-job.done:
+					case <-time.After(5 * time.Second):
+						t.Fatal("host failure did not finish the diagram job")
+					}
+					after := diagramObject(f, id)
+					graph, valid := checkedDiagramGraph(asMap(after["props"])["graph"])
+					if !valid || graph.raw["error"] != reason || graph.aim != diagramSpecOf(asMap(before["props"])).aim {
+						t.Fatalf("late %s after loaded:false left no authoritative error graph: %v, want error %q", failure, asMap(after["props"])["graph"], reason)
+					}
+					if _, err := time.Parse(time.RFC3339Nano, graph.raw["computedAt"].(string)); err != nil {
+						t.Fatalf("failure graph has no completion timestamp: %v", graph.raw)
+					}
+					if previous {
+						want := computedDiagram()
+						want["error"] = reason
+						want["computedAt"] = graph.raw["computedAt"]
+						if !reflect.DeepEqual(graph.raw, want) {
+							t.Fatalf("failure discarded the previous graph: %v, want %v", graph.raw, want)
+						}
+					} else if len(graph.nodes) != 0 || len(graph.edges) != 0 {
+						t.Fatalf("first failed computation invented nodes or edges: %v", graph.raw)
+					}
+					want := model.Clone(before).(map[string]any)
+					want["props"].(map[string]any)["graph"] = graph.raw
+					if !reflect.DeepEqual(after, want) {
+						t.Fatalf("failure changed content or metadata: %v, want %v", after, want)
+					}
+					if event := diagramMessage(t, updates.incoming); event["event"] != "object.updated" || !reflect.DeepEqual(event["data"], want) {
+						t.Fatalf("failure was not published to viewers: %v", event)
+					}
+					if got := f.result("board.history", map[string]any{}); !reflect.DeepEqual(got, history) {
+						t.Fatalf("failure bookkeeping entered activity history: %v", got)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestDiagramFailureDoesNotReuseGraphOfPreviousAim(t *testing.T) {
+	f := newFixture(t)
+	id := createDiagram(f)
+	peer := attachDiagramPeer(t, f)
+	initial := diagramReload(f, id, 1000)
+	answerDiagram(f, peer, diagramMessage(t, peer.incoming), id, diagramObject(f, id)["rev"], computedDiagram())
+	if reply := diagramMessage(t, initial); reply["ok"] != true {
+		t.Fatalf("initial graph = %v", reply)
+	}
+	f.result("object.update", map[string]any{"id": id, "props": map[string]any{
+		"path": "other.go", "symbol": nil, "line": 1.0, "direction": "incoming",
+	}})
+	updates := diagramUpdates(t, f)
+	if reply := diagramMessage(t, diagramReload(f, id, 0)); asMap(reply["result"])["loaded"] != false {
+		t.Fatalf("reload before failure = %v", reply)
+	}
+	request := diagramMessage(t, peer.incoming)
+	f.router.clients.Answer(peer, map[string]any{"id": request["id"], "ok": false, "error": map[string]any{
+		"code": "unavailable", "message": "host transport failed",
+	}})
+	event := diagramMessage(t, updates.incoming)
+	graph := asMap(asMap(asMap(event["data"])["props"])["graph"])
+	want := map[string]any{
+		"aim":   map[string]any{"kind": "calls", "path": "other.go", "line": 1.0, "direction": "incoming"},
+		"nodes": []any{}, "edges": []any{}, "error": "host transport failed", "computedAt": graph["computedAt"],
+	}
+	if event["event"] != "object.updated" || !reflect.DeepEqual(graph, want) {
+		t.Fatalf("failure retained the previous aim's graph: %v, want %v", event, want)
+	}
+	if got := asMap(diagramObject(f, id)["props"])["graph"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("failure graph was not stored authoritatively: %v", got)
+	}
+}
+
 func TestDiagramReloadCoalescesViewersAndDerivesItsPublicSummary(t *testing.T) {
 	f := newFixture(t)
 	id := createDiagram(f)
@@ -301,17 +415,25 @@ func TestDiagramReloadValidatesTheClientResultBeforePublishing(t *testing.T) {
 				graph["edges"].([]any)[0].(map[string]any)["lines"] = []any{"not a line"}
 			}
 			f.router.clients.Answer(peer, map[string]any{"id": request["id"], "ok": true, "result": result})
-			if got, message := errorOf(diagramMessage(t, waiting)); got != code {
+			got, message := errorOf(diagramMessage(t, waiting))
+			if got != code {
 				t.Fatalf("malformed result = %s %q, want %s", got, message, code)
 			}
-			if got := diagramObject(f, id); !reflect.DeepEqual(got, before) {
-				t.Fatalf("invalid result changed authoritative object: %v", got)
+			after := diagramObject(f, id)
+			failed, valid := checkedDiagramGraph(asMap(after["props"])["graph"])
+			if !valid || failed.raw["error"] != message || len(failed.nodes) != 0 || len(failed.edges) != 0 {
+				t.Fatalf("invalid result did not publish an empty error graph: %v", after)
+			}
+			want := model.Clone(before).(map[string]any)
+			want["props"].(map[string]any)["graph"] = failed.raw
+			if !reflect.DeepEqual(after, want) {
+				t.Fatalf("invalid result changed authoritative content or metadata: %v", after)
 			}
 		})
 	}
 }
 
-func TestDiagramDisconnectRetiresTheJobWithoutPublishing(t *testing.T) {
+func TestDiagramDisconnectRetiresTheJobAndPublishesOnlyTheFailure(t *testing.T) {
 	f := newFixture(t)
 	id := createDiagram(f)
 	before := diagramObject(f, id)
@@ -320,11 +442,19 @@ func TestDiagramDisconnectRetiresTheJobWithoutPublishing(t *testing.T) {
 	request := diagramMessage(t, peer.incoming)
 	peer.close()
 	answerDiagram(f, peer, request, id, before["rev"], computedDiagram())
-	if code, message := errorOf(diagramMessage(t, waiting)); code != "unavailable" {
+	code, message := errorOf(diagramMessage(t, waiting))
+	if code != "unavailable" {
 		t.Fatalf("disconnected reload = %s %q", code, message)
 	}
-	if got := diagramObject(f, id); !reflect.DeepEqual(got, before) {
-		t.Fatalf("disconnected client published a graph: %v", got)
+	after := diagramObject(f, id)
+	failed, valid := checkedDiagramGraph(asMap(after["props"])["graph"])
+	if !valid || failed.raw["error"] != message || len(failed.nodes) != 0 || len(failed.edges) != 0 {
+		t.Fatalf("disconnected client did not publish only its failure: %v", after)
+	}
+	want := model.Clone(before).(map[string]any)
+	want["props"].(map[string]any)["graph"] = failed.raw
+	if !reflect.DeepEqual(after, want) {
+		t.Fatalf("disconnect changed authoritative content or metadata: %v", after)
 	}
 	f.router.reg.Mu.Lock()
 	jobs := len(f.router.diagrams)

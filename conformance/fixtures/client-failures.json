@@ -1,7 +1,7 @@
 {
   "scenario": "client-failures",
-  "description": "Three scripted Mac clients show one board. Ordinary calls go to the client whose user focused the board last, else the one focused most recently, else the one attached last. A client that misses its deadline or hangs up mid-call fails the call unavailable, naming it, and nothing is retried on another client. Browser object.reload does not use that order: it goes only to the tile's persisted drawingMachine. This records easld's protocol with scripted clients.",
-  "recordedOn": "scratch easld schema2 remote edits and composer receipts",
+  "description": "Four scripted Mac clients show one board. Ordinary calls follow focus; browser reload stays with the persisted drawing machine. A timeout or disconnect fails a call without retrying another client. A diagram whose zero-timeout reload returned loaded:false publishes an error when its viewer disconnects later.",
+  "recordedOn": "easld scratch, remote late-failure fix",
   "steps": [
     {
       "step": "board.open",
@@ -585,6 +585,366 @@
           }
         }
       ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 700,
+          "y": 0
+        },
+        "props": {
+          "path": "main.go",
+          "symbol": "main"
+        },
+        "type": "diagram"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 700,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "path": "main.go",
+              "symbol": "main"
+            },
+            "rev": "<rev:1>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 700,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "path": "main.go",
+              "symbol": "main"
+            },
+            "rev": "<rev:1>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "late",
+      "request": {
+        "app": "0.2.0",
+        "boards": [
+          "<board>"
+        ],
+        "focused": "<board>",
+        "host": "late-viewer",
+        "serves": [
+          "view.render",
+          "object.reload"
+        ],
+        "version": 2
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:4>",
+          "version": 2
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "studio",
+                "id": "<cli:1>",
+                "identity": "mch_studio",
+                "serves": [
+                  "browser.call",
+                  "object.reload",
+                  "view.render"
+                ]
+              },
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "host": "mini",
+                "id": "<cli:3>",
+                "serves": [
+                  "view.render"
+                ]
+              },
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "late-viewer",
+                "id": "<cli:4>",
+                "serves": [
+                  "object.reload",
+                  "view.render"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        }
+      ],
+      "ignored": {
+        "request.schema": "the schema's hash changes with every schema edit",
+        "response.result.schema": "the schema's hash changes with every schema edit"
+      }
+    },
+    {
+      "step": "object.reload",
+      "method": "object.reload",
+      "request": {
+        "id": "<obj:2>",
+        "timeoutMs": 0
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "id": "<obj:2>",
+          "loaded": false
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "late",
+          "method": "object.reload",
+          "params": {
+            "_diagram": {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 400,
+                "w": 600,
+                "x": 700,
+                "y": 0
+              },
+              "id": "<obj:2>",
+              "props": {
+                "path": "main.go",
+                "symbol": "main"
+              },
+              "rev": "<rev:1>",
+              "type": "diagram",
+              "updatedAt": "<time:number>",
+              "z": 2
+            },
+            "id": "<obj:2>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "view.render",
+      "method": "view.render",
+      "request": {
+        "board": "<board>",
+        "target": {
+          "h": 100,
+          "w": 100,
+          "x": 0,
+          "y": 0
+        }
+      },
+      "response": {
+        "error": {
+          "code": "unavailable",
+          "message": "easl 0.2.0 on late-viewer (client <cli:4>) disconnected before answering view.render"
+        },
+        "id": "r9",
+        "ok": false
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "clients": [
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "focused": "<board>",
+                "host": "studio",
+                "id": "<cli:1>",
+                "identity": "mch_studio",
+                "serves": [
+                  "browser.call",
+                  "object.reload",
+                  "view.render"
+                ]
+              },
+              {
+                "app": "0.2.0",
+                "boards": [
+                  "<board>"
+                ],
+                "host": "mini",
+                "id": "<cli:3>",
+                "serves": [
+                  "view.render"
+                ]
+              }
+            ]
+          },
+          "event": "client.changed"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 700,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "graph": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "calls",
+                  "path": "main.go",
+                  "symbol": "main"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [],
+                "error": "<transport failure>",
+                "nodes": []
+              },
+              "path": "main.go",
+              "symbol": "main"
+            },
+            "rev": "<rev:1>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.updated"
+        }
+      ],
+      "forwarded": [
+        {
+          "conn": "late",
+          "method": "view.render",
+          "params": {
+            "board": "<board>",
+            "format": "png",
+            "inline": true,
+            "target": {
+              "h": 100,
+              "w": 100,
+              "x": 0,
+              "y": 0
+            }
+          }
+        }
+      ],
+      "masked": {
+        "events.*.data.props.graph.error": "The graph must carry the failure; transport message wording is not its contract."
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:2>"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 700,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "graph": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "calls",
+                  "path": "main.go",
+                  "symbol": "main"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [],
+                "error": "<transport failure>",
+                "nodes": []
+              },
+              "path": "main.go",
+              "symbol": "main"
+            },
+            "rev": "<rev:1>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "z": 2
+          }
+        }
+      },
+      "masked": {
+        "response.result.object.props.graph.error": "The graph must carry the failure; transport message wording is not its contract."
+      }
     }
   ]
 }

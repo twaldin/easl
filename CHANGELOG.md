@@ -11,6 +11,12 @@ Each version's section is its GitHub release's notes.
 - Remote HTML tiles show the reason when a host image cannot load instead of silently returning not found. These are viewer-side fixes and do not require an easld update.
 - **Install updates while your Mac is idle.** Enable easl › Install Updates Automatically, off by default, to download and verify newer releases and install after 10 minutes without input anywhere in your login session. Updates reopen your local and remote tabs without taking focus or changing Spaces. Agents can check with `easl app.update check` or install immediately with `easl app.update install`. Both paths keep the manual updater's signature, Team ID, and Gatekeeper checks. Atomic bundle replacement keeps a complete app at its installed path if interrupted. Failures report why when you next look at easl. Failed board recovery offers Retry or Discard without replacing your normal reopen list on later launches.
 
+### Fixed
+
+- Remote diagrams leave "Asking" and show late delegated failures after a zero-timeout reload returns. The last graph stays visible when its aim still matches. Requires the easld host update.
+- Host language servers stop when their viewer's SSH link ends, including before the viewer receives the host PID. The viewer-supplied launcher owns cleanup on Linux and macOS.
+- Host-closed boards allow panning, zooming, scrolling, and read-only text selection, including cached text panned back into view, without enabling edits or removing the closed banner. Cached Changes retain native drawing. Menus, shortcuts, accessibility close actions, code navigation, and links refuse changes while closed. Pending navigation, HTML queue handoffs, Changes applies and card reads cannot start stale work after closure or replace cached content across reopening. Inspection preserves focus, selection, attention markers, and the viewport, and ⌘J skips hidden closed tabs.
+
 ## 0.2.8
 
 **Interim release.** Remote HTML loading host files and video, browser relay through easld, closed-board inspection, and faster board loading come in the next release.
