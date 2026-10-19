@@ -4,12 +4,12 @@ import QuartzCore
 /// Development performance probes (`EASL_DEV_PERF=1`; see docs/testing.md "Performance
 /// probes"). Off, every call returns after one flag check.
 ///
-/// A span covers an input-replay burst (plus a settle after it) or an idle window
-/// (`dev-input <pid> perf <ms>`). While it runs, a display link on the canvas window counts frames
-/// and missed vsyncs, a main run-loop observer measures each busy stretch of the main thread
-/// (from waking to going back to sleep: a stretch over one frame is a hitch), and code paths
-/// report counts (`count`, e.g. draws per view type) and timed sections (`time`). When the span
-/// ends, `app.log` gets one `DevPerf:` line per phase.
+/// A span covers launch restoration, an input-replay burst (plus its settle), or an idle
+/// window (`dev-input <pid> perf <ms>`). Launch starts at applicationDidFinishLaunching,
+/// before asynchronous restoration; the next explicit span closes it, including its open wake.
+/// A display link counts frames when a canvas window is available. A main run-loop observer
+/// measures busy stretches from waking to sleeping, independently of that window. Timed
+/// sections and counts accompany each phase's log, with the longest wake's start and CPU time.
 @MainActor
 enum DevPerf {
     static let enabled = ProcessInfo.processInfo.environment["EASL_DEV_PERF"] == "1"
