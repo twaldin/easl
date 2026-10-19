@@ -7,7 +7,8 @@ import Foundation
 /// (`/src/app.py(12)main()`, as `where` lists them and a stop shows `> …`); a pytest node id
 /// (`tests/test_x.py::TestA::test_b[1]`), whose line is its `def`'s, found when it opens; or a
 /// source file's name alone (`Applied edit to url.go`), which has no line.
-/// ⌘-click opens it as a code tile beside the terminal.
+/// ⌘-click opens it as a code tile beside the terminal, or an HTML page named without a line
+/// rendered in a browser tile (`Board.openReference`).
 public struct TerminalReference: Equatable, Sendable {
     /// UTF-16 range of the whole reference in the searched text.
     public var range: NSRange
@@ -37,14 +38,16 @@ public enum TerminalReferences {
         pathPattern + #"(?::(\d+)(?:[-–—](\d+)|:\d+)?|#L(\d+)(?:[-–—]L?(\d+))?)(?![\w/])"#)
     /// A path with no line after it, kept when its extension is a source file's (`sourceExtensions`).
     private static let barePattern = try! NSRegularExpression(pattern: pathPattern + #"(?![\w/#(@.-]|:\d)"#)
-    /// Extensions of files worth opening by name alone: source code, and the config and docs
-    /// beside it. Anything else named bare (`example.com`, `v1.2`) stays text.
-    static let sourceExtensions: Set<String> = [
+    /// Extensions of files worth opening by name alone: source code, web pages, and the config
+    /// and docs beside them. Anything else named bare (`example.com`, `v1.2`) stays text.
+    static let sourceExtensions: Set<String> = pageExtensions.union([
         "swift", "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "py", "pyi", "go", "rs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh",
         "m", "mm", "java", "kt", "kts", "scala", "rb", "php", "cs", "fs", "lua", "zig", "ex", "exs", "erl", "hs", "ml", "clj", "dart",
-        "sh", "bash", "zsh", "fish", "vue", "svelte", "css", "scss", "html", "sql", "proto", "graphql", "json", "toml", "yaml", "yml",
+        "sh", "bash", "zsh", "fish", "vue", "svelte", "css", "scss", "sql", "proto", "graphql", "json", "toml", "yaml", "yml",
         "md", "gradle", "cmake", "nix", "tf",
-    ]
+    ])
+    /// Extensions of web pages: a ⌘-click shows the page rendered (`Board.referencePage`).
+    public static let pageExtensions: Set<String> = ["html", "htm"]
     /// A Python traceback frame: `File "<path>", line <n>`; the quoted path may hold spaces.
     private static let tracebackPattern = try! NSRegularExpression(pattern: #"File "([^"\n]+)", line (\d+)"#)
     /// A pdb frame: a path, the line in parentheses, then the function called (`main()`,
@@ -454,6 +457,45 @@ extension Board {
         guard codePreviews.values.contains(where: { $0.tile == id }) else { return }
         codePreviews = codePreviews.filter { $0.value.tile != id }
     }
+
+    /// A plain local ⌘-click renders an HTML page inside the resolved board root or a temp
+    /// directory. A home-rooted board allows only temp directories. Dependency pages open as
+    /// code because rendered pages run scripts with the browser profile, network and folder access.
+    public func referencePage(path: String, lines: LineRange?, newTile: Bool, hosted: Bool,
+                              tempDirectories: [String] = FollowFilter.tempDirectories) -> URL? {
+        guard !newTile, !hosted, lines == nil, TerminalReferences.pageExtensions.contains((path as NSString).pathExtension.lowercased()) else { return nil }
+        let file = URL(fileURLWithPath: path).standardizedFileURL
+        let resolvedRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.resolvingSymlinksInPath()
+        let directories = resolvedRoot.path == home.path ? tempDirectories : [resolvedRoot.path] + tempDirectories
+        guard let resolved = LocalImage.confined(file, directories: directories),
+              !file.pathComponents.contains("node_modules"),
+              !resolved.pathComponents.contains("node_modules") else { return nil }
+        return resolved
+    }
+
+    /// A reference the user ⌘-clicked in terminal `tile`: a page (`referencePage`) in a browser
+    /// tile, else its code (`openCode`). A browser tile already showing the file is the answer
+    /// anywhere on the board (`existing`: the canvas goes to it), also when the page has since
+    /// moved to an anchor or a query of its own (the reference names neither); else the page opens
+    /// beside the terminal (`openLink`), credited to it.
+    @discardableResult
+    public func openReference(path: String, lines: LineRange?, beside tile: ObjectID, newTile: Bool = false, hosted: Bool = false,
+                              tempDirectories: [String] = FollowFilter.tempDirectories) -> ReferenceOpened {
+        guard let page = referencePage(path: path, lines: lines, newTile: newTile, hosted: hosted, tempDirectories: tempDirectories) else {
+            return .code(openCode(path: path, lines: lines, beside: tile, newTile: newTile))
+        }
+        let opened = openLink(page, near: tile, caller: tile, matchingFilePath: true)
+        return .page(opened.object.id, url: page, existing: opened.existing)
+    }
+}
+
+/// What a reference ⌘-clicked in a terminal opened (`Board.openReference`).
+public enum ReferenceOpened: Equatable, Sendable {
+    /// Its source, in a code tile.
+    case code(CodeOpened)
+    /// The page `url` rendered, in browser tile `id`; `existing` when the tile already showed it.
+    case page(ObjectID, url: URL, existing: Bool)
 }
 
 /// How a terminal whose session is gone (after a reboot) resumes the agent it recorded

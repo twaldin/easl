@@ -25,8 +25,7 @@ final class TerminalTile: NSView, TileContent {
     /// A ⌘-clicked reference opened this code tile (`created`) or re-aimed or found it there;
     /// `source` is the reference's rect in window coordinates.
     var onOpenedCode: ((CodeOpened, _ source: NSRect) -> Void)?
-    /// A web link the terminal's text activated (⌘-click on a URL) opened or found this browser
-    /// tile; the canvas shows it.
+    var onOpenedPage: ((ObjectID, _ existing: Bool, _ source: NSRect) -> Void)?
     var onOpenedLink: ((ObjectID) -> Void)?
     var onNotice: ((String) -> Void)?
     /// A remote board's terminal (docs/design.md "Client mode"): the host's session, attached
@@ -1190,13 +1189,19 @@ final class TerminalTile: NSView, TileContent {
             }
             return
         }
-        let opened = board.openCode(path: hit.file, lines: hit.lines, beside: objectID, newTile: newTile)
-        if !isRemote {
-            NSLog("easl: terminal %@ opened %@%@ as %@ (%@)", objectID, hit.file, hit.lines.map { ":\($0.start)-\($0.end)" } ?? "", opened.id,
-                  opened.created ? (newTile ? "new tile" : "new preview") : opened.existing ? "existing" : "re-aimed preview")
+        let runs = grid.map { rects(hit.runs, grid: $0).reduce(NSRect.null) { $0.union($1) } } ?? .null
+        let source = runs.isNull ? .null : underline.convert(runs, to: nil)
+        switch board.openReference(path: hit.file, lines: hit.lines, beside: objectID, newTile: newTile, hosted: isRemote || host != nil) {
+        case .code(let opened):
+            if !isRemote {
+                NSLog("easl: terminal %@ opened %@%@ as %@ (%@)", objectID, hit.file, hit.lines.map { ":\($0.start)-\($0.end)" } ?? "", opened.id,
+                      opened.created ? (newTile ? "new tile" : "new preview") : opened.existing ? "existing" : "re-aimed preview")
+            }
+            onOpenedCode?(opened, source)
+        case let .page(id, url, existing):
+            NSLog("easl: terminal %@ link %@ → %@ %@", objectID, url.absoluteString, existing ? "existing browser tile" : "new browser tile", id)
+            onOpenedPage?(id, existing, source)
         }
-        let source = grid.map { rects(hit.runs, grid: $0).reduce(NSRect.null) { $0.union($1) } } ?? .null
-        onOpenedCode?(opened, source.isNull ? .null : underline.convert(source, to: nil))
     }
 
     /// A URL or path Ghostty found under a ⌘-click (`TerminalSurfaceOpenURLDelegate`; with a
