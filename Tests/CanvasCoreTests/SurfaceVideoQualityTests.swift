@@ -155,7 +155,8 @@ private enum BrowserQuality {
                       "Caret pair must differ by less than the cumulative 1% rearm threshold")
             let encoder = SurfaceImageEncoder(), decoder = SurfaceVideoDecoder(), revision = SurfaceInputRevision()
             func capture(_ image: CGImage, at time: Double) throws -> SurfaceImageEncoding? {
-                try encoder.capture(image, width: image.width, height: image.height, mode: .video,
+                let fitted = SurfaceEvent.Frame.fittedPixels(width: image.width, height: image.height, ratio: 1, format: .h264)
+                return try encoder.capture(image, width: fitted.width, height: fitted.height, mode: .video,
                     inputActive: false, lastInput: 0, forceState: false, revision: revision, at: time)
             }
             let first = try require(capture(off, at: 0), "Missing initial video frame")
@@ -231,6 +232,12 @@ private enum BrowserQuality {
             let on = try load(page.on, hash: page.onSHA256, root: root, width: page.width, height: page.height)
             results.append(run(id: page.id, page: page, off: off, on: on, gated: true,
                                caretTransitions: page.id == "docs" ? 200 : 30))
+            if page.id == "docs" {
+                let bounds = CGRect(x: 0, y: 0, width: page.width - 1, height: page.height - 1)
+                let oddOff = try require(off.cropping(to: bounds), "Odd documentation viewport")
+                let oddOn = try require(on.cropping(to: bounds), "Odd documentation caret viewport")
+                results.append(run(id: "docs-odd-viewport", page: page, off: oddOff, on: oddOn, gated: true, caretTransitions: 30))
+            }
         }
         results.append(run(id: "saturated-128x96-report-only", page: nil,
                            off: try saturated(caret: false), on: try saturated(caret: true), gated: false, caretTransitions: 30))

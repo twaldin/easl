@@ -249,15 +249,20 @@ public enum SurfaceEvent {
 
         /// Fits positive source dimensions at a finite positive relative ratio within the coded frame budget.
         public static func fittedPixels(width: Int, height: Int, ratio: Double, format: SurfaceFormat) -> (width: Int, height: Int) {
-            let (alignment, minimum) = format == .h264 ? (2, 16) : (1, 1)
+            let minimum = format == .h264 ? 16 : 1
             let w = Double(width), h = Double(height), budget = Double(maxPixels)
             // Single-axis caps include the codec's minimum size on the other axis.
             let axisBudget = budget / Double(minimum)
             let scale = min(ratio, (budget / w / h).squareRoot(), axisBudget / w, axisBudget / h)
-            var fittedWidth = max(minimum, Int(min(axisBudget, (w * scale).rounded(.down))) / alignment * alignment)
-            let fittedHeight = max(minimum, Int(min(axisBudget, (h * scale).rounded(.down))) / alignment * alignment)
-            // Integer division keeps both the budget and alignment exact at rounding boundaries.
-            fittedWidth = min(fittedWidth, maxPixels / fittedHeight / alignment * alignment)
+            var fittedWidth = max(1, Int(min(axisBudget, (w * scale).rounded(.down))))
+            var fittedHeight = max(1, Int(min(axisBudget, (h * scale).rounded(.down))))
+            fittedWidth = min(fittedWidth, maxPixels / fittedHeight)
+            // Preserve native pixels unless codec padding would exceed the budget.
+            if format == .h264,
+               max(16, (fittedWidth + 1) / 2 * 2) > maxPixels / max(16, (fittedHeight + 1) / 2 * 2) {
+                fittedWidth = max(1, fittedWidth / 2 * 2)
+                fittedHeight = max(1, fittedHeight / 2 * 2)
+            }
             return (fittedWidth, fittedHeight)
         }
 

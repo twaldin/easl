@@ -4,8 +4,6 @@ import CanvasCore
 /// One viewer's stream of a browser tile, owned by the connection that opened it (`owner`).
 @MainActor
 final class SurfaceStream {
-
-
     /// Input batches a stream may have waiting before more is refused.
     static let maxQueued = 32
     private static let maxOpeningEvents = 32

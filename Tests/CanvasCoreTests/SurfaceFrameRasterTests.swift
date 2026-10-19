@@ -82,23 +82,31 @@ struct SurfaceFrameRasterTests {
         #expect(jpeg.width == 2530 && jpeg.height == 1581)
     }
 
+    @Test func videoCaptureKeepsOddPixelsWhenPaddingFitsTheBudget() {
+        for (width, height) in [(1801, 1325), (1, 64), (1, 1)] {
+            let pixels = SurfaceEvent.Frame.fittedPixels(width: width, height: height, ratio: 1, format: .h264)
+            #expect(pixels.width == width && pixels.height == height)
+        }
+    }
+
     @Test func videoCaptureRasterReservesTheMinimumCodedAxis() {
         for dimension in [8_000_000, Int.max] {
             let wide = SurfaceEvent.Frame.fittedPixels(width: dimension, height: 1, ratio: 1, format: .h264)
-            #expect(wide.width == 250_000 && wide.height == 16)
+            #expect(wide.width == 250_000 && wide.height == 1)
             let tall = SurfaceEvent.Frame.fittedPixels(width: 1, height: dimension, ratio: 1, format: .h264)
-            #expect(tall.width == 16 && tall.height == 250_000)
+            #expect(tall.width == 1 && tall.height == 250_000)
         }
         for ratio in [Double.leastNonzeroMagnitude, 0.125, 1] {
             let minimum = SurfaceEvent.Frame.fittedPixels(width: 1, height: 1, ratio: ratio, format: .h264)
-            #expect(minimum.width == 16 && minimum.height == 16)
+            #expect(minimum.width == 1 && minimum.height == 1)
         }
         for (width, height) in [(1, Int.max), (Int.max, 1), (Int.max, Int.max), (4033, 3025)] {
             for ratio in [Double.leastNonzeroMagnitude, 0.125, 1, 2, Double.greatestFiniteMagnitude] {
                 let pixels = SurfaceEvent.Frame.fittedPixels(width: width, height: height, ratio: ratio, format: .h264)
-                #expect(pixels.width >= 16 && pixels.height >= 16)
-                #expect(pixels.width % 2 == 0 && pixels.height % 2 == 0)
-                #expect(pixels.width <= 4_000_000 / pixels.height)
+                #expect(pixels.width >= 1 && pixels.height >= 1)
+                let codedWidth = max(16, (pixels.width + 1) / 2 * 2)
+                let codedHeight = max(16, (pixels.height + 1) / 2 * 2)
+                #expect(codedWidth <= 4_000_000 / codedHeight)
             }
         }
     }

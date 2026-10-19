@@ -1,6 +1,5 @@
 import AppKit
 import CanvasCore
-
 import UniformTypeIdentifiers
 
 /// A remote board's browser tile whose page this Mac doesn't run. The Mac that runs it keeps the
@@ -487,7 +486,6 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         }
         scheduleRetry()
     }
-
 
     private func receive(_ frame: HostFrame) {
         guard frame.stream == streamID else { return }
@@ -1621,7 +1619,6 @@ private enum SurfaceWire {
         return HostNotice(stream: stream, kind: kind, dialog: dialog, reason: data["reason"]?.string,
                           name: data["name"]?.string, state: data["state"]?.string)
     }
-
 
     static func plain(_ value: Any) -> String {
         switch value {

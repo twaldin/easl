@@ -69,8 +69,6 @@ struct SurfaceVideoTests {
         for (width, height, expectedWidth, expectedHeight) in [
             (2530, 1581, 2530, 1580),
             (2560, 1600, 2528, 1580),
-            (1, 64, 16, 64),
-            (1, 1, 16, 16),
         ] {
             let raster = SurfaceEvent.Frame.fittedPixels(width: width, height: height, ratio: 1, format: .h264)
             let source = try image(width: raster.width, height: raster.height, red: true)
