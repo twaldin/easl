@@ -13,17 +13,7 @@ enum HtmlRuleLists {
     }
 
     static func remote() async throws -> WKContentRuleList {
-        var patterns = ["^https?:", "^file:", "^wss?://\\[", "^wss?://0\\.", "^wss?://127\\.",
-                        "^wss?://10\\.", "^wss?://192\\.168\\.", "^wss?://169\\.254\\.",
-                        // WebKit content rules do not support alternation.
-                        "^wss?://100\\.6[4-9]\\.", "^wss?://100\\.[7-9][0-9]\\.",
-                        "^wss?://100\\.1[01][0-9]\\.", "^wss?://100\\.12[0-7]\\.",
-                        "^wss?://198\\.1[89]\\.",
-                        "^wss?://([a-z0-9-]+\\.)*localhost\\.?[:/]",
-                        "^wss?://([a-z0-9-]+\\.)*local\\.?[:/]", "^wss?://[a-z0-9-]+(:[0-9]+)?/"]
-        patterns += (16...31).map { "^wss?://172\\.\($0)\\." }
-        let rules = patterns.map { ["trigger": ["url-filter": $0], "action": ["type": "block"]] }
-        return try await compile(String(decoding: JSONSerialization.data(withJSONObject: rules), as: UTF8.self))
+        try await compile(HtmlKit.remoteNetworkRules)
     }
 
     private static func compile(_ json: String) async throws -> WKContentRuleList {

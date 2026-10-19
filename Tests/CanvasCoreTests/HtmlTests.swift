@@ -168,6 +168,34 @@ struct HtmlPathTests {
         #expect(allowed("ws://example.com/", by: http))
         #expect(!allowed("https://example.com/", by: http))
     }
+
+    @Test func remoteRulesHaveCanonicalPersistentIdentity() throws {
+        let encoded = Data(HtmlKit.remoteNetworkRules.utf8)
+        let rules = try JSONSerialization.jsonObject(with: encoded)
+        let canonical = try JSONSerialization.data(withJSONObject: rules, options: [.sortedKeys])
+        #expect(encoded == canonical, "Dictionary iteration order must not create a new persisted WK rule list")
+    }
+
+    @Test func remoteRulesBlockViewerFilesAndPrivateNetworkWithoutBlockingTheHostScheme() throws {
+        let rules = try #require(JSONSerialization.jsonObject(with: Data(HtmlKit.remoteNetworkRules.utf8)) as? [[String: [String: String]]])
+        let filters = try rules.map { rule in
+            #expect(rule["action"]?["type"] == "block")
+            return try NSRegularExpression(pattern: #require(rule["trigger"]?["url-filter"]), options: .caseInsensitive)
+        }
+        func blocked(_ url: String) -> Bool {
+            filters.contains { $0.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)) != nil }
+        }
+        for url in ["http://public.example/data", "https://public.example/data", "file:///tmp/private",
+                    "ws://127.0.0.1/socket", "wss://10.1.2.3/socket", "ws://100.64.0.1/socket",
+                    "ws://100.127.255.254/socket", "wss://172.16.0.1/socket", "ws://172.31.1.2/socket",
+                    "wss://[::1]/socket", "ws://service.local/socket", "wss://deckbox:5199/socket"] {
+            #expect(blocked(url), "\(url)")
+        }
+        for url in ["canvas-kit://html/page", "canvas-kit://p-opaque/data", "wss://public.example/socket",
+                    "ws://100.128.0.1/socket", "wss://172.32.0.1/socket"] {
+            #expect(!blocked(url), "\(url)")
+        }
+    }
 }
 
 @MainActor

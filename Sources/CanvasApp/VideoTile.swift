@@ -524,7 +524,7 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
                         while offset < end {
                             try Task.checkCancellation()
                             let block = try await self.block(at: offset, metadata: metadata)
-                            guard !loadingRequest.isCancelled else { throw CancellationError() }
+                            guard !loadingRequest.isCancelled, !loadingRequest.isFinished else { throw CancellationError() }
                             let start = Int(offset - block.offset)
                             let count = Int(min(end - offset, Int64(block.data.count - start)))
                             guard count > 0 else { throw URLError(.resourceUnavailable) }
@@ -533,10 +533,10 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
                         }
                     }
                     try Task.checkCancellation()
-                    if !loadingRequest.isCancelled { loadingRequest.finishLoading() }
+                    if !loadingRequest.isCancelled, !loadingRequest.isFinished { loadingRequest.finishLoading() }
                 } catch {
                     if !(error is CancellationError) { self.failure = Self.message(error) }
-                    if !loadingRequest.isCancelled { loadingRequest.finishLoading(with: error) }
+                    if !loadingRequest.isCancelled, !loadingRequest.isFinished { loadingRequest.finishLoading(with: error) }
                 }
             }
             return true

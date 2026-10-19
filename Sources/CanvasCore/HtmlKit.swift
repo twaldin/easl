@@ -170,6 +170,23 @@ public enum HtmlKit {
         return "default-src \(allowed); script-src \(allowed) 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; style-src \(allowed) 'unsafe-inline'"
     }
 
+    /// Host-independent guard for remote pages. Canonical bytes keep its persisted cache identity
+    /// stable across views and application launches.
+    public static let remoteNetworkRules: String = {
+        var patterns = ["^https?:", "^file:", "^wss?://\\[", "^wss?://0\\.", "^wss?://127\\.",
+                        "^wss?://10\\.", "^wss?://192\\.168\\.", "^wss?://169\\.254\\.",
+                        // WebKit content rules do not support alternation.
+                        "^wss?://100\\.6[4-9]\\.", "^wss?://100\\.[7-9][0-9]\\.",
+                        "^wss?://100\\.1[01][0-9]\\.", "^wss?://100\\.12[0-7]\\.",
+                        "^wss?://198\\.1[89]\\.",
+                        "^wss?://([a-z0-9-]+\\.)*localhost\\.?[:/]",
+                        "^wss?://([a-z0-9-]+\\.)*local\\.?[:/]", "^wss?://[a-z0-9-]+(:[0-9]+)?/"]
+        patterns += (16...31).map { "^wss?://172\\.\($0)\\." }
+        let rules = patterns.map { ["trigger": ["url-filter": $0], "action": ["type": "block"]] }
+        let data = try! JSONSerialization.data(withJSONObject: rules, options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self)
+    }()
+
     /// WKContentRuleList JSON: block every http(s)/ws(s)/file load, then let allowlisted hosts through.
     public static func networkRules(allow entries: [String]) -> String {
         var rules: [[String: Any]] = ["^https?:", "^wss?:", "^file:"].map {
