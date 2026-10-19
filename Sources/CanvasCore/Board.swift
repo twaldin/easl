@@ -160,6 +160,8 @@ public final class Board {
     /// Each terminal's agent session generation (`agentSession(of:)`); in memory: what a restart
     /// keeps queued belongs to the session there now.
     var agentSessions: [ObjectID: Int] = [:]
+    let terminalSessionBoard = UUID()
+    var terminalSessionStates: [ObjectID: TerminalSessionState] = [:]
     /// Terminals whose message-taking integration died without its release (`agentExited`); in memory.
     var exitedAgents: Set<ObjectID> = []
     /// Terminals whose agent agent.restart relaunched (`restartedAgent`) and that no agent has
@@ -211,6 +213,7 @@ public final class Board {
 
     func deactivate() {
         isClosed = true
+        terminalSessionStates = [:]
         questionExpiry?.cancel()
         questionExpiry = nil
         onChange = nil
@@ -600,6 +603,7 @@ public final class Board {
         defer { endStep() }
         detachArrows(from: id, actor: actor, caller: caller)
         guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
+        terminalSessionStates[id] = nil
         changedAt.removeValue(forKey: id)
         reindexKey(id, from: removed.props, to: nil)
         forgetAliases(of: id)
@@ -701,6 +705,7 @@ public final class Board {
     }
 
     private func commit(_ object: CanvasObject) {
+        retainTerminalSessionIdentity(for: object)
         bumpRevision()
         reindexKey(object.id, from: objects[object.id]?.props, to: object.props)
         renamed(object.id, from: objects[object.id]?.props, to: object.props, type: object.type)
@@ -1172,6 +1177,7 @@ public final class Board {
     func applyHost(_ object: CanvasObject) {
         let previous = objects[object.id]
         guard previous != object else { return }
+        retainTerminalSessionIdentity(for: object)
         bumpRevision()
         reindexKey(object.id, from: previous?.props, to: object.props)
         objects[object.id] = object
@@ -1206,6 +1212,7 @@ public final class Board {
     /// host's own): it leaves here with its mentions and marker, ending nothing.
     func removeHost(_ id: ObjectID) {
         guard let removed = objects.removeValue(forKey: id) else { return }
+        terminalSessionStates[id] = nil
         bumpRevision()
         changedAt.removeValue(forKey: id)
         reindexKey(id, from: removed.props, to: nil)
@@ -1441,6 +1448,7 @@ public final class Board {
     /// relaunch (`restartedAgent`) or ends without one (`agentRestartEnded`), a release there is
     /// held (`releaseAgent`), so the tile shows what it had, its unseen answer too, throughout.
     func agentRestartBegan(_ tile: ObjectID) {
+        invalidateTerminalSessionObservation(tile)
         restartingAgents[tile] = false
     }
 
@@ -1469,6 +1477,7 @@ public final class Board {
     /// (`agentExited`) isn't the relaunched one's.
     public func restartedAgent(tile: ObjectID, command: [String], agent: JSONValue) throws {
         let terminal = try object(tile)
+        invalidateTerminalSessionObservation(tile)
         pendingApprovals[tile] = nil
         exitedAgents.remove(tile)
         relaunchedAgents.insert(tile)

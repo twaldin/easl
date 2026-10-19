@@ -13,6 +13,7 @@ final class TerminalTile: NSView, TileContent {
     let sessionName: String
     let terminal: CanvasTerminalView
     private let board: Board
+    private var sessionIdentity: TerminalSessionIdentity?
     private var surface: TerminalSurface?
     private let handler = TerminalEvents()
     private let underline = TerminalLinkUnderline()
@@ -96,6 +97,7 @@ final class TerminalTile: NSView, TileContent {
         objectID = object.id
         sessionName = Self.sessionName(object.id)
         self.board = board
+        sessionIdentity = attach == nil ? board.terminalSessionIdentity(object.id) : nil
         self.references = references
         isRemote = attach != nil
         host = attach == nil ? HostedTerminal.host(of: object).map(TerminalHost.named) : nil
@@ -320,6 +322,19 @@ final class TerminalTile: NSView, TileContent {
         return HostedTerminal.spawnParams(tile: objectID, board: board.id, merged: merged ?? board.repo?.merged ?? [], argv: argv ?? AgentResume.initialArgv(object), cwd: object.props["cwd"]?.string,
                                           home: home, run: run, homeLabel: Self.homeLabel, cmuxPassword: AppPaths.cmuxPassword,
                                           ghosttyIntegration: TerminalConfig.shared.shellIntegration != nil)
+    }
+
+    func sessionObservation() -> TerminalSessionIdentity? {
+        guard !discarded, !endingSession, let previous = sessionIdentity,
+              let identity = board.terminalSessionIdentity(objectID, continuing: previous) else { return nil }
+        sessionIdentity = identity
+        return identity
+    }
+
+    @discardableResult
+    func observeRunningSession(_ identity: TerminalSessionIdentity) -> Bool {
+        guard !discarded, !endingSession else { return false }
+        return board.observeRunningTerminalSession(identity)
     }
 
     /// Reports this hosted terminal's integration spooled on its host while it couldn't reach the
@@ -583,13 +598,17 @@ final class TerminalTile: NSView, TileContent {
     /// exited (`Board.terminalProgram`). Where it works goes to the board too (`worksIn`).
     func refreshProgram() {
         // A remote or hosted terminal's processes run on its host: none of this Mac's process table.
-        guard !isRemote, host == nil else { return }
+        guard !discarded, !endingSession, !board.isClosed, !isRemote, host == nil else { return }
         guard let shell else {
             worksIn(reportedCwd)
             return findShell()
         }
         let (state, directory) = ForegroundProgram.foreground(shell: shell, job: &foregroundJob)
-        if state == .gone { self.shell = nil }
+        if state == .gone {
+            self.shell = nil
+        } else if let identity = sessionObservation() {
+            observeRunningSession(identity)
+        }
         worksIn(directory ?? reportedCwd)
         let program: String? = switch state {
         case .running(let argv): TerminalName.program(argv: argv)
@@ -630,11 +649,13 @@ final class TerminalTile: NSView, TileContent {
     /// that doesn't exist yet appears once zmx has started it).
     private func findShell() {
         if let shellLookup, Date().timeIntervalSince(shellLookup) < 5 { return }
+        guard let identity = sessionObservation() else { return }
         shellLookup = Date()
-        let session = sessionName
+        let session = sessionName, board = self.board.id, merged = self.board.repo?.merged ?? []
+        let home = Self.homeLabel, legacy = Self.legacyHomeLabels
         Task { [weak self] in
-            let pid = await offPool { ForegroundProgram.shellPid(session: session) }
-            guard let self, let pid else { return }
+            let pid = await offPool { ForegroundProgram.shellPid(session: session, home: home, legacy: legacy, board: board, merged: merged) }
+            guard let self, let pid, self.observeRunningSession(identity) else { return }
             self.shell = pid
             self.shellName = ForegroundProgram.name(pid)
             self.refreshProgram()

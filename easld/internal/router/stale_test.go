@@ -37,9 +37,7 @@ func TestBoardStaleUsesConfirmedSessionExitNotAgentReleaseOrIdle(t *testing.T) {
 		for key, value := range labels {
 			parts = append(parts, key+"="+value)
 		}
-		if name == "ended" {
-			parts = append(parts, "ended=10")
-		}
+		parts = append(parts, "ended=10", "exit_code=0")
 		if name == "unreachable" {
 			parts = append(parts, "status=unreachable")
 		}
@@ -74,7 +72,7 @@ func TestBoardStaleUsesConfirmedSessionExitNotAgentReleaseOrIdle(t *testing.T) {
 			t.Fatalf("wrong reasons = %v", entry)
 		}
 	}
-	want := []string{tiles["gone"], tiles["ended"], orphan}
+	want := []string{tiles["gone"], orphan}
 	sort.Strings(want)
 	if !reflect.DeepEqual(ids, want) {
 		t.Fatalf("stale ids = %v, want %v", ids, want)

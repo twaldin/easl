@@ -50,10 +50,8 @@ func (r *Router) boardStale(p map[string]any) (any, error) {
 			if _, restarting := r.restarts[id]; restarting {
 				continue
 			}
-			s, listed := sessions[id]
+			_, listed := sessions[id]
 			if !listed && observation.started {
-				exited[id] = true
-			} else if !s.Unreachable && s.Carries(r.Owns.Labels(b.ID(), id), mergedInto(b)...) && s.Ended {
 				exited[id] = true
 			}
 		}

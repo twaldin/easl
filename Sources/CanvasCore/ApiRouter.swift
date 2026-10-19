@@ -2317,6 +2317,7 @@ public final class ApiRouter {
     /// (`KeyPlan`); if its key's holder is another by the time it applies, the batch fails.
     private func batch(_ p: JSONValue) async throws -> JSONValue {
         guard var ops = p["ops"]?.array, !ops.isEmpty else { throw Failure("invalid_params", "ops must be a non-empty array") }
+        let now = Date()
         let board = try board(p)
         func prepared(_ method: String, _ raw: JSONValue) -> JSONValue {
             var params = raw.object ?? [:]
@@ -2345,6 +2346,12 @@ public final class ApiRouter {
                     throw Failure("invalid_params", "viewer and step mark a remote window's own edit: they aren't taken inside object.batch")
                 }
                 var raw = prepared(method, Self.replacingReferences(op["params"] ?? .object([:])) { n, _ in updating[n].map(JSONValue.string) })
+                if raw["expiresIn"] != nil, case .set(let expiry) = try ObjectExpiryPatch(raw, now: now) {
+                    var fields = raw.object ?? [:]
+                    fields["expiresIn"] = nil
+                    fields["expires"] = expiry.map { .string($0.stamp) } ?? .null
+                    raw = .object(fields)
+                }
                 if method == "object.upsert" {
                     let key = try string(raw, "key")
                     (method, raw) = try upserted(raw, plan: plan)

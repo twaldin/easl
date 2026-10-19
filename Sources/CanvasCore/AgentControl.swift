@@ -146,11 +146,13 @@ extension ApiRouter {
     /// `live` is its host's easld's session list (`hostedSessions`), when it answers.
     func agentList() async -> JSONValue {
         var terminals: [(object: CanvasObject, entry: JSONValue)] = []
+        var observations: [(board: Board, object: CanvasObject, identity: TerminalSessionIdentity)] = []
         var listed: Set<ObjectID> = []
         for board in registry.boards.values.sorted(by: { $0.id < $1.id }) {
             for object in board.objects.values.sorted(by: { $0.id < $1.id }) where object.type == .terminal {
                 listed.insert(object.id)
                 terminals.append((object, agentEntry(object, on: board)))
+                if let identity = board.terminalSessionIdentity(object.id) { observations.append((board, object, identity)) }
             }
         }
         let directory = registry.store.directory, cache = storedTerminals
@@ -165,6 +167,10 @@ extension ApiRouter {
         let hosts = Set(terminals.compactMap { HostedTerminal.host(of: $0.object) })
         var hosted: [String: Set<ObjectID>] = [:]
         if !hosts.isEmpty, let hostedSessions { hosted = await hostedSessions(hosts.sorted()) }
+        for (board, object, identity) in observations where registry.board(id: board.id) === board && board.objects[object.id]?.rev == object.rev {
+            let running = identity.host.map { hosted[$0]?.contains(object.id) == true } ?? (local?[object.id] != nil)
+            if running { board.observeRunningTerminalSession(identity) }
+        }
         let agents = terminals.map { Self.withSession($0.entry, host: HostedTerminal.host(of: $0.object), local: local, hosted: hosted) }
         return .object(["agents": .array(agents)])
     }

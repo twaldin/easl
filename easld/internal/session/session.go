@@ -53,7 +53,6 @@ type Session struct {
 	Clients     int
 	Labels      map[string]string
 	Unreachable bool
-	Ended       bool
 }
 
 // Manager runs zmx. The zero Zmx means zmx isn't installed: every call is `unavailable`.
@@ -590,8 +589,6 @@ func Parse(output string) []Session {
 				s.PID, _ = strconv.Atoi(value)
 			case key == "clients":
 				s.Clients, _ = strconv.Atoi(value)
-			case key == "ended":
-				s.Ended = value != "" && value != "0"
 			case key == "status" && value == "cleaning up":
 				gone = true
 			case key == "err" || (key == "status" && value == "unreachable"):

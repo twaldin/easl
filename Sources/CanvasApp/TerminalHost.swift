@@ -250,9 +250,11 @@ final class TerminalHost {
 
     /// Asks easld to start `tile`'s session unless it runs (`session.spawn`).
     private func spawn(_ tile: TerminalTile) async {
-        guard let home, let run, let params = tile.hostedSpawnParams(home: home, run: run) else { return }
+        guard let home, let run, let params = tile.hostedSpawnParams(home: home, run: run),
+              let identity = tile.sessionObservation() else { return }
         do {
             let result = try await call("session.spawn", params)
+            tile.observeRunningSession(identity)
             failures[tile.objectID] = nil
             if result["created"]?.bool == true { NSLog("easl: %@ started %@ on %@", tile.objectID, result["session"]?.string ?? "", target) }
         } catch let failure as ApiRouter.Failure {
@@ -292,7 +294,8 @@ final class TerminalHost {
         try await endSession(id)
         try ended()
         // The session is gone, so merge history cannot matter; older easld accepts this relaunch.
-        guard let params = tile.hostedSpawnParams(home: home, run: run, argv: argv, merged: []) else {
+        guard let params = tile.hostedSpawnParams(home: home, run: run, argv: argv, merged: []),
+              let identity = tile.sessionObservation() else {
             throw ApiRouter.Failure("not_found", "terminal \(id) was closed")
         }
         let result: JSONValue
@@ -308,6 +311,7 @@ final class TerminalHost {
         guard result["created"]?.bool == true else {
             throw ApiRouter.Failure("unavailable", "\(target) started terminal \(id)'s session again before the relaunch could")
         }
+        tile.observeRunningSession(identity)
         NSLog("easl: %@ restarted %@ on %@", id, result["session"]?.string ?? "", target)
     }
 
