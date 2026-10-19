@@ -232,7 +232,6 @@ final class SurfaceStream {
     private func deliver(_ frame: SurfaceEvent.Frame) {
         let owner = owner, board = board, revision = inputRevision
         let ticket = revision.value
-        let sentAt = ProcessInfo.processInfo.systemUptime
         delivery.async { [weak self] in
             guard !frame.refresh || revision.value == ticket,
                   let line = try? EventLine("surface.frame", board: board, frame.json),
@@ -241,6 +240,7 @@ final class SurfaceStream {
             if frame.refresh { whileCurrent = { revision.value == ticket } }
             else { whileCurrent = nil }
             if owner.send(line, whileCurrent: whileCurrent) {
+                let sentAt = ProcessInfo.processInfo.systemUptime
                 Metrics.shared.record("surface.frameWire", bytes: line.data.count)
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
