@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import CanvasCore
+@testable import CanvasCore
 
 @MainActor
 struct RemoteUpdateActivityTests {
@@ -67,10 +67,10 @@ struct RemoteUpdateActivityTests {
 
     @Test func lazyDisconnectCleanupRetainsActivityWithoutWarningAboutDeadSessions() {
         let activity = RemoteUpdateActivity()
-        var connected = true
-        activity.record(session: "viewer", kind: .board, board: "brd_test", now: 100, isLive: { connected })
+        let connected = Locked(true)
+        activity.record(session: "viewer", kind: .board, board: "brd_test", now: 100, isLive: { connected.withLock { $0 } })
         #expect(activity.sessions.array?.count == 1)
-        connected = false
+        connected.withLock { $0 = false }
         #expect(action(activity, now: 699.999) == .none)
         #expect(activity.sessions == .array([]))
         #expect(action(activity, now: 700) == .install)

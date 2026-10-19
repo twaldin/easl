@@ -70,8 +70,8 @@ The CLI accepts `easl app.update check`, `easl app.update install`, and the equi
 | `phase` | string | `idle`, `checking`, `available`, `downloading`, `verifying`, `ready`, `installing`, or `failed`. `ready` is verified staging awaiting idle or explicit installation. |
 | `error` | string or null | The check, download, verification, or installation failure reason, including a persisted failure from the previous attempt, or null. |
 | `deferred` | string or null | `"remote viewer active"` while an enabled automatic install is ready but recent remote activity prevents it. Otherwise null. |
-| `interruptions` | array | For an accepted `install`, live remote sessions with `session`, `kind` (`browser`, `board`, or `terminal`), `board`, and nullable `tile`. Empty otherwise. |
-| `warning` | string or null | For an accepted `install`, warns when restarting interrupts the listed remote sessions. The explicit install still proceeds immediately. |
+| `interruptions` | array | For an accepted `install`, or one already in progress, live remote sessions with `session`, `kind` (`browser`, `board`, or `terminal`), `board`, and nullable `tile`. Empty otherwise. |
+| `warning` | string or null | For an accepted `install`, or one already in progress, warns when restarting interrupts the listed remote sessions. The explicit install still proceeds immediately. |
 
 `check` fetches the feed without a modal alert and reports state. `install` checks for a newer version, downloads and verifies it, and starts installation without confirmation or an idle requirement. A failed feed check preserves verified staging, which `install` can still use. An accepted install returns `phase: "installing"`, `installPending: true`, and `error: null`. Only that request's connection can authorize the update to quit. Other `check` or `install` calls during installation report state without controlling the original acknowledgment.
 
