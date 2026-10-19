@@ -19,6 +19,7 @@ final class HtmlTile: NSView, TileContent {
     /// goes without a `detach` (deleted from the board).
     private var webViewCount: GaugeHold?
     private var live = true
+    private(set) var hostBoardClosed = false
     private var building = false
     private var loadFailure: NSTextField?
     private var hostImageFailure: NSTextField?
@@ -138,7 +139,7 @@ final class HtmlTile: NSView, TileContent {
     /// The rule list compiles asynchronously; the page never loads without it (fail closed), and
     /// never with a list compiled for an allowlist that has since changed.
     private func build() {
-        guard live, webView == nil, !building else { return }
+        guard live, !hostBoardClosed, webView == nil, !building else { return }
         building = true
         let hosts = allowNetwork
         let remote = board.isRemote
@@ -159,7 +160,7 @@ final class HtmlTile: NSView, TileContent {
             self.building = false
             guard hosts == self.allowNetwork else { return self.build() }
             guard let rules else { return self.showFailure("Network rules failed to compile: \(failure.map(String.init(describing:)) ?? "")") }
-            guard self.live, self.webView == nil else { return }
+            guard self.live, !self.hostBoardClosed, self.webView == nil else { return }
             self.attach(rules: rules)
         }
     }
@@ -328,6 +329,7 @@ final class HtmlTile: NSView, TileContent {
     /// `rendering`: from the offscreen page `render(_:)` loads, which may read (excerpts, state)
     /// but never act for the user.
     func handle(_ message: HtmlMessage, rendering: Bool) async throws -> JSONValue {
+        guard !hostBoardClosed, !board.isClosed else { throw HtmlError.unavailable("host closed this board") }
         if rendering {
             switch message {
             case .rendered:
@@ -345,7 +347,11 @@ final class HtmlTile: NSView, TileContent {
             if let y { scrollY = y }
             pageSettled()
         }
-        let result = try await work.perform { [object, board, files] in try await HtmlChannel.handle(message, tile: object.id, board: board, files: files) }
+        let result = try await work.perform { [object, board, files] in
+            try Task.checkCancellation()
+            return try await HtmlChannel.handle(message, tile: object.id, board: board, files: files)
+        }
+        guard !hostBoardClosed, !board.isClosed else { throw HtmlError.cancelled }
         if case .openCode = message, let opened = result["tile"]?.string { onOpenedCode?(opened, result["existing"] == .bool(true)) }
         return result
     }
@@ -394,7 +400,22 @@ final class HtmlTile: NSView, TileContent {
 
     // MARK: TileContent
 
+    func setHostBoardClosed(_ closed: Bool) {
+        guard hostBoardClosed != closed else { return }
+        hostBoardClosed = closed
+        if closed {
+            suspendAssetWatch()
+            (webView?.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
+            (renderWebView?.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
+            work.cancelAll()
+            snapshotTask?.cancel()
+            webView?.stopLoading()
+            renderWebView?.stopLoading()
+        }
+    }
+
     func setLive(_ live: Bool) {
+        guard !live || !hostBoardClosed else { return }
         guard live != self.live else { return }
         self.live = live
         if !live {
@@ -438,16 +459,16 @@ final class HtmlTile: NSView, TileContent {
     }
 
     /// Card image: the live page's last capture, else an offscreen render.
-    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
-        if let lastSnapshot { return deliver(lastSnapshot) }
+    func cardSnapshot() async -> NSImage? {
+        guard !Task.isCancelled else { return nil }
+        if let lastSnapshot { return lastSnapshot }
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
                                         appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
-        Task { @MainActor in
-            // Cards requested together (a batch of new tiles) render one per wake of the main thread.
-            await MainTurns.next()
-            let render = await self.render(request)
-            deliver(render.state == .rendered ? render.image : nil)
-        }
+        // Cards requested together (a batch of new tiles) render one per wake of the main thread.
+        await MainTurns.next()
+        guard !Task.isCancelled else { return nil }
+        let render = await self.render(request)
+        return !Task.isCancelled && render.state == .rendered ? render.image : nil
     }
 
     // MARK: Offscreen render
@@ -786,6 +807,7 @@ final class HtmlTile: NSView, TileContent {
 
 extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
+        guard !hostBoardClosed, !board.isClosed else { return .cancel }
         guard let url = action.request.url else { return .cancel }
         let isMain = action.targetFrame?.isMainFrame ?? true
         let userLink = action.targetFrame == nil || (action.navigationType == .linkActivated && isMain)
@@ -803,6 +825,7 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard !hostBoardClosed, !board.isClosed else { return }
         if webView === self.webView {
             loadPage(in: webView)
         } else {
@@ -818,6 +841,7 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     private func followed(_ action: WKNavigationAction, in webView: WKWebView) -> Bool {
+        guard !hostBoardClosed, !board.isClosed else { return false }
         guard !board.isRemote, let url = action.request.url, WebLink.isWeb(url),
               let click = (webView as? HtmlWebView)?.recentClick() else { return false }
         if click.union(action.modifierFlags).contains(.option) {

@@ -10,7 +10,7 @@ import WebKit
 /// (that would stall every socket request until answered). Without a window (the tile closed,
 /// or a page an agent drives from the stage) the page gets the answer a dismissed dialog gives.
 /// A page another Mac streams (`BrowserSurface`) asks its viewer instead, and what a viewer
-/// can't answer for this Mac (a file, a certificate, the camera, another app) is refused.
+/// can't answer for this Mac (a certificate, the camera, another app) is refused.
 extension BrowserTile {
     /// "localhost:8000", "accounts.google.com": who is asking.
     static func host(of origin: WKSecurityOrigin) -> String {
@@ -93,12 +93,10 @@ extension BrowserTile {
 
     // MARK: File upload
 
-    /// `<input type=file>`: an open panel as a sheet (several files, or folders, when the input
-    /// allows them). Cancelling sends the page no files. A page another Mac streams gets none:
-    /// its viewer can't choose this Mac's files, and nobody here asked.
+    /// Streamed file clicks bypass WebKit's picker. Any native fallback is refused.
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable ([URL]?) -> Void) {
         if let surface {
-            surface.refuse("upload")
+            surface.refuse(frame.isMainFrame ? (parameters.allowsDirectories ? "folder upload" : "native upload") : "upload in a frame")
             return completionHandler(nil)
         }
         guard let window else { return completionHandler(nil) }

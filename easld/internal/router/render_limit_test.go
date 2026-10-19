@@ -30,7 +30,7 @@ func TestViewRenderInlineWireLimitKeepsTheCallerAndFileOutputUsable(t *testing.T
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	srv, err := server.Listen(filepath.Join(dir, "s.sock"), f.router.Handle, f.router.Answer)
+	srv, err := server.Listen(filepath.Join(dir, "s.sock"), f.router.Handle, f.router.Answer, f.router.Push)
 	if err != nil {
 		t.Fatal(err)
 	}

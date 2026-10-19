@@ -18,7 +18,9 @@ import Foundation
 ///
 /// The server's own calls on the link (`{id: "easld-<n>", method, params}`, docs/design/next.md
 /// "Framing": an easld this viewer attached to as its client) go to `serve`'s handler, each in a
-/// task of its own, and each answer goes back with the call's id on the link it came on.
+/// task of its own, and each answer goes back with the call's id on the link it came on. What
+/// answering a call starts (a browser tile's stream) pushes its events on that same link, through
+/// the call's `origin`, and nowhere once that link is gone.
 ///
 /// Thread-safe; every link callback runs on one serial queue.
 public final class EaslConnection: @unchecked Sendable {
@@ -64,12 +66,63 @@ public final class EaslConnection: @unchecked Sendable {
     public struct Call: Sendable {
         public var method: String
         public var params: JSONValue
+        /// The link the call came on: what answering it starts may push events there
+        /// (`Origin.push`), only while that link lasts.
+        public let origin: Origin
+        /// The surface events the viewer of a relayed `surface.stream` hears on the tile's board
+        /// (`surfaceEvents`, beside the call's params): which of its stream's private events it
+        /// may be sent. Empty on any other call, and when easld named none.
+        public let surfaceEvents: Set<String>
         var eventsThrough: UInt64 = 0
 
-        public init(method: String, params: JSONValue) {
+        /// A call that came on no link (tests): its origin is closed.
+        public init(method: String, params: JSONValue, surfaceEvents: Set<String> = []) {
+            self.init(method: method, params: params, origin: Origin(), surfaceEvents: surfaceEvents)
+        }
+
+        init(method: String, params: JSONValue, origin: Origin, surfaceEvents: Set<String>) {
             self.method = method
             self.params = params
+            self.origin = origin
+            self.surfaceEvents = surfaceEvents
         }
+    }
+
+    /// One link of this connection, as a call that came on it knows it. A push goes out on that
+    /// link behind what it already queued, or nowhere once the link is gone: a reconnect is a new
+    /// link and a new origin, so nothing encoded for an old link reaches the server on the next.
+    public struct Origin: Sendable, Hashable {
+        private let link: Link?
+        private weak var connection: EaslConnection?
+
+        /// No link: closed from the start.
+        init() {
+            link = nil
+            connection = nil
+        }
+
+        fileprivate init(_ link: Link, on connection: EaslConnection) {
+            self.link = link
+            self.connection = connection
+        }
+
+        /// False once that link dropped or the connection closed.
+        public var isOpen: Bool { link?.isLive == true }
+
+        /// Queues `line` on that link; false, and dropped, once the link is gone. Any thread.
+        @discardableResult
+        public func push(_ line: EventLine) -> Bool {
+            guard let link, link.isLive, let connection else { return false }
+            connection.queue.async {
+                guard connection.link === link else { return }
+                connection.write(line.data, on: link)
+            }
+            return true
+        }
+
+        public static func == (lhs: Origin, rhs: Origin) -> Bool { lhs.link === rhs.link }
+
+        public func hash(into hasher: inout Hasher) { hasher.combine(link.map { ObjectIdentifier($0) }) }
     }
 
     /// Waits between attempts: `initial`, doubling after each failed one, at most `maximum`;
@@ -523,7 +576,8 @@ public final class EaslConnection: @unchecked Sendable {
         }
         if let method = message["method"]?.string {
             guard let id = message["id"]?.string else { return }
-            var call = Call(method: method, params: message["params"] ?? .object([:]))
+            let heard = Set(message["surfaceEvents"]?.array?.compactMap(\.string) ?? [])
+            var call = Call(method: method, params: message["params"] ?? .object([:]), origin: Origin(link, on: self), surfaceEvents: heard)
             call.eventsThrough = eventSequence
             return called(call, id: id, on: link)
         }
@@ -725,6 +779,8 @@ private final class Link: @unchecked Sendable {
     var exited = false
     private let lock = NSLock()
     private var stderrTail = Data()
+    /// Until `tearDown`: the connection's current link, which a call's origin may push on.
+    private var live = true
 
     init(generation: Int, readFD: Int32, writeFD: Int32, process: Process?) {
         self.generation = generation
@@ -740,6 +796,8 @@ private final class Link: @unchecked Sendable {
             if stderrTail.count > 4096 { stderrTail.removeFirst(stderrTail.count - 4096) }
         }
     }
+
+    var isLive: Bool { lock.withLock { live } }
 
     /// "ssh exited with status 255: ssh: connect to host … port 22: Connection refused".
     func exitReason() -> String {
@@ -758,6 +816,7 @@ private final class Link: @unchecked Sendable {
     }
 
     func tearDown() {
+        lock.withLock { live = false }
         source?.cancel()
         source = nil
         stopWriting()

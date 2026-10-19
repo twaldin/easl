@@ -25,6 +25,8 @@ The Swift navigation fixture builds with `--build-system native --enable-index-s
 
 What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` that `CanvasCoreTests` and easld's `go test` both check, so the two can't drift: `terminal-env.json` (a hosted and an owned terminal's session variables), `agent-resume.json` (the command resuming a recorded agent session with the tile's own options, `AgentResume.argv` and `session.ResumeArgv`) and `agent-relaunch.json` (what `agent.restart` relaunches, resumed or fresh, with the recorded model and thinking level and the call's `args`, and the tile's command from then on: `AgentResume.relaunch` and `session.RelaunchOf`). Change a case there, then make both pass.
 
+`scripts/test_host_lsp_lifetime.py` runs the host language launcher as a real subprocess on Linux and macOS. The link-death regression reads the `easl/hostProcess` PID notification before killing the input link, then checks that the server is reaped. It does not prove cleanup before PID delivery. Separate retained real-SSH proof holds that notification back, verifies that the viewer receives zero bytes, and kills the SSH link before checking the host process. Other script cases check byte-for-byte LSP forwarding and isolation from unrelated environment files. The scripts run through the Python discovery command above and need Bun, as the host launcher does.
+
 ## Rotating an omp lead
 
 `scripts/rotate-lead.ts` runs one guarded fresh restart and one out-of-band handoff through the existing easl CLI. It is a finite developer tool, not a scheduler:
@@ -136,6 +138,7 @@ scripts/dev.sh input text "hello"                   # insert into the first resp
 scripts/dev.sh input command insertNewline:
 scripts/dev.sh input shortcut z --mods cmd           # a key press by character: p, 9, =, +, $'\r'
 scripts/dev.sh input key return                      # by name: return escape tab space delete forwarddelete up down left right home end pageup pagedown
+scripts/dev.sh input state                         # app.log: window, closed state, viewport, responder, and object/selection hashes; no source text
 scripts/dev.sh input scroll <x> <y> <dx> <dy>
 scripts/dev.sh input scroll <x> <y> <dx> <dy> --repeat 30 --gesture   # one phased trackpad gesture (began and ended without movement)
 scripts/dev.sh input scroll <x> <y> <dx> <dy> --lines   # a mouse wheel's notches (line units, no precise deltas); with --mods cmd, ⌘-scroll
@@ -155,6 +158,41 @@ Client mode with two instances on one Mac: start the host, `EASL_DEV_HOME=/tmp/e
 Any kind takes `--repeat N [--interval ms]` (default 8 ms apart) for a trackpad-rate burst, e.g. `input scroll 950 220 -40 -15 --repeat 120`; a `magnify` burst is one gesture (began, changed…, ended). A `scroll` burst sends continuous (trackpad-precise) steps without a gesture phase: on macOS 26 NSScrollView tracks a real phased scroll itself, and a replayed phased gesture only moved the view by its first step. `--gesture` replays the burst as that phased gesture anyway, for views that own a gesture from its first event (a changes tile keeps a whole gesture, the board never pans in it). A horizontal-dominant step (`|dx| > |dy|`) pans even over a code tile or a terminal; a vertical one over a terminal pans only while the terminal has neither keyboard focus nor scrollback (a fresh shell; a full-screen TUI in the alternate screen). When the burst ends, `app.log` records `longest gap … before step …, mean lateness …`. The longest gap between two steps is the longest stall a person sees, and it is the number to compare before and after a performance change. `scripts/perf-replica.sh start <board-id|file> [app]` copies a real board (terminals dropped) into a scratch home to measure against. It launches unfocused on the current Space and uses yabai only to look up the window id. `[app]` runs a given bundle, so two frozen builds can be measured in turns.
 
 `magnify` is a real gesture event (CG type 29 with HID zoom type), so NSScrollView runs its own live magnification and the board's liveness pass runs at the end, exactly as for a trackpad pinch. Calling `setMagnification` per step instead measures a different thing. Live magnification anchors at the real pointer, so the replay moves the document back under the replayed point after each step. Put that point over empty board or a code tile: a note or terminal under it takes the gesture. On macOS 26 AppKit damps replayed steps after the first few (0.05 per step barely moves; `0.25 --repeat 45` goes from fit to 100% and `-0.25 --repeat 45` back out, rubber-banding at the limits).
+
+`Tests/RemoteClosedBoard/run.py` exercises a separate development viewer of a scratch host. It requires macOS, Pillow, the authorized CuaDriver, the viewer checkout and home, a local Unix socket forwarding to the scratch host, its SSH target and home, and an empty scratch board. The prepared fixture directory must be visible to both the runner and the host. Follow the machine's GUI policy before launching it.
+
+The regression keeps the exact Cmd-T focus, selection, object, and viewport checks, Select All, literal clipboard copies, pan, visible zoom changes, and the hidden closed tab's needs-you behavior. Code context actions, Code-menu actions, and Cmd-clicks must preserve those inspection fields and the clipboard while closed. The public viewer `app.metrics` board-write count also stays fixed, so a rejected provisional edit cannot pass by rolling back before the next state sample.
+
+Reopening must leave host objects, revision, and attention unchanged. Object timestamps are compared at their stored whole-second precision, with raw snapshots retained. The in-memory mutation journal resets when its board closes, so it is not compared across reopening.
+
+Prepare a fresh host root with the real sourcekit-lsp binary. The helper prints the canonical root and an `EASL_LSP_SWIFT` launcher path. Set that existing override in the scratch host's isolated SSH login environment before starting the viewer. Do not change a shared shell profile. This fixture is not a language-server replacement. It forwards real LSP frames unchanged and holds one actual definition reply until the runner releases it.
+
+```sh
+FIXTURE="$(mktemp -d /tmp/easl-closed.XXXXXX)"
+FIXTURE="$(cd "$FIXTURE" && pwd -P)"
+python3 Tests/RemoteClosedBoard/lsp_gate.py prepare --root "$FIXTURE" \
+  --server "$(xcrun -f sourcekit-lsp)"
+```
+
+Open and reopened controls must create host code tiles aimed at `main.swift` line 3 through the context menu, menubar, and Cmd-click navigation. URL controls must create a host browser with the literal fixture URL. The delayed regression selects the code tile, pans it entirely offscreen, starts the native Open Definition shortcut, and waits for a real server reply. It closes the host board before releasing that reply. The viewport, focus, selection, clipboard, model, and board-write count must remain unchanged. The same held-reply action while open must create the exact code target.
+
+Also exercise a terminal Cmd-click whose real host reference reply arrives after closure. Closing must cancel and invalidate that request; releasing a late reply must not open a tile, show a notice, move the viewport or focus, or increment the viewer's board-write count. Repeat while open and after reopening to prove ordinary reference navigation still works. This terminal-specific timing scenario is separate from the code-tile LSP fixture above.
+
+Exercise the same close-before-completion order for a real HTML `<canvas-link>` host lookup. Hold its host-file reply, close the board, then release it. Neither a provisional code tile nor a late viewport/focus change is allowed. While closed, the parked page must not start new excerpt or image reads, state writes, or browser navigation. Open and reopened code-link controls must still reach the literal target. Retain host request records and the viewer's model, viewport, focus and board-write counter for each order.
+
+For Changes, hold patch reconstruction after an open-board Stage or Discard is admitted, close the board, then release it. No new host apply may start and no late review entry, selection change or notice may appear. A write already dispatched before closure may have committed; never retry it or claim cancellation rolled it back. Also close while a card waits for its main turn, and close/reopen while a real note or Git read is held. Old cards must start no new host reads after closure, and released old reads must not replace the retained model. Open and reopened controls must still load and apply normally.
+
+The runner's accessibility regression uses `Tests/RemoteClosedBoard/native.py` and the guest's authorized CuaDriver. Each snapshot checks that the development PID owns the instance lock and requests that exact PID and window ID. A fresh tree supplies the labelled Close button's opaque element token. The helper immediately sends a background accessibility `press` with the same PID, window ID, and unique session. It never supplies coordinates or falls back to a pointer click. Open and reopened `ax-control.swift` controls must remove exactly that host object and viewer tile, advance the host revision once, and increment the viewer's public board-write count once. With the host board closed, pressing `Close main.swift` must preserve the exact model, selection, selected-text hashes, first responder, viewport, clipboard, and board-write count. The subsequent literal cached-source copy detects a delete-and-restore that loses the retained code view. Driver action receipts are retained as evidence, not treated as proof of the postcondition.
+
+The cached Changes proof also requires a real Git hunk and native zoom **in**, not only a zoomed-out capture. Record the fixture's literal path, removed line, and added line while the board is open. Set the tile's content zoom to 150% before closing, and retain that state too. Close the host board, pan the Changes tile entirely offscreen and back, and increase board zoom from 50% to its supported 100% ceiling with native input. Content zoom and board magnification are independent; do not change the application's zoom limits for this proof. Retain before-and-after viewport states showing the increased board zoom and CuaDriver captures of the actual cached hunk at both scales. Inspect the enlarged path and diff text for sharp rendering and unchanged content. Check that the host file bytes, index and worktree diff, board contents, and revision remain unchanged. A model-only assertion, a rescaled PNG, or the general pan/zoom captures above do not satisfy this proof.
+
+The runner writes observations, protocol evidence, native action receipts, and CuaDriver captures of only its verified viewer PID and window. It releases its reply gates, removes its code-navigation control objects in `finally`, and ends its native-driver session on exit. It does not request native SSH Screen Recording permission or use `screencapture`. The caller still owns the scratch viewer, host, SSH forwarding, and root cleanup.
+
+```sh
+python3 Tests/RemoteClosedBoard/run.py --checkout "$PWD" --viewer-home "$EASL_DEV_HOME" \
+  --host-socket "$G/host/easl.sock" --host-home "$G/host" --host easl-guest \
+  --root "$FIXTURE" --fixture-directory "$FIXTURE" --out "$FIXTURE/proof"
+```
 
 ### Performance probes
 
@@ -204,6 +242,34 @@ Use `scripts/dev.sh input mainmenu "File/Open Remote…"`, `input text easl-loca
 Stop the host to see "easl isn't running"; the viewer reconnects when the host starts again.
 
 `remote-boards.json` stores each easld board's `host`, `sshTarget`, absolute server `home`, and `board`. Restarting without `EASL_DEV_REMOTE_HOME`, or with a different value, keeps the saved server home. Entries predating `home` use the dev override when set and the host's default only without it. With the override set, discovery refuses the default server even if an entry explicitly names it; it never redirects that address to another server. The picker remembers its most recent server home too. A custom Mac home uses its own `zmx` and `tmp` directories and has no known launcher, so Start easl is unavailable. Quit the viewer with the sheet open and verify that its SSH relays end before the app exits.
+
+### Default board directory regression
+
+The native regression links the compiled app and invokes the shared picker action with local,
+remote, and no active board, with valid, unset, and invalid preferences. It intercepts only panel
+presentation and checks the actual `NSOpenPanel.directoryURL`; it is not visual proof.
+
+```sh
+swift build --build-system native -j 2 --product Easl
+python3 Tests/BoardDirectory/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+Use an isolated development instance and its own preference domain, not the installed app's.
+Set `canvas.boardDirectory` in that domain to an existing folder different from both the local
+board's root and the remote board's root, then restart the instance.
+
+1. With a local board selected, invoke File › Open Board… and confirm the initial folder is the
+   configured directory. Cancel, then repeat with the tab bar's + button.
+2. Select a remote board and repeat both entry points. Each must ignore the local preference and
+   retain the picker behavior observed with the preference unset.
+3. Unset the preference and restart. On the local board, both pickers must again start at the
+   active board's root. A missing directory, relative path, or regular file must behave the same.
+4. Launch the isolated bundle from `/` without an explicit root: a valid preference must select
+   the startup board. `EASL_ROOT`, a positional root, and a working directory other than `/` must
+   still win over the preference.
+
+Cancel every picker without opening a folder, then stop the development instance. Never change
+the installed app's preferences or close the user's boards for this regression.
 
 ### Testing the updater
 

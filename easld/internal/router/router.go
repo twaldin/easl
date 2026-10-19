@@ -25,6 +25,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/relay"
 	"github.com/twaldin/easl/easld/internal/server"
 	"github.com/twaldin/easl/easld/internal/session"
+	"github.com/twaldin/easl/easld/internal/surfaces"
 	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
@@ -55,6 +56,8 @@ type Router struct {
 	reg *board.Registry
 	// clients are the attached Mac clients, which serve the delegated methods and measure text.
 	clients *clients.Registry
+	// surfaces are the browser streams easld relays from a tile's drawing Mac to their viewers.
+	surfaces *surfaces.Registry
 
 	pendingPrompts map[string]time.Time
 	waiters        []*waiter
@@ -107,9 +110,11 @@ func New(reg *board.Registry) *Router {
 	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[messageHold]Conn{}, restarts: map[string]uint64{}, closing: map[string]*boardClose{}, typing: map[string]int{}, diagrams: map[string]*diagramJob{},
 		cmux: map[string]*cmuxSocket{}, adopted: map[string]int{},
 		FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
+	r.surfaces = surfaces.New(r.clients, r.surfaceEnds)
 	reg.Hook = func(b *board.Board, e model.Event) {
 		r.observeDiagrams(b, e)
 		r.observe(b, e)
+		r.observeSurfaces(b, e)
 	}
 	reg.Bounced = r.bounce
 	reg.Terminals = r.terminals
@@ -127,6 +132,11 @@ func (r *Router) Answer(c *server.Conn, line map[string]any) bool {
 	return r.clients.Answer(c, line)
 }
 
+// Push is the server's Pushes: a drawing Mac's event line for a stream easld relays.
+func (r *Router) Push(c *server.Conn, line []byte) {
+	r.surfaces.Push(c, line)
+}
+
 // Handle is the server's handler: the response, or nil when the reply is deferred (agent.wait,
 // an agent.inbox long poll) or the connection became an event stream.
 func (r *Router) Handle(req any, c *server.Conn) any {
@@ -138,6 +148,9 @@ func (r *Router) Handle(req any, c *server.Conn) any {
 // reload has waited for its graph: both happen once the registry's lock is let go.
 func (r *Router) HandleConn(req any, c Conn) any {
 	if reply, ok := r.hostCall(req); ok {
+		return reply
+	}
+	if reply, ok := r.surfaceCall(req, c); ok {
 		return reply
 	}
 	reply, before, after := r.locked(req, c)

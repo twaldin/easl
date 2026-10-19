@@ -7,7 +7,7 @@
     "request": "{ id: string, method: string, params: object }",
     "response": "{ id: string, ok: true, result: any } | { id: string, ok: false, error: { code: string, message: string, data?: any } }",
     "events": "after a successful events.subscribe, the same connection receives { event: string, data: any } lines until closed",
-    "clients": "after a successful client.attach the server also writes requests to that connection, { id: string, method: string, params: object } with ids \"easld-<n>\", for the methods the client serves; the client answers each with a response line carrying its id, in any order. A line from the client with `ok` and no `method` is such an answer"
+    "clients": "after a successful client.attach the server also writes requests to that connection, { id: string, method: string, params: object } with ids \"easld-<n>\", for the methods the client serves; the client answers each with a response line carrying its id, in any order. A line from the client with `ok` and no `method` is such an answer. Relayed surface.stream calls also carry surfaceEvents: string[] outside params, the opening viewer's private-event subscriptions. Drawing clients push {event, board, data} surface events on that same attached link, with event encoded first; easld forwards them only to the stream's owning viewer"
   },
   "errors": {
     "invalid_params": "params failed schema validation",
@@ -145,22 +145,34 @@
       }, "additionalProperties": false,
       "description": "surface.frame data. Full current page image held in memory, never a profile, cookie jar, page source, dirty rectangle or image-less acknowledgement. Only the subscribed owning connection receives it."
     },
+    "SurfaceFile": {
+      "type": "object", "required": ["name", "type", "data"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "1 to 1024 UTF-8 bytes." },
+        "type": { "type": "string", "description": "At most 256 UTF-8 bytes." },
+        "modified": { "type": "number", "minimum": 0, "description": "Last modification time in milliseconds since the Unix epoch." },
+        "data": { "type": "string", "maxLength": 11184812, "contentEncoding": "base64" }
+      }, "additionalProperties": false,
+      "description": "A viewer-picked file held only in memory. All files in one answer total at most 8 MiB decoded, including empty files. No viewer path or drawing-machine staging file is sent."
+    },
     "SurfaceDialog": {
       "type": "object", "required": ["stream", "dialog", "kind", "origin"],
       "properties": {
         "stream": { "$ref": "#/definitions/SurfaceStream" }, "dialog": { "type": "string" },
-        "kind": { "enum": ["alert", "confirm", "prompt", "login", "select"] }, "origin": { "type": "string" },
-        "message": { "type": "string" }, "text": { "type": "string" }, "choices": { "type": "array", "items": { "type": "string" } }, "selected": { "type": "integer", "minimum": 0 }
+        "kind": { "enum": ["alert", "confirm", "prompt", "login", "select", "file"] }, "origin": { "type": "string" },
+        "message": { "type": "string" }, "text": { "type": "string" }, "choices": { "type": "array", "items": { "type": "string" } }, "selected": { "type": "integer", "minimum": 0 },
+        "multiple": { "type": "boolean" }, "accept": { "type": "array", "items": { "type": "string" }, "description": "File picker type hints from the initiating input." }
       }, "additionalProperties": false,
       "description": "surface.dialog data, private to the subscribed owning connection. Completed once by surface.answer, safely dismissed when the connection or stream closes."
     },
     "SurfaceNotice": {
       "type": "object", "required": ["stream", "kind"],
       "properties": {
-        "stream": { "$ref": "#/definitions/SurfaceStream" }, "kind": { "enum": ["closed", "download", "refused"] },
+        "stream": { "$ref": "#/definitions/SurfaceStream" }, "kind": { "enum": ["closed", "dialogClosed", "download", "refused"] },
+        "dialog": { "type": "string", "minLength": 1, "description": "Required for dialogClosed. The invalidated dialog id on this stream. The viewer dismisses its picker without sending an answer or file bytes." },
         "reason": { "type": "string" }, "name": { "type": "string" }, "state": { "type": "string" }
       }, "additionalProperties": false,
-      "description": "surface.notice data, private to the subscribed owning connection. Downloads remain host files. File uploads are refused, not silently accepted."
+      "description": "surface.notice data, private to the subscribed owning connection. Downloads remain drawing-machine files. Folder uploads and file inputs in frames remain refused."
     },
     "SurfaceEvent": {
       "description": "Private pushed events, never board broadcasts. Canonical board id and matching subscription are required on the owning connection.",
@@ -1026,7 +1038,7 @@
   },
   "methods": {
     "surface.stream": {
-      "description": "Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Currently served by the Swift app only; easld relay is not implemented.",
+      "description": "Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Easld relays to the exact attached drawingMachine and pins the stream to that attachment. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay.",
       "params": {
         "type": "object", "required": ["id"],
         "properties": { "id": { "type": "string", "pattern": "^obj_[0-9A-Za-z]+$" }, "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 2, "default": 1 }, "format": { "enum": ["jpeg", "png"], "default": "jpeg" } },
@@ -1043,15 +1055,15 @@
       "result": { "type": "object", "properties": {}, "additionalProperties": false }
     },
     "surface.input": {
-      "description": "Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation.",
+      "description": "Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. If page relay setup fails during delivery, the stream closes with a notice; accepted input is never replayed. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation.",
       "params": { "type": "object", "required": ["stream", "events"], "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "events": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/definitions/SurfaceInputEvent" } } }, "additionalProperties": false },
       "result": { "type": "object", "required": ["accepted"], "properties": { "accepted": { "type": "integer", "minimum": 0, "description": "Count of newly queued events in this batch; duplicates contribute zero. Not a delivery or presentation acknowledgement." }, "text": { "type": "string" } }, "additionalProperties": false }
     },
     "surface.answer": {
-      "description": "Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords are transient request data, never logged or read from the viewer's keychain.",
+      "description": "Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords and file bytes are transient request data, never logged, staged or read from the viewer's keychain. A file picker accepts 1 file, or up to 32 with multiple:true, totaling at most 8 MiB decoded. An accepted file selection cannot be empty. Files are installed in the initiating main-frame input as in-memory File objects with untrusted input/change events. Cancellation preserves the input's prior files. Navigation or element replacement invalidates the picker. Cancel carries accept:false and no files.",
       "params": {
         "type": "object", "required": ["stream", "dialog", "accept"],
-        "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "dialog": { "type": "string" }, "accept": { "type": "boolean" }, "text": { "type": "string" }, "user": { "type": "string" }, "password": { "type": "string" }, "choice": { "type": "integer", "minimum": 0 } }, "additionalProperties": false
+        "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "dialog": { "type": "string" }, "accept": { "type": "boolean" }, "text": { "type": "string" }, "user": { "type": "string" }, "password": { "type": "string" }, "choice": { "type": "integer", "minimum": 0 }, "files": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/definitions/SurfaceFile" } } }, "additionalProperties": false
       },
       "result": { "type": "object", "properties": {}, "additionalProperties": false }
     },
@@ -2215,7 +2227,7 @@
           "app": { "type": "string", "description": "the client's easl version, e.g. \"0.2.0\", for messages" },
           "host": { "type": "string", "description": "the machine it runs on, for messages" },
           "identity": { "$ref": "#/definitions/Id", "description": "this app home's persistent machine identity, unchanged across reconnects and relaunches; distinct from the connection's cli_ id. Needed to serve browser.call" },
-          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call (others are ignored)" },
+          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call, surface.stream, surface.ack, surface.input, surface.answer, surface.stop (others are ignored)" },
           "boards": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "the boards this client serves, in a window, tab, or background attachment, each open on the server; default none" },
           "focused": { "$ref": "#/definitions/Id", "description": "the board its user is looking at now (the key window's selected tab), one of `boards`; the client focused last on a board serves that board first" }
         },

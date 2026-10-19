@@ -28,20 +28,19 @@ enum WebMentions {
     /// `<canvas>`, `<video>` or `<img>`, where the point falls in its own pixels (a Hyper-click's
     /// mention; hovering doesn't need it).
     static func element(at point: CGPoint, in webView: WKWebView, pixel: Bool = false) async -> Element? {
-        let result = try? await webView.callAsyncJavaScript("return window.__canvasMentions?.at(x, y, pixel) ?? null", arguments: ["x": point.x, "y": point.y, "pixel": pixel], contentWorld: world)
-        return decode(result)
+        await PageScript.value("return window.__canvasMentions?.at(x, y, pixel) ?? null", ["x": point.x, "y": point.y, "pixel": pixel],
+                               in: world, on: webView, decode)
     }
 
     /// Where the element matching `selector` is now, or nil if it no longer exists.
     static func element(matching selector: String, in webView: WKWebView) async -> Element? {
-        let result = try? await webView.callAsyncJavaScript("return window.__canvasMentions?.find(selector) ?? null", arguments: ["selector": selector], contentWorld: world)
-        return decode(result)
+        await PageScript.value("return window.__canvasMentions?.find(selector) ?? null", ["selector": selector], in: world, on: webView, decode)
     }
 
     /// The page's text selection: the innermost element holding all of it, `text` the selected
     /// text (whitespace collapsed); nil with nothing selected.
     static func selection(in webView: WKWebView) async -> Element? {
-        decode(try? await webView.callAsyncJavaScript("return window.__canvasMentions?.selection() ?? null", arguments: [:], contentWorld: world))
+        await PageScript.value("return window.__canvasMentions?.selection() ?? null", in: world, on: webView, decode)
     }
 
     /// The elements under a rect (web view coordinates, top-left origin): the outermost ones it
@@ -49,11 +48,11 @@ enum WebMentions {
     /// the smallest such element it touches within a line (an underline, a margin note). At
     /// most `limit`, plus how many more there are.
     static func elements(in rect: CGRect, in webView: WKWebView, limit: Int = 8) async -> (elements: [Element], more: Int)? {
-        let result = try? await webView.callAsyncJavaScript("return window.__canvasMentions?.within(x, y, w, h, limit) ?? null",
-                                                            arguments: ["x": rect.minX, "y": rect.minY, "w": rect.width, "h": rect.height, "limit": limit],
-                                                            contentWorld: world)
-        guard let object = result as? [String: Any], let list = object["elements"] as? [Any] else { return nil }
-        return (list.compactMap(decode), (object["more"] as? NSNumber)?.intValue ?? 0)
+        await PageScript.value("return window.__canvasMentions?.within(x, y, w, h, limit) ?? null",
+                               ["x": rect.minX, "y": rect.minY, "w": rect.width, "h": rect.height, "limit": limit], in: world, on: webView) { value in
+            guard let object = value as? [String: Any], let list = object["elements"] as? [Any] else { return nil }
+            return (list.compactMap(decode), (object["more"] as? NSNumber)?.intValue ?? 0)
+        }
     }
 
     private static func decode(_ value: Any?) -> Element? {

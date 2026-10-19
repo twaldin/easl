@@ -141,7 +141,7 @@ func run(args []string, stderr io.Writer) int {
 	for _, err := range r.Restore() {
 		fmt.Fprintln(stderr, "easld:", err)
 	}
-	srv, err := server.Listen(path, r.Handle, r.Answer)
+	srv, err := server.Listen(path, r.Handle, r.Answer, r.Push)
 	if err != nil {
 		return fail(err)
 	}

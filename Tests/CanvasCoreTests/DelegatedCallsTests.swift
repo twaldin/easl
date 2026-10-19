@@ -29,6 +29,9 @@ final class DelegatedCallsTests {
     var page: (JSONValue, CGFloat) -> CGSize = { _, width in CGSize(width: width, height: 900.2) }
     /// The widths the window laid pages out at, in order.
     var laidOut: [CGFloat] = []
+    /// The `surface.*` calls the window answered, in order: each request, whether its origin could
+    /// push, and what its viewer hears.
+    var streamed: [(request: SurfaceRequest, open: Bool, heard: Set<String>)] = []
 
     init() throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -56,6 +59,10 @@ final class DelegatedCallsTests {
             },
             reload: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser page is loaded") },
             browse: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser page is loaded") },
+            surface: { [unowned self] request, origin, heard in
+                streamed.append((request, origin.isOpen, heard))
+                return .object(["stream": "str_1", "size": .object(["w": 800, "h": 600]), "scale": 2])
+            },
             submit: { [unowned self] id, text in
                 guard surface, id == terminal else { return false }
                 screen += ["> \(text)"] + reply
@@ -239,5 +246,23 @@ final class DelegatedCallsTests {
         #expect(code(await call("obj_page", "browser.open_split", .object(["url": "https://example.com/"]))) == "invalid_params")
         #expect(code(await call("obj_note", "browser.url.get", .object([:]))) == "not_found")
         #expect(code(await call("obj_gone", "browser.url.get", .object([:]))) == "not_found")
+    }
+
+    /// A stream opens only on a browser tile of this board, carrying what its viewer hears; the
+    /// calls after it name the stream and pass through as parsed, with nothing to hear.
+    @Test func surfaceCallsReachTheWindowWithWhatTheirViewerHears() async throws {
+        tile("obj_page", .browser, at: 0)
+        tile("obj_note", .note, at: 400)
+        let calls = delegated()
+        let opened = await calls.answer(EaslConnection.Call(method: "surface.stream", params: .object(["id": "obj_page", "scale": 2]),
+                                                            surfaceEvents: ["surface.frame", "surface.dialog"]))
+        #expect(try opened.get()["stream"] == .string("str_1"))
+        #expect(code(await answer(calls, "surface.stream", .object(["id": "obj_note"]))) == "not_found")
+        #expect(code(await answer(calls, "surface.stream", .object(["id": "obj_gone"]))) == "not_found")
+        #expect(code(await answer(calls, "surface.ack", .object(["stream": "str_1"]))) == "invalid_params")
+        _ = try await answer(calls, "surface.ack", .object(["stream": "str_1", "frame": 0])).get()
+        #expect(streamed.map { $0.request } == [.stream(tile: "obj_page", scale: 2, format: .jpeg), .ack(stream: "str_1", frame: 0)])
+        #expect(streamed.map { $0.heard } == [["surface.frame", "surface.dialog"], []])
+        #expect(streamed.allSatisfy { !$0.open }, "a call that came on no link can push nothing")
     }
 }

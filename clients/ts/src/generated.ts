@@ -127,22 +127,38 @@ export type SurfaceFrame = {
   loading: boolean;
 };
 
+/** A viewer-picked file held only in memory. All files in one answer total at most 8 MiB decoded, including empty files. No viewer path or drawing-machine staging file is sent. */
+export type SurfaceFile = {
+  /** 1 to 1024 UTF-8 bytes. */
+  name: string;
+  /** At most 256 UTF-8 bytes. */
+  type: string;
+  /** Last modification time in milliseconds since the Unix epoch. */
+  modified?: number;
+  data: string;
+};
+
 /** surface.dialog data, private to the subscribed owning connection. Completed once by surface.answer, safely dismissed when the connection or stream closes. */
 export type SurfaceDialog = {
   stream: SurfaceStream;
   dialog: string;
-  kind: "alert" | "confirm" | "prompt" | "login" | "select";
+  kind: "alert" | "confirm" | "prompt" | "login" | "select" | "file";
   origin: string;
   message?: string;
   text?: string;
   choices?: string[];
   selected?: number;
+  multiple?: boolean;
+  /** File picker type hints from the initiating input. */
+  accept?: string[];
 };
 
-/** surface.notice data, private to the subscribed owning connection. Downloads remain host files. File uploads are refused, not silently accepted. */
+/** surface.notice data, private to the subscribed owning connection. Downloads remain drawing-machine files. Folder uploads and file inputs in frames remain refused. */
 export type SurfaceNotice = {
   stream: SurfaceStream;
-  kind: "closed" | "download" | "refused";
+  kind: "closed" | "dialogClosed" | "download" | "refused";
+  /** Required for dialogClosed. The invalidated dialog id on this stream. The viewer dismisses its picker without sending an answer or file bytes. */
+  dialog?: string;
   reason?: string;
   name?: string;
   state?: string;
@@ -1031,6 +1047,7 @@ export type SurfaceAnswerParams = {
   user?: string;
   password?: string;
   choice?: number;
+  files?: SurfaceFile[];
 };
 export type SurfaceAnswerResult = Record<string, unknown>;
 
@@ -2085,7 +2102,7 @@ export type ClientAttachParams = {
   host?: string;
   /** this app home's persistent machine identity, unchanged across reconnects and relaunches; distinct from the connection's cli_ id. Needed to serve browser.call */
   identity?: Id;
-  /** the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call (others are ignored) */
+  /** the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call, surface.stream, surface.ack, surface.input, surface.answer, surface.stop (others are ignored) */
   serves: string[];
   /** the boards this client serves, in a window, tab, or background attachment, each open on the server; default none */
   boards?: Id[];
@@ -2171,13 +2188,13 @@ export type TextMeasureResult = {
 /** Every API method, grouped by namespace (`api.board.get(...)`). */
 export interface CanvasApi {
   surface: {
-    /** Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Currently served by the Swift app only; easld relay is not implemented. */
+    /** Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Easld relays to the exact attached drawingMachine and pins the stream to that attachment. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay. */
     stream(params: SurfaceStreamParams): Promise<SurfaceStreamResult>;
     /** On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging. */
     ack(params: SurfaceAckParams): Promise<SurfaceAckResult>;
-    /** Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation. */
+    /** Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. If page relay setup fails during delivery, the stream closes with a notice; accepted input is never replayed. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation. */
     input(params: SurfaceInputParams): Promise<SurfaceInputResult>;
-    /** Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords are transient request data, never logged or read from the viewer's keychain. */
+    /** Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords and file bytes are transient request data, never logged, staged or read from the viewer's keychain. A file picker accepts 1 file, or up to 32 with multiple:true, totaling at most 8 MiB decoded. An accepted file selection cannot be empty. Files are installed in the initiating main-frame input as in-memory File objects with untrusted input/change events. Cancellation preserves the input's prior files. Navigation or element replacement invalidates the picker. Cancel carries accept:false and no files. */
     answer(params: SurfaceAnswerParams): Promise<SurfaceAnswerResult>;
     /** Stop the opening connection's stream and cancel its capture work. Never delete or release the host page; its existing driven-lease policy takes over. Another connection cannot control this stream. */
     stop(params: SurfaceStopParams): Promise<SurfaceStopResult>;

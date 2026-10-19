@@ -23,6 +23,11 @@ public struct ViewerWindow {
     /// (`browser.call`, credited to the caller): the command's own result; throws its own
     /// `CmuxError` (`timeout`, `js_error`, …), or `Failure` for a tile whose page another Mac runs.
     public var browse: (ObjectID, CmuxBrowserCommand, _ caller: ObjectID?) async throws -> JSONValue
+    /// A `surface.*` call easld relays from another Mac's viewer, for a browser tile whose page
+    /// this Mac runs, answered by this Mac's browser streams for the link the call came on
+    /// (`origin`): its stream's events go out there. `heard` is what that viewer hears of the
+    /// stream's private events (`Call.surfaceEvents`), which only an open names.
+    public var surface: (SurfaceRequest, _ origin: EaslConnection.Origin, _ heard: Set<String>) async throws -> JSONValue
     /// Types text into a terminal tile's surface (bracketed paste) and presses Enter once the paste
     /// landed; false when the tile has no surface.
     public var submit: (ObjectID, _ text: String) async -> Bool
@@ -42,6 +47,7 @@ public struct ViewerWindow {
                 render: @escaping (RenderRequest, ImageFormat) async throws -> RenderOutput, hostPicture: @escaping (ObjectID) -> Bool,
                 measureHTML: @escaping ObjectMeasure.PageMeasurer, reload: @escaping (ObjectID, ObjectID?, Int) async throws -> JSONValue,
                 browse: @escaping (ObjectID, CmuxBrowserCommand, ObjectID?) async throws -> JSONValue,
+                surface: @escaping (SurfaceRequest, EaslConnection.Origin, Set<String>) async throws -> JSONValue,
                 submit: @escaping (ObjectID, String) async -> Bool, surfaceTail: @escaping (ObjectID, Int) -> TerminalTail.Tail?,
                 block: @escaping (ObjectID, Int) throws -> (command: TerminalCommand, output: String), status: @escaping (ObjectID) -> TerminalStatus?,
                 languages: @escaping () -> LanguageService?) {
@@ -52,6 +58,7 @@ public struct ViewerWindow {
         self.measureHTML = measureHTML
         self.reload = reload
         self.browse = browse
+        self.surface = surface
         self.submit = submit
         self.surfaceTail = surfaceTail
         self.block = block
@@ -84,8 +91,11 @@ public struct ClientIdentity: Equatable, Sendable {
 @MainActor
 final class DelegatedCalls {
     /// A snapshot would put the window's picture on the viewer's disk: not a capability of a
-    /// remote board's viewer.
-    static let served = ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure", "browser.call"]
+    /// remote board's viewer. The five `surface.*` methods stream a browser tile this Mac draws to
+    /// another Mac's viewer through easld; easld sends the four after `surface.stream` only on
+    /// the link that stream was opened on.
+    static let served = ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure", "browser.call",
+                         "surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"]
     /// The longest line easld reads from a client (`easld/internal/server`, `defaultLimits`): past
     /// it easld closes the link, failing every call on it.
     nonisolated static let maxReply = 64 << 20
@@ -111,6 +121,7 @@ final class DelegatedCalls {
                 p = .object(fields)
             }
             try ApiRouter.checkParams(call.method, p)
+            if let request = try SurfaceRequest(method: call.method, params: p) { return .success(try await surface(request, call)) }
             switch call.method {
             case "view.get":
                 guard let state = window.viewState() else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
@@ -212,6 +223,15 @@ final class DelegatedCalls {
         } catch let error as CmuxError {
             throw ApiRouter.Failure(error.code, error.message)
         }
+    }
+
+    /// A stream opens only on a browser tile of this board as this viewer has it; its other calls
+    /// name a stream, which the window checks belongs to the call's link.
+    private func surface(_ request: SurfaceRequest, _ call: EaslConnection.Call) async throws -> JSONValue {
+        if case .stream(let id, _, _) = request, board.objects[id]?.type != .browser {
+            throw ApiRouter.Failure("not_found", "browser tile \(id) isn't on this board's viewer")
+        }
+        return try await window.surface(request, call.origin, call.surfaceEvents)
     }
 
     /// Types the prompt into the terminal's surface, as the app's own `agent.prompt` does once its

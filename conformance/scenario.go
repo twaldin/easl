@@ -87,10 +87,11 @@ type Step struct {
 // message}); or none at all (Silent: the server's deadline passes), or the connection closing
 // instead (HangUp).
 type Reply struct {
-	Result any            `json:"result,omitempty"`
-	Error  map[string]any `json:"error,omitempty"`
-	Silent bool           `json:"silent,omitempty"`
-	HangUp bool           `json:"hangUp,omitempty"`
+	Result any              `json:"result,omitempty"`
+	Error  map[string]any   `json:"error,omitempty"`
+	Silent bool             `json:"silent,omitempty"`
+	HangUp bool             `json:"hangUp,omitempty"`
+	Events []map[string]any `json:"events,omitempty"`
 }
 
 type WriteFile struct {

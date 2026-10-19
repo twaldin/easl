@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -399,7 +400,7 @@ func TestAnAnswerIsNotQueuedBehindTheClientsOwnRequest(t *testing.T) {
 			return map[string]any{"id": m["id"], "ok": true, "result": map[string]any{"w": size.W, "h": size.H, "approximate": size.Approximate}}
 		}
 	}
-	srv, err := server.Listen(filepath.Join(dir, "s.sock"), handle, func(c *server.Conn, line map[string]any) bool { return r.Answer(c, line) })
+	srv, err := server.Listen(filepath.Join(dir, "s.sock"), handle, func(c *server.Conn, line map[string]any) bool { return r.Answer(c, line) }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -627,5 +628,116 @@ func TestRemoveBoardCannotRejectThenEnqueueAnOverlappingPrompt(t *testing.T) {
 	}
 	if got := len(conn.sent); got != 0 {
 		t.Fatalf("client received %d unexpected requests after close", got)
+	}
+}
+
+// drawing is an attachment of the Mac mch_studio, which draws browser tiles on board.
+func drawing(serves ...string) Attachment {
+	a := current("0.2.0", "studio", serves, []string{board}, board)
+	a.Identity = "mch_studio"
+	return a
+}
+
+// surface.stream carries its viewer's events beside params, and a stream the Mac opens after
+// the open gave up goes to late instead of being lost; the next call is plain.
+func TestOpenSurfaceCarriesItsEventsAndHandsALateStreamToLate(t *testing.T) {
+	r := New()
+	conn := newConn()
+	t.Cleanup(conn.hangUp)
+	c := attach(t, r, conn, drawing("surface.stream", "view.get"))
+	late := make(chan any, 1)
+	params := map[string]any{"id": "obj_page", "scale": 1.0}
+	_, failure := r.OpenSurface(c, "mch_studio", board, params, []string{"surface.frame"}, 50*time.Millisecond, func(result any) { late <- result })
+	expectFailure(t, failure, api.CodeUnavailable, "easl 0.2.0 on studio (client "+c.ID+") didn't answer surface.stream within 0.05 s")
+	request := conn.request(t)
+	if request["method"] != "surface.stream" || !reflect.DeepEqual(request["params"], params) || !reflect.DeepEqual(request["surfaceEvents"], []string{"surface.frame"}) {
+		t.Fatalf("the client was asked %v", request)
+	}
+	opened := map[string]any{"stream": "str_late"}
+	if !r.Answer(conn, map[string]any{"id": request["id"], "ok": true, "result": opened}) {
+		t.Fatal("the late answer went on to the router")
+	}
+	select {
+	case got := <-late:
+		if !reflect.DeepEqual(got, opened) {
+			t.Fatalf("late got %v, want %v", got, opened)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the late stream was dropped")
+	}
+
+	done := make(chan *Failure, 1)
+	go func() {
+		_, failure := r.Call(context.Background(), c, board, "view.get", map[string]any{"board": board}, 5*time.Second)
+		done <- failure
+	}()
+	next := conn.request(t)
+	if _, has := next["surfaceEvents"]; has {
+		t.Fatalf("a plain call carried surfaceEvents: %v", next)
+	}
+	r.Answer(conn, map[string]any{"id": next["id"], "ok": true, "result": map[string]any{}})
+	if failure := <-done; failure != nil {
+		t.Fatal(failure)
+	}
+}
+
+// An open goes only to the link that draws the Mac's pages as it is sent: one that reattached
+// as another Mac, dropped surface.stream or the board, or has a newer link, is asked nothing.
+func TestOpenSurfaceGoesOnlyToTheLinkThatDrawsAsItIsSent(t *testing.T) {
+	other := drawing("surface.stream")
+	other.Identity = "mch_other"
+	elsewhere := drawing("surface.stream")
+	elsewhere.Boards, elsewhere.Focused = []string{"brd_b"}, ""
+	for name, change := range map[string]func(r *Registry, conn *fakeConn){
+		"another identity":  func(r *Registry, conn *fakeConn) { attach(t, r, conn, other) },
+		"no surface.stream": func(r *Registry, conn *fakeConn) { attach(t, r, conn, drawing("browser.call")) },
+		"no board":          func(r *Registry, conn *fakeConn) { attach(t, r, conn, elsewhere) },
+		"a newer link": func(r *Registry, conn *fakeConn) {
+			newer := newConn()
+			t.Cleanup(newer.hangUp)
+			attach(t, r, newer, drawing("surface.stream"))
+		},
+	} {
+		r := New()
+		conn := newConn()
+		t.Cleanup(conn.hangUp)
+		c := attach(t, r, conn, drawing("surface.stream"))
+		change(r, conn)
+		_, failure := r.OpenSurface(c, "mch_studio", board, map[string]any{"id": "obj_page"}, []string{"surface.frame"}, time.Minute, nil)
+		expectFailure(t, failure, api.CodeUnavailable, "easl 0.2.0 on studio (client "+c.ID+") no longer draws mch_studio's pages on board "+board)
+		if len(conn.sent) != 0 {
+			t.Fatalf("%s: the link was asked %v", name, <-conn.sent)
+		}
+	}
+}
+
+// A link that closes takes its Mac's streams with it: an open it never answered in time is
+// forgotten then, and nothing answers late for it.
+func TestAnOpenGivenUpOnIsForgottenWhenItsClientDisconnects(t *testing.T) {
+	r := New()
+	conn := newConn()
+	c := attach(t, r, conn, drawing("surface.stream"))
+	late := make(chan any, 1)
+	if _, failure := r.OpenSurface(c, "mch_studio", board, map[string]any{"id": "obj_page"}, []string{"surface.frame"}, 10*time.Millisecond, func(result any) { late <- result }); failure == nil {
+		t.Fatal("an unanswered open succeeded")
+	}
+	request := conn.request(t)
+	conn.hangUp()
+	pending := func() int {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return len(r.pending)
+	}
+	for deadline := time.Now().Add(5 * time.Second); pending() != 0; {
+		if time.Now().After(deadline) {
+			t.Fatal("the given-up open outlived its client")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	r.Answer(conn, map[string]any{"id": request["id"], "ok": true, "result": map[string]any{"stream": "str_gone"}})
+	select {
+	case got := <-late:
+		t.Fatalf("late got %v from a closed link", got)
+	case <-time.After(50 * time.Millisecond):
 	}
 }

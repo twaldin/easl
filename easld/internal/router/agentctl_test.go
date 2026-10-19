@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"sync"
 	"testing"
 
 	"github.com/twaldin/easl/easld/internal/api"
@@ -323,6 +324,7 @@ func TestRestartNeedsASessionToResumeAndAnAgentOrCommandToStartAnew(t *testing.T
 // scriptedClient is a Mac client (client.attach) that answers the calls easld forwards it with
 // replies, in order, and keeps what it was asked.
 type scriptedClient struct {
+	mu      sync.Mutex
 	router  *Router
 	replies []map[string]any // answers without their id: {"ok": true, "result": …} or {"ok": false, "error": …}
 	asked   []map[string]any
@@ -330,6 +332,8 @@ type scriptedClient struct {
 }
 
 func (c *scriptedClient) Send(v any) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	request := v.(map[string]any)
 	if _, isCall := request["method"]; isCall {
 		c.asked = append(c.asked, request)

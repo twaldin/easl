@@ -26,8 +26,10 @@ import (
 
 // Delegated are the methods a client can serve (client.attach `serves`).
 // browser.call is the drawing Mac's page commands; without it, and without a
-// persistent identity, a client cannot own a browser tile.
-var Delegated = []string{"view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "object.measure", "text.measure", "browser.call"}
+// persistent identity, a client cannot own a browser tile. surface.stream is a browser tile's
+// stream for another viewer; the other four surface methods name a stream it opened.
+var Delegated = []string{"view.get", "view.render", "view.snapshot", "agent.prompt", "agent.read", "agent.restart", "object.reload", "object.measure", "text.measure", "browser.call",
+	"surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"}
 
 const (
 	ViewGetDeadline  = 5 * time.Second
@@ -89,6 +91,9 @@ type Client struct {
 // Done closes when the attached client's connection closes.
 func (c *Client) Done() <-chan struct{} { return c.conn.Done() }
 
+// Is reports whether conn is the connection c is attached on.
+func (c *Client) Is(conn Conn) bool { return c.conn == conn }
+
 // Name is how messages name the client: `easl 0.2.0 on studio (client cli_…)`.
 func (c *Client) Name() string {
 	who := ""
@@ -117,6 +122,9 @@ type call struct {
 	method string
 	board  string
 	done   chan answer
+	// late takes a success that arrives after its caller gave up (OpenSurface); set only then,
+	// and the entry stays until that answer or the connection closes.
+	late func(result any)
 }
 
 // Registry is every attached client and the calls waiting on them.
@@ -203,6 +211,11 @@ func (r *Registry) detachWhenClosed(conn Conn) {
 	if c != nil {
 		boards = boardIDs(c.boards)
 		delete(r.clients, conn)
+	}
+	for id, pending := range r.pending {
+		if pending.conn == conn && pending.late != nil {
+			delete(r.pending, id)
+		}
 	}
 	notify := r.onPresence
 	r.mu.Unlock()
@@ -296,11 +309,16 @@ type Owner struct {
 // ChooseExact is the newest attached link with identity, showing board, that serves method.
 // Focus is never a fallback. Nil when none match.
 func (r *Registry) ChooseExact(identity, board, method string) *Client {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.exact(identity, board, method)
+}
+
+// exact is ChooseExact with mu held.
+func (r *Registry) exact(identity, board, method string) *Client {
 	if identity == "" || board == "" || method == "" {
 		return nil
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	var best *Client
 	for _, c := range r.clients {
 		if c.identity != identity || !c.boards[board] || !c.serves[method] {
@@ -426,6 +444,33 @@ func (r *Registry) List() []ListedClient {
 
 // Call sends method with params to c and waits for its answer, cancellation, deadline or disconnect.
 func (r *Registry) Call(ctx context.Context, c *Client, board, method string, params map[string]any, deadline time.Duration) (any, *Failure) {
+	return r.call(ctx, c, board, method, params, deadline, nil)
+}
+
+type opening struct {
+	identity, board string
+	events          []string
+	late            func(result any)
+}
+
+// OpenSurface is Call of surface.stream on c, the link that draws identity's pages on board,
+// for a viewer that hears events. c is checked to be that link as the request is sent, and the
+// request carries events beside params as surfaceEvents. A success that arrives after deadline
+// isn't dropped: late gets it, in a goroutine of its own, unless c's connection closes first
+// (taking the stream with it). One that arrives as the deadline passes is returned.
+func (r *Registry) OpenSurface(c *Client, identity, board string, params map[string]any, events []string, deadline time.Duration, late func(result any)) (any, *Failure) {
+	return r.call(context.Background(), c, "", "surface.stream", params, deadline, &opening{identity, board, events, late})
+}
+
+// StopSurface waits while c still shows board. Closing the board ends its producer streams.
+func (r *Registry) StopSurface(c *Client, board, stream string) *Failure {
+	_, failure := r.call(context.Background(), c, board, "surface.stop", map[string]any{"stream": stream}, untilClosed, nil)
+	return failure
+}
+
+const untilClosed time.Duration = -1
+
+func (r *Registry) call(ctx context.Context, c *Client, board, method string, params map[string]any, deadline time.Duration, open *opening) (any, *Failure) {
 	if ctx.Err() != nil {
 		return nil, &Failure{api.CodeUnavailable, method + " was cancelled"}
 	}
@@ -434,32 +479,69 @@ func (r *Registry) Call(ctx context.Context, c *Client, board, method string, pa
 		r.mu.Unlock()
 		return nil, &Failure{api.CodeNotFound, "board " + board + " was closed"}
 	}
+	request := map[string]any{"method": method, "params": params}
+	if open != nil {
+		if r.exact(open.identity, open.board, method) != c {
+			name := c.Name()
+			r.mu.Unlock()
+			return nil, &Failure{api.CodeUnavailable, name + " no longer draws " + open.identity + "'s pages on board " + open.board}
+		}
+		request["surfaceEvents"] = open.events
+	}
 	r.request++
 	id := requestPrefix + strconv.FormatUint(r.request, 10)
+	request["id"] = id
 	pending := &call{conn: c.conn, method: method, board: board, done: make(chan answer, 1)}
 	r.pending[id] = pending
 	name := c.Name()
 	// Capability removal must not reject this call before its request is queued.
-	sent := c.conn.Send(map[string]any{"id": id, "method": method, "params": params})
+	sent := c.conn.Send(request)
 	r.mu.Unlock()
 	defer func() {
 		r.mu.Lock()
-		delete(r.pending, id)
+		if pending.late == nil {
+			delete(r.pending, id)
+		}
 		r.mu.Unlock()
 	}()
 	disconnected := &Failure{api.CodeUnavailable, name + " disconnected before answering " + method}
 	if !sent {
 		return nil, disconnected
 	}
-	timer := time.NewTimer(deadline)
-	defer timer.Stop()
+	var expired <-chan time.Time
+	if deadline != untilClosed {
+		timer := time.NewTimer(deadline)
+		defer timer.Stop()
+		expired = timer.C
+	}
 	select {
 	case a := <-pending.done:
 		return a.result, a.failure
 	case <-ctx.Done():
 		return nil, &Failure{api.CodeUnavailable, name + "'s " + method + " was cancelled"}
-	case <-timer.C:
-		return nil, &Failure{api.CodeUnavailable, name + " didn't answer " + method + " within " + seconds(deadline) + " s"}
+	case <-expired:
+		timedOut := &Failure{api.CodeUnavailable, name + " didn't answer " + method + " within " + seconds(deadline) + " s"}
+		if open == nil {
+			return nil, timedOut
+		}
+		r.mu.Lock()
+		_, waiting := r.pending[id]
+		if waiting {
+			select {
+			case <-c.conn.Done():
+				delete(r.pending, id)
+				r.mu.Unlock()
+				return nil, disconnected
+			default:
+			}
+			pending.late = open.late
+		}
+		r.mu.Unlock()
+		if waiting {
+			return nil, timedOut
+		}
+		a := <-pending.done
+		return a.result, a.failure
 	case <-c.conn.Done():
 		// An answer that arrived just before the connection closed still counts.
 		select {
@@ -477,7 +559,8 @@ func seconds(d time.Duration) string {
 
 // Answer takes a line a connection sent that has `ok` and no `method`: the answer to a call this
 // registry forwarded. It reports whether the line was one (handled here: a late answer, after its
-// call gave up, is dropped); other lines are requests for the router.
+// call gave up, is dropped, unless OpenSurface's late takes its success); other lines are
+// requests for the router.
 func (r *Registry) Answer(conn Conn, line map[string]any) bool {
 	ok, isBool := line["ok"].(bool)
 	if _, hasMethod := line["method"]; hasMethod || !isBool {
@@ -489,8 +572,10 @@ func (r *Registry) Answer(conn Conn, line map[string]any) bool {
 	if waiting && pending.conn != conn {
 		waiting = false
 	}
+	var late func(result any)
 	if waiting {
 		delete(r.pending, id)
+		late = pending.late
 	}
 	_, attached := r.clients[conn]
 	r.mu.Unlock()
@@ -503,6 +588,9 @@ func (r *Registry) Answer(conn Conn, line map[string]any) bool {
 			result = map[string]any{}
 		}
 		pending.done <- answer{result: result}
+		if late != nil {
+			go late(result)
+		}
 		return true
 	}
 	errorObject, _ := line["error"].(map[string]any)

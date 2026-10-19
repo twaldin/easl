@@ -2,28 +2,33 @@ import AppKit
 @preconcurrency import AVFoundation
 import AVKit
 import CanvasCore
+import CoreImage
 import UniformTypeIdentifiers
 
 @MainActor
 final class VideoTile: NSView, TileContent {
+    private static let snapshotContext = CIContext(options: [.useSoftwareRenderer: true, .cacheIntermediates: false])
     private var object: CanvasObject
     private let board: Board
     private let files: HostFiles?
     private let player = AVPlayer()
     private let playerView = VideoPlayerView()
     private var source: HostVideoAsset?
+    private var videoOutput: AVPlayerItemVideoOutput?
+    private var videoTransform: CGAffineTransform?
     private var statusObservation: NSKeyValueObservation?
     private var displayObservation: NSKeyValueObservation?
     private var endedObserver: NSObjectProtocol?
     private var playTask: Task<Void, Never>?
     private var posterTask: Task<Void, Never>?
-    private var cardTask: Task<Void, Never>?
     private var posterView: NSImageView?
     private var snapshotCover: NSImageView?
     private var lastSnapshot: NSImage?
     private var failureLabel: NSTextField?
     private var readyWaiters: [@MainActor () -> Void] = []
     private var live = true
+    private var hostBoardClosed = false
+    private var playbackGeneration = 0
     private var position: Double
     private var pendingSeek = true
     private var shouldPlay: Bool
@@ -60,7 +65,6 @@ final class VideoTile: NSView, TileContent {
     deinit {
         playTask?.cancel()
         posterTask?.cancel()
-        cardTask?.cancel()
         MainActor.assumeIsolated {
             source?.cancel()
             if let endedObserver { NotificationCenter.default.removeObserver(endedObserver) }
@@ -72,18 +76,23 @@ final class VideoTile: NSView, TileContent {
     }
 
     private func start() {
+        guard !hostBoardClosed else { return }
         failureLabel?.removeFromSuperview()
         failureLabel = nil
         let source = HostVideoAsset(request: request(object.props["path"]?.string ?? ""), files: files)
         self.source = source
         let item = AVPlayerItem(asset: source.asset)
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: nil)
+        item.add(output)
+        videoOutput = output
+        videoTransform = nil
         item.preferredForwardBufferDuration = 2
         player.isMuted = object.props["muted"] == .bool(true)
         player.replaceCurrentItem(with: item)
         pendingSeek = true
         statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor [weak self, weak item] in
-                guard let self, let item, self.player.currentItem === item else { return }
+                guard let self, let item, !self.hostBoardClosed, self.player.currentItem === item else { return }
                 if item.status == .readyToPlay { self.seek() }
                 if item.status == .failed {
                     self.showFailure(self.source?.failure ?? item.error?.localizedDescription ?? "video could not load")
@@ -92,7 +101,7 @@ final class VideoTile: NSView, TileContent {
         }
         endedObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self, weak item] in
-                guard let self, let item, self.live, self.player.currentItem === item,
+                guard let self, let item, self.live, !self.hostBoardClosed, self.player.currentItem === item,
                       self.object.props["loop"] == .bool(true) else { return }
                 self.position = 0
                 self.pendingSeek = true
@@ -104,22 +113,43 @@ final class VideoTile: NSView, TileContent {
     }
 
     private func seek() {
-        guard pendingSeek, let item = player.currentItem, item.status == .readyToPlay else { return }
+        guard pendingSeek, !hostBoardClosed, let item = player.currentItem, item.status == .readyToPlay else { return }
         pendingSeek = false
+        playbackGeneration += 1
+        let generation = playbackGeneration
         playTask?.cancel()
         item.cancelPendingSeeks()
         let time = CMTime(seconds: max(0, position), preferredTimescale: 600)
         playTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let finished = await self.player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-            guard finished, !Task.isCancelled, self.live, self.player.currentItem === item else { return }
-            if self.shouldPlay { self.player.play() }
-            else { self.player.pause() }
+            defer { if self.playbackGeneration == generation { self.playTask = nil } }
+            do {
+                if self.videoTransform == nil {
+                    let tracks = try await item.asset.loadTracks(withMediaType: .video)
+                    let transform: CGAffineTransform
+                    if let track = tracks.first { transform = try await track.load(.preferredTransform) }
+                    else { transform = .identity }
+                    guard !Task.isCancelled, !self.hostBoardClosed, self.player.currentItem === item,
+                          self.playbackGeneration == generation else { return }
+                    self.videoTransform = transform
+                }
+                let finished = await self.player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+                guard finished, !Task.isCancelled, self.live, !self.hostBoardClosed,
+                      self.player.currentItem === item, self.playbackGeneration == generation else { return }
+                if self.shouldPlay { self.player.play() }
+                else { self.player.pause() }
+            } catch {
+                guard !Task.isCancelled, !self.hostBoardClosed, self.player.currentItem === item,
+                      self.playbackGeneration == generation else { return }
+                self.showFailure(HostVideoAsset.message(error))
+            }
         }
     }
 
     private func stop() {
+        playbackGeneration += 1
         playTask?.cancel()
+        playTask = nil
         posterTask?.cancel()
         player.pause()
         player.currentItem?.cancelPendingSeeks()
@@ -127,6 +157,8 @@ final class VideoTile: NSView, TileContent {
         if let endedObserver { NotificationCenter.default.removeObserver(endedObserver) }
         endedObserver = nil
         player.replaceCurrentItem(with: nil)
+        videoOutput = nil
+        videoTransform = nil
         source?.cancel()
         source = nil
     }
@@ -189,7 +221,41 @@ final class VideoTile: NSView, TileContent {
         return player.currentItem != nil && time.isFinite ? time : position
     }
 
+    private func captureFrame(pixels: CGSize) -> NSImage? {
+        guard let output = videoOutput, let transform = videoTransform, let item = player.currentItem else { return nil }
+        var time = player.currentTime()
+        let duration = item.duration.seconds
+        if duration.isFinite, duration > 0, time.seconds >= duration {
+            time = CMTime(seconds: max(0, duration - 1 / 600.0), preferredTimescale: 600)
+        }
+        guard let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else { return nil }
+        var image = CIImage(cvPixelBuffer: buffer).transformed(by: transform)
+        let extent = image.extent
+        let scale = min(1, min(4096, max(1, pixels.width)) / extent.width, min(4096, max(1, pixels.height)) / extent.height)
+        if scale < 1 { image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) }
+        guard let frame = Self.snapshotContext.createCGImage(image, from: image.extent) else { return nil }
+        return NSImage(cgImage: frame, size: CGSize(width: frame.width, height: frame.height))
+    }
+
+    func setHostBoardClosed(_ closed: Bool) {
+        guard hostBoardClosed != closed else { return }
+        if closed {
+            let scale = window?.backingScaleFactor ?? 2
+            if let frame = captureFrame(pixels: CGSize(width: bounds.width * scale, height: bounds.height * scale)) { lastSnapshot = frame }
+            position = currentPosition
+            if player.currentItem?.status == .readyToPlay { shouldPlay = player.rate != 0 }
+            playbackGeneration += 1
+            playTask?.cancel()
+            playTask = nil
+            posterTask?.cancel()
+            player.pause()
+            source?.cancel()
+        }
+        hostBoardClosed = closed
+    }
+
     private func thumbnail(at time: Double, pixels: CGSize) async throws -> NSImage {
+        guard !hostBoardClosed else { throw CancellationError() }
         let source = HostVideoAsset(request: request(object.props["path"]?.string ?? ""), files: files)
         defer { source.cancel() }
         let generator = AVAssetImageGenerator(asset: source.asset)
@@ -209,13 +275,14 @@ final class VideoTile: NSView, TileContent {
     }
 
     func setLive(_ live: Bool) {
+        guard !live || !hostBoardClosed else { return }
         guard live != self.live else { return }
         self.live = live
         if live {
             start()
         } else {
             position = currentPosition
-            if player.currentItem?.status == .readyToPlay { shouldPlay = player.rate != 0 }
+            if !hostBoardClosed, player.currentItem?.status == .readyToPlay { shouldPlay = player.rate != 0 }
             readyWaiters.removeAll()
             stop()
         }
@@ -239,7 +306,7 @@ final class VideoTile: NSView, TileContent {
         }
         if previous.props["autoplay"] != object.props["autoplay"] {
             shouldPlay = object.props["autoplay"] == .bool(true)
-            if live, !pendingSeek {
+            if live, !pendingSeek, playTask == nil, !hostBoardClosed {
                 if shouldPlay { player.play() } else { player.pause() }
             }
         }
@@ -252,7 +319,14 @@ final class VideoTile: NSView, TileContent {
 
     func render(_ request: TileRenderRequest) async -> TileRender {
         do {
-            let frame = try await thumbnail(at: currentPosition, pixels: CGSize(width: request.size.width * request.scale, height: request.size.height * request.scale))
+            let frame: NSImage
+            if hostBoardClosed {
+                guard let cached = lastSnapshot else { return .placeholder(request, "host closed this board before a video frame was cached") }
+                frame = cached
+            } else {
+                frame = try await thumbnail(at: object.props["startTime"]?.number ?? 0,
+                                            pixels: CGSize(width: request.size.width * request.scale, height: request.size.height * request.scale))
+            }
             let image = request.image { bounds in
                 NSColor.black.setFill()
                 bounds.fill()
@@ -266,14 +340,18 @@ final class VideoTile: NSView, TileContent {
         }
     }
 
-    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
-        cardTask?.cancel()
-        let time = currentPosition
+    func cardSnapshot() async -> NSImage? {
+        guard !Task.isCancelled else { return nil }
         let pixels = CGSize(width: bounds.width * TileFrameView.cardPixelsPerPoint, height: bounds.height * TileFrameView.cardPixelsPerPoint)
-        cardTask = Task { @MainActor [weak self] in
-            let frame = try? await self?.thumbnail(at: time, pixels: pixels)
-            deliver(frame)
+        if let frame = captureFrame(pixels: pixels) {
+            lastSnapshot = frame
+            return frame
         }
+        if hostBoardClosed { return lastSnapshot }
+        let frame = try? await thumbnail(at: currentPosition, pixels: pixels)
+        guard !Task.isCancelled else { return nil }
+        if let frame { lastSnapshot = frame }
+        return frame
     }
 
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void) {
@@ -284,7 +362,9 @@ final class VideoTile: NSView, TileContent {
 
     func prepareSnapshot() async {
         let scale = window?.backingScaleFactor ?? 2
-        lastSnapshot = try? await thumbnail(at: currentPosition, pixels: CGSize(width: bounds.width * scale, height: bounds.height * scale))
+        let pixels = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        if let frame = captureFrame(pixels: pixels) { lastSnapshot = frame }
+        else if !hostBoardClosed { lastSnapshot = try? await thumbnail(at: currentPosition, pixels: pixels) }
     }
 
     func showSnapshot(_ show: Bool) {
@@ -314,6 +394,7 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
     private var tasks: [ObjectIdentifier: Task<Void, Never>] = [:]
     private var blocks: [HostFile] = []
     private var nextBlock = 0
+    private var cancelled = false
     private(set) var failure: String?
 
     init(request: HostFileRequest, files: HostFiles?) {
@@ -368,7 +449,7 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
 
     nonisolated func resourceLoader(_ resourceLoader: AVAssetResourceLoader, shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
         MainActor.assumeIsolated {
-            guard loadingRequest.request.url == asset.url else { return false }
+            guard !cancelled, loadingRequest.request.url == asset.url else { return false }
             let key = ObjectIdentifier(loadingRequest)
             tasks[key] = Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -419,6 +500,7 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
     }
 
     func cancel() {
+        cancelled = true
         asset.cancelLoading()
         metadataTask?.cancel()
         for task in tasks.values { task.cancel() }

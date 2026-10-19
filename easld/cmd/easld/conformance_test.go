@@ -20,14 +20,15 @@ import (
 // app did when they were recorded. The test fails when one of them stops passing; a scenario
 // that starts passing is reported, so it can join the list.
 var passing = []string{
-	"agent-control", "agent-control-owned", "agents", "app-update-daemon", "app-update-validation", "arrows", "batch", "board-close", "board-close-owned", "board-get-history", "board-lifecycle", "boards", "browser-drawing", "client-delegation", "client-failures", "client-mode", "client-versions",
+	"agent-control", "agent-control-owned", "agents", "app-update-daemon", "app-update-validation", "arrows", "batch", "board-close", "board-close-owned", "board-get-history", "board-lifecycle", "boards", "browser-drawing", "client-delegation", "client-failures", "client-mode", "client-surface-relay", "client-versions",
 	"code-tiles", "events", "follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "messages",
 	"metrics", "no-client", "objects-crud", "open-url", "owned-terminals", "placement", "protocol", "question-cleanup", "questions", "remote-attention", "remote-composer", "remote-undo", "tray", "video", "viewer-serve",
 }
 
 // Not passing, and why:
-//   - browser-surfaces: frames and native input belong to the Mac app's WKWebView.
-//     easld returns unsupported until it relays surface sessions between attached clients.
+//   - browser-surfaces: recorded against a Mac host that draws the page itself, in its own
+//     WKWebView. easld draws no page: it relays surface.* to the tile's attached drawing Mac,
+//     which client-surface-relay replays through a scripted one.
 //   - measure-notes: recorded against the app, whose AppKit measured its notes and text shapes
 //     exactly (SF Pro, TextKit 2; Shantell Sans with GPOS kerning). With no client attached easld
 //     measures them from the glyph table (measure/glyphs): within a few points, and marked
@@ -128,7 +129,7 @@ func serve(t *testing.T, home string, own bool) *server.Server {
 		r.Sessions = session.New(zmx, filepath.Join(home, "sessions"))
 		r.Owns = &session.Owner{Socket: socket, Home: home, Resources: session.Resources(r.Sessions.Home)}
 	}
-	srv, err := server.Listen(socket, r.Handle, r.Answer)
+	srv, err := server.Listen(socket, r.Handle, r.Answer, r.Push)
 	if err != nil {
 		t.Fatal(err)
 	}

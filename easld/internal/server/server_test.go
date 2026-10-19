@@ -30,7 +30,7 @@ func socketPath(t *testing.T) string {
 
 func start(t *testing.T, h Handler) *Server {
 	t.Helper()
-	s, err := Listen(socketPath(t), h, nil)
+	s, err := Listen(socketPath(t), h, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestSendNeverBlocksOnAClientThatStopsReading(t *testing.T) {
 	conns := make(chan *Conn, 1)
 	l := defaultLimits
 	l.pending = 1 << 20
-	s, err := listen(socketPath(t), func(req any, c *Conn) any { conns <- c; return nil }, nil, nil, l)
+	s, err := listen(socketPath(t), func(req any, c *Conn) any { conns <- c; return nil }, nil, nil, nil, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,13 +355,13 @@ func TestSocketMode(t *testing.T) {
 func TestListenReplacesStaleSocketAndCreatesItsDirectory(t *testing.T) {
 	path := filepath.Join(filepath.Dir(socketPath(t)), "sub", "dir", "s.sock")
 	// A dead server's socket file.
-	first, err := Listen(path, echo, nil)
+	first, err := Listen(path, echo, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	first.listener.SetUnlinkOnClose(false)
 	first.listener.Close() // leaves the file behind, like a crashed process
-	second, err := Listen(path, echo, nil)
+	second, err := Listen(path, echo, nil, nil)
 	if err != nil {
 		t.Fatalf("Listen over a stale socket: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestListenReplacesStaleSocketAndCreatesItsDirectory(t *testing.T) {
 // this server instead.
 func TestListenRefusesASocketThatIsServed(t *testing.T) {
 	live := start(t, echo)
-	other, err := Listen(live.Path(), echo, nil)
+	other, err := Listen(live.Path(), echo, nil, nil)
 	if err == nil {
 		other.Close()
 		t.Fatal("a second server took over a live socket")
@@ -407,7 +407,7 @@ func TestListenNeverRemovesWhatIsNotASocket(t *testing.T) {
 	if err := os.WriteFile(path, []byte("notes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if s, err := Listen(path, echo, nil); err == nil {
+	if s, err := Listen(path, echo, nil, nil); err == nil {
 		s.Close()
 		t.Fatal("Listen replaced a regular file")
 	}
@@ -418,7 +418,7 @@ func TestListenNeverRemovesWhatIsNotASocket(t *testing.T) {
 
 func TestCloseRemovesOnlyItsOwnSocketFile(t *testing.T) {
 	path := socketPath(t)
-	a, err := Listen(path, echo, nil)
+	a, err := Listen(path, echo, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestCloseRemovesOnlyItsOwnSocketFile(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	b, err := Listen(path, echo, nil)
+	b, err := Listen(path, echo, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestCloseRemovesOnlyItsOwnSocketFile(t *testing.T) {
 func TestOverlongLineIsAnsweredThenTheConnectionCloses(t *testing.T) {
 	l := defaultLimits
 	l.line = 1024
-	s, err := listen(socketPath(t), echo, nil, nil, l)
+	s, err := listen(socketPath(t), echo, nil, nil, nil, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +482,7 @@ func TestReadingPausesWhileTheInboxIsFull(t *testing.T) {
 	s, err := listen(socketPath(t), func(req any, c *Conn) any {
 		once.Do(func() { conns <- c; <-release })
 		return echo(req, c)
-	}, nil, nil, l)
+	}, nil, nil, nil, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,7 +561,7 @@ func TestCloseEndsConnectionsAfterFlushingWhatWasQueued(t *testing.T) {
 }
 
 func TestListenRejectsTooLongPath(t *testing.T) {
-	_, err := Listen("/tmp/"+strings.Repeat("a", 120)+".sock", echo, nil)
+	_, err := Listen("/tmp/"+strings.Repeat("a", 120)+".sock", echo, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "file name too long") {
 		t.Fatalf("got %v", err)
 	}
@@ -700,5 +700,45 @@ func TestPanickingHandlerIsAnsweredAsInternalErrorAndTheConnectionKeepsServing(t
 	out := logged.String()
 	if !strings.Contains(out, "kaboom") || !strings.Contains(out, "explodingHandler") {
 		t.Fatalf("panic not logged with its stack:\n%s", out)
+	}
+}
+
+// A pushed event line goes to Pushes as it was sent, on the reader, while the connection's own
+// request still waits: it is never a request, so nothing answers it. SendLine writes it to
+// another connection unchanged, though the reader reuses its buffer.
+func TestPushedLinesSkipTheRequestQueueAndSendLineWritesThemAsSent(t *testing.T) {
+	line := `{"event":"surface.frame","board":"brd_a","data":{"stream":"str_1","data":"iVBO\/Rw=="}}`
+	viewers := make(chan *Conn, 1)
+	release := make(chan struct{})
+	s, err := Listen(socketPath(t), func(req any, c *Conn) any {
+		id := req.(map[string]any)["id"]
+		switch id {
+		case "view":
+			viewers <- c
+		case "hold":
+			<-release
+		}
+		return map[string]any{"id": id, "ok": true}
+	}, nil, func(c *Conn, pushed []byte) {
+		(<-viewers).SendLine(pushed)
+		close(release)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	viewer := dial(t, s)
+	viewer.write(t, `{"id":"view"}`+"\n")
+	viewer.read(t)
+	drawer := dial(t, s)
+	drawer.write(t, `{"id":"hold"}`+"\n"+line+"\n"+`{"id":"after","pad":"overwrites the reader's buffer"}`+"\n")
+	viewer.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if got, err := viewer.lines.ReadString('\n'); err != nil || got != line+"\n" {
+		t.Fatalf("the viewer got %q %v, want the pushed line", got, err)
+	}
+	for _, want := range []string{"hold", "after"} {
+		if got := drawer.read(t).(map[string]any)["id"]; got != want {
+			t.Fatalf("the drawer was answered %v, want %s", got, want)
+		}
 	}
 }

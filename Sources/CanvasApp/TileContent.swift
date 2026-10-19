@@ -87,9 +87,9 @@ protocol TileContent: NSView {
     /// detached, hidden, or drawn outside AppKit), and may await loading; the renderer applies
     /// a deadline and reports a tile that misses it as a placeholder.
     func render(_ request: TileRenderRequest) async -> TileRender
-    /// Image for the zoomed-out card, delivered on the main actor. Called before the tile goes
-    /// not-live; defaults to `render` at card resolution.
-    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void)
+    /// Image for the zoomed-out card. Called before the tile goes not-live; defaults to
+    /// `render` at card resolution. The frame owns the task and cancels obsolete requests.
+    func cardSnapshot() async -> NSImage?
     /// Calls `ready` once the content, just made live, shows its live view as it will stay (a
     /// web page loaded, laid out, and painted); until then the frame keeps the card over it.
     /// Defaults to at once: views that draw synchronously are ready when shown.
@@ -173,15 +173,14 @@ extension TileContent {
 
     func enterKeyboard() -> Bool { false }
 
-    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
+    func cardSnapshot() async -> NSImage? {
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
                                         appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
-        Task { @MainActor in
-            // Cards requested together (a batch of new tiles) render one per wake of the main thread.
-            await MainTurns.next()
-            let render = await self.render(request)
-            deliver(render.state == .rendered ? render.image : nil)
-        }
+        // Cards requested together (a batch of new tiles) render one per wake of the main thread.
+        await MainTurns.next()
+        guard !Task.isCancelled else { return nil }
+        let render = await self.render(request)
+        return !Task.isCancelled && render.state == .rendered ? render.image : nil
     }
 }
 

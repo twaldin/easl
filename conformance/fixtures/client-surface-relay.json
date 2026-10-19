@@ -1,0 +1,765 @@
+{
+  "scenario": "client-surface-relay",
+  "description": "Easld relays existing surface methods to the exact drawing attachment. Streams remain private to their opening viewer, unrelated subscribers and forged source events see no page data, stopping one viewer leaves another live, and moving drawing retires old streams. The scripted Mac exercises relay protocol ownership, not native drawing.",
+  "recordedOn": "scratch easld schema2 relay",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 480,
+          "w": 640,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "drawingMachine": {
+            "host": "drawer",
+            "id": "mch_drawer"
+          },
+          "url": "about:blank"
+        },
+        "type": "browser"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "drawingMachine": {
+                "host": "drawer",
+                "id": "mch_drawer"
+              },
+              "url": "about:blank"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "drawingMachine": {
+                "host": "drawer",
+                "id": "mch_drawer"
+              },
+              "url": "about:blank"
+            },
+            "rev": "<rev:1>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "drawer",
+      "request": {
+        "boards": [
+          "<board>"
+        ],
+        "host": "drawer",
+        "identity": "mch_drawer",
+        "serves": [
+          "browser.call",
+          "surface.stream",
+          "surface.ack",
+          "surface.input",
+          "surface.answer",
+          "surface.stop"
+        ],
+        "version": 2
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:1>",
+          "version": 2
+        }
+      },
+      "ignored": {
+        "request.schema": "The schema hash changes with any schema edit.",
+        "response.result.schema": "The schema hash changes with any schema edit."
+      }
+    },
+    {
+      "step": "surface.stream",
+      "method": "surface.stream",
+      "conn": "a",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "subscribe this connection to surface.frame on board <board> (events.subscribe) before surface.stream"
+        },
+        "id": "r1",
+        "ok": false
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "a",
+      "request": {
+        "board": "<board>",
+        "events": [
+          "surface.frame"
+        ]
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "b",
+      "request": {
+        "board": "<board>",
+        "events": [
+          "surface.frame",
+          "surface.dialog",
+          "surface.notice"
+        ]
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "observer",
+      "request": {
+        "board": "<board>",
+        "events": [
+          "surface.frame",
+          "surface.dialog",
+          "surface.notice"
+        ]
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "surface.stream",
+      "method": "surface.stream",
+      "conn": "a",
+      "request": {
+        "format": "png",
+        "id": "<obj:1>",
+        "scale": 1
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "scale": 1,
+          "size": {
+            "h": 480,
+            "w": 640
+          },
+          "stream": "<str:1>"
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "drawer",
+          "method": "surface.stream",
+          "params": {
+            "format": "png",
+            "id": "<obj:1>",
+            "scale": 1
+          },
+          "surfaceEvents": [
+            "surface.frame"
+          ]
+        }
+      ]
+    },
+    {
+      "step": "surface.stream",
+      "method": "surface.stream",
+      "conn": "b",
+      "request": {
+        "format": "png",
+        "id": "<obj:1>",
+        "scale": 1
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "scale": 1,
+          "size": {
+            "h": 480,
+            "w": 640
+          },
+          "stream": "<str:2>"
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "drawer",
+          "method": "surface.stream",
+          "params": {
+            "format": "png",
+            "id": "<obj:1>",
+            "scale": 1
+          },
+          "surfaceEvents": [
+            "surface.frame",
+            "surface.dialog",
+            "surface.notice"
+          ]
+        }
+      ]
+    },
+    {
+      "step": "surface.ack",
+      "method": "surface.ack",
+      "conn": "observer",
+      "request": {
+        "frame": 0,
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:1> is not open on this connection"
+        },
+        "id": "r2",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "observer",
+      "request": {
+        "events": [
+          {
+            "kind": "text",
+            "seq": 1,
+            "text": "not authorized"
+          }
+        ],
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:1> is not open on this connection"
+        },
+        "id": "r3",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.answer",
+      "method": "surface.answer",
+      "conn": "observer",
+      "request": {
+        "accept": true,
+        "dialog": "dlg_B",
+        "stream": "<str:2>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:2> is not open on this connection"
+        },
+        "id": "r4",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.stop",
+      "method": "surface.stop",
+      "conn": "observer",
+      "request": {
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:1> is not open on this connection"
+        },
+        "id": "r5",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.ack",
+      "method": "surface.ack",
+      "conn": "a",
+      "request": {
+        "frame": 0,
+        "stream": "<str:1>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "conn": "a",
+          "data": {
+            "back": false,
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+            "format": "png",
+            "forward": false,
+            "height": 1,
+            "input": 0,
+            "loading": false,
+            "scale": 1,
+            "seq": 1,
+            "size": {
+              "h": 480,
+              "w": 640
+            },
+            "stream": "<str:1>",
+            "width": 1
+          },
+          "event": "surface.frame"
+        }
+      ],
+      "forwarded": [
+        {
+          "conn": "drawer",
+          "method": "surface.ack",
+          "params": {
+            "frame": 0,
+            "stream": "<str:1>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "client.attach",
+      "method": "client.attach",
+      "conn": "forger",
+      "request": {
+        "boards": [
+          "<board>"
+        ],
+        "focused": "<board>",
+        "host": "forger",
+        "identity": "mch_forger",
+        "serves": [
+          "view.get"
+        ],
+        "version": 2
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "client": "<cli:2>",
+          "version": 2
+        }
+      },
+      "ignored": {
+        "request.schema": "The schema hash changes with any schema edit.",
+        "response.result.schema": "The schema hash changes with any schema edit."
+      }
+    },
+    {
+      "step": "view.get",
+      "method": "view.get",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "appearance": "dark",
+          "board": "<board>",
+          "selection": [],
+          "viewport": {
+            "rect": {
+              "h": 480,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "zoom": 1
+          },
+          "visible": true
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "forger",
+          "method": "view.get",
+          "params": {
+            "board": "<board>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "surface.stop",
+      "method": "surface.stop",
+      "conn": "a",
+      "request": {
+        "stream": "<str:1>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "stopped": true
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "drawer",
+          "method": "surface.stop",
+          "params": {
+            "stream": "<str:1>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "surface.ack",
+      "method": "surface.ack",
+      "conn": "a",
+      "request": {
+        "frame": 1,
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:1> is not open on this connection"
+        },
+        "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.ack",
+      "method": "surface.ack",
+      "conn": "b",
+      "request": {
+        "frame": 0,
+        "stream": "<str:2>"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "conn": "b",
+          "data": {
+            "back": false,
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+            "format": "png",
+            "forward": false,
+            "height": 1,
+            "input": 0,
+            "loading": false,
+            "scale": 1,
+            "seq": 1,
+            "size": {
+              "h": 480,
+              "w": 640
+            },
+            "stream": "<str:2>",
+            "width": 1
+          },
+          "event": "surface.frame"
+        },
+        {
+          "board": "<board>",
+          "conn": "b",
+          "data": {
+            "dialog": "dlg_B",
+            "kind": "confirm",
+            "message": "Continue?",
+            "origin": "fixture",
+            "stream": "<str:2>"
+          },
+          "event": "surface.dialog"
+        }
+      ],
+      "forwarded": [
+        {
+          "conn": "drawer",
+          "method": "surface.ack",
+          "params": {
+            "frame": 0,
+            "stream": "<str:2>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "b",
+      "request": {
+        "events": [
+          {
+            "kind": "command",
+            "name": "copy",
+            "seq": 1
+          }
+        ],
+        "stream": "<str:2>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "accepted": 1,
+          "text": "private selection"
+        }
+      },
+      "forwarded": [
+        {
+          "conn": "drawer",
+          "method": "surface.input",
+          "params": {
+            "events": [
+              {
+                "kind": "command",
+                "name": "copy",
+                "seq": 1
+              }
+            ],
+            "stream": "<str:2>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "surface.answer",
+      "method": "surface.answer",
+      "conn": "b",
+      "request": {
+        "accept": true,
+        "dialog": "dlg_B",
+        "stream": "<str:2>"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {}
+      },
+      "forwarded": [
+        {
+          "conn": "drawer",
+          "method": "surface.answer",
+          "params": {
+            "accept": true,
+            "dialog": "dlg_B",
+            "stream": "<str:2>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "drawingMachine": {
+            "host": "other",
+            "id": "mch_other"
+          }
+        }
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "drawingMachine": {
+                "host": "other",
+                "id": "mch_other"
+              },
+              "url": "about:blank"
+            },
+            "rev": "<rev:2>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "conn": "b",
+          "data": {
+            "kind": "closed",
+            "reason": "drawing moved",
+            "stream": "<str:2>"
+          },
+          "event": "surface.notice"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "drawingMachine": {
+                "host": "other",
+                "id": "mch_other"
+              },
+              "url": "about:blank"
+            },
+            "rev": "<rev:2>",
+            "type": "browser",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ],
+      "forwarded": [
+        {
+          "conn": "drawer",
+          "method": "surface.stop",
+          "params": {
+            "stream": "<str:2>"
+          }
+        }
+      ]
+    },
+    {
+      "step": "surface.input",
+      "method": "surface.input",
+      "conn": "b",
+      "request": {
+        "events": [
+          {
+            "kind": "text",
+            "seq": 2,
+            "text": "must not move with the page"
+          }
+        ],
+        "stream": "<str:2>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:2> is not open on this connection"
+        },
+        "id": "r6",
+        "ok": false
+      }
+    }
+  ]
+}

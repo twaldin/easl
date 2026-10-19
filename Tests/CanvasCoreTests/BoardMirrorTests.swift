@@ -1082,6 +1082,7 @@ final class BoardMirrorTests {
             mirror.attachment == .attached(client: "cli_1", version: 1) && mirror.drawingMachines == ["mch_01STUDIO"]
         }
         try await mirror.prompt("before close", to: terminal.id, mentions: [], answer: false)
+        let served = try #require(mirror.serving)
         var availability: [BoardMirror.Availability] = []
         var closedObjects: [ObjectID: CanvasObject]?
         mirror.onAvailability = { [weak mirror] in
@@ -1100,6 +1101,7 @@ final class BoardMirrorTests {
         #expect(mirror.connection.state == .online)
         #expect(mirror.attachment == .waiting)
         #expect(mirror.drawingMachines == nil)
+        #expect(mirror.serving == nil, "a stream opened for this board's calls ends with it")
         _ = try board.update(edited.id, props: .object(["markdown": "must not be sent"]))
         try board.delete(terminal.id)
         let provisional = board.create(type: .note, props: .object(["markdown": "must not be created"]))
@@ -1129,6 +1131,7 @@ final class BoardMirrorTests {
         #expect(board.objects.count == 2)
         #expect(availability == [.closed, .open])
         #expect(easld.attaches.count == 2)
+        #expect(mirror.serving != nil && mirror.serving != served, "the reopened board is another incarnation")
         try await eventually { redraws == 1 }
     }
 
@@ -1818,7 +1821,8 @@ final class BoardMirrorTests {
     }
 
     /// The host's socket served as `easld` fronts it from now on.
-    func serveEasld(_ easld: Easld, refusingHtml failure: Locked<String?>? = nil) throws {
+    func serveEasld(_ easld: Easld, refusingHtml failure: Locked<String?>? = nil,
+                    browser: (@Sendable (JSONValue, SocketServer.Connection) -> JSONValue?)? = nil) throws {
         server.stop()
         let router = router
         server = SocketServer(path: socket) { request, connection in
@@ -1857,6 +1861,8 @@ final class BoardMirrorTests {
                 return nil
             case "client.list"?:
                 return easld.list(id, on: connection)
+            case "browser.call"? where browser != nil:
+                return browser?(request, connection)
             case "browser.report"?:
                 var update: [String: JSONValue] = ["id": params["id"] ?? .null, "props": .object(["url": params["url"] ?? .null])]
                 if let caller = params["caller"] { update["caller"] = caller }
@@ -1877,6 +1883,7 @@ final class BoardMirrorTests {
                      measureHTML: { _, _ in throw ApiRouter.Failure("unavailable", "no page is laid out here") },
                      reload: { id, _, _ in throw ApiRouter.Failure("unavailable", "browser tile \(id) isn't shown here") },
                      browse: { id, _, _ in throw ApiRouter.Failure("unavailable", "browser tile \(id) isn't shown here") },
+                     surface: { _, _, _ in throw ApiRouter.Failure("unavailable", "no browser page runs here") },
                      submit: submit, surfaceTail: { _, _ in nil },
                      block: { _, _ in throw ApiRouter.Failure("unavailable", "no command has finished") }, status: { _ in nil }, languages: { nil })
     }
@@ -1926,7 +1933,8 @@ final class BoardMirrorTests {
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
         let attach: JSONValue = .object([
             "version": .number(Double(ApiParams.schemaVersion)), "schema": .string(ApiParams.schemaHash), "app": "0.2.7", "host": "studio", "identity": "mch_01STUDIO",
-            "serves": ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure", "browser.call"], "boards": [.string(host.id)],
+            "serves": ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure", "browser.call",
+                       "surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"], "boards": [.string(host.id)],
         ])
         #expect(easld.attaches == [attach])
         key = true
@@ -2016,40 +2024,106 @@ final class BoardMirrorTests {
     }
 
 
-    func client(_ identity: String?, serving board: BoardID, serves: [String] = ["agent.prompt", "browser.call", "object.reload"]) -> JSONValue {
+    func client(_ identity: String?, host: String? = nil, serving board: BoardID, serves: [String] = ["agent.prompt", "browser.call", "object.reload"]) -> JSONValue {
         var entry: [String: JSONValue] = ["id": "cli_2", "boards": [.string(board)], "serves": .array(serves.map(JSONValue.string))]
         if let identity { entry["identity"] = .string(identity) }
+        if let host { entry["host"] = .string(host) }
         return .object(entry)
     }
 
+    /// Each drawing Mac once, by its identity, named as it attached (its identity when it gave no
+    /// name), sorted by name; what serves no browser calls, or another board, isn't one.
     @Test func theBoardsDrawingMacsFollowEasldsLatestSnapshot() async throws {
         let easld = Easld()
-        easld.clients = [client("mch_01HOME", serving: host.id)]
+        easld.clients = [client("mch_01HOME", host: "home", serving: host.id)]
         easld.holdsLists = true
         try serveEasld(easld)
         let (mirror, _) = try await mirror()
         defer { mirror.close() }
         mirror.serve(window(), as: identity)
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) && easld.waitingLists == 1 }
-        #expect(mirror.drawingMachines == nil)
+        #expect(mirror.drawingMachineChoices == nil && mirror.drawingMachines == nil)
         easld.announce([
-            client("mch_01STUDIO", serving: host.id),
-            client("mch_01OLDER", serving: host.id, serves: ["agent.prompt", "object.reload"]),
-            client(nil, serving: host.id),
-            client("mch_01ELSEWHERE", serving: "brd_elsewhere"),
+            client("mch_01STUDIO", host: "studio", serving: host.id),
+            client("mch_01STUDIO", host: "studio", serving: host.id, serves: ["browser.call", "surface.stream"]),
+            client("mch_01NAMELESS", serving: host.id),
+            client("mch_01ATTIC", host: "attic", serving: host.id),
+            client("mch_01OLDER", host: "older", serving: host.id, serves: ["agent.prompt", "object.reload"]),
+            client(nil, host: "anonymous", serving: host.id),
+            client("mch_01ELSEWHERE", host: "elsewhere", serving: "brd_elsewhere"),
         ], board: host.id)
-        try await eventually { mirror.drawingMachines == ["mch_01STUDIO"] }
+        let heard = [DrawingMachine(id: "mch_01ATTIC", host: "attic"), DrawingMachine(id: "mch_01NAMELESS", host: "mch_01NAMELESS"),
+                     DrawingMachine(id: "mch_01STUDIO", host: "studio")]
+        try await eventually { mirror.drawingMachineChoices == heard }
+        #expect(mirror.drawingMachines == ["mch_01ATTIC", "mch_01NAMELESS", "mch_01STUDIO"])
         easld.answerLists()
         try await Task.sleep(for: .milliseconds(300))
-        #expect(mirror.drawingMachines == ["mch_01STUDIO"], "the list asked before the snapshot is older")
+        #expect(mirror.drawingMachineChoices == heard, "the list asked before the snapshot is older")
         server.stop()
-        try await eventually { mirror.drawingMachines == nil }
+        try await eventually { mirror.drawingMachineChoices == nil && mirror.drawingMachines == nil }
         easld.holdsLists = false
         try serveEasld(easld)
-        try await eventually { mirror.drawingMachines == ["mch_01HOME"] }
+        try await eventually { mirror.drawingMachineChoices == [DrawingMachine(id: "mch_01HOME", host: "home")] }
+        #expect(mirror.drawingMachines == ["mch_01HOME"])
     }
 
-    @Test(arguments: ["browser.call", "object.reload"])
+    @Test(arguments: ["assignment", "destination", "incarnation", "online-read-failure", "offline-read-failure"])
+    func aMoveCannotOutliveItsPageOrUseASavedURLAfterAFailedLiveRead(_ transition: String) async throws {
+        let source = DrawingMachine(id: "mch_01SOURCE", host: "source")
+        let destination = DrawingMachine(id: "mch_01DEST", host: "destination")
+        let other = DrawingMachine(id: "mch_01OTHER", host: "other")
+        let page = host.create(type: .browser, props: .object(["url": "https://page.example/saved", "drawingMachine": source.json]))
+        let easld = Easld()
+        easld.clients = [client(source.id, serving: host.id), client(destination.id, serving: host.id)]
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let fails = transition.hasSuffix("read-failure")
+        try serveEasld(easld, browser: { request, connection in
+            let reply: JSONValue = fails
+                ? .object(["id": request["id"] ?? .null, "ok": .bool(false), "error": .object(["code": "unavailable", "message": "read failed"])])
+                : .object(["id": request["id"] ?? .null, "ok": .bool(true), "result": .object(["url": "https://page.example/live"])])
+            pending.withLock { $0 = { connection.send(reply) } }
+            return nil
+        })
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        mirror.serve(window(), as: identity)
+        try await eventually { mirror.drawingMachines?.contains(source.id) == true }
+        let move = try mirror.drawingMove(page.id, to: destination)
+        let moving = Task { @MainActor () -> String? in
+            do {
+                try await mirror.moveDrawing(move)
+                return nil
+            } catch {
+                return (error as? ApiRouter.Failure)?.code
+            }
+        }
+        try await eventually { pending.withLock { $0 != nil } }
+        switch transition {
+        case "assignment":
+            try host.update(page.id, props: .object(["drawingMachine": other.json]))
+            try await eventually { DrawingMachine(board.objects[page.id]!.props) == other }
+        case "destination":
+            easld.announce([client(source.id, serving: host.id)], board: host.id)
+            try await eventually { mirror.drawingMachines == [source.id] }
+        case "incarnation":
+            try registry.close(host.id)
+            try await eventually { mirror.availability == .closed }
+            _ = registry.open(root: host.root)
+            try await eventually { mirror.availability == .open }
+        case "offline-read-failure":
+            easld.announce([client(destination.id, serving: host.id)], board: host.id)
+            try await eventually { mirror.drawingMachines == [destination.id] }
+        default: break
+        }
+        pending.withLock { $0 }?()
+        #expect(await moving.value == (transition == "assignment" ? "conflict" : "unavailable"))
+        #expect(host.objects[page.id]?.props["url"] == "https://page.example/saved")
+        #expect(DrawingMachine(host.objects[page.id]!.props) == (transition == "assignment" ? other : source))
+    }
+
+    /// A delegated call that opens or drives a tile's page waits for the events easld sent before
+    /// it, and fails with the board that closes meanwhile, or as gone for a tile deleted by then.
+    @Test(arguments: ["browser.call", "object.reload", "surface.stream"])
     func closingAHostFailsBrowserCallsWaitingForEarlierEvents(_ method: String) async throws {
         let easld = Easld()
         let page = host.create(type: .browser, props: .object(["url": "https://page.example/"]))
@@ -2086,6 +2160,10 @@ final class BoardMirrorTests {
         viewer.reload = { id, _, _ in
             dispatched.append(id)
             return .object(["id": .string(id), "loaded": .bool(true)])
+        }
+        viewer.surface = { request, _, _ in
+            if case .stream(let id, _, _) = request { dispatched.append(id) }
+            return .object(["stream": "str_1", "size": .object(["w": 640, "h": 480]), "scale": 1])
         }
         mirror.serve(viewer, as: identity)
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }

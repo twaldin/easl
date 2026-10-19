@@ -100,7 +100,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
-        guard let url = task.request.url, let tile else {
+        guard let url = task.request.url, url.host == HtmlKit.host, let tile, !tile.hostBoardClosed else {
             return task.didFailWithError(URLError(.fileDoesNotExist))
         }
         guard !tile.isRemote || tile.files != nil else {
@@ -386,6 +386,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     private func respond(_ task: any WKURLSchemeTask, url: URL, data: Data, type: String, cache: String, status: Int = 200) {
+        guard let tile, !tile.hostBoardClosed else { return task.didFailWithError(URLError(.cancelled)) }
         var headers = ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": cache]
         if let policy = tile?.contentSecurityPolicy { headers["Content-Security-Policy"] = policy }
         task.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)

@@ -83,21 +83,31 @@ class SurfaceFrame(TypedDict):
     forward: Required[bool]
     loading: Required[bool]
 
+class SurfaceFile(TypedDict):
+    """A viewer-picked file held only in memory. All files in one answer total at most 8 MiB decoded, including empty files. No viewer path or drawing-machine staging file is sent."""
+    name: Required[str]
+    type: Required[str]
+    modified: NotRequired[float]
+    data: Required[str]
+
 class SurfaceDialog(TypedDict):
     """surface.dialog data, private to the subscribed owning connection. Completed once by surface.answer, safely dismissed when the connection or stream closes."""
     stream: Required["SurfaceStream"]
     dialog: Required[str]
-    kind: Required[Literal["alert", "confirm", "prompt", "login", "select"]]
+    kind: Required[Literal["alert", "confirm", "prompt", "login", "select", "file"]]
     origin: Required[str]
     message: NotRequired[str]
     text: NotRequired[str]
     choices: NotRequired[list[str]]
     selected: NotRequired[int]
+    multiple: NotRequired[bool]
+    accept: NotRequired[list[str]]
 
 class SurfaceNotice(TypedDict):
-    """surface.notice data, private to the subscribed owning connection. Downloads remain host files. File uploads are refused, not silently accepted."""
+    """surface.notice data, private to the subscribed owning connection. Downloads remain drawing-machine files. Folder uploads and file inputs in frames remain refused."""
     stream: Required["SurfaceStream"]
-    kind: Required[Literal["closed", "download", "refused"]]
+    kind: Required[Literal["closed", "dialogClosed", "download", "refused"]]
+    dialog: NotRequired[str]
     reason: NotRequired[str]
     name: NotRequired[str]
     state: NotRequired[str]
@@ -484,7 +494,7 @@ class SurfaceApi:
         self._call = call
 
     def stream(self, *, id: str, scale: float | None = None, format: Literal["jpeg", "png"] | None = None) -> dict[str, Any]:
-        """Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Currently served by the Swift app only; easld relay is not implemented."""
+        """Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Easld relays to the exact attached drawingMachine and pins the stream to that attachment. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay."""
         params = {"id": id, "scale": scale, "format": format}
         return self._call("surface.stream", params, [])
 
@@ -494,13 +504,13 @@ class SurfaceApi:
         return self._call("surface.ack", params, [])
 
     def input(self, *, stream: "SurfaceStream", events: list["SurfaceInputEvent"]) -> dict[str, Any]:
-        """Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation."""
+        """Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. If page relay setup fails during delivery, the stream closes with a notice; accepted input is never replayed. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation."""
         params = {"stream": stream, "events": events}
         return self._call("surface.input", params, [])
 
-    def answer(self, *, stream: "SurfaceStream", dialog: str, accept: bool, text: str | None = None, user: str | None = None, password: str | None = None, choice: int | None = None) -> dict[str, Any]:
-        """Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords are transient request data, never logged or read from the viewer's keychain."""
-        params = {"stream": stream, "dialog": dialog, "accept": accept, "text": text, "user": user, "password": password, "choice": choice}
+    def answer(self, *, stream: "SurfaceStream", dialog: str, accept: bool, text: str | None = None, user: str | None = None, password: str | None = None, choice: int | None = None, files: list["SurfaceFile"] | None = None) -> dict[str, Any]:
+        """Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords and file bytes are transient request data, never logged, staged or read from the viewer's keychain. A file picker accepts 1 file, or up to 32 with multiple:true, totaling at most 8 MiB decoded. An accepted file selection cannot be empty. Files are installed in the initiating main-frame input as in-memory File objects with untrusted input/change events. Cancellation preserves the input's prior files. Navigation or element replacement invalidates the picker. Cancel carries accept:false and no files."""
+        params = {"stream": stream, "dialog": dialog, "accept": accept, "text": text, "user": user, "password": password, "choice": choice, "files": files}
         return self._call("surface.answer", params, [])
 
     def stop(self, *, stream: "SurfaceStream") -> dict[str, Any]:
