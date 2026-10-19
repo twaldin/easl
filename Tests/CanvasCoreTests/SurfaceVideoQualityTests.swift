@@ -244,28 +244,7 @@ private enum BrowserQuality {
     }
 }
 
-#if SURFACE_QUALITY_PROBE
-@main private struct SurfaceVideoQualityProbe {
-    static func main() {
-        do {
-            try BrowserQuality.check(CommandLine.arguments.count == 3, "Usage: quality-probe FIXTURE_DIRECTORY REPORT_JSON")
-            let results = try BrowserQuality.reports(root: URL(fileURLWithPath: CommandLine.arguments[1]))
-            let data = try BrowserQuality.json(results)
-            try data.write(to: URL(fileURLWithPath: CommandLine.arguments[2]), options: .atomic)
-            print(String(decoding: data, as: UTF8.self))
-            exit(results.filter(\.qualityGated).allSatisfy(\.passed) ? 0 : 2)
-        } catch {
-            let report = ["exception": String(describing: error), "passed": "false"]
-            if CommandLine.arguments.count == 3,
-               let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
-                try? data.write(to: URL(fileURLWithPath: CommandLine.arguments[2]), options: .atomic)
-            }
-            FileHandle.standardError.write(Data("\(error)\n".utf8))
-            exit(1)
-        }
-    }
-}
-#else
+#if !SURFACE_QUALITY_PROBE
 @Suite(.serialized)
 struct SurfaceVideoQualityTests {
     @Test func realBrowserPagesRetainSharpReferenceThroughTwoHundredDocsCaretTransitions() throws {
