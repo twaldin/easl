@@ -56,6 +56,7 @@ final class SurfaceStream {
         self.surface = surface
         self.scale = scale
         self.format = format
+        RemoteUpdateActivity.shared.begin(session: id, kind: .browser, board: board, tile: surface.tile?.objectID)
     }
 
     /// The seq the next frame takes, while one may go.
@@ -104,7 +105,7 @@ final class SurfaceStream {
             throw ApiRouter.Failure("unavailable", "this Mac hasn't delivered the stream's last \(queued) batches yet (a menu or drag here holds its event queue); nothing in this batch was accepted")
         }
         accepted = last.seq
-        lastInput = ProcessInfo.processInfo.systemUptime
+        recordInput()
         let batch = enqueue(fresh)
         surface.inputArrived()
         var result: [String: JSONValue] = ["accepted": .number(Double(fresh.count))]
@@ -118,6 +119,12 @@ final class SurfaceStream {
             result["text"] = .string(text)
         }
         return .object(result)
+    }
+
+    func recordInput() {
+        lastInput = ProcessInfo.processInfo.systemUptime
+        RemoteUpdateActivity.shared.record(session: id, kind: .browser, board: board,
+                                           tile: surface.tile?.objectID, now: lastInput)
     }
 
     /// Batches reach the page one after another, each once the one before is through.
@@ -157,10 +164,18 @@ final class SurfaceStream {
         Metrics.shared.record("surface.frame", bytes: frame.data.count)
         let owner = owner, board = board
         // Base64 and JSON of a whole page image take milliseconds: off the main thread.
-        DispatchQueue.global(qos: .userInitiated).async {
+        let sentAt = ProcessInfo.processInfo.systemUptime
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let line = try? EventLine("surface.frame", board: board, frame.json) else { return }
             if owner.send(line) {
                 Metrics.shared.record("surface.frameWire", bytes: line.data.count)
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, !self.closed, self.peer.isOpen else { return }
+                        RemoteUpdateActivity.shared.record(session: self.id, kind: .browser, board: self.board,
+                                                           tile: self.surface.tile?.objectID, now: sentAt)
+                    }
+                }
             }
         }
         return true

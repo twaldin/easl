@@ -22,6 +22,17 @@
   },
   "definitions": {
     "ViewerId": { "type": "string", "pattern": "^vw_[A-Za-z0-9_-]{8,64}$", "description": "A remote window's in-memory identity, retained across reconnects and scoped to that window's edits and composer returns." },
+    "RemoteUpdateSession": {
+      "type": "object",
+      "required": ["session", "kind", "board", "tile"],
+      "properties": {
+        "session": { "type": "string", "description": "Live remote connection or stream identity." },
+        "kind": { "enum": ["browser", "board", "terminal"] },
+        "board": { "$ref": "#/definitions/Id" },
+        "tile": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
     "ComposerReceipt": {
       "type": "object",
       "required": ["receipt", "event", "viewer", "terminal", "ids"],
@@ -1107,13 +1118,16 @@
       },
       "result": {
         "type": "object",
-        "required": ["currentVersion", "availableVersion", "installPending", "phase", "error"],
+        "required": ["currentVersion", "availableVersion", "installPending", "phase", "error", "deferred", "interruptions", "warning"],
         "properties": {
           "currentVersion": { "type": "string" },
           "availableVersion": { "type": ["string", "null"], "description": "The latest feed version, including one that is not newer; null when unknown." },
           "installPending": { "type": "boolean", "description": "An update is downloading, verifying, waiting in verified staging, or installing." },
           "phase": { "type": "string", "description": "The app updater's current phase." },
-          "error": { "type": ["string", "null"], "description": "The update failure reason, including a retained failure from the previous install; null without a failure." }
+          "error": { "type": ["string", "null"], "description": "The update failure reason, including a retained failure from the previous install; null without a failure." },
+          "deferred": { "type": ["string", "null"], "description": "remote viewer active when automatic installation is deferred for recent remote activity, otherwise null; explicit install still proceeds." },
+          "interruptions": { "type": "array", "items": { "$ref": "#/definitions/RemoteUpdateSession" }, "description": "Live remote sessions that installing now can interrupt." },
+          "warning": { "type": ["string", "null"], "description": "Human-readable interruption warning for explicit installation, otherwise null." }
         },
         "additionalProperties": false
       }
@@ -2197,6 +2211,20 @@
       "params": {
         "type": "object",
         "properties": { "board": { "$ref": "#/definitions/Id" }, "events": { "type": "array", "items": { "type": "string" } } },
+        "additionalProperties": false
+      },
+      "result": { "type": "object", "properties": {} }
+    },
+    "viewer.activity": {
+      "description": "Optional Mac app host report from a remote board viewer on its board event connection. Requires a subscription to object.updated on this open board. input false registers an attached viewer without resetting idle time; true reports actual user input, never background API requests, terminal output or refreshes. A terminal names the tile receiving real keyboard, paste or drop input through its SSH/zmx attachment. Sessions end when the connection, board or terminal ends. Viewers coalesce reports with a trailing report so the final input keeps its full idle-protection window. Unknown-method errors on older servers disable this optional reporting without affecting viewing or input. Not forwarded by easld.",
+      "params": {
+        "type": "object",
+        "required": ["board", "input"],
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "input": { "type": "boolean" },
+          "terminal": { "$ref": "#/definitions/Id" }
+        },
         "additionalProperties": false
       },
       "result": { "type": "object", "properties": {} }

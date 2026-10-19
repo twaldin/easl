@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "a111af1ab5b95922"
+const SchemaHash = "e7c4c11c6e468543"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -266,6 +266,10 @@ var Methods = map[string]ParamSpec{
 		Accepted: []string{"board", "events"},
 		Required: nil,
 	},
+	"viewer.activity": {
+		Accepted: []string{"board", "input", "terminal"},
+		Required: []string{"board", "input"},
+	},
 	"client.attach": {
 		Accepted: []string{"version", "schema", "app", "host", "identity", "serves", "boards", "focused"},
 		Required: []string{"version", "schema", "serves"},
@@ -290,6 +294,15 @@ var Methods = map[string]ParamSpec{
 
 // ViewerId: A remote window's in-memory identity, retained across reconnects and scoped to that window's edits and composer returns.
 type ViewerId = string
+
+type RemoteUpdateSession struct {
+	// Live remote connection or stream identity.
+	Session string `json:"session"`
+	// One of "browser", "board", "terminal".
+	Kind  string  `json:"kind"`
+	Board Id      `json:"board"`
+	Tile  *string `json:"tile"`
+}
 
 type ComposerReceipt struct {
 	// Stable outcome identity; the same receipt appears live and in board.get so a viewer applies it once.

@@ -38,6 +38,12 @@ def _snake_case_hints(cls: type[_Api]) -> type[_Api]:
 
 ViewerId = str
 
+class RemoteUpdateSession(TypedDict):
+    session: Required[str]
+    kind: Required[Literal["browser", "board", "terminal"]]
+    board: Required["Id"]
+    tile: Required[Any]
+
 class ComposerReceipt(TypedDict):
     receipt: Required["Id"]
     event: Required[Literal["composer.returned", "composer.submitted"]]
@@ -829,6 +835,16 @@ class EventsApi:
         return self._call("events.subscribe", params, ["board"])
 
 @_snake_case_hints
+class ViewerApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def activity(self, *, board: "Id", input: bool, terminal: "Id" | None = None) -> dict[str, Any]:
+        """Optional Mac app host report from a remote board viewer on its board event connection. Requires a subscription to object.updated on this open board. input false registers an attached viewer without resetting idle time; true reports actual user input, never background API requests, terminal output or refreshes. A terminal names the tile receiving real keyboard, paste or drop input through its SSH/zmx attachment. Sessions end when the connection, board or terminal ends. Viewers coalesce reports with a trailing report so the final input keeps its full idle-protection window. Unknown-method errors on older servers disable this optional reporting without affecting viewing or input. Not forwarded by easld."""
+        params = {"board": board, "input": input, "terminal": terminal}
+        return self._call("viewer.activity", params, ["board"])
+
+@_snake_case_hints
 class ClientApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -883,11 +899,12 @@ class GeneratedApi:
         self.session = SessionApi(call)
         self.relay = RelayApi(call)
         self.events = EventsApi(call)
+        self.viewer = ViewerApi(call)
         self.client = ClientApi(call)
         self.browser = BrowserApi(call)
         self.text = TextApi(call)
 
-METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","browser.call","browser.report","text.measure"]
+METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

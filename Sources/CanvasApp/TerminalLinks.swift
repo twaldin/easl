@@ -130,6 +130,7 @@ final class CanvasTerminalView: TerminalView {
     var onMissedLink: ((NSPoint, _ newTile: Bool) -> Void)?
     var onReferenceClick: ((NSPoint, _ newTile: Bool) -> Bool)?
     var onClick: (() -> Void)?
+    var onUserInput: (() -> Void)?
     private(set) var openingNewTile = false
     /// Keyboard focus came or went: libghostty-spm has just told Ghostty the view is focused
     /// or not, without asking whether its window is key in an active app.
@@ -325,6 +326,7 @@ final class CanvasTerminalView: TerminalView {
 
 
     @IBAction override func paste(_ sender: Any?) {
+        onUserInput?()
         if pasteImages(from: .general) { return }
         if activeInput != nil {
             if let text = TerminalPasteboardContent.text() { enqueue(.text(text)) }
@@ -343,6 +345,7 @@ final class CanvasTerminalView: TerminalView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard !draggingEntered(sender).isEmpty else { return false }
+        onUserInput?()
         window?.makeFirstResponder(self)
         return pasteImages(from: sender.draggingPasteboard, dropping: true)
     }
@@ -557,6 +560,7 @@ final class CanvasTerminalView: TerminalView {
     /// thread, which this doesn't see, and a consumed binding or a composing IME key writes
     /// nothing at all.
     override func keyDown(with event: NSEvent) {
+        onUserInput?()
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
         if event.charactersIgnoringModifiers?.lowercased() == "v" {
             if !event.isARepeat { pasteKeyUp = nil }
