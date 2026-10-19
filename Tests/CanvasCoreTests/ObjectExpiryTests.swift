@@ -141,7 +141,7 @@ final class ObjectExpiryTests {
         restarted.onEvent = { _, event in
             if case .objectDeleted(let id) = event { deleted.append(id) }
         }
-        let reopened = restarted.open(root: board.root)
+        let reopened = await restarted.open(root: board.root)
         defer { try? restarted.close(reopened.id) }
         #expect(deadline > Date())
         #expect(reopened.objects[object.id]?.expires == object.expires)
