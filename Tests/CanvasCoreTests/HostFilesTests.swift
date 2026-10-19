@@ -40,7 +40,7 @@ final class HostFileFixture: @unchecked Sendable {
         try data.write(to: file)
     }
 
-    func reader(body: String? = nil, request: JSONValue? = nil) throws -> HostFiles {
+    func reader(body: String? = nil, request: JSONValue? = nil, batching: Bool = false) throws -> HostFiles {
         let bodyFile = directory.appendingPathComponent("reader-\(UUID().uuidString)")
         let execution: String
         if let request {
@@ -53,7 +53,8 @@ final class HostFileFixture: @unchecked Sendable {
         }
         try (execution + "\n").write(to: bodyFile, atomically: true, encoding: .utf8)
         return HostFiles(hostName: "fixture", route: HostRoute(target: "fixture", controlPath: bodyFile.path,
-                         executable: try Self.launcher.get().path), temps: [temp.path])
+                         executable: try Self.launcher.get().path), temps: [temp.path],
+                         fileReads: batching ? HostFileReads() : nil)
     }
 
     var attempts: [Int32] {
@@ -61,18 +62,18 @@ final class HostFileFixture: @unchecked Sendable {
             .split(separator: "\n").compactMap { Int32($0) }
     }
 
-    func recordingReader(body: String = "exec /bin/sh -c \"$command\"") throws -> HostFiles {
+    func recordingReader(body: String = "exec /bin/sh -c \"$command\"", batching: Bool = false) throws -> HostFiles {
         try reader(body: """
         printf '%s\\n' $$ >> \(RemoteHost.quote(directory.appendingPathComponent("attempts").path))
         \(body)
-        """)
+        """, batching: batching)
     }
 
-    func reader(running injection: String) throws -> HostFiles {
+    func reader(running injection: String, batching: Bool = false) throws -> HostFiles {
         let escaped = String(decoding: try JSONEncoder().encode(injection + "\n"), as: UTF8.self).dropFirst().dropLast()
         return try reader(body: """
         { dd bs=1 count=1 of=/dev/null 2>/dev/null; printf '"%s' \(RemoteHost.quote(String(escaped))); cat; } | /bin/sh -c "$command"
-        """)
+        """, batching: batching)
     }
 
     func readerSwappingDirectory(containing relative: String, afterCanonicalization: Int) throws -> HostFiles {

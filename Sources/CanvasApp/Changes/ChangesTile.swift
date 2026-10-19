@@ -299,7 +299,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         if spec.root == nil, spec.head == nil, spec.ref == nil { onBranch?(load.set.branch) }
         hostWatch?.cancel()
         hostWatch = load.probe.map { probe in
-            HostFileWatch(baseline: load.baseline, probe: { await git.stamp(probe) }) { [weak self] _ in self?.scheduleReload(after: 0.05) }
+            let background = HostGit(files: git.files.prioritized(.background))
+            return HostFileWatch(baseline: load.baseline, probe: { await background.stamp(probe) }) { [weak self] _ in self?.scheduleReload(after: 0.05) }
         }
     }
 
@@ -1276,7 +1277,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             var hostLoad: HostChangesLoad?
             if let git {
                 do {
-                    let load = try await git.changes(boardRoot: board.root.path, spec: hostSpec(spec))
+                    let rendering = HostGit(files: git.files.prioritized(request.priority))
+                    let load = try await rendering.changes(boardRoot: board.root.path, spec: hostSpec(spec))
                     hostLoad = load
                     fresh = load.set
                 } catch {

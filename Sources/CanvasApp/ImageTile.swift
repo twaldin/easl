@@ -86,7 +86,7 @@ final class ImageTile: NSView, TileContent {
     // MARK: Loading
 
     /// Reads the file off the main thread; the newest read wins.
-    private func reload() {
+    private func reload(priority: HostReadPriority? = nil) {
         stopAnimation()
         loadTask?.cancel()
         hostWatch?.cancel()
@@ -98,6 +98,7 @@ final class ImageTile: NSView, TileContent {
         let generation = loadGeneration
         let source = source
         let path = path
+        let priority = priority ?? (live && window != nil ? .visible : .background)
         loadTask = Task { [weak self] in
             var read: (data: Data, size: CGSize)?
             var failure: String?
@@ -115,7 +116,7 @@ final class ImageTile: NSView, TileContent {
                     }
                 case .host(let files, let root):
                     do {
-                        let file = try await files.read(HostFileRequest(source: .directory(root), policy: .boardImage(path)))
+                        let file = try await files.read(HostFileRequest(source: .directory(root), policy: .boardImage(path)), priority: priority)
                         baseline = .version(file.version)
                         if let size = await offPool({ LocalImage.naturalSize(of: file.data) }) {
                             read = (file.data, size)
@@ -377,7 +378,7 @@ final class ImageTile: NSView, TileContent {
 
     func render(_ request: TileRenderRequest) async -> TileRender {
         if !loaded || stale {
-            reload()
+            reload(priority: request.priority)
             await loadTask?.value
         }
         guard loaded, !stale else { return .placeholder(request, "image read was cancelled") }

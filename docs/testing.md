@@ -39,6 +39,24 @@ What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` t
 
 `scripts/test_host_lsp_lifetime.py` runs the host language launcher as a real subprocess on Linux and macOS. The link-death regression reads the `easl/hostProcess` PID notification before killing the input link, then checks that the server is reaped. It does not prove cleanup before PID delivery. Separate retained real-SSH proof holds that notification back, verifies that the viewer receives zero bytes, and kills the SSH link before checking the host process. Other script cases check byte-for-byte LSP forwarding and isolation from unrelated environment files. The scripts run through the Python discovery command above and need Bun, as the host launcher does.
 
+### Remote host-file throughput
+
+`HostFileReadsTests`, `HostFilesTests`, `HostFileRangeTests`, `HostHTTPTests`, `HostGitTests`, and `HostMasterTests` exercise real host programs and SSH subprocess fixtures. They cover binary member ordering, independent refusals, batch-budget deferral, changing files, selected byte ranges, shared-command cancellation, priority/FIFO admission, lease bounds, and cancellation isolation.
+
+For a real-link comparison, launch an isolated development viewer with `EASL_DEV_HOST_READ_TRACE=1`. Each `host-read` line reports admission wait (`queueMs`), master setup (`setupMs`), command time (`channelMs`), request/reply bytes, member count, status, and timeout state. `scripts/dev.sh` forwards this setting and `EASL_DEV_HOST_FILE_CONCURRENCY` through its launcher. The concurrency override accepts 1–6 and is for experiments, not a second production setting.
+
+Compare limits 1, 2, 4, and 6 in at least five interleaved runs on the same guest and route. Use host-backed HTML fetches that exercise individual range reads, checking every file's hash and decoded image; native images alone also measure batching. Then time 30 opens of the 50-image board, from `board.open_remote` to native captured pixels for all 50 images, not object counts. Keep incomplete opens and errors in the report. Measure route RTT and checked bulk transfers in both directions separately from cold SSH setup, and retain the before and after logs from the same session.
+
+### Whole-board browser render regression
+
+Use two isolated Mac viewers of one scratch easld board. Assign browser pages to both drawing identities. Put distinct text and colors in each page. Leave at least two browsers unseen by the composing viewer, with two browser frames overlapping. Keep one browser streaming as a control.
+
+Call `view.render` on the host with the board ID, a target list containing all browser IDs and a note ID, `inline:true`, `scale:0.4`, and `timeoutMs:30000`. Decode the returned PNG and inspect each browser's distinct page content. Require each loaded browser's object record to report `rendered`, including the unseen browsers. Check that the body has one browser address bar, not a duplicated tile title bar. Repeat with content zoom other than 1 and fractional object positions.
+
+Repeat with a rectangle covering those tiles. The overlapping pages must not trigger repeated nested compositions. Inspect connection and surface-stream evidence before and after. Captures must not open new streams or leave snapshot links behind. The composing viewer's viewport and existing live stream must stay unchanged.
+
+Use a page whose response stays pending, then repeat with a short `timeoutMs`. Require a bounded placeholder rather than a successful stale frame. Cancel a running render in the viewer and check that its snapshot connections close. Move a pending browser to the other drawing identity, then disconnect its drawing viewer. Neither case may return the former drawing's retained frame as a fresh render. These checks need the real app because the existing Swift behavior target imports `CanvasCore`, not `CanvasApp`.
+
 ## Rotating an omp lead
 
 `scripts/rotate-lead.ts` runs one guarded fresh restart and one out-of-band handoff through the existing easl CLI. It is a finite developer tool, not a scheduler:
@@ -90,6 +108,38 @@ Easl lanes use `/home/tim/agents/projects/easl/state/efforts/gui-guest/recipe.md
 The guest needs macOS 14 or later, Command Line Tools, git, Python, Go, bun, and zmx 0.8.1. Use a login shell so Homebrew's tools are on `PATH`. Cap Swift builds and bundling at two jobs. Use a separate `EASL_DEV_HOME` and scratch easld home for each lane.
 
 In `agent-gui`, use the already-authorized CuaDriver with both the dev process PID and its window ID, as the recipe shows. Capture before and after a visible change, then inspect both PNGs for changed terminal output and advancing HTML or browser content. A new file or in-process `view.snapshot` is not GUI proof. Do not pursue a native SSH Screen Recording grant.
+
+## Native remote video regression
+
+Run this check in a claimed GUI guest against a scratch remote board. Use an isolated app home for each audio case so a hung audio pipeline does not invalidate the next control.
+
+1. Put an unchanged audio-bearing MP4 at `original.mp4` in the scratch board. Record its hash and track metadata on the host. Create a silent stream copy on the host, not the viewer.
+
+   ```sh
+	sha256sum original.mp4
+	ffprobe -v error -show_streams -show_format -of json original.mp4
+	ffmpeg -i original.mp4 -map 0:v:0 -c:v copy -an silent.mp4
+   ```
+
+2. Set `EASL_SOCKET` to the scratch daemon and `BOARD` to its board ID. Create a native silent tile and retain its returned object ID as `VIDEO`.
+
+   ```sh
+	easl object.create --board "$BOARD" --type video --json '{"props":{"path":"silent.mp4","muted":true,"autoplay":true,"startTime":20},"frame":{"x":0,"y":0,"w":300,"h":540}}'
+	easl object.update --id "$VIDEO" --json '{"props":{"startTime":10,"autoplay":false}}'
+	easl object.update --id "$VIDEO" --json '{"props":{"autoplay":true}}'
+   ```
+
+3. Capture native frames before and after playback. Read the native timeline through accessibility to prove that time advances. Pause, seek backward and forward through both the API and native controls, and verify the requested position before resuming. A spinner disappearing or `object.get` returning new props does not prove playback or seeking.
+4. Repeat with `original.mp4`, first muted and then unmuted. Repeat both files in a guest-local board from byte-identical copies. Keep an HTML `<video controls>` tile for each file as a separate decoder and transport control. HTML success does not qualify native AVKit playback.
+5. Seek during an outstanding remote read, park and reopen the tile, and close the remote board during playback. Verify responsive input, preserved position on reopen, and the cached presentation after closure. Check that no video payload was staged on the viewer's disk.
+6. If the audio case hangs, retain its native PID, window ID, capture receipt, and these guest diagnostics.
+
+   ```sh
+	sample "$PID" 5 -file native-video-sample.txt
+	system_profiler SPAudioDataType -json
+   ```
+
+Record the candidate commit, guest macOS version, file hashes, route, muted state, and timeline values with every result. A main-thread `currentMediaSelection` wait plus an `AQServer` CoreAudio HAL wait identifies the observed stack, not a product-code cause. Classify the hang as guest-only only after the same candidate and unchanged audio file pass native local and remote controls on a separate physical Mac. If that control is unavailable, leave guest-only attribution unproven. Never launch the development app on `twaldin-home`'s display for this control.
 
 ## A development instance
 

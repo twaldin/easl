@@ -184,25 +184,43 @@ extension CanvasView {
     private func renderTiles(_ jobs: [TileJob], deadline: ContinuousClock.Instant) async -> [ObjectID: TileRender] {
         let running = jobs.map { job in (job.object.id, Task { await Self.render(job, deadline: deadline) }) }
         var results: [ObjectID: TileRender] = [:]
-        for (id, task) in running { results[id] = await task.value }
-        return results
+        return await withTaskCancellationHandler {
+            for (id, task) in running { results[id] = await task.value }
+            return results
+        } onCancel: {
+            for (_, task) in running { task.cancel() }
+        }
     }
 
     /// At the deadline the render is cancelled (tiles then return what they have); one that
     /// still hasn't answered a second later is reported without it.
     private static func render(_ job: TileJob, deadline: ContinuousClock.Instant) async -> TileRender {
-        return await withCheckedContinuation { (continuation: CheckedContinuation<TileRender, Never>) in
-            let once = Once()
-            let work = Task {
-                let render = await job.content.render(job.request)
-                if once.claim() { continuation.resume(returning: render) }
+        guard !Task.isCancelled else { return .placeholder(job.request, "cancelled") }
+        let work = Task {
+            if let browser = job.content as? RemoteBrowserTile {
+                return await browser.render(job.request, deadline: deadline)
             }
-            Task {
-                try? await Task.sleep(until: deadline)
-                work.cancel()
-                try? await Task.sleep(for: .seconds(1))
-                if once.claim() { continuation.resume(returning: .placeholder(job.request, "timed out")) }
+            return await job.content.render(job.request)
+        }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<TileRender, Never>) in
+                let once = Once()
+                let timeout = Task {
+                    do {
+                        try await Task.sleep(until: deadline)
+                        work.cancel()
+                        try await Task.sleep(for: .seconds(1))
+                    } catch { return }
+                    if once.claim() { continuation.resume(returning: .placeholder(job.request, "timed out")) }
+                }
+                Task {
+                    let render = await work.value
+                    timeout.cancel()
+                    if once.claim() { continuation.resume(returning: render) }
+                }
             }
+        } onCancel: {
+            work.cancel()
         }
     }
 

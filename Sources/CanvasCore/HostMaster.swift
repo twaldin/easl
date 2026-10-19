@@ -22,7 +22,13 @@ public struct HostRoute: Sendable, Equatable {
     }
 }
 
-/// A tracked ssh master with a separate, lazily created master for file commands.
+public enum HostReadPriority: Int, Sendable {
+    case background = 0
+    case visible = 1
+    case interactive = 2
+}
+
+/// A tracked ssh master with a separate, lazily created pool for file commands.
 @MainActor
 public final class HostMaster {
     public struct Failure: Error, LocalizedError, Equatable {
@@ -58,6 +64,8 @@ public final class HostMaster {
     public var onEnded: ((String) -> Void)?
 
     private let processes: RemoteProcesses
+    lazy var fileReads = HostFileReads()
+    private let fileConcurrency: Int
     private var master: MasterProcess?
     private var starting: Task<Void, Error>?
     private var lastFailure: Failure?
@@ -71,7 +79,8 @@ public final class HostMaster {
         let path = URL(fileURLWithPath: route.controlPath).deletingLastPathComponent().appendingPathComponent("easl-ssh-\(key)").path
         let reader = HostMaster(
             route: HostRoute(target: route.target, controlPath: path, executable: route.executable),
-            processes: processes
+            processes: processes,
+            fileConcurrency: fileConcurrency
         )
         if closed { reader.close() }
         cachedFileReader = reader
@@ -83,25 +92,28 @@ public final class HostMaster {
         let path = URL(fileURLWithPath: route.controlPath).deletingLastPathComponent().appendingPathComponent("easl-ssh-\(key)").path
         let reader = HostMaster(
             route: HostRoute(target: route.target, controlPath: path, executable: route.executable),
-            processes: processes
+            processes: processes,
+            fileConcurrency: 1
         )
         if closed { reader.close() }
         cachedHTTPReader = reader
         return reader
     }
 
-
-    // SSH can withhold a channel's first bytes behind another reply. File reads use one dedicated channel.
-    private var fileBusy = false
+    private var fileTransports: [HostMaster] = []
+    private var fileLeases: Set<Int> = []
     private struct Waiter {
         let id: UUID
-        let continuation: CheckedContinuation<Void, Error>
+        let priority: HostReadPriority
+        let continuation: CheckedContinuation<HostMaster, Error>
     }
     private var fileWaiters: [Waiter] = []
 
-    init(route: HostRoute, processes: RemoteProcesses = .shared) {
+    init(route: HostRoute, processes: RemoteProcesses = .shared,
+         fileConcurrency: Int = Int(ProcessInfo.processInfo.environment["EASL_DEV_HOST_FILE_CONCURRENCY"] ?? "") ?? 4) {
         self.route = route
         self.processes = processes
+        self.fileConcurrency = min(6, max(1, fileConcurrency))
     }
 
     /// Concurrent callers share one start and readiness check. A caller's cancellation does
@@ -217,20 +229,22 @@ public final class HostMaster {
         onEnded?(failure.message)
     }
 
-    public func fileSession() async throws {
+    public func fileSession(priority: HostReadPriority = .visible) async throws -> HostMaster {
         try Task.checkCancellation()
         guard !closed else { throw Failure("easl is quitting") }
-        if !fileBusy {
-            fileBusy = true
-            return
+        if let slot = (0..<fileConcurrency).first(where: { !fileLeases.contains($0) }) {
+            fileLeases.insert(slot)
+            return fileTransport(slot)
         }
         let id = UUID()
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        let transport = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<HostMaster, Error>) in
                 if Task.isCancelled {
                     continuation.resume(throwing: CancellationError())
                 } else {
-                    fileWaiters.append(Waiter(id: id, continuation: continuation))
+                    let waiter = Waiter(id: id, priority: priority, continuation: continuation)
+                    let index = fileWaiters.firstIndex { $0.priority.rawValue < priority.rawValue } ?? fileWaiters.endIndex
+                    fileWaiters.insert(waiter, at: index)
                 }
             }
         } onCancel: {
@@ -240,18 +254,42 @@ public final class HostMaster {
             try Task.checkCancellation()
             guard !closed else { throw Failure("easl is quitting") }
         } catch {
-            endFileSession()
+            endFileSession(transport)
             throw error
+        }
+        return transport
+    }
+
+    public func endFileSession(_ transport: HostMaster) {
+        let slot: Int
+        if transport === self {
+            slot = 0
+        } else {
+            guard let index = fileTransports.firstIndex(where: { $0 === transport }) else {
+                preconditionFailure("file transport belongs to another master")
+            }
+            slot = index + 1
+        }
+        precondition(fileLeases.contains(slot), "file transport is not leased")
+        if !closed, !fileWaiters.isEmpty {
+            fileWaiters.removeFirst().continuation.resume(returning: transport)
+        } else {
+            fileLeases.remove(slot)
         }
     }
 
-    public func endFileSession() {
-        precondition(fileBusy)
-        if !fileWaiters.isEmpty {
-            fileWaiters.removeFirst().continuation.resume()
-        } else {
-            fileBusy = false
+    private func fileTransport(_ slot: Int) -> HostMaster {
+        if slot == 0 { return self }
+        if slot > fileTransports.count {
+            let key = HostedTerminal.instance(hostname: "files-\(slot)", support: route.controlPath)
+            let path = URL(fileURLWithPath: route.controlPath).deletingLastPathComponent().appendingPathComponent("easl-ssh-\(key)").path
+            fileTransports.append(HostMaster(
+                route: HostRoute(target: route.target, controlPath: path, executable: route.executable),
+                processes: processes,
+                fileConcurrency: 1
+            ))
         }
+        return fileTransports[slot - 1]
     }
 
     private func cancelFileWaiter(_ id: UUID) {
@@ -263,6 +301,7 @@ public final class HostMaster {
         closed = true
         cachedFileReader?.close()
         cachedHTTPReader?.close()
+        for transport in fileTransports { transport.close() }
         starting?.cancel()
         if let master { RemoteProcesses.stop(master.process) }
         let waiting = fileWaiters

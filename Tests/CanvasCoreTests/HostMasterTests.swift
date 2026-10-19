@@ -11,14 +11,14 @@ struct HostMasterTests {
         let processes = RemoteProcesses()
         let master: HostMaster
 
-        init() throws {
+        init(fileConcurrency: Int = 1) throws {
             directory = FileManager.default.temporaryDirectory.appendingPathComponent("host-master-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let executable = directory.appendingPathComponent("ssh").path
             try Self.ssh.write(toFile: executable, atomically: true, encoding: .utf8)
             chmod(executable, 0o755)
             route = HostRoute(target: "host-without-easld", controlPath: directory.appendingPathComponent("control").path, executable: executable)
-            master = HostMaster(route: route, processes: processes)
+            master = HostMaster(route: route, processes: processes, fileConcurrency: fileConcurrency)
         }
 
         func file(_ name: String) -> URL { directory.appendingPathComponent(name) }
@@ -47,6 +47,19 @@ struct HostMasterTests {
                 .split(separator: "\n").map(String.init)
         }
         func release(_ pid: Int32) throws { try Data().write(to: file("release.\(pid)")) }
+        func read(_ name: String, priority: HostReadPriority = .visible) async throws -> RemoteHost.RunResult {
+            let owner = master.fileReader
+            let transport = try await owner.fileSession(priority: priority)
+            defer { owner.endFileSession(transport) }
+            try await transport.ready()
+            let interrupt = try transport.interruption()
+            return try await RemoteHost.run(
+                transport.route.executable,
+                transport.route.ssh("cat " + RemoteHost.quote(file(name).path)),
+                timeout: 10,
+                onStop: interrupt
+            )
+        }
         func close() {
             master.close()
             processes.terminateAll(grace: 0.05)
@@ -95,9 +108,15 @@ struct HostMasterTests {
             kill -0 "$pid" 2>/dev/null || exit 1
             printf '%s\n' "$$" >> "$directory/clients"
             printf '%s\n' "$control" >> "$directory/client-routes"
-            while [ -f "$control.busy" ]; do sleep 0.02; done
+            while [ -f "$control.busy" ]; do
+              kill -0 "$pid" 2>/dev/null || exit 255
+              sleep 0.02
+            done
             if [ -f "$directory/read-hold" ]; then
-              while [ ! -f "$directory/release.$$" ]; do sleep 0.02; done
+              while [ ! -f "$directory/release.$$" ]; do
+                kill -0 "$pid" 2>/dev/null || exit 255
+                sleep 0.02
+              done
             fi
             exec /bin/sh -c "$1"
             """#
@@ -209,106 +228,168 @@ struct HostMasterTests {
         #expect(host.starts.count == 1)
     }
 
-    @Test func actualFileReadsSerializeAcrossConsumersAndSkipACancelledQueuedRead() async throws {
-        let host = try Host()
+    @Test(arguments: [1, 2, 4, 6])
+    func fileTransportLeasesBoundConcurrentCommands(limit: Int) async throws {
+        let host = try Host(fileConcurrency: limit)
         defer { host.close() }
         try Data().write(to: host.file("read-hold"))
-        let remote = RemoteHost(name: "fixture", sshTarget: "fixture", socketPath: "/unused",
-                                tmpdir: host.directory.path, easlBin: "easl")
-        let files = HostFiles(host: remote, master: host.master)
-        let otherFiles = HostFiles(host: remote, master: host.master)
-        let expected = Data([0, 255, 71, 73, 70, 10, 128, 42])
-        try expected.write(to: host.file("chart.png"))
-        let request = HostFileRequest(source: .directory(host.directory.path), policy: .boardImage("chart.png"))
-        let first = Task { try await files.read(request) }
+        let names = (0..<(limit + 2)).map { "file-\($0)" }
+        for name in names { try Data(name.utf8).write(to: host.file(name)) }
+        let reads = names.map { name in Task { try await host.read(name) } }
+        defer { for read in reads { read.cancel() } }
+        try #require(try await eventually { host.clients.count == limit })
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(host.clients.count == limit)
+        #expect(Set(host.clientRoutes).count == limit)
+        for index in names.indices {
+            try #require(try await eventually { host.clients.count > index })
+            try host.release(host.clients[index])
+        }
+        for (name, read) in zip(names, reads) {
+            let result = try await read.value
+            #expect(result.status == 0)
+            #expect(result.output == name)
+        }
+        #expect(Set(host.clientRoutes).count == limit)
+        #expect(host.clients.allSatisfy { kill($0, 0) == -1 && errno == ESRCH })
+    }
+
+    @Test func queuedReadsUsePriorityFIFOAndSkipCancellation() async throws {
+        let host = try Host(fileConcurrency: 1)
+        defer { host.close() }
+        try Data().write(to: host.file("read-hold"))
+        let names = ["first", "background-1", "cancelled", "background-2", "visible-1", "visible-2", "interactive"]
+        for name in names { try Data(name.utf8).write(to: host.file(name)) }
+        let first = Task { try await host.read("first") }
         defer { first.cancel() }
         try #require(try await eventually { host.clients.count == 1 })
-        let firstClient = try #require(host.clients.first)
-        #expect(kill(firstClient, 0) == 0)
+        var entered: [String] = []
+        var completed: [String] = []
+        let queued: [(String, HostReadPriority)] = [
+            ("background-1", .background), ("cancelled", .background), ("background-2", .background),
+            ("visible-1", .visible), ("visible-2", .visible), ("interactive", .interactive)
+        ]
+        var reads: [Task<RemoteHost.RunResult, Error>] = []
+        defer { for read in reads { read.cancel() } }
+        for (name, priority) in queued {
+            reads.append(Task {
+                entered.append(name)
+                let result = try await host.read(name, priority: priority)
+                completed.append(result.output)
+                return result
+            })
+            try #require(try await eventually { entered.last == name })
+        }
+        reads[1].cancel()
+        await #expect(throws: CancellationError.self) { try await reads[1].value }
+        #expect(host.clients.count == 1)
+        try host.release(try #require(host.clients.first))
+        #expect(try await first.value.output == "first")
+        let expected = ["interactive", "visible-1", "visible-2", "background-1", "background-2"]
+        for index in expected.indices {
+            try #require(try await eventually { host.clients.count == index + 2 })
+            try host.release(try #require(host.clients.last))
+            try #require(try await eventually { completed.count == index + 1 })
+            #expect(completed == Array(expected.prefix(index + 1)))
+        }
+        for (index, read) in reads.enumerated() where index != 1 {
+            #expect(try await read.value.status == 0)
+        }
+        #expect(host.clients.count == 6)
+    }
+
+    @Test func cancellationAfterGrantReturnsTheExactLease() async throws {
+        let host = try Host(fileConcurrency: 2)
+        defer { host.close() }
+        let owner = host.master.fileReader
+        let first = try await owner.fileSession()
+        try await first.ready()
+        defer { owner.endFileSession(first) }
+        let second = try await owner.fileSession()
+        try await second.ready()
         var entered = false
         let cancelled = Task {
             entered = true
-            return try await otherFiles.read(request)
+            return try await owner.fileSession()
         }
         defer { cancelled.cancel() }
-        #expect(try await eventually { entered })
-        var waiting = false
-        let next = Task {
-            waiting = true
-            return try await otherFiles.read(request)
-        }
-        defer { next.cancel() }
-        #expect(try await eventually { waiting })
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(host.clients == [firstClient])
+        try #require(try await eventually { entered })
+        owner.endFileSession(second)
         cancelled.cancel()
         await #expect(throws: CancellationError.self) { try await cancelled.value }
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(host.clients == [firstClient])
-        try host.release(firstClient)
-        #expect(try await first.value.data == expected)
-        #expect(kill(firstClient, 0) == -1 && errno == ESRCH)
-        try #require(try await eventually { host.clients.count == 2 })
-        let replacement = try #require(host.clients.last)
-        #expect(kill(replacement, 0) == 0)
-        var laterWaiting = false
-        let later = Task {
-            laterWaiting = true
-            return try await files.read(request)
-        }
-        defer { later.cancel() }
-        #expect(try await eventually { laterWaiting })
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(host.clients == [firstClient, replacement])
-        try host.release(replacement)
-        #expect(try await next.value.data == expected)
-        try #require(try await eventually { host.clients.count == 3 })
-        let lastClient = try #require(host.clients.last)
-        try host.release(lastClient)
-        #expect(try await later.value.data == expected)
-        #expect(host.clients.count == 3)
-        #expect(host.clients.allSatisfy { kill($0, 0) == -1 && errno == ESRCH })
-        #expect(host.masters.count == 1)
-        #expect(Set(host.clientRoutes) == Set(host.masterRoutes))
-        let reader = try #require(host.masters.first)
-        #expect(kill(reader, 0) == 0)
-        host.master.close()
-        #expect(try await eventually { kill(reader, 0) == -1 && errno == ESRCH })
-        #expect(host.processes.count == 0)
-        await #expect(throws: HostFileError.self) { try await otherFiles.read(request) }
-        #expect(host.masters == [reader])
-        #expect(host.clients.count == 3)
+        try Data("after grant".utf8).write(to: host.file("next"))
+        let result = try await host.read("next")
+        #expect(result.status == 0)
+        #expect(result.output == "after grant")
     }
 
-    @Test func cancellingAnActiveReadReplacesOnlyItsReaderTransport() async throws {
-        let host = try Host()
+    @Test func cancellingAnActiveReadLeavesAnotherTransportAndPersistentMasterAlive() async throws {
+        let host = try Host(fileConcurrency: 2)
         defer { host.close() }
         try await host.master.ready()
         let persistent = try #require(host.pid())
         try Data().write(to: host.file("read-hold"))
-        let remote = RemoteHost(name: "fixture", sshTarget: "fixture", socketPath: "/unused",
-                                tmpdir: host.directory.path, easlBin: "easl")
-        let files = HostFiles(host: remote, master: host.master)
-        try Data("replacement image".utf8).write(to: host.file("chart.png"))
-        let request = HostFileRequest(source: .directory(host.directory.path), policy: .boardImage("chart.png"))
-        let first = Task { try await files.read(request) }
+        for name in ["cancelled", "survivor", "replacement"] {
+            try Data(name.utf8).write(to: host.file(name))
+        }
+        let first = Task { try await host.read("cancelled") }
         defer { first.cancel() }
         try #require(try await eventually { host.clients.count == 1 && host.masters.count == 2 })
         let interrupted = try #require(host.masters.last)
         let firstClient = try #require(host.clients.first)
-        let next = Task { try await files.read(request) }
-        defer { next.cancel() }
+        let other = Task { try await host.read("survivor") }
+        defer { other.cancel() }
+        try #require(try await eventually { host.clients.count == 2 && host.masters.count == 3 })
+        let survivingMaster = try #require(host.masters.last)
+        let survivingClient = try #require(host.clients.last)
         first.cancel()
         await #expect(throws: CancellationError.self) { try await first.value }
-        try #require(try await eventually { host.clients.count == 2 && host.masters.count == 3 })
+        #expect(try await eventually { kill(interrupted, 0) == -1 && errno == ESRCH })
         #expect(kill(firstClient, 0) == -1 && errno == ESRCH)
-        #expect(kill(interrupted, 0) == -1 && errno == ESRCH)
         #expect(kill(persistent, 0) == 0)
+        #expect(kill(survivingMaster, 0) == 0)
+        #expect(kill(survivingClient, 0) == 0)
+        try host.release(survivingClient)
+        let survivor = try await other.value
+        #expect(survivor.status == 0)
+        #expect(survivor.output == "survivor")
+        let replacement = Task { try await host.read("replacement") }
+        defer { replacement.cancel() }
+        try #require(try await eventually { host.clients.count == 3 })
         try host.release(try #require(host.clients.last))
-        #expect(try await next.value.data == Data("replacement image".utf8))
+        #expect(try await replacement.value.output == "replacement")
         #expect(kill(persistent, 0) == 0)
+        #expect(kill(survivingMaster, 0) == 0)
+        #expect(host.masters.count == 4)
+    }
+
+    @Test func closingRejectsWaitersAndReapsEveryLeasedTransport() async throws {
+        let host = try Host(fileConcurrency: 3)
+        defer { host.close() }
+        try Data().write(to: host.file("read-hold"))
+        let names = ["first", "second", "third"]
+        for name in names { try Data(name.utf8).write(to: host.file(name)) }
+        let reads = names.map { name in Task { try await host.read(name) } }
+        defer { for read in reads { read.cancel() } }
+        try #require(try await eventually { host.clients.count == 3 })
+        var entered = false
+        let waiting = Task {
+            entered = true
+            return try await host.read("queued")
+        }
+        defer { waiting.cancel() }
+        try #require(try await eventually { entered })
+        let masters = host.masters
+        #expect(masters.count == 3)
         host.master.close()
-        #expect(try await eventually { host.processes.count == 0 })
+        await #expect(throws: HostMaster.Failure("easl is quitting")) { try await waiting.value }
+        for read in reads { #expect(try await read.value.status == 255) }
+        #expect(try await eventually { masters.allSatisfy { kill($0, 0) == -1 && errno == ESRCH } })
+        #expect(host.clients.allSatisfy { kill($0, 0) == -1 && errno == ESRCH })
+        #expect(host.processes.count == 0)
+        await #expect(throws: HostMaster.Failure("easl is quitting")) { try await host.read("first") }
+        #expect(host.clients.count == 3)
+        #expect(host.masters == masters)
     }
 
     @Test func persistentChannelCannotStarveFileReadsAndClosingReapsBothMasters() async throws {

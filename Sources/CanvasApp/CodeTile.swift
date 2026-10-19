@@ -457,7 +457,8 @@ final class CodeTile: NSView, TileContent {
             needsLoad = true
             return
         }
-        hostWatch = HostFileWatch(baseline: load.baseline, probe: { await git.stamp(probe) }) { [weak self] _ in self?.scheduleReload() }
+        let background = HostGit(files: git.files.prioritized(.background))
+        hostWatch = HostFileWatch(baseline: load.baseline, probe: { await background.stamp(probe) }) { [weak self] _ in self?.scheduleReload() }
     }
 
     private func hostLoadFailed(_ error: HostFileError, path: String, source: Source) {
@@ -487,14 +488,15 @@ final class CodeTile: NSView, TileContent {
     }
 
     /// The model without holding the repository, for renders and cards of tiles that aren't live.
-    private func loadOffscreen() async -> CodeDocument? {
+    private func loadOffscreen(priority: HostReadPriority = .interactive) async -> CodeDocument? {
         if hostBoardClosed { return document }
         if documentIsCurrent, let document { return document }
         let path = displayed.path, source = source, current = generation
         let document: CodeDocument
         var hostLoad: HostCodeLoad?
         if let git {
-            guard let load = try? await git.code(hostRead(path: path, source: source)) else { return nil }
+            let rendering = HostGit(files: git.files.prioritized(priority))
+            guard let load = try? await rendering.code(hostRead(path: path, source: source)) else { return nil }
             hostLoad = load
             document = load.document
         } else {
@@ -1326,7 +1328,7 @@ extension CodeTile {
     }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
-        guard let document = await loadOffscreen(), !Task.isCancelled else {
+        guard let document = await loadOffscreen(priority: request.priority), !Task.isCancelled else {
             return .placeholder(request, Task.isCancelled ? "cancelled" : "the tile changed while loading")
         }
         let drawn = image(of: document, size: request.size, scale: request.scale, full: request.full, appearance: request.appearance)
@@ -1345,7 +1347,7 @@ extension CodeTile {
         if documentIsCurrent, let document {
             return image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image
         }
-        guard let document = await loadOffscreen(), !Task.isCancelled else { return nil }
+        guard let document = await loadOffscreen(priority: .background), !Task.isCancelled else { return nil }
         return image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image
     }
 }

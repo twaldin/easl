@@ -20,7 +20,7 @@ public final class HostFileWatch {
         metadata.bytes = false
         self.init(baseline: baseline, interval: interval, probe: { [metadata] in
             do {
-                return .version(try await files.read(metadata).version)
+                return .version(try await files.read(metadata, priority: .background).version)
             } catch is CancellationError {
                 return nil
             } catch let error as HostFileError {

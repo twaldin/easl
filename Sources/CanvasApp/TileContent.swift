@@ -11,6 +11,7 @@ struct TileRenderRequest {
     var full: Bool
     /// The window's effective appearance; dynamic colors resolve inside `performAsCurrentDrawingAppearance`.
     var appearance: NSAppearance
+    var priority: HostReadPriority = .interactive
 }
 
 struct TileRender {
@@ -180,7 +181,7 @@ extension TileContent {
 
     func cardSnapshot() async -> NSImage? {
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
-                                        appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
+                                        appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance, priority: .background)
         // Cards requested together (a batch of new tiles) render one per wake of the main thread.
         await MainTurns.next()
         guard !Task.isCancelled else { return nil }

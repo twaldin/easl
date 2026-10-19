@@ -124,6 +124,8 @@ public struct HostFiles: Sendable {
     private let master: HostMaster?
     private let channelRoute: HostRoute
     private let channelMaster: HostMaster?
+    private let fileReads: HostFileReads?
+    private var readPriority: HostReadPriority = .visible
 
     @MainActor
     public init(host: RemoteHost, master: HostMaster) {
@@ -132,15 +134,17 @@ public struct HostFiles: Sendable {
         let reader = master.fileReader
         route = reader.route
         self.master = reader
+        fileReads = reader.fileReads
         channelRoute = master.route
         channelMaster = master
     }
 
-    init(hostName: String, route: HostRoute, temps: [String]) {
+    init(hostName: String, route: HostRoute, temps: [String], fileReads: HostFileReads? = nil) {
         self.hostName = hostName
         self.route = route
         self.temps = temps
         master = nil
+        self.fileReads = fileReads
         channelRoute = route
         channelMaster = nil
     }
@@ -149,20 +153,45 @@ public struct HostFiles: Sendable {
     /// the master, a file-session slot or the main actor.
     var cleanup: HostFiles { HostFiles(hostName: hostName, route: channelRoute, temps: temps) }
 
-    public func read(_ request: HostFileRequest) async throws -> HostFile {
+    public func prioritized(_ priority: HostReadPriority) -> HostFiles {
+        var files = self
+        files.readPriority = priority
+        return files
+    }
+
+    public func read(_ request: HostFileRequest, priority: HostReadPriority? = nil) async throws -> HostFile {
+        try Task.checkCancellation()
         try request.range?.validate()
-        let output = try await execute(Self.program, request: JSONEncoder().encode(payload(request)), retryTransport: true, what: "host file reader")
+        let value = try payload(request)
+        let urgency = priority ?? (request.range == nil ? readPriority : .interactive)
+        if let fileReads, case .directory = request.source, request.range == nil {
+            return try await fileReads.read(request, payload: value, files: self, priority: urgency)
+        }
+        return try await readOne(request, payload: value, priority: urgency)
+    }
+
+    func readOne(_ request: HostFileRequest, payload: JSONValue, priority: HostReadPriority) async throws -> HostFile {
+        let what = request.range != nil ? "host file range" : request.bytes ? "host file reader" : "host file metadata"
+        let output = try await execute(Self.program, request: JSONEncoder().encode(payload), retryTransport: true, priority: priority, what: what)
         guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(output.utf8)) else {
             throw HostFileError.unavailable("invalid host file reply")
         }
-        guard reply.ok else {
-            throw HostFileError(code: reply.code, message: reply.message, commit: reply.commit, limit: reply.limit)
+        return try reply.file()
+    }
+
+    func readBatch(_ payloads: [JSONValue], priority: HostReadPriority) async throws -> [HostFileReadResult] {
+        let input = try JSONEncoder().encode(JSONValue.object(["requests": .array(payloads)]))
+        let output = try await execute(Self.program, request: input, retryTransport: true, priority: priority,
+                                       members: payloads.count, what: "host file batch")
+        guard let replies = try? JSONDecoder().decode([Reply].self, from: Data(output.utf8)),
+              replies.count == payloads.count else {
+            throw HostFileError.unavailable("invalid host file reply")
         }
-        guard let root = reply.root, let encoded = reply.data, let bytes = Data(base64Encoded: encoded) else {
-            throw HostFileError.unavailable("invalid host file bytes")
+        return replies.map { reply in
+            if reply.deferred == true { return .deferred }
+            do { return .file(try reply.file()) }
+            catch { return .failure(error as? HostFileError ?? .unreadable) }
         }
-        return HostFile(root: root, path: reply.path, commit: reply.commit, data: bytes, stamp: reply.stamp,
-                        size: reply.size, offset: reply.offset ?? 0)
     }
 
     public static func readLocal(_ request: HostFileRequest) async throws -> HostFile {
@@ -182,7 +211,8 @@ public struct HostFiles: Sendable {
                 return try payload(metadata)
             }
             let input = try JSONEncoder().encode(JSONValue.object(["requests": .array(batch)]))
-            let output = try await execute(Self.program, request: input, retryTransport: true, what: "host file observations")
+            let output = try await execute(Self.program, request: input, retryTransport: true, priority: readPriority,
+                                           members: batch.count, what: "host file observations")
             guard let replies = try? JSONDecoder().decode([Reply].self, from: Data(output.utf8)), replies.count == batch.count else {
                 throw HostFileError.unavailable("invalid host file observations")
             }
@@ -212,28 +242,33 @@ public struct HostFiles: Sendable {
         return observations
     }
 
-    func execute(_ program: HostProgram, request: Data, timeout: TimeInterval = 20, retryTransport: Bool = false, what: String) async throws -> String {
+    func execute(_ program: HostProgram, request: Data, timeout: TimeInterval = 20, retryTransport: Bool = false,
+                 priority: HostReadPriority? = nil, members: Int = 1, what: String) async throws -> String {
         let input = program.frame + request
         var attempt = 0
         while true {
             attempt += 1
+            let queued = Metrics.now()
             try Task.checkCancellation()
-            var admitted = false
+            var transport: HostMaster?
+            var queueMs = 0.0
             let interrupt: (@Sendable () -> Void)?
             do {
                 if let master {
-                    try await master.fileSession()
-                    admitted = true
-                    try await master.ready()
-                    interrupt = try await master.interruption()
+                    let lease = try await master.fileSession(priority: priority ?? readPriority)
+                    transport = lease
+                    queueMs = (Metrics.now() - queued) * 1000
+                    Metrics.shared.record("host.files.queue", ms: queueMs)
+                    try await lease.ready()
+                    interrupt = try await lease.interruption()
                 } else {
                     interrupt = nil
                 }
             } catch is CancellationError {
-                if admitted, let master { await master.endFileSession() }
+                if let transport, let master { await master.endFileSession(transport) }
                 throw CancellationError()
             } catch {
-                if admitted, let master { await master.endFileSession() }
+                if let transport, let master { await master.endFileSession(transport) }
                 try Task.checkCancellation()
                 let failure = error as? HostMaster.Failure
                 if retryTransport, failure?.retryable == true, attempt < 3 {
@@ -243,15 +278,25 @@ public struct HostFiles: Sendable {
                 let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
                 throw HostFileError.unavailable(Self.sshRefused(message) ? "the host refused the SSH connection" : message)
             }
+            let route = transport?.route ?? self.route
+            let started = Metrics.now()
             let result: RemoteHost.RunResult
             do {
                 result = try await RemoteHost.run(route.executable, route.ssh(Self.command), input: input, timeout: timeout, timeoutPolicy: .inactivity, onStop: interrupt)
             } catch {
-                if let master { await master.endFileSession() }
+                if let transport, let master { await master.endFileSession(transport) }
                 throw error
             }
+            let elapsed = (Metrics.now() - started) * 1000
+            Metrics.shared.record("host.files.channel", ms: elapsed, bytes: result.output.utf8.count)
+            Metrics.shared.record("host.files.request", bytes: input.count)
+            Metrics.shared.record("host.files.members", count: members)
+            if Self.traceReads {
+                NSLog("easl: host-read %@ queueMs=%.3f setupMs=%.3f channelMs=%.3f inputBytes=%ld bytes=%ld members=%ld status=%d timedOut=%d",
+                      what, queueMs, (started - queued) * 1000 - queueMs, elapsed, input.count, result.output.utf8.count, members, result.status, result.timedOut ? 1 : 0)
+            }
             if result.status != 0, Self.retryableSSHFailure(status: result.status, errors: result.errors) { interrupt?() }
-            if let master { await master.endFileSession() }
+            if let transport, let master { await master.endFileSession(transport) }
             try Task.checkCancellation()
             if result.timedOut {
                 NSLog("easl: %@ on %@ timed out after %ld reply bytes (status %d): %@", what, hostName, result.output.utf8.count, result.status, result.errors)
@@ -274,36 +319,37 @@ public struct HostFiles: Sendable {
         }
     }
 
+    private static let traceReads = ProcessInfo.processInfo.environment["EASL_DEV_HOST_READ_TRACE"] == "1"
+
     func httpSession<T: Sendable>(_ body: (HostRoute) async throws -> T) async throws -> T {
         let master = await channelMaster?.httpReader
-        let route = master?.route ?? channelRoute
-        var admitted = false
+        var transport: HostMaster?
         let interrupt: (@Sendable () -> Void)?
         do {
             if let master {
-                try await master.fileSession()
-                admitted = true
-                try await master.ready()
-                interrupt = try await master.interruption()
+                let lease = try await master.fileSession(priority: readPriority)
+                transport = lease
+                try await lease.ready()
+                interrupt = try await lease.interruption()
             } else {
                 interrupt = nil
             }
         } catch is CancellationError {
-            if admitted, let master { await master.endFileSession() }
+            if let transport, let master { await master.endFileSession(transport) }
             throw CancellationError()
         } catch {
-            if admitted, let master { await master.endFileSession() }
+            if let transport, let master { await master.endFileSession(transport) }
             try Task.checkCancellation()
             let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
             throw HostFileError.unavailable(Self.sshRefused(message) ? "the host refused the SSH connection" : message)
         }
         do {
-            let value = try await body(route)
-            if let master { await master.endFileSession() }
+            let value = try await body(transport?.route ?? channelRoute)
+            if let transport, let master { await master.endFileSession(transport) }
             return value
         } catch {
             interrupt?()
-            if let master { await master.endFileSession() }
+            if let transport, let master { await master.endFileSession(transport) }
             throw error
         }
     }
@@ -361,6 +407,18 @@ public struct HostFiles: Sendable {
         var code: String?
         var message: String?
         var limit: Int?
+        var deferred: Bool?
+
+        func file() throws -> HostFile {
+            guard ok else {
+                throw HostFileError(code: code, message: message, commit: commit, limit: limit)
+            }
+            guard let root, let encoded = data, let bytes = Data(base64Encoded: encoded) else {
+                throw HostFileError.unavailable("invalid host file bytes")
+            }
+            return HostFile(root: root, path: path, commit: commit, data: bytes, stamp: stamp,
+                            size: size, offset: offset ?? 0)
+        }
     }
 
     func sourcePayload(_ value: HostFileRequest.Source) throws -> [String: JSONValue] {
@@ -555,13 +613,13 @@ public struct HostFiles: Sendable {
                 return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'size': st.st_size, 'offset': offset, 'data': ''}
             count = min(length, st.st_size - offset) if span is not None else st.st_size
             if budget is not None and count > budget[0]:
-                return {'ok': False, 'code': 'too_large', 'limit': limit}
+                return {'ok': False, 'deferred': True} if request.get('deferBudget') else {'ok': False, 'code': 'too_large', 'limit': limit}
             with os.fdopen(fd, 'rb', closefd=False) as stream:
                 if span is not None:
                     stream.seek(offset)
                     data = stream.read(count)
                 else:
-                    data = stream.read() if limit is None else stream.read(limit + 1)
+                    data = stream.read(count) if request.get('deferBudget') else stream.read() if limit is None else stream.read(limit + 1)
             after = os.fstat(fd)
             after_stamp = ':'.join(str(value) for value in (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns))
             if after_stamp != stamp:
@@ -572,7 +630,7 @@ public struct HostFiles: Sendable {
                 return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'sha256': hashlib.sha256(data).hexdigest()}
             if budget is not None:
                 if len(data) > budget[0]:
-                    return {'ok': False, 'code': 'too_large', 'limit': limit}
+                    return {'ok': False, 'deferred': True} if request.get('deferBudget') else {'ok': False, 'code': 'too_large', 'limit': limit}
                 budget[0] -= len(data)
             size = st.st_size if span is not None or request.get('totalSize') else len(data)
             return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'size': size, 'offset': offset, 'data': base64.b64encode(data).decode('ascii')}
@@ -613,7 +671,7 @@ public struct HostFiles: Sendable {
     const source = req.source, policy = req.policy;
     function readRegular(p, root, roots, limit) {
       const request = { path: p, roots, bytes: req.bytes, limit, metadataLimit: policy.kind === 'boardImage',
-                        range: req.range, totalSize: true };
+                        range: req.range, totalSize: true, deferBudget: pendingReads !== null };
       if (pendingReads) {
         const pending = pendingReads.length;
         pendingReads.push(request);
@@ -622,6 +680,7 @@ public struct HostFiles: Sendable {
       return { root, ...readFiles([request])[0] };
     }
     function read() {
+      if (pendingReads && (req.range != null || (req.bytes && source.kind !== 'directory'))) fail('refused');
       if (req.range != null && (typeof req.range !== 'object' || Array.isArray(req.range) ||
           !Number.isSafeInteger(req.range.offset) || req.range.offset < 0 ||
           !Number.isSafeInteger(req.range.length) || req.range.length <= 0 || req.range.length > \#(HostFileRange.maxLength))) fail('refused');
@@ -698,11 +757,12 @@ public struct HostFiles: Sendable {
     }
     let result;
     if (Object.hasOwn(req, 'requests')) {
-      if (!Array.isArray(req.requests) || req.requests.length > 256) result = { ok: false, code: 'refused' };
+      if (!Array.isArray(req.requests) || req.requests.length > 256 ||
+          (req.requests.length > 64 && req.requests.some(request => request.bytes))) result = { ok: false, code: 'refused' };
       else {
         pendingReads = [];
-        const prepared = req.requests.map(request => readRequest({ ...request, bytes: false, range: null }));
-        const reads = readFiles(pendingReads);
+        const prepared = req.requests.map(request => readRequest(request));
+        const reads = readFiles(pendingReads, 4 * 1024 * 1024);
         result = prepared.map(reply => reply.pending == null ? reply : { root: reply.root, ...reads[reply.pending] });
       }
     } else result = readRequest(req);

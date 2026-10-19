@@ -80,7 +80,7 @@ final class HtmlTile: NSView, TileContent {
         let files = files
         assetWatch = HostFileWatch(baseline: dependencies.map(\.baseline), probe: {
             do {
-                if let files { return try await files.observe(requests) }
+                if let files { return try await files.prioritized(.background).observe(requests) }
                 return try await HostFiles.observeLocal(requests)
             } catch {
                 return nil
@@ -167,8 +167,8 @@ final class HtmlTile: NSView, TileContent {
 
     /// The sandbox every page of this tile runs in: its own data store, the network rules, the
     /// kit scheme, and the validated `canvas` channel.
-    private func configuration(rules: WKContentRuleList?) -> WKWebViewConfiguration {
-        Self.configuration(rules: rules, scheme: HtmlSchemeHandler(tile: self), channel: HtmlChannelHandler(tile: self))
+    private func configuration(rules: WKContentRuleList?, priority: HostReadPriority = .visible) -> WKWebViewConfiguration {
+        Self.configuration(rules: rules, scheme: HtmlSchemeHandler(tile: self, priority: priority), channel: HtmlChannelHandler(tile: self, priority: priority))
     }
 
     static func configuration(rules: WKContentRuleList?, scheme: HtmlSchemeHandler, channel: HtmlChannelHandler) -> WKWebViewConfiguration {
@@ -328,7 +328,7 @@ final class HtmlTile: NSView, TileContent {
 
     /// `rendering`: from the offscreen page `render(_:)` loads, which may read (excerpts, state)
     /// but never act for the user.
-    func handle(_ message: HtmlMessage, rendering: Bool) async throws -> JSONValue {
+    func handle(_ message: HtmlMessage, rendering: Bool, priority: HostReadPriority = .interactive) async throws -> JSONValue {
         guard !hostBoardClosed, !board.isClosed else { throw HtmlError.unavailable("host closed this board") }
         if rendering {
             switch message {
@@ -347,6 +347,7 @@ final class HtmlTile: NSView, TileContent {
             if let y { scrollY = y }
             pageSettled()
         }
+        let files = rendering ? files?.prioritized(priority) : files
         let result = try await work.perform { [object, board, files] in
             try Task.checkCancellation()
             return try await HtmlChannel.handle(message, tile: object.id, board: board, files: files)
@@ -463,7 +464,7 @@ final class HtmlTile: NSView, TileContent {
         guard !Task.isCancelled else { return nil }
         if let lastSnapshot { return lastSnapshot }
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
-                                        appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
+                                        appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance, priority: .background)
         // Cards requested together (a batch of new tiles) render one per wake of the main thread.
         await MainTurns.next()
         guard !Task.isCancelled else { return nil }
@@ -493,7 +494,7 @@ final class HtmlTile: NSView, TileContent {
             Metrics.shared.record("html.render", ms: (Metrics.now() - started) * 1000)
         }
         let content: CGSize
-        switch await loadOffscreen(size: request.size, appearance: request.appearance) {
+        switch await loadOffscreen(size: request.size, appearance: request.appearance, priority: request.priority) {
         case .success(let extent): content = CGSize(width: max(request.size.width, extent.width), height: extent.height)
         case .failure(.rules(let reason)): return TileRender(image: nil, contentSize: request.size, state: .failed, reason: reason)
         case .failure(.unsettled(let reason)): return .placeholder(request, reason)
@@ -654,7 +655,7 @@ final class HtmlTile: NSView, TileContent {
     /// Loads the page into `renderWebView`, `size` points, parked in the stage, and waits for the
     /// kit's `view.rendered`; then the document's scroll width and height. `pooled` (a measure)
     /// borrows a web view from `HtmlMeasurePool` instead of making one.
-    private func loadOffscreen(size: CGSize, appearance: NSAppearance, limit: Duration = .seconds(60), pooled: Bool = false) async -> Result<CGSize, OffscreenFailure> {
+    private func loadOffscreen(size: CGSize, appearance: NSAppearance, limit: Duration = .seconds(60), pooled: Bool = false, priority: HostReadPriority = .interactive) async -> Result<CGSize, OffscreenFailure> {
         let rules: WKContentRuleList
         do {
             if board.isRemote {
@@ -671,7 +672,7 @@ final class HtmlTile: NSView, TileContent {
             measurePage = page
             web = page.web
         } else {
-            web = HtmlWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration(rules: rules))
+            web = HtmlWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration(rules: rules, priority: priority))
             WebStage.setOcclusionDetection(false, on: web)
         }
         web.navigationDelegate = self

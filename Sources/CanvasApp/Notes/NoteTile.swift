@@ -284,7 +284,7 @@ final class NoteTile: NSView, TileContent {
                 self.renderDisplay()
             }
             self.hostWatch = HostFileWatch(baseline: read.observation, probe: {
-                let read = await files.loadNote(request, bytes: false)
+                let read = await files.prioritized(.background).loadNote(request, bytes: false)
                 return Task.isCancelled ? nil : read.observation
             }, changed: { [weak self] _ in self?.scheduleResolve() })
         }
@@ -757,7 +757,7 @@ final class NoteTile: NSView, TileContent {
                 resolved = excerpts
                 pictures = images
             } else {
-                let read = await files?.loadNote(host, captured: captured)
+                let read = await files?.prioritized(request.priority).loadNote(host, captured: captured)
                 guard !Task.isCancelled, generation == closureGeneration, !hostBoardClosed, !board.isClosed else {
                     return .placeholder(request, "board availability changed while rendering")
                 }

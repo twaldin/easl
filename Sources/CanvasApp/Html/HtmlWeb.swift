@@ -40,6 +40,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
         }
     }
     private static let kitRoot = AppPaths.asset("kit")
+    private let priority: HostReadPriority
     private static var kitCache: [String: Data] = [:]
     private static let textLimit = 4 * 1024 * 1024
     private var reads: [ObjectIdentifier: Task<Void, Never>] = [:]
@@ -85,8 +86,9 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
         mediaBlocks.append(MediaBlock(path: path, request: metadata, file: file))
     }
 
-    init(tile: HtmlTile?) {
+    init(tile: HtmlTile?, priority: HostReadPriority = .visible) {
         self.tile = tile
+        self.priority = priority
     }
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
@@ -97,7 +99,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
             return task.didFailWithError(URLError(.cannotConnectToHost))
         }
         if url.host != HtmlKit.host {
-            guard hostNetworkEnabled, let original = hostURLs.originalURL(for: url), let files = tile.files else {
+            guard hostNetworkEnabled, let original = hostURLs.originalURL(for: url), let files = tile.files?.prioritized(priority) else {
                 return task.didFailWithError(URLError(.noPermissionsToReadFile))
             }
             return serveHTTP(task, url: url, original: original, files: files, allow: tile.allowNetwork)
@@ -125,7 +127,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
             return respond(task, url: url, data: Data(), type: "text/plain", cache: "no-store", status: 405)
         }
         let key = ObjectIdentifier(task)
-        let files = tile.files
+        let files = tile.files?.prioritized(priority)
         let source = tile.isRemote ? tile.hostImageSource : .directory(tile.boardRoot.path)
         let assetPath = url.path.hasPrefix(tile.boardRoot.path + "/") ? url.path : String(url.path.drop(while: { $0 == "/" }))
         let assetKey = url.path
@@ -389,9 +391,11 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
 final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
     /// As `HtmlSchemeHandler.tile`.
     weak var tile: HtmlTile?
+    private let priority: HostReadPriority
 
-    init(tile: HtmlTile?) {
+    init(tile: HtmlTile?, priority: HostReadPriority = .visible) {
         self.tile = tile
+        self.priority = priority
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?) {
@@ -410,7 +414,7 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
               let data = try? JSONSerialization.data(withJSONObject: body) else { return (nil, HtmlError.malformed("message must be an object").description) }
         do {
             let parsed = try HtmlMessage.parse(data)
-            let reply = try await tile.handle(parsed, rendering: source === tile.renderWebView)
+            let reply = try await tile.handle(parsed, rendering: source === tile.renderWebView, priority: priority)
             let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reply), options: .fragmentsAllowed)
             return (object, nil)
         } catch let error as HtmlError {
