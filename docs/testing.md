@@ -138,7 +138,7 @@ scripts/dev.sh input text "hello"                   # insert into the first resp
 scripts/dev.sh input command insertNewline:
 scripts/dev.sh input shortcut z --mods cmd           # a key press by character: p, 9, =, +, $'\r'
 scripts/dev.sh input key return                      # by name: return escape tab space delete forwarddelete up down left right home end pageup pagedown
-scripts/dev.sh input state                         # app.log: window, closed state, viewport, responder, and object/selection hashes; no source text
+scripts/dev.sh input state                         # app.log: window, closed/selected/minimized state, ordered native tab-group window ids, viewport, responder, and object/selection hashes; no source text
 scripts/dev.sh input scroll <x> <y> <dx> <dy>
 scripts/dev.sh input scroll <x> <y> <dx> <dy> --repeat 30 --gesture   # one phased trackpad gesture (began and ended without movement)
 scripts/dev.sh input scroll <x> <y> <dx> <dy> --lines   # a mouse wheel's notches (line units, no precise deltas); with --mods cmd, ⌘-scroll
