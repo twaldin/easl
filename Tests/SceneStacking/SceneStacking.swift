@@ -78,7 +78,7 @@ private enum SceneStacking {
         canvas.setSelection([])
         try await check(canvas, image: image.id, shape: shape.id, shapeInFront: false, label: "tile bringToFront reverse control")
 
-        _ = try board.update(shape.id, props: ShapeSpec(kind: .rect, color: "#ff0000", fill: .none).props)
+        _ = try board.update(shape.id, props: .object(["fill": .null]))
         canvas.setSelection([shape.id])
         canvas.bringToFront()
         canvas.setSelection([])
@@ -100,9 +100,14 @@ private enum SceneStacking {
                                          isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
             fatalError("Cannot allocate cyan fixture")
         }
+        guard let bytes = rep.bitmapData else { fatalError("Cannot access fixture pixels") }
         for y in 0..<174 {
             for x in 0..<240 {
-                rep.setColor(NSColor(srgbRed: 0, green: 1, blue: 1, alpha: 1), atX: x, y: y)
+                let offset = y * rep.bytesPerRow + x * 4
+                bytes[offset] = 0
+                bytes[offset + 1] = 255
+                bytes[offset + 2] = 255
+                bytes[offset + 3] = 255
             }
         }
         guard let data = rep.representation(using: .png, properties: [:]) else {
