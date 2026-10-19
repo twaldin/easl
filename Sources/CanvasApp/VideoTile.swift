@@ -53,7 +53,7 @@ final class VideoTile: NSView, TileContent {
         addSubview(playerView)
         displayObservation = playerView.observe(\.isReadyForDisplay, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in
-                guard let self, self.playerView.isReadyForDisplay else { return }
+                guard let self, self.live, !self.hostBoardClosed, self.frameReady else { return }
                 self.posterView?.isHidden = true
                 self.reveal()
             }
@@ -125,7 +125,15 @@ final class VideoTile: NSView, TileContent {
         let time = CMTime(seconds: max(0, position), preferredTimescale: 600)
         playTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { if self.playbackGeneration == generation { self.playTask = nil } }
+            defer {
+                if self.playbackGeneration == generation {
+                    self.playTask = nil
+                    if self.live, !self.hostBoardClosed, self.frameReady {
+                        self.posterView?.isHidden = true
+                        self.reveal()
+                    }
+                }
+            }
             do {
                 if self.videoTransform == nil {
                     let tracks = try await item.asset.loadTracks(withMediaType: .video)
@@ -227,12 +235,18 @@ final class VideoTile: NSView, TileContent {
     }
 
     private var currentPosition: Double {
+        if pendingSeek || playTask != nil { return position }
         let time = player.currentTime().seconds
         return player.currentItem != nil && time.isFinite ? time : position
     }
 
+    private var frameReady: Bool {
+        !pendingSeek && playTask == nil && playerView.isReadyForDisplay
+    }
+
     private func captureFrame(pixels: CGSize) -> NSImage? {
-        guard let output = videoOutput, let transform = videoTransform, let item = player.currentItem else { return nil }
+        guard !pendingSeek, playTask == nil, let output = videoOutput, let transform = videoTransform,
+              let item = player.currentItem else { return nil }
         var time = player.currentTime()
         let duration = item.duration.seconds
         if duration.isFinite, duration > 0, time.seconds >= duration {
@@ -386,8 +400,8 @@ final class VideoTile: NSView, TileContent {
     }
 
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void) {
-        guard live else { return }
-        if playerView.isReadyForDisplay || (failureLabel != nil && !posterFailed) { ready() }
+        guard live, !hostBoardClosed else { return }
+        if frameReady || (failureLabel != nil && !posterFailed) { ready() }
         else { readyWaiters.append(ready) }
     }
 
