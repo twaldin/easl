@@ -219,7 +219,7 @@ public struct HostFiles: Sendable {
             observations.append(contentsOf: try replies.map { reply in
                 guard reply.ok else {
                     let error = HostFileError(code: reply.code, message: reply.message, commit: reply.commit, limit: reply.limit)
-                    if case .unavailable = error { throw error }
+                    if reply.batchFailure == true { throw error }
                     return .failure(error)
                 }
                 guard let root = reply.root else { throw HostFileError.unavailable("invalid host file observation") }
@@ -411,6 +411,7 @@ public struct HostFiles: Sendable {
         var message: String?
         var limit: Int?
         var deferred: Bool?
+        var batchFailure: Bool?
 
         func file() throws -> HostFile {
             guard ok else {
@@ -769,7 +770,7 @@ public struct HostFiles: Sendable {
           const reads = readFiles(pendingReads, 4 * 1024 * 1024);
           result = prepared.map(reply => reply.pending == null ? reply : { root: reply.root, ...reads[reply.pending] });
         } catch (e) {
-          const failure = { ok: false, code: e.code || 'unreadable', message: e.message, commit: e.commit, limit: e.limit };
+          const failure = { ok: false, batchFailure: true, code: e.code || 'unreadable', message: e.message, commit: e.commit, limit: e.limit };
           result = prepared.map(reply => reply.pending == null ? reply : failure);
         }
       }
