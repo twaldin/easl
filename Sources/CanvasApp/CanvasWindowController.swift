@@ -58,31 +58,49 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private static let windowIconPixels = Task {
         await offPool {
-            Result { () throws -> (images: [CGImage], size: CGSize) in
-                let url: URL?
+            Result { () throws -> (images: [(image: CGImage, size: CGSize)], size: CGSize) in
+                let urls: [URL]
                 if Bundle.main.bundleURL.pathExtension == "app" {
-                    url = Bundle.main.resourceURL?.appendingPathComponent("AppIcon.icns")
+                    urls = Bundle.main.resourceURL.map { [$0.appendingPathComponent("AppIcon.icns")] } ?? []
+                } else if let resources = AppPaths.resources {
+                    urls = [resources.appendingPathComponent("AppIcon.icns"),
+                            resources.appendingPathComponent("scripts/AppIcon.icns")]
                 } else {
-                    url = AppPaths.resources?.appendingPathComponent("scripts/AppIcon.icns")
+                    urls = []
                 }
-                guard let url,
-                      let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-                      CGImageSourceGetCount(source) > 0 else {
-                    throw ApiRouter.Failure("unavailable", "Cannot read AppIcon.icns for native board tabs")
+                var loaded: (url: URL, source: CGImageSource)?
+                for url in urls {
+                    if let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) {
+                        loaded = (url, source)
+                        break
+                    }
                 }
-                var images: [CGImage] = []
-                images.reserveCapacity(CGImageSourceGetCount(source))
+                guard let loaded else {
+                    throw ApiRouter.Failure("unavailable", "No readable AppIcon.icns image source at \(urls.map(\.path).joined(separator: ", "))")
+                }
+                let count = CGImageSourceGetCount(loaded.source)
+                var images: [(image: CGImage, size: CGSize)] = []
+                images.reserveCapacity(count)
                 var size = CGSize.zero
-                for index in 0..<CGImageSourceGetCount(source) {
-                    guard let image = CGImageSourceCreateImageAtIndex(source, index, [
+                for index in 0..<count {
+                    guard let image = CGImageSourceCreateImageAtIndex(loaded.source, index, [
                         kCGImageSourceShouldCache: true,
                         kCGImageSourceShouldCacheImmediately: true,
-                    ] as CFDictionary) else {
-                        throw ApiRouter.Failure("unavailable", "Cannot decode AppIcon.icns for native board tabs")
-                    }
-                    images.append(image)
-                    size.width = max(size.width, CGFloat(image.width))
-                    size.height = max(size.height, CGFloat(image.height))
+                    ] as CFDictionary) else { continue }
+                    let properties = CGImageSourceCopyPropertiesAtIndex(loaded.source, index, nil) as? [CFString: Any]
+                    let dpiWidth = (properties?[kCGImagePropertyDPIWidth] as? NSNumber)?.doubleValue ?? 72
+                    let dpiHeight = (properties?[kCGImagePropertyDPIHeight] as? NSNumber)?.doubleValue ?? 72
+                    let points = CGSize(width: CGFloat(image.width) * 72 / (dpiWidth.isFinite && dpiWidth > 0 ? dpiWidth : 72),
+                                        height: CGFloat(image.height) * 72 / (dpiHeight.isFinite && dpiHeight > 0 ? dpiHeight : 72))
+                    images.append((image, points))
+                    size.width = max(size.width, points.width)
+                    size.height = max(size.height, points.height)
+                }
+                guard !images.isEmpty else {
+                    throw ApiRouter.Failure("unavailable", "No AppIcon.icns representation decoded at \(loaded.url.path)")
+                }
+                if images.count != count {
+                    NSLog("easl: skipped %d undecodable icon representations at %@", count - images.count, loaded.url.path)
                 }
                 return (images, size)
             }
@@ -90,20 +108,26 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
     private static var windowIconPrepared = false
 
-    static func prepareWindowIcon() async throws {
-        let pixels = try await windowIconPixels.value.get()
-        try Task.checkCancellation()
+    static func prepareWindowIcon() async {
         guard !windowIconPrepared else { return }
-        DevPerf.time("board.window.icon") {
-            let image = NSImage(size: pixels.size)
-            for pixels in pixels.images {
-                image.addRepresentation(NSBitmapImageRep(cgImage: pixels))
-            }
-            // Native tabs use the application icon. NSWindowTab has no public image setter.
-            // Keep every bundled size because this public property also supplies the Dock.
-            NSApp.applicationIconImage = image
-        }
+        let result = await windowIconPixels.value
+        guard !Task.isCancelled, !windowIconPrepared else { return }
         windowIconPrepared = true
+        switch result {
+        case let .success(pixels):
+            DevPerf.time("board.window.icon") {
+                let image = NSImage(size: pixels.size)
+                for pixels in pixels.images {
+                    let representation = NSBitmapImageRep(cgImage: pixels.image)
+                    representation.size = pixels.size
+                    image.addRepresentation(representation)
+                }
+                // Native tabs use this public application image; pixel-equal 1x/2x reps keep their point sizes.
+                NSApp.applicationIconImage = image
+            }
+        case let .failure(error):
+            NSLog("easl: native tab icon preparation failed; keeping the system icon: \(error)")
+        }
     }
 
     static func makeWindow(isRemote: Bool) -> CanvasWindow {

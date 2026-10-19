@@ -160,13 +160,7 @@ private enum BoardDirectoryPicker {
         case .remote:
             // A real remote window: a real BoardMirror and RemoteSource. Nothing is loaded, so no
             // host connection is needed; the picker only needs the controller's remote flag and root.
-            let controller: CanvasWindowController
-            do {
-                controller = try await remoteController()
-            } catch {
-                PickerProbe.require(false, "cannot prepare remote board window: \(error)")
-                return
-            }
+            let controller = await remoteController()
             retainedController = controller
             PickerProbe.require(controller.remote != nil, "remote controller has no RemoteSource")
             PickerProbe.require(controller.board.root.standardizedFileURL.path == remoteRoot.standardizedFileURL.path,
@@ -206,7 +200,7 @@ private enum BoardDirectoryPicker {
                             "\(stage) expected \(expectedPath ?? "nil"), got \(actualPath ?? "nil")")
     }
 
-    private static func remoteController() async throws -> CanvasWindowController {
+    private static func remoteController() async -> CanvasWindowController {
         let host = RemoteHost(name: "picker-regression",
                               sshTarget: "picker-regression.invalid",
                               socketPath: home.appendingPathComponent("host.sock").path,
@@ -220,7 +214,7 @@ private enum BoardDirectoryPicker {
                                  board: board.id,
                                  connection: EaslConnection(.unixSocket(absent), backoff: backoff, handshakeTimeout: .seconds(1)),
                                  diagrams: EaslConnection(.unixSocket(absent), backoff: backoff, handshakeTimeout: .seconds(1)))
-        try await CanvasWindowController.prepareWindowIcon()
+        await CanvasWindowController.prepareWindowIcon()
         let controller = CanvasWindowController(window: CanvasWindowController.makeWindow(isRemote: true),
                                                 board: board,
                                                 registry: registry,

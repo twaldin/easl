@@ -468,12 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return (viewport, composer)
         }
         guard canShowWindow(of: board) else { return }
-        do {
-            try await CanvasWindowController.prepareWindowIcon()
-        } catch {
-            if !Task.isCancelled { NSLog("easl: cannot create board window: \(error)") }
-            return
-        }
+        await CanvasWindowController.prepareWindowIcon()
         guard !Task.isCancelled, canShowWindow(of: board) else { return }
         await MainTurns.next()
         guard canShowWindow(of: board) else { return }
@@ -1270,7 +1265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         do {
             try stillWanted()
-            try await CanvasWindowController.prepareWindowIcon()
+            await CanvasWindowController.prepareWindowIcon()
             try stillWanted()
             await MainTurns.next()
             try stillWanted()
