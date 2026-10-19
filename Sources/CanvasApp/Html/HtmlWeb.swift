@@ -388,7 +388,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     private func respond(_ task: any WKURLSchemeTask, url: URL, data: Data, type: String, cache: String, status: Int = 200) {
         guard let tile, !tile.hostBoardClosed else { return task.didFailWithError(URLError(.cancelled)) }
         var headers = ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": cache]
-        if let policy = tile?.contentSecurityPolicy { headers["Content-Security-Policy"] = policy }
+        if let policy = tile.contentSecurityPolicy { headers["Content-Security-Policy"] = policy }
         task.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)
         if !data.isEmpty { task.didReceive(data) }
         task.didFinish()
