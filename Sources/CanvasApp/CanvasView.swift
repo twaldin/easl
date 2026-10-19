@@ -102,8 +102,6 @@ final class CanvasDocumentView: NSView {
     override func selectAll(_ sender: Any?) { canvas?.selectAll() }
 }
 
-/// The pan/zoom scene for one board: tiles are real NSViews positioned by object frames; groups
-/// are regions behind them; drawings (installed by the drawing layer) and the overlay sit above.
 /// Zoom is capped at 100%; below `liveThreshold` tiles become cards and release resources.
 /// The viewport only moves on user input, never in response to agents.
 @MainActor
@@ -811,9 +809,6 @@ final class CanvasView: NSScrollView {
         remote.mirror.userInput()
     }
 
-    /// Clicks that land on tiles or drawings, seen before any view: tile bodies select their tile
-    /// and still receive the click (a terminal keeps focusing); drawn objects are selected and
-    /// dragged here because they have no view of their own.
     private func handleMouse(_ event: NSEvent) -> NSEvent? {
         guard !isHidden, remote?.mirror.availability != .closed, event.window === window, !HyperMonitor.isHyper(event.modifierFlags) else { return event }
         switch event.type {

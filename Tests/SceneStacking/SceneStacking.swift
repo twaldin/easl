@@ -92,7 +92,7 @@ private enum SceneStacking {
         try board.delete(shape.id)
         let drawings: [(name: String, type: ObjectType, props: JSONValue)] = [
             ("arrow", .arrow, ArrowSpec(from: .point(CGPoint(x: 80, y: 140)), to: .point(CGPoint(x: 240, y: 140)), color: "#ff0000").props),
-            ("ink", .shape, .object(["kind": "ink", "color": "#ff0000", "points": [[0, 0], [80, 0], [160, 0]]])),
+            ("ink", .shape, ShapeSpec(kind: .ink, points: [InkPoint(x: 0, y: 0), InkPoint(x: 80, y: 0), InkPoint(x: 160, y: 0)], color: "#ff0000").props),
         ]
         for fixture in drawings {
             let drawing = board.create(type: fixture.type, props: fixture.props, frame: Frame(x: 80, y: 140, w: 160, h: 1))
