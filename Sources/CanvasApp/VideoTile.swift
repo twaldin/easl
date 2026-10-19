@@ -26,6 +26,7 @@ final class VideoTile: NSView, TileContent {
     private var snapshotCover: NSImageView?
     private var lastSnapshot: NSImage?
     private var failureLabel: NSTextField?
+    private var posterFailed = false
     private var readyWaiters: [@MainActor () -> Void] = []
     private var live = true
     private var hostBoardClosed = false
@@ -68,10 +69,6 @@ final class VideoTile: NSView, TileContent {
         posterTask?.cancel()
         MainActor.assumeIsolated {
             source?.cancel()
-            for job in thumbnails.values {
-                job.generator.cancelAllCGImageGeneration()
-                job.source.cancel()
-            }
             if let endedObserver { NotificationCenter.default.removeObserver(endedObserver) }
         }
     }
@@ -84,6 +81,7 @@ final class VideoTile: NSView, TileContent {
         guard !hostBoardClosed else { return }
         failureLabel?.removeFromSuperview()
         failureLabel = nil
+        posterFailed = false
         let source = HostVideoAsset(request: request(object.props["path"]?.string ?? ""), files: files)
         self.source = source
         let item = AVPlayerItem(asset: source.asset)
@@ -172,6 +170,11 @@ final class VideoTile: NSView, TileContent {
         posterTask?.cancel()
         posterView?.removeFromSuperview()
         posterView = nil
+        if posterFailed {
+            failureLabel?.removeFromSuperview()
+            failureLabel = nil
+            posterFailed = false
+        }
         guard let path = object.props["poster"]?.string, !path.isEmpty else { return }
         var request = request(path)
         request.bytes = true
@@ -186,7 +189,7 @@ final class VideoTile: NSView, TileContent {
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
-                self?.showFailure(HostVideoAsset.message(error))
+                self?.showFailure(HostVideoAsset.message(error), poster: true)
             }
         }
     }
@@ -203,7 +206,9 @@ final class VideoTile: NSView, TileContent {
         return view
     }
 
-    private func showFailure(_ message: String) {
+    private func showFailure(_ message: String, poster: Bool = false) {
+        if poster, failureLabel != nil, !posterFailed { return }
+        posterFailed = poster
         failureLabel?.removeFromSuperview()
         let label = NSTextField(wrappingLabelWithString: message)
         label.font = .systemFont(ofSize: 12)
@@ -212,7 +217,7 @@ final class VideoTile: NSView, TileContent {
         label.autoresizingMask = [.width]
         addSubview(label)
         failureLabel = label
-        reveal()
+        if !poster { reveal() }
     }
 
     private func reveal() {
@@ -269,6 +274,7 @@ final class VideoTile: NSView, TileContent {
     }
 
     private func thumbnail(at time: Double, pixels: CGSize) async throws -> NSImage {
+        try Task.checkCancellation()
         guard !hostBoardClosed else { throw CancellationError() }
         let source = HostVideoAsset(request: request(object.props["path"]?.string ?? ""), files: files)
         let generator = AVAssetImageGenerator(asset: source.asset)
@@ -283,7 +289,9 @@ final class VideoTile: NSView, TileContent {
             source.cancel()
         }
         return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
             let duration = try await source.asset.load(.duration).seconds
+            try Task.checkCancellation()
             let end = duration.isFinite && duration > 0 ? max(0, duration - 1 / 600.0) : time
             let frame = try await generator.image(at: CMTime(seconds: min(max(0, time), end), preferredTimescale: 600))
             try Task.checkCancellation()
@@ -291,6 +299,7 @@ final class VideoTile: NSView, TileContent {
             return NSImage(cgImage: frame.image, size: CGSize(width: frame.image.width, height: frame.image.height))
         } onCancel: {
             generator.cancelAllCGImageGeneration()
+            Task { @MainActor in source.cancel() }
         }
     }
 
@@ -355,6 +364,8 @@ final class VideoTile: NSView, TileContent {
                 frame.drawUpright(in: CGRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height))
             }
             return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered, reason: image == nil ? "bitmap allocation failed" : nil)
+        } catch is CancellationError {
+            return .placeholder(request, "cancelled")
         } catch {
             return TileRender(image: nil, contentSize: request.size, state: .failed, reason: HostVideoAsset.message(error))
         }
@@ -376,15 +387,19 @@ final class VideoTile: NSView, TileContent {
 
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void) {
         guard live else { return }
-        if playerView.isReadyForDisplay || failureLabel != nil { ready() }
+        if playerView.isReadyForDisplay || (failureLabel != nil && !posterFailed) { ready() }
         else { readyWaiters.append(ready) }
     }
 
     func prepareSnapshot() async {
+        guard !Task.isCancelled else { return }
         let scale = window?.backingScaleFactor ?? 2
         let pixels = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         if let frame = captureFrame(pixels: pixels) { lastSnapshot = frame }
-        else if !hostBoardClosed { lastSnapshot = try? await thumbnail(at: currentPosition, pixels: pixels) }
+        else if !hostBoardClosed, let frame = try? await thumbnail(at: currentPosition, pixels: pixels) {
+            guard !Task.isCancelled, !hostBoardClosed else { return }
+            lastSnapshot = frame
+        }
     }
 
     func showSnapshot(_ show: Bool) {
