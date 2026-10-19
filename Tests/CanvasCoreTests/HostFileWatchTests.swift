@@ -154,6 +154,40 @@ struct HostFileWatchTests {
         #expect(changes == [edited, missing, refused, changedWhileRefused, restored])
     }
 
+    @Test func unavailableMemberDoesNotHideEditsToOtherAssets() async throws {
+        let fixture = try HostFileFixture()
+        try fixture.write("first.js", Data("first".utf8))
+        let outside = fixture.temp.appendingPathComponent("outside.js")
+        try Data("outside".utf8).write(to: outside)
+        _ = try await TempRepo.run(["init", "-q"], in: fixture.root)
+        let missingGit = String(decoding: try JSONEncoder().encode(fixture.directory.appendingPathComponent("missing-git").path), as: UTF8.self)
+        let files = try fixture.reader(running: """
+        (() => {
+          const cp = require('node:child_process');
+          const execFileSync = cp.execFileSync;
+          cp.execFileSync = (command, ...args) => execFileSync(command === 'git' ? \(missingGit) : command, ...args);
+        })();
+        """)
+        let requests = ["first.js", outside.path].map {
+            HostFileRequest(source: .directory(fixture.root.path), policy: .boardAsset($0))
+        }
+        let baseline = try await files.observe(requests)
+        guard case .failure(.unavailable) = baseline[1] else {
+            Issue.record("expected independent Git unavailability")
+            return
+        }
+        var changes: [[HostFileObservation]] = []
+        let watch = HostFileWatch(baseline: baseline, interval: .milliseconds(20), probe: {
+            try? await files.observe(requests)
+        }, changed: { changes.append($0) })
+        defer { watch.cancel() }
+        try Data("changed first asset".utf8).write(to: fixture.root.appendingPathComponent("first.js"), options: .atomic)
+        let edited = try await files.observe(requests)
+        #expect(edited[0] != baseline[0])
+        #expect(edited[1] == baseline[1])
+        try #require(await eventually { changes == [edited] })
+    }
+
     @Test func nilBaselineUsesMetadataOnlyAndNotifiesOnceForASameSizeEdit() async throws {
         let fixture = try HostFileFixture()
         try fixture.write("chart.png", Data("first".utf8))
