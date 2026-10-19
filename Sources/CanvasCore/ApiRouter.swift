@@ -1631,6 +1631,7 @@ public final class ApiRouter {
             if type == .note || type == .html, let root = props["root"]?.string, !root.isEmpty { try board.checkLinkRoot(root) }
             try board.checkKey(props, for: nil)
             if type == .diagram, let problem = DiagramSpec.problem(props) { throw Failure("invalid_params", problem) }
+            if type == .video, let problem = LocalVideo.problem(props) { throw Failure("invalid_params", problem) }
             if type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             if type == .question { props = try board.questionToCreate(props, caller: caller(p)) }
             let object = try board.asViewerEdit(edit) { board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p)) }
@@ -1649,6 +1650,10 @@ public final class ApiRouter {
             var props = p["props"]
             if let root = props?["root"]?.string, !root.isEmpty, [.note, .html].contains(try board.object(id).type) { try board.checkLinkRoot(root) }
             if let patch = props, try board.object(id).type == .diagram, let problem = DiagramSpec.problem(try board.object(id).props.merging(patch)) {
+                throw Failure("invalid_params", problem)
+            }
+            if let patch = props, try board.object(id).type == .video,
+               let problem = LocalVideo.problem(try board.object(id).props.merging(patch)) {
                 throw Failure("invalid_params", problem)
             }
             if try board.object(id).type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
@@ -2186,7 +2191,7 @@ public final class ApiRouter {
             let props = p["props"].map { object.props.merging($0) } ?? object.props
             base = (object.type, props, object.frame.w, pathRoot(board, type: object.type, props: props))
         }
-        return try await ObjectMeasure.size(type: base.type, props: base.props, width: width ?? ([.code, .image].contains(base.type) ? nil : base.width), root: base.root)
+        return try await ObjectMeasure.size(type: base.type, props: base.props, width: width ?? ([.code, .image, .video].contains(base.type) ? nil : base.width), root: base.root)
     }
 
     /// `object.create` of a diagram with `size: "fit"` and no `props.graph`: its size is its graph's,

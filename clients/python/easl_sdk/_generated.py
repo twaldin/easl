@@ -249,6 +249,16 @@ class ImageProps(TypedDict):
     title: NotRequired[str]
     key: NotRequired["ObjectKey"]
 
+class VideoProps(TypedDict):
+    path: Required[str]
+    poster: NotRequired[str]
+    loop: NotRequired[bool]
+    muted: NotRequired[bool]
+    autoplay: NotRequired[bool]
+    startTime: NotRequired[float]
+    title: NotRequired[str]
+    key: NotRequired["ObjectKey"]
+
 class DiagramProps(TypedDict):
     """A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`."""
     kind: NotRequired[Literal["calls"]]
@@ -323,7 +333,7 @@ class Size(TypedDict):
     w: Required[float]
     h: Required[float]
 
-ObjectType = Literal["terminal", "browser", "code", "note", "html", "changes", "image", "diagram", "question", "shape", "arrow", "group"]
+ObjectType = Literal["terminal", "browser", "code", "note", "html", "changes", "image", "video", "diagram", "question", "shape", "arrow", "group"]
 
 class CanvasObject(TypedDict):
     id: Required["Id"]

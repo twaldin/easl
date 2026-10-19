@@ -46,6 +46,8 @@ final class CardTile: NSView, TileContent {
             label.stringValue = "\((props["title"] ?? props["pageTitle"])?.string ?? "Browser")\n\(props["url"]?.string ?? "")"
         case .html:
             label.stringValue = props["title"]?.string ?? "HTML tile"
+        case .video:
+            label.stringValue = "\(props["title"]?.string ?? "Video")\n\(props["path"]?.string ?? "")"
         default:
             label.stringValue = object.type.rawValue
         }

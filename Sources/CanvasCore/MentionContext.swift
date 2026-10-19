@@ -431,6 +431,7 @@ public enum MentionContext {
         case .html: return props["title"]?.string ?? "html"
         case .changes: return props["title"]?.string ?? ChangesSpec(props).name
         case .image: return props["title"]?.string ?? props["path"]?.string ?? "image"
+        case .video: return props["title"]?.string ?? props["path"]?.string ?? "video"
         case .diagram: return DiagramSpec.title(props)
         case .question: return props["question"]?.string ?? "question"
         case .shape: return props["text"]?.string ?? props["kind"]?.string ?? ""

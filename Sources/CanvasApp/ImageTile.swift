@@ -1,5 +1,7 @@
 import AppKit
 import CanvasCore
+import ImageIO
+import UniformTypeIdentifiers
 
 /// An image file on the canvas (`type: image`, `props.path`): a chart an agent saved, a
 /// screenshot, an SVG, a PDF's first page. The picture keeps its aspect ratio inside the body,
@@ -20,6 +22,27 @@ final class ImageTile: NSView, TileContent {
     private var live = true
     /// The loaded picture and its natural size (pixels for bitmaps, points for SVG and PDF).
     private var picture: (image: NSImage, size: CGSize, path: String)?
+    private final class Animation {
+        let frames: GIFFrames
+        var index = 0
+        var cycle = 0
+        var image: NSImage
+        var delay: TimeInterval
+
+        var isComplete: Bool {
+            guard let totalPlays = frames.totalPlays else { return false }
+            return cycle == totalPlays - 1 && index == frames.count - 1
+        }
+
+        init(frames: GIFFrames, image: NSImage, delay: TimeInterval) {
+            self.frames = frames
+            self.image = image
+            self.delay = delay
+        }
+    }
+    private var animation: Animation?
+    private var animationTimer: Timer?
+    private var animationTask: Task<Void, Never>?
     /// The picture's mean relative luminance, nil when it is mostly transparent (the tile's
     /// background shows): what drawings in the default ink over it contrast with.
     private(set) var surfaceLuminance: Double?
@@ -51,6 +74,8 @@ final class ImageTile: NSView, TileContent {
 
     deinit {
         loadTask?.cancel()
+        animationTask?.cancel()
+        MainActor.assumeIsolated { animationTimer?.invalidate() }
     }
 
     nonisolated override var isFlipped: Bool { true }
@@ -62,6 +87,7 @@ final class ImageTile: NSView, TileContent {
 
     /// Reads the file off the main thread; the newest read wins.
     private func reload() {
+        stopAnimation()
         loadTask?.cancel()
         hostWatch?.cancel()
         hostWatch = nil
@@ -106,15 +132,31 @@ final class ImageTile: NSView, TileContent {
                     }
                 }
             }
+            guard !Task.isCancelled, self?.loadGeneration == generation, self?.path == path else { return }
+            var image: NSImage?
+            var animation: Animation?
+            if let read {
+                if let frames = GIFFrames(data: read.data), let first = await frames.frame(0) {
+                    let firstImage = NSImage(cgImage: first.image, size: read.size)
+                    image = firstImage
+                    animation = Animation(frames: frames, image: firstImage, delay: first.delay)
+                } else {
+                    image = NSImage(data: read.data)
+                }
+            }
             guard let self, !Task.isCancelled, self.loadGeneration == generation, self.path == path else { return }
             self.loaded = true
-            if let read, let image = NSImage(data: read.data) {
+            if let read, let image {
                 image.size = read.size
                 self.picture = (image, read.size, path)
+                self.animation = animation
                 self.failure = nil
             } else {
                 let unavailable = if case .unavailable? = readFailure { true } else { false }
-                if !unavailable || self.picture?.path != path { self.picture = nil }
+                if !unavailable || self.picture?.path != path {
+                    self.picture = nil
+                    self.animation = nil
+                }
                 self.failure = failure ?? "not a readable image: \(path)"
             }
             let luminance = self.picture.flatMap { Self.meanLuminance($0.image) }
@@ -123,6 +165,7 @@ final class ImageTile: NSView, TileContent {
                 NotificationCenter.default.post(name: .tileSurfaceChanged, object: self)
             }
             self.needsDisplay = true
+            self.startAnimation()
             self.watch(baseline: baseline)
         }
         watch()
@@ -137,6 +180,48 @@ final class ImageTile: NSView, TileContent {
         case .ref(let message): "host image source unavailable: \(message)"
         case .unavailable(let message): "host image unavailable: \(message)"
         }
+    }
+
+    private func startAnimation() {
+        guard live, window != nil, picture?.path == path, let animation, !animation.isComplete,
+              animationTimer == nil, animationTask == nil else { return }
+        let timer = Timer(timeInterval: animation.delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.animationTimer = nil
+                self.advanceAnimation()
+            }
+        }
+        animationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func advanceAnimation() {
+        guard live, window != nil, let animation, !animation.isComplete else { return }
+        let generation = loadGeneration
+        let next = (animation.index + 1) % animation.frames.count
+        animationTask = Task { [weak self] in
+            let frame = await animation.frames.frame(next)
+            guard let self, !Task.isCancelled, self.loadGeneration == generation,
+                  self.animation === animation, self.live, self.window != nil else { return }
+            self.animationTask = nil
+            guard let frame else { return }
+            if next == 0, animation.frames.totalPlays != nil {
+                animation.cycle += 1
+            }
+            animation.index = next
+            animation.image = NSImage(cgImage: frame.image, size: self.picture?.size ?? .zero)
+            animation.delay = frame.delay
+            self.needsDisplay = true
+            self.startAnimation()
+        }
+    }
+
+    private func stopAnimation() {
+        animationTimer?.invalidate()
+        animationTimer = nil
+        animationTask?.cancel()
+        animationTask = nil
     }
 
     /// Mean relative luminance of an image drawn into 8×8 pixels; nil when most of it is
@@ -200,6 +285,7 @@ final class ImageTile: NSView, TileContent {
 
     private func suspend() {
         stopWatching()
+        stopAnimation()
         loadTask?.cancel()
         loadTask = nil
         loadGeneration += 1
@@ -246,15 +332,16 @@ final class ImageTile: NSView, TileContent {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        paint(in: bounds)
+        paint(in: bounds, animated: live && window != nil)
     }
 
     /// Picture, caption, or the reason there is none; `bounds` is the body (top-left origin).
-    private func paint(in bounds: CGRect) {
+    private func paint(in bounds: CGRect, animated: Bool = false) {
         NSColor.textBackgroundColor.setFill()
         bounds.fill()
         if let picture, let rect = pictureRect(bounds.size) {
-            picture.image.drawUpright(in: rect)
+            let image = animated ? animation?.image ?? picture.image : picture.image
+            image.drawUpright(in: rect)
         }
         if loaded, let failure {
             let text = NSAttributedString(string: failure, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: picture == nil ? NSColor.secondaryLabelColor : NSColor.systemOrange])
@@ -323,5 +410,48 @@ final class ImageTile: NSView, TileContent {
         } else if previous.props["caption"] != object.props["caption"] {
             needsDisplay = true
         }
+    }
+}
+
+private actor GIFFrames {
+    private let source: CGImageSource
+    nonisolated let count: Int
+    nonisolated let totalPlays: Int?
+
+    struct Frame: Sendable {
+        let image: CGImage
+        let delay: TimeInterval
+    }
+
+    init?(data: Data) {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetType(source) as String? == UTType.gif.identifier,
+              CGImageSourceGetCount(source) > 1 else { return nil }
+        self.source = source
+        count = CGImageSourceGetCount(source)
+        let properties = CGImageSourceCopyProperties(source, nil) as? [CFString: Any]
+        let gif = properties?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+        if let repetitions = gif?[kCGImagePropertyGIFLoopCount] as? Int {
+            // The extension counts repetitions after the initial play; zero means forever.
+            totalPlays = repetitions == 0 ? nil : repetitions + 1
+        } else {
+            totalPlays = 1
+        }
+    }
+
+    func frame(_ index: Int) -> Frame? {
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, index, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 4096,
+            kCGImageSourceShouldCache: false,
+            kCGImageSourceShouldCacheImmediately: true,
+        ] as CFDictionary) else { return nil }
+        defer { CGImageSourceRemoveCacheAtIndex(source, index) }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
+        let gif = properties?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+        let delay = (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double)
+            ?? (gif?[kCGImagePropertyGIFDelayTime] as? Double) ?? 0.1
+        return Frame(image: image, delay: delay.isFinite && delay >= 0.011 ? delay : 0.1)
     }
 }

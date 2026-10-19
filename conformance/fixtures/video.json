@@ -1,0 +1,393 @@
+{
+  "scenario": "video",
+  "description": "Video props survive create, get, updates and board save/reopen; invalid playback props are rejected without mutation.",
+  "recordedOn": "scratch easld on deckbox, easl-host-media-1; replay verified at f3c2e60",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 386,
+          "w": 640,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "autoplay": false,
+          "key": "demo",
+          "loop": true,
+          "muted": false,
+          "path": "clip.mp4",
+          "poster": "poster.png",
+          "startTime": 1.25,
+          "title": "Demo"
+        },
+        "type": "video"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 386,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "autoplay": false,
+              "key": "demo",
+              "loop": true,
+              "muted": false,
+              "path": "clip.mp4",
+              "poster": "poster.png",
+              "startTime": 1.25,
+              "title": "Demo"
+            },
+            "rev": "<rev:1>",
+            "type": "video",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 386,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "autoplay": false,
+              "key": "demo",
+              "loop": true,
+              "muted": false,
+              "path": "clip.mp4",
+              "poster": "poster.png",
+              "startTime": 1.25,
+              "title": "Demo"
+            },
+            "rev": "<rev:1>",
+            "type": "video",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 386,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "autoplay": false,
+              "key": "demo",
+              "loop": true,
+              "muted": false,
+              "path": "clip.mp4",
+              "poster": "poster.png",
+              "startTime": 1.25,
+              "title": "Demo"
+            },
+            "rev": "<rev:1>",
+            "type": "video",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "startTime": 2.5,
+          "title": "Edited"
+        }
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 386,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "autoplay": false,
+              "key": "demo",
+              "loop": true,
+              "muted": false,
+              "path": "clip.mp4",
+              "poster": "poster.png",
+              "startTime": 2.5,
+              "title": "Edited"
+            },
+            "rev": "<rev:2>",
+            "type": "video",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 386,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "autoplay": false,
+              "key": "demo",
+              "loop": true,
+              "muted": false,
+              "path": "clip.mp4",
+              "poster": "poster.png",
+              "startTime": 2.5,
+              "title": "Edited"
+            },
+            "rev": "<rev:2>",
+            "type": "video",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "startTime": -1
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "video props.startTime must be a nonnegative number"
+        },
+        "id": "r5",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "startTime": "2"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "video props.startTime must be a nonnegative number"
+        },
+        "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "loop": "true"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "video props.loop must be a boolean"
+        },
+        "id": "r7",
+        "ok": false
+      }
+    },
+    {
+      "step": "board.close",
+      "method": "board.close",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "ended": [],
+          "kept": [],
+          "root": "<root>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.closed"
+        }
+      ]
+    },
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 1,
+          "root": "<root>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {},
+          "event": "board.opened"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 386,
+              "w": 640,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "autoplay": false,
+              "key": "demo",
+              "loop": true,
+              "muted": false,
+              "path": "clip.mp4",
+              "poster": "poster.png",
+              "startTime": 2.5,
+              "title": "Edited"
+            },
+            "rev": "<rev:2>",
+            "type": "video",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      }
+    }
+  ]
+}

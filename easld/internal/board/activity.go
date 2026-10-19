@@ -285,12 +285,12 @@ func Describe(o model.Object) string {
 		return "html" + q("title")
 	case model.Changes:
 		return changesName(p) + q("title")
-	case model.Image:
+	case model.Image, model.Video:
 		path, ok := propString(p, "path")
 		if !ok {
 			path = "?"
 		}
-		return "image " + path + q("title")
+		return string(o.Type) + " " + path + q("title")
 	case model.Diagram:
 		return "diagram" + quoted(diagramTitle(p), true)
 	case model.Question:

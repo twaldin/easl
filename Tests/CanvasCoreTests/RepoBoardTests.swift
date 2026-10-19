@@ -211,6 +211,68 @@ struct RepoBoardTests {
         #expect(board.objects.values.contains { $0.props["key"] == .string("detached:wt-feature") })
     }
 
+    @Test func adoptedVideosReadOriginalFileURIsAndRelativeSources() async throws {
+        let (repo, _) = try await fixture()
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: repo.root)
+        }
+        let root = repo.url("src")
+        let movie = root.appendingPathComponent("clip space.mp4")
+        let poster = root.appendingPathComponent("poster space.png")
+        let movieURI = "FILE:" + movie.absoluteString.dropFirst(5)
+        let posterURI = "FiLe:" + poster.absoluteString.dropFirst(5)
+        let posterBytes = Data("original poster".utf8)
+        try VideoHeader.movie(width: 640, height: 360).write(to: movie)
+        try posterBytes.write(to: poster)
+        for (path, bytes) in [
+            (movieURI, VideoHeader.movie(width: 90, height: 160)),
+            (posterURI, Data("shadow poster".utf8)),
+            ("~/clip.mp4", VideoHeader.movie(width: 90, height: 160)),
+            ("~/poster.png", Data("tilde poster".utf8))
+        ] {
+            let shadow = root.appendingPathComponent(path).standardizedFileURL
+            try FileManager.default.createDirectory(at: shadow.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try bytes.write(to: shadow)
+        }
+        try VideoHeader.movie(width: 800, height: 600).write(to: root.appendingPathComponent("relative.mp4"))
+        let relativePoster = Data("relative poster".utf8)
+        try relativePoster.write(to: root.appendingPathComponent("relative.png"))
+        var expected: [ObjectID: (CGSize, Data)] = [:]
+        var refused: [ObjectID: String] = [:]
+        _ = try await legacyBoard(root) { board in
+            for (path, image, dimensions, bytes) in [
+                (movieURI, posterURI, CGSize(width: 640, height: 360), posterBytes),
+                ("relative.mp4", "relative.png", CGSize(width: 800, height: 600), relativePoster)
+            ] {
+                let tile = board.create(type: .video, props: .object(["path": .string(path), "poster": .string(image)]))
+                expected[tile.id] = (dimensions, bytes)
+            }
+            for (key, path) in [("path", "~/clip.mp4"), ("poster", "~/poster.png")] {
+                var props: [String: JSONValue] = ["path": .string(movieURI), "poster": .string(posterURI)]
+                props[key] = .string(path)
+                refused[board.create(type: .video, props: .object(props)).id] = key
+            }
+        }
+        let store = BoardStore(directory: boards)
+        _ = try #require(store.migrateToRepoBoards())
+        let board = BoardRegistry(store: store).open(root: repo.root)
+        for (id, result) in expected {
+            let props = try board.object(id).props
+            let path = try #require(props["path"]?.string)
+            let image = try #require(props["poster"]?.string)
+            #expect(try await LocalVideo.naturalSize(path: path, root: repo.root) == result.0)
+            let read = try await HostFiles.readLocal(HostFileRequest(source: .directory(repo.root.path), policy: .boardAsset(image)))
+            #expect(read.data == result.1)
+        }
+        for (id, key) in refused {
+            let path = try #require(board.object(id).props[key]?.string)
+            await #expect(throws: HostFileError.refused) {
+                try await HostFiles.readLocal(HostFileRequest(source: .directory(repo.root.path), policy: .boardAsset(path)))
+            }
+        }
+    }
+
     @Test func aDeletedWorktreesBoardIsFoundByItsBranchAndReadsTheBranch() async throws {
         let (repo, worktree) = try await fixture()
         _ = try await legacyBoard(repo.root) { $0.create(type: .note, props: .object(["markdown": .string("main")])) }

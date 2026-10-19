@@ -15,8 +15,7 @@ func ZoomOf(props map[string]any) float64 {
 	return min(max(value, 0.25), 8)
 }
 
-// ZoomApplies is ObjectZoom.applies(to:): every tile but an image takes props.zoom.
-func ZoomApplies(t model.ObjectType) bool { return t.IsTile() && t != model.Image }
+func ZoomApplies(t model.ObjectType) bool { return t.IsTile() && t != model.Image && t != model.Video }
 
 // ObjectZoom is CanvasObject.zoom: props.zoom for tiles that zoom, 1 for everything else.
 func ObjectZoom(o model.Object) float64 {

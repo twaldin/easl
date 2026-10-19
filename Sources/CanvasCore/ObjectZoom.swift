@@ -29,9 +29,8 @@ public enum ObjectZoom {
         return min(max(value, range.lowerBound), range.upperBound)
     }
 
-    /// Whether tiles of this type take `props.zoom`: every tile but an image.
     public static func applies(to type: ObjectType) -> Bool {
-        RenderMath.isTile(type) && type != .image
+        RenderMath.isTile(type) && type != .image && type != .video
     }
 
     /// `zoom` as the title bar and the menus show it: "150%".

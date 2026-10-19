@@ -799,6 +799,13 @@ func (r *rerooter) reroot(o model.Object) model.Object {
 		if path, ok := props["path"].(string); ok {
 			props["path"] = r.worktreePath(path, what)
 		}
+	case model.Video:
+		for _, key := range []string{"path", "poster"} {
+			path, ok := props[key].(string)
+			if ok && IsRelativeFileReference(path) {
+				props[key] = r.worktreePath(path, what)
+			}
+		}
 	case model.Diagram:
 		// Its file, the graph as last computed (node paths and ids, its aim) and the nodes it
 		// expanded, as the repository board's next build writes them (moved), so that build

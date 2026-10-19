@@ -31,7 +31,8 @@ public final class HostFileWatch {
         }, changed: changed)
     }
 
-    /// `probe` answers nil only when cancelled.
+    /// A nil `probe` result skips that poll without replacing the prior observation.
+    /// Polling continues at `interval` until cancelled or dropped.
     public init<Observation: Equatable & Sendable>(
         baseline: Observation?,
         interval: Duration = .seconds(2),
@@ -46,7 +47,9 @@ public final class HostFileWatch {
                 } catch {
                     return
                 }
-                guard let observation = await probe(), !Task.isCancelled else { return }
+                let observation = await probe()
+                guard !Task.isCancelled else { return }
+                guard let observation else { continue }
                 if let prior, prior != observation {
                     await MainActor.run {
                         if !Task.isCancelled { changed(observation) }

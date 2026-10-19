@@ -161,6 +161,10 @@ extension CanvasView {
             let path = nonEmpty(props["path"])
             return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "Image", dot: nil,
                                 subtitle: nonEmpty(props["caption"]), terms: path.map { [$0] } ?? [], toolTip: path)
+        case .video:
+            let path = nonEmpty(props["path"])
+            return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "Video", dot: nil,
+                                terms: path.map { [$0] } ?? [], toolTip: path)
         case .browser:
             // Found by its address too ("localhost"); the host (and port) says which site it is.
             let url = nonEmpty(props["url"])

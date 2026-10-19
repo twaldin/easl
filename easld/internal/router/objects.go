@@ -168,6 +168,11 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 	if err := checkProps(p); err != nil {
 		return nil, err
 	}
+	if typ == model.Video {
+		if problem := measure.VideoProblem(props); problem != "" {
+			return nil, invalid("%s", problem)
+		}
+	}
 	caller := r.callerOf(p)
 	var frame *model.Frame
 	if value, present := p["frame"]; present {
@@ -261,6 +266,11 @@ func (r *Router) update(p map[string]any) (any, error) {
 		frame = &f
 	}
 	props := asMap(p["props"])
+	if current.Type == model.Video && props != nil {
+		if problem := measure.VideoProblem(model.Merge(current.Props, props).(map[string]any)); problem != "" {
+			return nil, invalid("%s", problem)
+		}
+	}
 	if props != nil && current.Type == model.Browser {
 		if err := validateDrawing(props["drawingMachine"]); err != nil {
 			return nil, err
@@ -1254,7 +1264,7 @@ func (r *Router) fitSize(method string, p map[string]any, state *batchState, gua
 	if patch, ok := p["props"]; ok {
 		props, _ = model.Merge(props, patch).(map[string]any)
 	}
-	if width == nil && typ != model.Code && typ != model.Image {
+	if width == nil && typ != model.Code && typ != model.Image && typ != model.Video {
 		width = baseWidth
 	}
 	g := guard

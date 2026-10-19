@@ -443,6 +443,20 @@ export type ImageProps = {
   key?: ObjectKey;
 };
 
+export type VideoProps = {
+  /** video file on the board's host, board-relative or an allowed absolute path */
+  path: string;
+  /** optional poster image on the board's host */
+  poster?: string;
+  loop?: boolean;
+  muted?: boolean;
+  autoplay?: boolean;
+  /** initial playback position in seconds */
+  startTime?: number;
+  title?: string;
+  key?: ObjectKey;
+};
+
 /** A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`. */
 export type DiagramProps = {
   /** what the diagram is of; more kinds (types, pipelines) will come */
@@ -644,7 +658,7 @@ export type Size = {
   h: number;
 };
 
-export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "changes" | "image" | "diagram" | "question" | "shape" | "arrow" | "group";
+export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "changes" | "image" | "video" | "diagram" | "question" | "shape" | "arrow" | "group";
 
 export type CanvasObject = {
   id: Id;
@@ -658,7 +672,7 @@ export type CanvasObject = {
   updatedBy?: Actor;
   createdAt: string;
   updatedAt: string;
-  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one) */
+  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | VideoProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one) */
   props: Record<string, unknown>;
 };
 
@@ -1398,7 +1412,7 @@ export type ObjectFindResult = {
 export type ObjectCreateParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props: Record<string, unknown>;
   frame?: Frame | FitFrame | SizeFrame;
   /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
@@ -1433,7 +1447,7 @@ export type ObjectUpdateParams = {
   z?: number;
   /** measure the frame's size from the content */
   size?: "fit";
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props?: Record<string, unknown>;
   /** With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch. */
   viewer?: ViewerId;
@@ -1490,9 +1504,9 @@ export type ObjectDeleteResult = Record<string, unknown>;
 export type ObjectMeasureParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props: Record<string, unknown>;
-  /** wrap width for notes and text; maximum width for code (default 1546, 200 columns); the width an html page lays out at (default 640) */
+  /** wrap width for notes and text; maximum width for code (default 1546, 200 columns), images and video (default 960); the width an html page lays out at (default 640) */
   width?: number;
   caller?: Id;
 };

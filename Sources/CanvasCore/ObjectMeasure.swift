@@ -65,6 +65,11 @@ public enum ObjectMeasure {
             // The rows of every changed file, as wide as the longest line up to `width`.
             let set = await ChangeSet.load(root: root, spec: ChangesSpec(props), highlight: false)
             size = ChangesMetrics.fit(set, maxWidth: natural, viewed: props["viewed"])
+        case .video:
+            if let problem = LocalVideo.problem(props) { throw Failure.invalidParams(problem) }
+            let pixels = try await LocalVideo.naturalSize(path: props["path"]!.string!, root: root)
+            let picture = LocalImage.fitted(pixels, maxWidth: natural ?? LocalImage.defaultMaxWidth)
+            size = CGSize(width: picture.width, height: RenderMath.tileTitleHeight + picture.height)
         case .image:
             // The picture at one point per pixel, scaled down to `width` (default 960), plus the
             // title bar and the caption strip.

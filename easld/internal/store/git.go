@@ -22,6 +22,12 @@ type Worktree struct {
 	GitDir string
 }
 
+// IsRelativeFileReference preserves absolute paths, file URIs and empty/tilde refusals during rebasing.
+func IsRelativeFileReference(path string) bool {
+	return path != "" && !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "~") &&
+		!(len(path) >= 5 && strings.EqualFold(path[:5], "file:"))
+}
+
 // Standardized is URL(fileURLWithPath:).standardizedFileURL.path: `.` and `..` removed,
 // symlinks kept.
 func Standardized(path string) string {

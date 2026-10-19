@@ -449,6 +449,21 @@
       },
       "additionalProperties": false
     },
+    "VideoProps": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "description": "video file on the board's host, board-relative or an allowed absolute path" },
+        "poster": { "type": "string", "description": "optional poster image on the board's host" },
+        "loop": { "type": "boolean" },
+        "muted": { "type": "boolean" },
+        "autoplay": { "type": "boolean" },
+        "startTime": { "type": "number", "minimum": 0, "description": "initial playback position in seconds" },
+        "title": { "type": "string" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
+      },
+      "additionalProperties": false
+    },
     "DiagramProps": {
       "type": "object",
       "description": "A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`.",
@@ -658,7 +673,7 @@
       "description": "any of x, y, w, h; the rest keep their current values (with size: fit, w is the wrap or widest width and h is measured)"
     },
     "Size": { "type": "object", "required": ["w", "h"], "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "additionalProperties": false },
-    "ObjectType": { "enum": ["terminal", "browser", "code", "note", "html", "changes", "image", "diagram", "question", "shape", "arrow", "group"] },
+    "ObjectType": { "enum": ["terminal", "browser", "code", "note", "html", "changes", "image", "video", "diagram", "question", "shape", "arrow", "group"] },
     "CanvasObject": {
       "type": "object",
       "required": ["id", "type", "frame", "z", "rev", "createdBy", "createdAt", "updatedAt", "props"],
@@ -673,7 +688,7 @@
         "updatedBy": { "$ref": "#/definitions/Actor" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
-        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)" }
+        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | VideoProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)" }
       },
       "additionalProperties": false
     },
@@ -1440,7 +1455,7 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width)" },
           "parent": { "$ref": "#/definitions/Id" },
@@ -1463,7 +1478,7 @@
           "frame": { "$ref": "#/definitions/FramePatch" },
           "z": { "type": "number", "description": "stacking order, back to front; objects with larger values draw above objects with smaller values" },
           "size": { "const": "fit", "description": "measure the frame's size from the content" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "viewer": { "$ref": "#/definitions/ViewerId", "description": "With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch." },
           "step": { "type": "integer", "minimum": 1, "description": "The viewer's gesture id; writes with the same id form one undo step." },
           "caller": { "$ref": "#/definitions/Id" }
@@ -1513,8 +1528,8 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
-          "width": { "type": "number", "description": "wrap width for notes and text; maximum width for code (default 1546, 200 columns); the width an html page lays out at (default 640)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "width": { "type": "number", "description": "wrap width for notes and text; maximum width for code (default 1546, 200 columns), images and video (default 960); the width an html page lays out at (default 640)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
         "additionalProperties": false

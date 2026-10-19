@@ -1,5 +1,21 @@
 import Foundation
 
+public struct HostFileRange: Sendable, Equatable {
+    public static let maxLength = 1024 * 1024
+    public var offset: Int64
+    public var length: Int
+
+    public init(offset: Int64, length: Int) {
+        self.offset = offset
+        self.length = length
+    }
+
+    func validate() throws {
+        guard offset >= 0, length > 0, length <= Self.maxLength,
+              offset <= Int64.max - Int64(length) else { throw HostFileError.refused }
+    }
+}
+
 public struct HostFileRequest: Sendable, Equatable {
     public enum Source: Sendable, Equatable {
         case directory(String)
@@ -10,17 +26,20 @@ public struct HostFileRequest: Sendable, Equatable {
     public enum Policy: Sendable, Equatable {
         case boardFile(String)
         case boardImage(String)
+        case boardAsset(String)
         case pageImage(relative: String?, absolute: String?, temps: [String])
     }
 
     public var source: Source
     public var policy: Policy
     public var bytes: Bool
+    public var range: HostFileRange?
 
-    public init(source: Source, policy: Policy, bytes: Bool = true) {
+    public init(source: Source, policy: Policy, bytes: Bool = true, range: HostFileRange? = nil) {
         self.source = source
         self.policy = policy
         self.bytes = bytes
+        self.range = range
     }
 }
 
@@ -49,14 +68,18 @@ public struct HostFile: Sendable, Equatable {
     public var commit: String?
     public var data: Data
     public var stamp: String?
+    public var size: Int64
+    public var offset: Int64
     public var version: HostFileVersion { HostFileVersion(root: root, path: path, commit: commit, stamp: stamp) }
 
-    public init(root: String, path: String?, commit: String?, data: Data, stamp: String? = nil) {
+    public init(root: String, path: String?, commit: String?, data: Data, stamp: String? = nil, size: Int64? = nil, offset: Int64 = 0) {
         self.root = root
         self.path = path
         self.commit = commit
         self.data = data
         self.stamp = stamp
+        self.size = size ?? Int64(data.count)
+        self.offset = offset
     }
 
     public var mimeType: String { HtmlKit.mimeType(URL(fileURLWithPath: path ?? "")) }
@@ -127,7 +150,8 @@ public struct HostFiles: Sendable {
     var cleanup: HostFiles { HostFiles(hostName: hostName, route: channelRoute, temps: temps) }
 
     public func read(_ request: HostFileRequest) async throws -> HostFile {
-        let output = try await execute(Self.program, request: payload(request), retryTransport: true, what: "host file reader")
+        try request.range?.validate()
+        let output = try await execute(Self.program, request: JSONEncoder().encode(payload(request)), retryTransport: true, what: "host file reader")
         guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(output.utf8)) else {
             throw HostFileError.unavailable("invalid host file reply")
         }
@@ -137,7 +161,55 @@ public struct HostFiles: Sendable {
         guard let root = reply.root, let encoded = reply.data, let bytes = Data(base64Encoded: encoded) else {
             throw HostFileError.unavailable("invalid host file bytes")
         }
-        return HostFile(root: root, path: reply.path, commit: reply.commit, data: bytes, stamp: reply.stamp)
+        return HostFile(root: root, path: reply.path, commit: reply.commit, data: bytes, stamp: reply.stamp,
+                        size: reply.size, offset: reply.offset ?? 0)
+    }
+
+    public static func readLocal(_ request: HostFileRequest) async throws -> HostFile {
+        try Task.checkCancellation()
+        let file = try await offPool { Result { try HostLocalFile(request).read() } }.get()
+        try Task.checkCancellation()
+        return file
+    }
+
+    public func observe(_ requests: [HostFileRequest]) async throws -> [HostFileObservation] {
+        var observations: [HostFileObservation] = []
+        for start in stride(from: 0, to: requests.count, by: 256) {
+            let batch = try requests[start..<min(start + 256, requests.count)].map { request in
+                var metadata = request
+                metadata.bytes = false
+                metadata.range = nil
+                return try payload(metadata)
+            }
+            let input = try JSONEncoder().encode(JSONValue.object(["requests": .array(batch)]))
+            let output = try await execute(Self.program, request: input, retryTransport: true, what: "host file observations")
+            guard let replies = try? JSONDecoder().decode([Reply].self, from: Data(output.utf8)), replies.count == batch.count else {
+                throw HostFileError.unavailable("invalid host file observations")
+            }
+            observations.append(contentsOf: try replies.map { reply in
+                guard reply.ok else {
+                    return .failure(HostFileError(code: reply.code, message: reply.message, commit: reply.commit, limit: reply.limit))
+                }
+                guard let root = reply.root else { throw HostFileError.unavailable("invalid host file observation") }
+                return .version(HostFileVersion(root: root, path: reply.path, commit: reply.commit, stamp: reply.stamp))
+            })
+        }
+        return observations
+    }
+
+    public static func observeLocal(_ requests: [HostFileRequest]) async throws -> [HostFileObservation] {
+        try Task.checkCancellation()
+        let observations = await offPool {
+            requests.map { request -> HostFileObservation in
+                var metadata = request
+                metadata.bytes = false
+                metadata.range = nil
+                do { return .version(try HostLocalFile(metadata).read().version) }
+                catch { return .failure(error as? HostFileError ?? .unavailable(String(describing: error))) }
+            }
+        }
+        try Task.checkCancellation()
+        return observations
     }
 
     func execute(_ program: HostProgram, request: Data, timeout: TimeInterval = 20, retryTransport: Bool = false, what: String) async throws -> String {
@@ -202,6 +274,44 @@ public struct HostFiles: Sendable {
         }
     }
 
+    func httpSession<T: Sendable>(_ body: (HostRoute) async throws -> T) async throws -> T {
+        let master = await channelMaster?.httpReader
+        let route = master?.route ?? channelRoute
+        var admitted = false
+        let interrupt: (@Sendable () -> Void)?
+        do {
+            if let master {
+                try await master.fileSession()
+                admitted = true
+                try await master.ready()
+                interrupt = try await master.interruption()
+            } else {
+                interrupt = nil
+            }
+        } catch is CancellationError {
+            if admitted, let master { await master.endFileSession() }
+            throw CancellationError()
+        } catch {
+            if admitted, let master { await master.endFileSession() }
+            try Task.checkCancellation()
+            let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            throw HostFileError.unavailable(Self.sshRefused(message) ? "the host refused the SSH connection" : message)
+        }
+        do {
+            let value = try await body(route)
+            if let master { await master.endFileSession() }
+            return value
+        } catch {
+            interrupt?()
+            if let master { await master.endFileSession() }
+            throw error
+        }
+    }
+
+    func invocation(_ program: HostProgram, request: Data, route: HostRoute) -> (executable: String, arguments: [String], input: Data) {
+        (route.executable, route.ssh(Self.command), program.frame + request)
+    }
+
     private static let permanentSSHFailures = [
         "permission denied", "authentication failed", "host key verification failed",
         "remote host identification has changed", "bad configuration", "no matching host key type",
@@ -246,6 +356,8 @@ public struct HostFiles: Sendable {
         var commit: String?
         var stamp: String?
         var data: String?
+        var size: Int64?
+        var offset: Int64?
         var code: String?
         var message: String?
         var limit: Int?
@@ -267,7 +379,7 @@ public struct HostFiles: Sendable {
         return source
     }
 
-    private func payload(_ request: HostFileRequest) throws -> Data {
+    private func payload(_ request: HostFileRequest) throws -> JSONValue {
         let source = try sourcePayload(request.source)
         let policy: JSONValue
         switch request.policy {
@@ -275,12 +387,18 @@ public struct HostFiles: Sendable {
             policy = .object(["kind": .string("board"), "relative": .string(try HtmlKit.boardRelative(relative))])
         case .boardImage(let path):
             policy = .object(["kind": .string("boardImage"), "path": .string(path)])
+        case .boardAsset(let path):
+            policy = .object(["kind": .string("boardAsset"), "path": .string(path)])
         case .pageImage(let relative, let absolute, let temps):
             policy = .object(["kind": .string("image"), "relative": relative.map(JSONValue.string) ?? .null,
                               "absolute": absolute.map(JSONValue.string) ?? .null, "temps": .array(temps.map(JSONValue.string))])
         }
-        let value = JSONValue.object(["source": .object(source), "policy": policy, "bytes": .bool(request.bytes)])
-        return try JSONEncoder().encode(value)
+        var fields: [String: JSONValue] = ["source": .object(source), "policy": policy, "bytes": .bool(request.bytes)]
+        if let range = request.range {
+            guard range.offset <= 9_007_199_254_740_991 else { throw HostFileError.refused }
+            fields["range"] = .object(["offset": .number(Double(range.offset)), "length": .number(Double(range.length))])
+        }
+        return .object(fields)
     }
 
     private static let launcher = #"""
@@ -398,6 +516,14 @@ public struct HostFiles: Sendable {
         directory = None
         fd = None
         try:
+            span = request.get('range')
+            offset = 0
+            if span is not None:
+                if not isinstance(span, dict):
+                    return {'ok': False, 'code': 'refused'}
+                offset, length = span.get('offset'), span.get('length')
+                if type(offset) is not int or type(length) is not int or offset < 0 or length <= 0 or length > 1048576 or offset > 9223372036854775807 - length:
+                    return {'ok': False, 'code': 'refused'}
             p = os.path.normpath(request['path'])
             if not any(d == '/' or p == d or p.startswith(d + '/') for d in request['roots']):
                 return {'ok': False, 'code': 'refused'}
@@ -418,18 +544,29 @@ public struct HostFiles: Sendable {
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode):
                 return {'ok': False, 'code': 'not_found'}
+            if span is not None and offset > st.st_size:
+                return {'ok': False, 'code': 'refused'}
             stamp = ':'.join(str(value) for value in (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns))
             executable = bool(st.st_mode & 0o111)
             limit = request['limit']
-            if limit is not None and st.st_size > limit and (request['bytes'] or request['metadataLimit']):
+            if span is None and limit is not None and st.st_size > limit and (request['bytes'] or request['metadataLimit']):
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
             if not request['bytes'] or request.get('stamp') == stamp:
-                return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'size': st.st_size, 'data': ''}
-            if budget is not None and st.st_size > budget[0]:
+                return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'size': st.st_size, 'offset': offset, 'data': ''}
+            count = min(length, st.st_size - offset) if span is not None else st.st_size
+            if budget is not None and count > budget[0]:
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
             with os.fdopen(fd, 'rb', closefd=False) as stream:
-                data = stream.read() if limit is None else stream.read(limit + 1)
-            if limit is not None and len(data) > limit:
+                if span is not None:
+                    stream.seek(offset)
+                    data = stream.read(count)
+                else:
+                    data = stream.read() if limit is None else stream.read(limit + 1)
+            after = os.fstat(fd)
+            after_stamp = ':'.join(str(value) for value in (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns))
+            if after_stamp != stamp:
+                return {'ok': False, 'code': 'unreadable'}
+            if span is None and limit is not None and len(data) > limit:
                 return {'ok': False, 'code': 'too_large', 'limit': limit}
             if request.get('digest'):
                 return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'sha256': hashlib.sha256(data).hexdigest()}
@@ -437,7 +574,8 @@ public struct HostFiles: Sendable {
                 if len(data) > budget[0]:
                     return {'ok': False, 'code': 'too_large', 'limit': limit}
                 budget[0] -= len(data)
-            return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'size': len(data), 'data': base64.b64encode(data).decode('ascii')}
+            size = st.st_size if span is not None or request.get('totalSize') else len(data)
+            return {'ok': True, 'path': p, 'stamp': stamp, 'exec': executable, 'size': size, 'offset': offset, 'data': base64.b64encode(data).decode('ascii')}
         except OSError as error:
             code = 'refused' if error.errno in (errno.ELOOP, errno.ENOTDIR) else 'not_found' if error.errno == errno.ENOENT else 'unreadable'
             return {'ok': False, 'code': code}
@@ -470,12 +608,25 @@ public struct HostFiles: Sendable {
     """#
 
     private static let program = HostProgram(prelude + #"""
+    let pendingReads = null;
+    function readRequest(req) {
     const source = req.source, policy = req.policy;
     function readRegular(p, root, roots, limit) {
-      return { root, ...readFiles([{ path: p, roots, bytes: req.bytes, limit, metadataLimit: policy.kind === 'boardImage' }])[0] };
+      const request = { path: p, roots, bytes: req.bytes, limit, metadataLimit: policy.kind === 'boardImage',
+                        range: req.range, totalSize: true };
+      if (pendingReads) {
+        const pending = pendingReads.length;
+        pendingReads.push(request);
+        return { root, pending };
+      }
+      return { root, ...readFiles([request])[0] };
     }
     function read() {
+      if (req.range != null && (typeof req.range !== 'object' || Array.isArray(req.range) ||
+          !Number.isSafeInteger(req.range.offset) || req.range.offset < 0 ||
+          !Number.isSafeInteger(req.range.length) || req.range.length <= 0 || req.range.length > \#(HostFileRange.maxLength))) fail('refused');
       const { root, commit } = resolveSource(source);
+      if (commit && req.range != null) fail('refused');
       if (policy.kind === 'board') {
         const rel = policy.relative;
         if (!rel || rel.includes('\0') || rel.startsWith('/') || rel.startsWith('~') || rel.split('/').includes('..')) fail('refused');
@@ -491,27 +642,35 @@ public struct HostFiles: Sendable {
         if (!p) fail('not_found');
         return readRegular(p, root, [base], \#(SourceExcerpt.maxFileBytes));
       }
-      if (policy.kind === 'boardImage') {
+      if (policy.kind === 'boardImage' || policy.kind === 'boardAsset') {
         let input = policy.path;
         if (typeof input !== 'string' || !input || input.includes('\0') || input.startsWith('~')) fail('refused');
-        if (input.startsWith('file:')) {
+        if (/^file:/i.test(input)) {
           try { input = require('node:url').fileURLToPath(input); }
           catch { fail('refused'); }
         } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) fail('refused');
         if (input.includes('\0')) fail('refused');
         const requested = path.resolve(root, input);
+        if (policy.kind === 'boardAsset' && !commit && !inside(root, requested)) {
+          const candidate = resolved(requested);
+          const area = boardAreas(root).find(a => (inside(a.lex, requested) || inside(a.real, requested)) && inside(a.real, candidate));
+          if (!area) fail('refused');
+          const p = real(candidate);
+          if (!p) fail('not_found');
+          return readRegular(p, root, [area.real], \#(SourceExcerpt.maxFileBytes));
+        }
         if (requested === root || !inside(root, requested)) fail('refused');
         if (commit) {
           const rel = path.relative(root, requested);
+          const size = text(root, ['cat-file', '-s', commit + ':./' + rel]);
+          if (size === null) fail('not_found', { commit });
+          if (Number(size) > \#(SourceExcerpt.maxFileBytes) && (req.bytes || policy.kind === 'boardImage')) fail('too_large', { limit: \#(SourceExcerpt.maxFileBytes) });
           if (!req.bytes) {
-            const size = text(root, ['cat-file', '-s', commit + ':./' + rel]);
-            if (size === null) fail('not_found', { commit });
-            if (Number(size) > \#(SourceExcerpt.maxFileBytes)) fail('too_large', { limit: \#(SourceExcerpt.maxFileBytes) });
-            return { ok: true, root, path: rel, commit, data: '' };
+            return { ok: true, root, path: rel, commit, size: Number(size), offset: 0, data: '' };
           }
           const data = git(root, ['show', '--end-of-options', commit + ':./' + rel], \#(SourceExcerpt.maxFileBytes));
           if (data === null) fail('not_found', { commit });
-          return { ok: true, root, path: rel, commit, data: data.toString('base64') };
+          return { ok: true, root, path: rel, commit, size: Number(size), offset: 0, data: data.toString('base64') };
         }
         const base = resolved(root), candidate = resolved(requested);
         if (candidate === base || !inside(base, candidate)) fail('refused');
@@ -535,6 +694,18 @@ public struct HostFiles: Sendable {
     let reply;
     try { reply = read(); }
     catch (e) { reply = { ok: false, code: e.code || 'unreadable', message: e.message, commit: e.commit, limit: e.limit }; }
-    process.stdout.write(JSON.stringify(reply));
+    return reply;
+    }
+    let result;
+    if (Object.hasOwn(req, 'requests')) {
+      if (!Array.isArray(req.requests) || req.requests.length > 256) result = { ok: false, code: 'refused' };
+      else {
+        pendingReads = [];
+        const prepared = req.requests.map(request => readRequest({ ...request, bytes: false, range: null }));
+        const reads = readFiles(pendingReads);
+        result = prepared.map(reply => reply.pending == null ? reply : { root: reply.root, ...reads[reply.pending] });
+      }
+    } else result = readRequest(req);
+    process.stdout.write(JSON.stringify(result));
     """#)
 }
