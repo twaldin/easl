@@ -164,7 +164,7 @@ type Board struct {
 
 	// Lock serialises timer callbacks with requests. A standalone board without one
 	// leaves expiry to its caller.
-	Lock sync.Locker
+	Lock              sync.Locker
 	questionExpiry    *time.Timer
 	expirySeq         int
 	composerExpiry    *time.Timer
