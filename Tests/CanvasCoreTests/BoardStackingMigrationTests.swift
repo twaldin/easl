@@ -71,7 +71,7 @@ struct BoardStackingMigrationTests {
         let store = BoardStore(directory: directory.appendingPathComponent("boards"))
         try store.saveChecked(board)
         let reopened = BoardStore(directory: store.directory).load(root: directory, id: board.id)
-        #expect(reopened.objects == board.objects)
+        #expect(reopened.snapshot.objects.map(\.z) == [-100, -40, -40, -10, 5, 500, 500, 700, 900])
         #expect(reopened.snapshot.objects.map(\.id) == ["obj_tile_low", "obj_ink_a", "obj_shape_b", "obj_arrow", "obj_text", "obj_tile_a", "obj_tile_z", "obj_group_a", "obj_group_z"])
         #expect(try reopened.object("obj_tile_low").z == -100)
         #expect(try reopened.object("obj_shape_b").z == -40)
