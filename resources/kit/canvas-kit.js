@@ -48,6 +48,15 @@
     pending++;
     try { return await work; } finally { pending--; settle(); }
   };
+  const fetch = window.fetch;
+  window.fetch = function (...args) { return track(fetch.apply(this, args)); };
+  for (const method of ['arrayBuffer', 'blob', 'formData', 'json', 'text']) {
+    const read = Response.prototype[method];
+    Response.prototype[method] = function (...args) { return track(read.apply(this, args)); };
+  }
+  if (document.readyState !== 'complete') {
+    track(new Promise((resolve) => addEventListener('load', resolve, { once: true })));
+  }
   addEventListener('scroll', settle, { passive: true });
   addEventListener('resize', settle);
 
