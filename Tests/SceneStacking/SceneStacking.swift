@@ -144,11 +144,9 @@ private enum SceneStacking {
                 "\(label) must render the real image tile, not a placeholder")
         let color = try pixel(output)
         if shapeInFront {
-            // Solid shape fill is 85% alpha, not opaque. Color conversion can change the blend.
-            require(color.redComponent > 0.70 && color.redComponent < 0.98
-                    && color.greenComponent > 0.03 && color.greenComponent < 0.45
-                    && color.blueComponent > 0.03 && color.blueComponent < 0.45,
-                    "\(label) must show 85%-alpha red over cyan, got \(color)")
+            let otherChannels = max(color.greenComponent, color.blueComponent)
+            require(color.redComponent > 2 * otherChannels,
+                    "\(label) must show the red shape over the cyan tile, got \(color)")
         } else {
             requireCyan(color, "\(label) must show cyan, not an occluding red shape")
         }

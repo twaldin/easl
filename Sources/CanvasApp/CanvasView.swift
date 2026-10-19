@@ -198,7 +198,6 @@ final class CanvasView: NSScrollView {
 
     // MARK: Drawn objects (installed by the drawing layer)
 
-    /// The visible shape or arrow at a document point. Empty interiors pass through.
     var shapeHitTest: ((NSPoint) -> ObjectID?)?
     /// Document-space outline of a drawn object at its committed position.
     var shapeOutline: ((ObjectID) -> NSRect?)?
@@ -621,7 +620,6 @@ final class CanvasView: NSScrollView {
         view.author = authorName(of: object)
     }
 
-    /// Reorders in place so live tiles never leave the window.
     func restack() {
         document.sortSubviews({ a, b, _ in
             MainActor.assumeIsolated {
@@ -641,7 +639,6 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// Tools, editors, and selection handles remain above the object stack.
     func installShapeLayer(_ view: NSView) {
         shapeLayer = view
         document.addSubview(view, positioned: .below, relativeTo: overlay)

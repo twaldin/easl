@@ -1,8 +1,6 @@
 import AppKit
 import CanvasCore
 
-/// Owns drawing geometry, tools, and editing. Committed drawings have individual views in
-/// the canvas object stack; only gestures, handles, and editors paint in this overlay.
 @MainActor
 final class ShapeLayer: NSView {
     enum Tool: String, CaseIterable {
@@ -124,7 +122,6 @@ final class ShapeLayer: NSView {
 
     // MARK: Install
 
-    /// Installs drawing tools and the canvas' drawn-object seams.
     @discardableResult
     static func install(on canvas: CanvasView, toolbarIn container: NSView) -> ShapeLayer {
         let layer = ShapeLayer(canvas: canvas)

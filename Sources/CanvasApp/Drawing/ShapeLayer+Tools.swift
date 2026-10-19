@@ -192,7 +192,6 @@ extension ShapeLayer {
     /// just short of a box's edge means that box.
     static let arrowSnap: CGFloat = 16
 
-    /// Binds to the topmost object at the point, otherwise the nearest within the snap radius.
     func binding(at point: NSPoint) -> ArrowBinding {
         let snap = Self.arrowSnap / max(canvas.magnification, 0.1)
         var best: (id: ObjectID, z: Double, distance: CGFloat)?
