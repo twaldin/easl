@@ -293,6 +293,122 @@ func TestSlowReaderStillReceivesEverythingInOrder(t *testing.T) {
 	}
 }
 
+type observedWrite struct {
+	net.Conn
+	started chan struct{}
+	once    sync.Once
+}
+
+func (c *observedWrite) Write(p []byte) (int, error) {
+	c.once.Do(func() { close(c.started) })
+	return c.Conn.Write(p)
+}
+
+func TestSupersedingMotionRemovesOnlyItsQueuedRefreshChunks(t *testing.T) {
+	for _, supersedes := range []int{7, 0, 6, 8, 9} {
+		t.Run(fmt.Sprint(supersedes), func(t *testing.T) {
+			nc, peer := net.Pipe()
+			watched := &observedWrite{Conn: nc, started: make(chan struct{})}
+			c := newConn(watched, defaultLimits)
+			t.Cleanup(func() { c.close(true); peer.Close() })
+			frame := func(board, stream string, seq int, fields string) string {
+				return fmt.Sprintf(`{"event":"surface.frame","board":%q,"data":{"stream":%q,"format":"h264","seq":%d,"data":"AA=="%s}}`, board, stream, seq, fields)
+			}
+			chunk := `,"refresh":true,"offset":0,"total":16384`
+			first := frame("brd_a", "str_a", 7, chunk)
+			second := frame("brd_a", "str_a", 7, `,"refresh":true,"offset":16384,"total":32768`)
+			otherStream := frame("brd_a", "str_b", 7, chunk)
+			otherBoard := frame("brd_b", "str_a", 7, chunk)
+			prediction := frame("brd_a", "str_a", 6, "")
+			unrelatedRefresh := frame("brd_a", "str_a", 5, chunk)
+			laterRefresh := frame("brd_a", "str_a", 8, chunk)
+			if !c.SendLine([]byte(`{"committed":true}`)) {
+				t.Fatal("committed line refused")
+			}
+			for _, line := range []string{first, otherStream, prediction, second, otherBoard, unrelatedRefresh, laterRefresh} {
+				if !c.SendLine([]byte(line)) {
+					t.Fatal("queued line refused")
+				}
+			}
+			go c.writeLoop()
+			select {
+			case <-watched.started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("writer did not start")
+			}
+			replacement := frame("brd_a", "str_a", 9, fmt.Sprintf(`,"supersedes":%d`, supersedes))
+			if !c.SendLine([]byte(replacement)) || !c.SendLine([]byte(`{"after":true}`)) {
+				t.Fatal("replacement refused")
+			}
+			var want []string
+			switch supersedes {
+			case 6, 7:
+				want = []string{`{"committed":true}`, otherStream, prediction, otherBoard, unrelatedRefresh, replacement, `{"after":true}`}
+			case 8:
+				want = []string{`{"committed":true}`, first, otherStream, prediction, second, otherBoard, unrelatedRefresh, replacement, `{"after":true}`}
+			default:
+				want = []string{`{"committed":true}`, first, otherStream, prediction, second, otherBoard, unrelatedRefresh, laterRefresh, replacement, `{"after":true}`}
+			}
+			peer.SetReadDeadline(time.Now().Add(5 * time.Second))
+			reader := bufio.NewReader(peer)
+			for i, expected := range want {
+				got, err := reader.ReadString('\n')
+				if err != nil || got != expected+"\n" {
+					t.Fatalf("line %d = %q, %v; want %q", i, got, err, expected)
+				}
+			}
+		})
+	}
+}
+
+func TestSupersedingRefreshReclaimsThePendingBudgetBeforeAdmission(t *testing.T) {
+	nc, peer := net.Pipe()
+	l := defaultLimits
+	l.pending = 512
+	c := newConn(nc, l)
+	t.Cleanup(func() { c.close(true); peer.Close() })
+	old := `{"event":"surface.frame","board":"brd_a","data":{"stream":"str_a","format":"h264","seq":7,"refresh":true,"offset":0,"total":16384,"data":"` + strings.Repeat("A", 250) + `"}}`
+	replacement := `{"event":"surface.frame","board":"brd_a","data":{"stream":"str_a","format":"h264","seq":8,"supersedes":7,"data":"AA=="}}`
+	if !c.SendLine([]byte(old)) || !c.SendLine([]byte(replacement)) {
+		t.Fatal("superseding frame did not reclaim the canceled refresh's budget")
+	}
+	go c.writeLoop()
+	peer.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got, err := bufio.NewReader(peer).ReadString('\n')
+	if err != nil || got != replacement+"\n" {
+		t.Fatalf("replacement = %q, %v", got, err)
+	}
+}
+
+func TestSupersedingMotionCannotTruncateTheCurrentlyWritingChunk(t *testing.T) {
+	nc, peer := net.Pipe()
+	watched := &observedWrite{Conn: nc, started: make(chan struct{})}
+	c := newConn(watched, defaultLimits)
+	t.Cleanup(func() { c.close(true); peer.Close() })
+	old := `{"event":"surface.frame","board":"brd_a","data":{"stream":"str_a","format":"h264","seq":7,"refresh":true,"offset":0,"total":16384,"data":"AA=="}}`
+	replacement := `{"event":"surface.frame","board":"brd_a","data":{"stream":"str_a","format":"h264","seq":8,"supersedes":7,"data":"AQ=="}}`
+	if !c.SendLine([]byte(old)) {
+		t.Fatal("refresh refused")
+	}
+	go c.writeLoop()
+	select {
+	case <-watched.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer did not start")
+	}
+	if !c.SendLine([]byte(replacement)) {
+		t.Fatal("motion refused")
+	}
+	peer.SetReadDeadline(time.Now().Add(5 * time.Second))
+	reader := bufio.NewReader(peer)
+	for _, expected := range []string{old, replacement} {
+		got, err := reader.ReadString('\n')
+		if err != nil || got != expected+"\n" {
+			t.Fatalf("line = %q, %v; want %q", got, err, expected)
+		}
+	}
+}
+
 func TestPeerDisconnectClosesTheConnectionButHandlesWhatWasSent(t *testing.T) {
 	handled := make(chan any, 1)
 	conns := make(chan *Conn, 1)

@@ -9,11 +9,10 @@ public enum SurfaceRefreshTransferError: Error, Equatable {
 public struct SurfaceRefreshTransmission: Sendable {
     public static let chunkBytes = 16 * 1024
     public static let maximumBytes = 576 * 1024
-    public static let window = 2
 
     private let frame: SurfaceEvent.Frame
     private var nextOffset = 0
-    private var receipts: UInt64 = 0
+    private var receivedOffset = -1
 
     public init(frame: SurfaceEvent.Frame) throws {
         try validateRefresh(frame)
@@ -26,20 +25,15 @@ public struct SurfaceRefreshTransmission: Sendable {
 
     public mutating func start() -> [SurfaceEvent.Frame] {
         guard nextOffset == 0 else { return [] }
-        var parts: [SurfaceEvent.Frame] = []
-        for _ in 0..<Self.window {
-            if let part = nextPart() { parts.append(part) }
-        }
-        return parts
+        return nextPart().map { [$0] } ?? []
     }
 
     public mutating func progress(offset: Int) throws -> [SurfaceEvent.Frame] {
         guard offset >= 0, offset.isMultiple(of: Self.chunkBytes), offset < nextOffset else {
             throw SurfaceRefreshTransferError.invalidOffset
         }
-        let receipt = UInt64(1) << (offset / Self.chunkBytes)
-        guard receipts & receipt == 0 else { return [] }
-        receipts |= receipt
+        guard offset > receivedOffset else { return [] }
+        receivedOffset = offset
         guard let part = nextPart() else { return [] }
         return [part]
     }

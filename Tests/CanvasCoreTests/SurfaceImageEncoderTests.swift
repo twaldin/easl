@@ -331,6 +331,36 @@ struct SurfaceImageEncoderTests {
         #expect(Int(actual[marker + 2]) - Int(actual[marker]) > 40)
     }
 
+    @Test func largeInputAfterSharpRestartsIndependentMotionAndSettlesAgain() throws {
+        let work = RefreshQueue()
+        let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
+        let revision = SurfaceInputRevision()
+        let decoder = SurfaceVideoDecoder()
+        let original = try fixture()
+        let first = try #require(try capture(encoder, original, at: 0, revision: revision))
+        _ = try decode(first, video: decoder)
+        #expect(try capture(encoder, original, at: 1, revision: revision) == nil)
+        work.finish()
+        let sharp = try #require(try capture(encoder, original, at: 1.1, revision: revision))
+        _ = try decode(sharp, video: decoder)
+        encoder.acknowledgeRefinement()
+        revision.advance()
+        let changed = try fixture(redLeftHalf: true)
+        let motion = try #require(try capture(encoder, changed, at: 1.2, revision: revision, input: true, lastInput: 1.2))
+        #expect(!motion.refresh && motion.data[4] == 1)
+        for video in [decoder, SurfaceVideoDecoder()] {
+            let actual = try pixels(decode(motion, video: video))
+            #expect(actual[0] > 200 && actual[1] < 50 && actual[2] < 50)
+        }
+        #expect(try capture(encoder, changed, at: 2.3, revision: revision, lastInput: 1.2) == nil)
+        work.finish()
+        let settled = try #require(try capture(encoder, changed, at: 2.4, revision: revision, lastInput: 1.2))
+        #expect(settled.refresh && settled.data[4] == 1)
+        #expect(settled.width == 130 && settled.height == 98)
+        let actual = try pixels(decode(settled, video: decoder))
+        #expect(actual[0] > 245 && actual[1] < 10 && actual[2] < 10)
+    }
+
     @Test func smallChangesKeepTheFrozenPendingRefreshAndFollowItsReferenceAfterDelivery() throws {
         let work = RefreshQueue()
         work.pause()

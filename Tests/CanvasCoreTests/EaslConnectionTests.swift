@@ -607,6 +607,62 @@ final class EaslConnectionTests {
         #expect(await server.pushes(0).isEmpty, "nothing pushed for the dropped link reached the next one")
     }
 
+    @Test func aBlockedOriginDropsCanceledRefreshBeforeItsMotionReplacement() async throws {
+        let gate = dir.appendingPathComponent("release")
+        let captured = dir.appendingPathComponent("captured")
+        try #require(mkfifo(gate.path, 0o600) == 0)
+        let script = """
+        IFS= read -r ping
+        printf '%s\\n' '{"id":"-1","ok":true,"result":{}}' '{"id":"open","method":"surface.stream","params":{}}'
+        IFS= read -r release < '\(gate.path)'
+        exec cat > '\(captured.path)'
+        """
+        let connection = EaslConnection.process("/bin/sh", ["-c", script], backoff: fast)
+        defer { connection.close() }
+        let calls = Locked<[EaslConnection.Call]>([])
+        connection.serve { call in
+            calls.withLock { $0.append(call) }
+            return .success(.object(["stream": "str_a"]))
+        }
+        #expect(await reach(.online, connection))
+        let deadline = Date().addingTimeInterval(30)
+        while calls.withLock({ $0.isEmpty }), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let origin = try #require(calls.withLock { $0.first?.origin })
+        let revision = SurfaceInputRevision()
+        func line(_ label: String, stream: String = "str_a", bytes: Int = 0) throws -> EventLine {
+            try EventLine("surface.frame", board: "brd_a", .object([
+                "stream": .string(stream), "label": .string(label),
+                "data": .string(String(repeating: "x", count: bytes)),
+            ]))
+        }
+        #expect(origin.push(try line("committed", bytes: 1 << 20)))
+        #expect(origin.push(try line("canceled"), whileCurrent: { revision.value == 0 }))
+        #expect(origin.push(try line("other", stream: "str_b"), whileCurrent: { true }))
+        #expect(connection.state == .online)
+        revision.advance()
+        #expect(origin.push(try line("motion")))
+        let after = try line("after")
+        #expect(origin.push(after))
+        let release = try FileHandle(forWritingTo: gate)
+        try release.write(contentsOf: Data("go\n".utf8))
+        try release.close()
+        var received = Data()
+        let arrival = Date().addingTimeInterval(30)
+        repeat {
+            received = (try? Data(contentsOf: captured)) ?? Data()
+            if received.suffix(after.data.count) == after.data { break }
+            try await Task.sleep(for: .milliseconds(10))
+        } while Date() < arrival
+        try #require(received.suffix(after.data.count) == after.data)
+        let messages = try received.split(separator: 0x0A).map {
+            try JSONDecoder().decode(JSONValue.self, from: Data($0))
+        }
+        #expect(messages.filter { $0["event"] != nil }.map { $0["data"]?["label"] } ==
+            [.string("committed"), .string("other"), .string("motion"), .string("after")])
+    }
+
     /// easld tells a pushed event from a request by its first bytes alone, so `event` leads.
     @Test func anEventLineLeadsWithItsEvent() throws {
         let line = try EventLine("surface.dialog", board: "brd_a",

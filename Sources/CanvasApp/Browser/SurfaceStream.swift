@@ -228,7 +228,7 @@ final class SurfaceStream {
             guard !frame.refresh || revision.value == ticket,
                   let line = try? EventLine("surface.frame", board: board, frame.json),
                   !frame.refresh || revision.value == ticket else { return }
-            if owner.send(line) {
+            if owner.send(line, whileCurrent: frame.refresh ? { revision.value == ticket } : nil) {
                 Metrics.shared.record("surface.frameWire", bytes: line.data.count)
             }
         }

@@ -144,9 +144,10 @@ public final class SocketServer: @unchecked Sendable {
 
         /// Queues a line already encoded as JSON (an event sent to several subscribers is encoded
         /// once). Safe from any thread; returns false once the peer is gone.
+        /// `whileCurrent` may cancel a queued line before its first write, never a partial line.
         @discardableResult
-        public func send(encoded line: Data) -> Bool {
-            write(line)
+        public func send(encoded line: Data, whileCurrent: (@Sendable () -> Bool)? = nil) -> Bool {
+            write(line, whileCurrent: whileCurrent)
         }
 
         /// Queues one plain-text line (protocols that answer some commands outside JSON).
@@ -155,7 +156,7 @@ public final class SocketServer: @unchecked Sendable {
             write(Data(line.utf8))
         }
 
-        private func write(_ line: Data, timed send: TimedSend? = nil) -> Bool {
+        private func write(_ line: Data, timed send: TimedSend? = nil, whileCurrent: (@Sendable () -> Bool)? = nil) -> Bool {
             let data = line + [0x0A]
             writeLock.lock()
             guard isOpen else {
@@ -185,6 +186,12 @@ public final class SocketServer: @unchecked Sendable {
             // Admission and submission share the close lock, so the final fd close cannot
             // overtake a write that was accepted but not yet submitted to the outbox.
             outbox.async { [self] in
+                if let whileCurrent, !whileCurrent() {
+                    writeLock.lock()
+                    pending -= data.count
+                    writeLock.unlock()
+                    return
+                }
                 let written = data.withUnsafeBytes { raw -> Bool in
                     var offset = 0
                     while offset < raw.count {

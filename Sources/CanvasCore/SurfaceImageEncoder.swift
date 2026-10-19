@@ -293,6 +293,9 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
         }
         let change = identity.change(from: observed)
         observed = identity
+        let resumeMotion: Bool
+        if case .large = change { resumeMotion = inputActive }
+        else { resumeMotion = false }
         switch change {
         case .large:
             imageVersion &+= 1
@@ -337,7 +340,7 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
             }
         }
         if motionVersion != imageVersion || forceState {
-            guard let encoded = try video.encode(source, width: width, height: height) else { return nil }
+            guard let encoded = try video.encode(source, width: width, height: height, motion: resumeMotion) else { return nil }
             if encoded.refresh {
                 refresh.markDelivered(key: key)
                 sharp = identity
