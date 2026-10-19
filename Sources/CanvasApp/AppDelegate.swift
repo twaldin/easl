@@ -468,6 +468,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return (viewport, composer)
         }
         guard canShowWindow(of: board) else { return }
+        do {
+            try await CanvasWindowController.prepareWindowIcon()
+        } catch {
+            if !Task.isCancelled { NSLog("easl: cannot create board window: \(error)") }
+            return
+        }
+        guard !Task.isCancelled, canShowWindow(of: board) else { return }
         await MainTurns.next()
         guard canShowWindow(of: board) else { return }
         let window = DevPerf.time("board.window.shell") { CanvasWindowController.makeWindow(isRemote: false) }
@@ -1263,6 +1270,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         do {
             try stillWanted()
+            try await CanvasWindowController.prepareWindowIcon()
+            try stillWanted()
             await MainTurns.next()
             try stillWanted()
         } catch {
@@ -1431,7 +1440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// AppKit's first tab-group lookup resolves its icon and creates the native group.
+    /// AppKit's first tab-group lookup creates the native group.
     /// Separate it from insertion and selection. Look up the host again when showing:
     /// a board or native group can close while this opening yields.
     private func prepareTabHost(excluding window: NSWindow) async {

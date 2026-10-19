@@ -21,7 +21,9 @@ enum TerminalRender {
 
     // MARK: Font
 
-    nonisolated private static let installedFamilies = CTFontManagerCopyAvailableFontFamilyNames() as! [String]
+    // Equal-ranked fuzzy matches retain AppKit's alphabetic family precedence.
+    nonisolated private static let installedFamilies = (CTFontManagerCopyAvailableFontFamilyNames() as! [String])
+        .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     private static let fontPreparation = Task {
         await offPool(qos: .userInitiated) { _ = installedFamilies }
     }

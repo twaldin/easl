@@ -1,5 +1,6 @@
 import AppKit
 import CanvasCore
+import ImageIO
 
 /// One window per board: the canvas scene plus the composer (the tray bar).
 @MainActor
@@ -55,7 +56,58 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         DispatchQueue.main.async { [weak self] in self?.canvas.reveal(region) }
     }
 
+    private static let windowIconPixels = Task {
+        await offPool {
+            Result { () throws -> (images: [CGImage], size: CGSize) in
+                let url: URL?
+                if Bundle.main.bundleURL.pathExtension == "app" {
+                    url = Bundle.main.resourceURL?.appendingPathComponent("AppIcon.icns")
+                } else {
+                    url = AppPaths.resources?.appendingPathComponent("scripts/AppIcon.icns")
+                }
+                guard let url,
+                      let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+                      CGImageSourceGetCount(source) > 0 else {
+                    throw ApiRouter.Failure("unavailable", "Cannot read AppIcon.icns for native board tabs")
+                }
+                var images: [CGImage] = []
+                images.reserveCapacity(CGImageSourceGetCount(source))
+                var size = CGSize.zero
+                for index in 0..<CGImageSourceGetCount(source) {
+                    guard let image = CGImageSourceCreateImageAtIndex(source, index, [
+                        kCGImageSourceShouldCache: true,
+                        kCGImageSourceShouldCacheImmediately: true,
+                    ] as CFDictionary) else {
+                        throw ApiRouter.Failure("unavailable", "Cannot decode AppIcon.icns for native board tabs")
+                    }
+                    images.append(image)
+                    size.width = max(size.width, CGFloat(image.width))
+                    size.height = max(size.height, CGFloat(image.height))
+                }
+                return (images, size)
+            }
+        }
+    }
+    private static var windowIconPrepared = false
+
+    static func prepareWindowIcon() async throws {
+        let pixels = try await windowIconPixels.value.get()
+        try Task.checkCancellation()
+        guard !windowIconPrepared else { return }
+        DevPerf.time("board.window.icon") {
+            let image = NSImage(size: pixels.size)
+            for pixels in pixels.images {
+                image.addRepresentation(NSBitmapImageRep(cgImage: pixels))
+            }
+            // Native tabs use the application icon. NSWindowTab has no public image setter.
+            // Keep every bundled size because this public property also supplies the Dock.
+            NSApp.applicationIconImage = image
+        }
+        windowIconPrepared = true
+    }
+
     static func makeWindow(isRemote: Bool) -> CanvasWindow {
+        precondition(windowIconPrepared, "Await prepareWindowIcon() before making a board window")
         let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.isExcludedFromWindowsMenu = true
