@@ -117,6 +117,7 @@ private enum SceneStacking {
         if failures > 0 { exit(1) }
         print("PASS mixed shape/tile render pixels, bottom-to-top order, native hit testing, reverse stacking commands, and unfilled interior pass-through")
         print("PASS snapshot stacking metadata and arrow/ink front/back transitions")
+        print("PASS normal and full-content render stacking pixels")
     }
 
     private static func writeFixture(to url: URL) throws {
@@ -146,8 +147,10 @@ private enum SceneStacking {
     }
 
     private static func pixel(_ output: RenderOutput) throws -> NSColor {
+        let x = Int((Double(sample.x) - output.canvasRect.x) * output.scale)
+        let y = Int((Double(sample.y) - output.canvasRect.y) * output.scale)
         guard let bitmap = NSBitmapImageRep(data: output.image),
-              let color = bitmap.colorAt(x: Int(sample.x), y: Int(sample.y))?.usingColorSpace(.sRGB) else {
+              let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
             throw NSError(domain: "SceneStacking", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Cannot decode rendered sample pixel"])
         }
@@ -161,22 +164,25 @@ private enum SceneStacking {
 
     private static func check(_ canvas: CanvasView, image: ObjectID, shape: ObjectID,
                               shapeInFront: Bool, label: String) async throws {
-        let output = try await render(canvas)
+        let normal = try await render(canvas)
+        let full = try await canvas.render(RenderRequest(target: .objects([image]), scale: 1, full: true, chrome: false), format: .png)
         let expected = shapeInFront ? [image, shape] : [shape, image]
-        require(output.objects.map(\.id) == expected,
-                "\(label) rendered bottom-to-top order must be \(expected), got \(output.objects.map(\.id))")
+        for (mode, output) in [("normal", normal), ("full", full)] {
+            require(output.objects.map(\.id) == expected,
+                    "\(label) \(mode) rendered bottom-to-top order must be \(expected), got \(output.objects.map(\.id))")
+            require(output.objects.first(where: { $0.id == image })?.state == .rendered,
+                    "\(label) \(mode) must render the real image tile, not a placeholder")
+            let color = try pixel(output)
+            if shapeInFront {
+                let otherChannels = max(color.greenComponent, color.blueComponent)
+                require(color.redComponent > 2 * otherChannels,
+                        "\(label) \(mode) must show the red shape over the cyan tile, got \(color)")
+            } else {
+                requireCyan(color, "\(label) \(mode) must show cyan, not an occluding red shape")
+            }
+        }
         require(canvas.visibleObjects(pixelsPerPoint: 1).map(\.id) == expected,
                 "\(label) snapshot metadata must report the same bottom-to-top order")
-        require(output.objects.first(where: { $0.id == image })?.state == .rendered,
-                "\(label) must render the real image tile, not a placeholder")
-        let color = try pixel(output)
-        if shapeInFront {
-            let otherChannels = max(color.greenComponent, color.blueComponent)
-            require(color.redComponent > 2 * otherChannels,
-                    "\(label) must show the red shape over the cyan tile, got \(color)")
-        } else {
-            requireCyan(color, "\(label) must show cyan, not an occluding red shape")
-        }
         checkHit(canvas, image: image, shape: shapeInFront ? shape : nil, label: label)
     }
 
