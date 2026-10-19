@@ -510,7 +510,7 @@ A browser tile's Snapshot to Image (its object menu; File › Snapshot Page to I
 
 ## Remote boards
 
-A remote board's window (docs/design.md "Client mode") speaks the host's API over two board-level `EaslConnection`s. One carries `events.subscribe`, reads, writes and prompts; the other carries renders. Each live browser streamed from a Mac host has an additional dedicated connection over the existing SSH transport.
+A remote board's window (docs/design.md "Client mode") speaks the host's API over two board-level `EaslConnection`s. The main connection carries `events.subscribe`, reads, writes, prompts and delegated calls, including render requests; the other carries diagram reloads. Each live browser streamed from a Mac host has an additional dedicated connection over the existing SSH transport.
 
 When the host is easld, the viewer sends `client.attach` with its persistent `identity` on the mirror's main connection. It serves `agent.prompt`, `agent.read`, `view.get`, `text.measure`, `view.render`, HTML `object.measure`, `object.reload` and `browser.call`. Terminal methods read or type through the attached surface. Drawing and HTML layout use the viewer's actual tiles and WebKit, never a delegated call back to easld. Diagram reload runs the Swift builder against host files and language servers, then returns its result for easld to validate and persist. Browser commands and reload use the real page on the named drawing Mac, including its retained background canvas. HTML re-renders on prop changes rather than accepting reload. `view.snapshot` stays unsupported. An app host receives no attach. A refused attach leaves board reads and edits working, without an attach retry loop.
 
