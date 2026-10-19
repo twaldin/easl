@@ -163,7 +163,8 @@ public enum PromptTarget {
         case .object(let id):
             guard let object = board.objects[id] else { return nil }
             switch object.type {
-            case .code, .image, .video: path = object.props["path"]?.string.map { board.absoluteURL($0).path }
+            case .code, .image: path = object.props["path"]?.string.map { board.absoluteURL($0).path }
+            case .video: path = object.props["path"]?.string.map { LocalImage.tileFile($0, root: board.root).path }
             case .changes: path = ChangesSpec(object.props).directory(boardRoot: board.root).path
             case .note, .html: path = board.linkRoot(of: object).path
             default: path = nil
