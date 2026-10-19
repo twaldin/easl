@@ -211,6 +211,35 @@ final class SocketServerTests {
         #expect(try await socketBytesUntilEOF(client.fd) == Data(repeating: 0x78, count: filled) + Data("older\n".utf8))
     }
 
+    @Test func aCanceledQueuedRefreshDoesNotPrecedeItsMotionReplacement() async throws {
+        let prepared = SocketSendSignal<Result<(SocketServer.Connection, Int), any Error>>()
+        let revision = SurfaceInputRevision()
+        let server = SocketServer(path: path) { _, connection in
+            do {
+                let filled = try fillSocket(connection.fd)
+                connection.send(line: "committed")
+                connection.send(encoded: Data("canceled refresh".utf8), whileCurrent: { revision.value == 0 })
+                connection.send(encoded: Data("other stream".utf8), whileCurrent: { true })
+                prepared.append(.success((connection, filled)))
+            } catch {
+                prepared.append(.failure(error))
+            }
+            return nil
+        }
+        try server.start()
+        defer { server.stop() }
+        let client = try LineClient(path: path)
+        client.send("{}")
+        let (connection, filled) = try await prepared.first().get()
+        revision.advance()
+        #expect(connection.send(line: "replacement motion"))
+        #expect(connection.send(line: "after"))
+        #expect(try await client.nextText() == String(repeating: "x", count: filled) + "committed")
+        #expect(try await client.nextText() == "other stream")
+        #expect(try await client.nextText() == "replacement motion")
+        #expect(try await client.nextText() == "after")
+    }
+
     @Test func anExpiredDeadlineDoesNotWriteAnyOfTheJSONLine() async throws {
         let admitted = SocketSendSignal<Bool>()
         let results = SocketSendSignal<Bool>()

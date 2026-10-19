@@ -108,7 +108,6 @@ final class TerminalTile: NSView, TileContent {
         pasteHostTarget = HostedTerminal.host(of: object)
         terminal = CanvasTerminalView(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         super.init(frame: terminal.frame)
-        terminal.autoresizingMask = [.width, .height]
         if let attach {
             terminal.configuration = TerminalSurfaceOptions(backend: .exec, workingDirectory: NSHomeDirectory(), envVars: [:], command: RemoteHost.terminalCommand(attach))
         } else {
@@ -150,7 +149,6 @@ final class TerminalTile: NSView, TileContent {
         if !isRemote { _ = resolvePasteDestination() }
         addSubview(terminal)
         underline.frame = bounds
-        underline.autoresizingMask = [.width, .height]
         underline.isHidden = true
         addSubview(underline)
         name = object.props["name"]?.string
@@ -749,7 +747,7 @@ final class TerminalTile: NSView, TileContent {
         if let text = surface?.readSelection(), !text.isEmpty {
             return .terminal(object: objectID, text: text)
         }
-        guard let surface, let grid, let cell = cell(at: point) else { return .object(objectID) }
+        guard let surface, let grid, let cell = cell(at: terminal.convert(point, from: self)) else { return .object(objectID) }
         refreshProgram()
         if let block = commandBlock(row: cell.row, column: cell.column) {
             return .terminal(object: objectID, text: block.output, part: .command, command: block.command)
@@ -774,7 +772,7 @@ final class TerminalTile: NSView, TileContent {
     static let rowsBefore = 8
     static let rowsAfter = 3
 
-    /// The viewport cell under `point` (this view's coordinates); nil in the padding.
+    /// The viewport cell under `point` in terminal coordinates; nil in the padding.
     private func cell(at point: NSPoint) -> (row: Int, column: Int)? {
         guard let grid else { return nil }
         let fromTop = terminal.bounds.height - point.y
@@ -1258,6 +1256,32 @@ final class TerminalTile: NSView, TileContent {
     func setLive(_ live: Bool) {
         isLive = live
         updateSurfaceVisibility()
+        if live { alignToPixels() }
+    }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        // AppKit's autoresizing rounds the shifted frame, losing the offset and growing its size.
+        if terminal.frame.size != bounds.size { terminal.setFrameSize(bounds.size) }
+        alignToPixels()
+    }
+
+    /// Ghostty's Metal surface is composited, not drawn by AppKit, so between device pixels it is
+    /// resampled and its text goes soft (on a 1x screen most of all). The surface keeps the tile's
+    /// size and moves by under a pixel onto the nearest one in window space; the tile's frame and
+    /// the board's scroll origin stay exact. Position and zoom come from the views' geometry
+    /// (`convert`), never `magnification`, so a pinch still settling is included.
+    func alignToPixels() {
+        guard let window else { return }
+        let shown = convert(NSPoint.zero, to: nil)
+        let origin = convert(PixelGrid.nearest(shown, pixelsPerPoint: window.backingScaleFactor), from: nil)
+        if terminal.frame.origin != origin { terminal.setFrameOrigin(origin) }
+        underline.frame = terminal.frame
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        alignToPixels()
     }
 
     /// Below this a terminal is a smudge, and Ghostty at ~0.1 zoom held ~235 MB of GPU memory
@@ -1289,6 +1313,7 @@ final class TerminalTile: NSView, TileContent {
                 + [(app, app.addObserver(forName: UserIdleWatch.changed, object: nil, queue: .main, using: changed))]
         }
         updateSurfaceVisibility()
+        alignToPixels()
     }
 
     /// AppKit posts these before `occlusionState` settles (`didMiniaturize` arrives with the

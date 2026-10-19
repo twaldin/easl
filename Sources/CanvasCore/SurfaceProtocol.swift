@@ -6,6 +6,7 @@ import Foundation
 public enum SurfaceRequest: Sendable, Equatable {
     case stream(tile: ObjectID, scale: Double, format: SurfaceFormat)
     case ack(stream: String, frame: Int)
+    case progress(stream: String, frame: Int, offset: Int)
     case input(stream: String, events: [SurfaceInputEvent])
     case answer(stream: String, dialog: String, SurfaceAnswer)
     case stop(stream: String)
@@ -15,7 +16,7 @@ public enum SurfaceRequest: Sendable, Equatable {
     /// Integers a JSON number carries exactly.
     static let maxInteger = 1 << 53
 
-    static let methods: Set<String> = ["surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"]
+    static let methods: Set<String> = ["surface.stream", "surface.ack", "surface.progress", "surface.input", "surface.answer", "surface.stop"]
 
     /// Nil for a method that isn't one of these; throws `invalid_params` for a malformed request.
     public init?(method: String, params: JSONValue) throws {
@@ -28,12 +29,16 @@ public enum SurfaceRequest: Sendable, Equatable {
             let scale = try p.number("scale") ?? 1
             guard scale > 0, scale <= Self.maxScale else { throw Self.invalid("scale must be above 0 and at most \(Self.maxScale)") }
             let format = try p.string("format", optional: true).map { name in
-                guard let parsed = SurfaceFormat(rawValue: name) else { throw Self.invalid("format must be jpeg or png") }
+                guard let parsed = SurfaceFormat(rawValue: name) else { throw Self.invalid("format must be jpeg, png or h264") }
                 return parsed
             } ?? .jpeg
             self = .stream(tile: tile, scale: scale, format: format)
         case "surface.ack":
             self = .ack(stream: try p.stream(), frame: try p.integer("frame", 0...Self.maxInteger))
+        case "surface.progress":
+            let offset = try p.integer("offset", 0...(SurfaceRefreshTransmission.maximumBytes - 1))
+            guard offset.isMultiple(of: SurfaceRefreshTransmission.chunkBytes) else { throw Self.invalid("offset must be aligned to 16384 bytes") }
+            self = .progress(stream: try p.stream(), frame: try p.integer("frame", 1...Self.maxInteger), offset: offset)
         case "surface.input":
             guard let list = p.values["events"]?.array else { throw Self.invalid("events must be an array") }
             guard (1...Self.maxBatch).contains(list.count) else { throw Self.invalid("events must hold 1 to \(Self.maxBatch) events") }
@@ -66,6 +71,7 @@ public enum SurfaceRequest: Sendable, Equatable {
 
 public enum SurfaceFormat: String, Sendable, Equatable {
     case jpeg, png
+    case h264 = "h264"
 }
 
 /// One `SurfaceInputEvent`: its sequence number on its stream and what it does.
@@ -238,18 +244,25 @@ public struct SurfaceAnswer: Sendable, Equatable {
 
 /// What a viewer receives (`SurfaceEvent`), sent only to its stream's own connection.
 public enum SurfaceEvent {
-    public struct Frame: Sendable {
+    public struct Frame: Sendable, Equatable {
         public static let maxPixels: Int = 4_000_000
 
-        /// Fits positive source dimensions at a finite positive relative ratio within the frame budget.
-        public static func fittedPixels(width: Int, height: Int, ratio: Double) -> (width: Int, height: Int) {
+        /// Fits positive source dimensions at a finite positive relative ratio within the coded frame budget.
+        public static func fittedPixels(width: Int, height: Int, ratio: Double, format: SurfaceFormat) -> (width: Int, height: Int) {
+            let minimum = format == .h264 ? 16 : 1
             let w = Double(width), h = Double(height), budget = Double(maxPixels)
-            // Single-axis caps account for the other axis's minimum of one pixel.
-            let scale = min(ratio, (budget / w / h).squareRoot(), budget / w, budget / h)
-            var fittedWidth = max(1, Int(min(budget, (w * scale).rounded(.down))))
-            let fittedHeight = max(1, Int(min(budget, (h * scale).rounded(.down))))
-            // Integer division keeps the bound exact even at floating-point rounding boundaries.
+            // Single-axis caps include the codec's minimum size on the other axis.
+            let axisBudget = budget / Double(minimum)
+            let scale = min(ratio, (budget / w / h).squareRoot(), axisBudget / w, axisBudget / h)
+            var fittedWidth = max(1, Int(min(axisBudget, (w * scale).rounded(.down))))
+            var fittedHeight = max(1, Int(min(axisBudget, (h * scale).rounded(.down))))
             fittedWidth = min(fittedWidth, maxPixels / fittedHeight)
+            // Preserve native pixels unless codec padding would exceed the budget.
+            if format == .h264,
+               max(16, (fittedWidth + 1) / 2 * 2) > maxPixels / max(16, (fittedHeight + 1) / 2 * 2) {
+                fittedWidth = max(1, fittedWidth / 2 * 2)
+                fittedHeight = max(1, fittedHeight / 2 * 2)
+            }
             return (fittedWidth, fittedHeight)
         }
 
@@ -268,6 +281,11 @@ public enum SurfaceEvent {
         public var back: Bool
         public var forward: Bool
         public var loading: Bool
+        public var refresh = false
+        public var supersedes: Int?
+        public var canvas: CGSize?
+        public var offset: Int?
+        public var total: Int?
 
         public init(stream: String, seq: Int, input: Int, size: CGSize, scale: Double, format: SurfaceFormat, data: Data, width: Int, height: Int,
                     back: Bool, forward: Bool, loading: Bool) {
@@ -276,12 +294,18 @@ public enum SurfaceEvent {
         }
 
         public var json: JSONValue {
-            .object([
+            var value: [String: JSONValue] = [
                 "stream": .string(stream), "seq": .number(Double(seq)), "input": .number(Double(input)),
                 "size": SurfaceEvent.size(size), "scale": .number(scale), "format": .string(format.rawValue),
                 "data": .string(data.base64EncodedString()), "width": .number(Double(width)), "height": .number(Double(height)),
                 "back": .bool(back), "forward": .bool(forward), "loading": .bool(loading),
-            ])
+            ]
+            if refresh { value["refresh"] = .bool(true) }
+            if let supersedes { value["supersedes"] = .number(Double(supersedes)) }
+            if let canvas { value["canvas"] = SurfaceEvent.size(canvas) }
+            if let offset { value["offset"] = .number(Double(offset)) }
+            if let total { value["total"] = .number(Double(total)) }
+            return .object(value)
         }
     }
 

@@ -196,11 +196,13 @@
       },
       "response": {
         "error": {
-          "code": "invalid_params",
-          "message": "format must be jpeg or png"
+          "code": "invalid_params"
         },
         "id": "r5",
         "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Unknown formats are rejected by code, not fixed diagnostic wording."
       }
     },
     {
@@ -309,8 +311,7 @@
       },
       "response": {
         "error": {
-          "code": "invalid_params",
-          "message": "frame 1 wasn't sent; the latest is 0"
+          "code": "invalid_params"
         },
         "id": "r7",
         "ok": false

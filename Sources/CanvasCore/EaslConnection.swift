@@ -110,12 +110,20 @@ public final class EaslConnection: @unchecked Sendable {
         public var isOpen: Bool { link?.isLive == true }
 
         /// Queues `line` on that link; false, and dropped, once the link is gone. Any thread.
+        /// `whileCurrent` may cancel an event until its first byte is written.
         @discardableResult
-        public func push(_ line: EventLine) -> Bool {
+        public func push(_ line: EventLine, whileCurrent: (@Sendable () -> Bool)? = nil) -> Bool {
             guard let link, link.isLive, let connection else { return false }
             connection.queue.async {
-                guard connection.link === link else { return }
-                connection.write(line.data, on: link)
+                guard connection.link === link, whileCurrent?() != false else { return }
+                for index in link.outboxHead..<link.outbox.count {
+                    if index == link.outboxHead, link.written > 0 { continue }
+                    if link.outbox[index].whileCurrent?() == false {
+                        link.pendingBytes -= link.outbox[index].data.count
+                        link.outbox[index] = Link.Output(data: Data(), whileCurrent: nil)
+                    }
+                }
+                connection.write(line.data, on: link, whileCurrent: whileCurrent)
             }
             return true
         }
@@ -648,10 +656,20 @@ public final class EaslConnection: @unchecked Sendable {
         }
     }
 
+    /// Room for ordinary queued output plus one maximum delegated reply and its newline.
+    private static let maxPending = SocketServer.Connection.maxPending + DelegatedCalls.maxReply + 1
+
     /// Sends `line` after what `link` hasn't written yet; dropped once the link stopped writing.
-    private func write(_ line: Data, on link: Link) {
+    private func write(_ line: Data, on link: Link, whileCurrent: (@Sendable () -> Bool)? = nil) {
         guard link.writer != nil else { return }
-        link.outbox.append(line)
+        guard line.count <= Self.maxPending - link.pendingBytes else {
+            link.stopWriting()
+            let generation = link.generation
+            queue.async { [weak self] in self?.lost(generation, reason: "pending output exceeded its byte budget") }
+            return
+        }
+        link.pendingBytes += line.count
+        link.outbox.append(Link.Output(data: line, whileCurrent: whileCurrent))
         // Lines already waiting hold the source, which writes this one after them.
         if link.outbox.count == 1 { flush(link) }
     }
@@ -664,15 +682,22 @@ public final class EaslConnection: @unchecked Sendable {
         var done = link.outboxHead
         while done < link.outbox.count {
             let line = link.outbox[done]
-            let count = line.withUnsafeBytes { bytes in
+            if line.data.isEmpty || (link.written == 0 && line.whileCurrent?() == false) {
+                link.pendingBytes -= line.data.count
+                link.outbox[done] = Link.Output(data: Data(), whileCurrent: nil)
+                done += 1
+                continue
+            }
+            let count = line.data.withUnsafeBytes { bytes in
                 let rest = UnsafeRawBufferPointer(rebasing: bytes[link.written...])
                 return Darwin.write(link.writeFD, rest.baseAddress, rest.count)
             }
             if count > 0 {
                 link.written += count
-                if link.written == line.count {
+                if link.written == line.data.count {
                     link.written = 0
-                    link.outbox[done] = Data()
+                    link.pendingBytes -= line.data.count
+                    link.outbox[done] = Link.Output(data: Data(), whileCurrent: nil)
                     done += 1
                 }
                 continue
@@ -769,8 +794,13 @@ private final class Link: @unchecked Sendable {
     /// so a link that never fills it gets no write events. Nil before `start` and once stopped.
     var writer: Writer?
     /// Cleared slots before `outboxHead` avoid shifting pending lines after every partial drain.
-    var outbox: [Data] = []
+    struct Output {
+        var data: Data
+        var whileCurrent: (@Sendable () -> Bool)?
+    }
+    var outbox: [Output] = []
     var outboxHead = 0
+    var pendingBytes = 0
     var written = 0
     var errors: Pipe?
     var buffer: [UInt8] = []
@@ -840,6 +870,7 @@ private final class Link: @unchecked Sendable {
         outbox = []
         outboxHead = 0
         written = 0
+        pendingBytes = 0
     }
 }
 
