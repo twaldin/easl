@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Create a fresh board from File › Open Board… or the tab bar's + button using the picker's New Folder button while a local board is in front. Folder creation is unavailable on remote tabs. A fresh independent board requires a folder outside a Git repository; a folder inside one opens the repository's board. Existing folders still open normally.
 - Remote renders use native viewer tiles and the browser's drawing Mac. Whole-board renders capture unseen browsers through the existing single-browser route without starting streams or accepting stale disconnected frames.
 - **HTML tiles load board data and scripts.** JSON, CSV, JavaScript, stylesheets, fonts, images and media use the board's host-file policy on local and remote boards. Loaded-file edits refresh the live page without reopening its tile; briefly parked pages resume without an unnecessary reload.
 - **Video clips play on the board.** Create a `video` tile with a board path, optional poster and playback flags, or use `<video>` inside HTML. Both hosts serve seekable bytes in bounded reads, without a viewer-disk copy. MP4/MOV dimensions support exact fitting on easld as well as the Mac. Video file-URI references keep their original source across caller checkouts and repository-board adoption.

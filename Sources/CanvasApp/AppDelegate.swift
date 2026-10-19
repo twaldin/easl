@@ -1412,11 +1412,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// One canvas per directory: choosing a folder opens (or brings forward) its board. A sheet,
     /// not `runModal`: a modal run loop would stall every socket request until the user answers.
     @objc func openBoard(_ sender: Any?) {
+        let controller = keyController
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
+        panel.canCreateDirectories = controller?.remote == nil
         panel.prompt = "Open Board"
-        let controller = keyController
         panel.directoryURL = controller?.remote == nil
             ? (Self.configuredBoardDirectory ?? controller?.board.root)
             : controller?.board.root

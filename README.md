@@ -57,6 +57,13 @@ Requires macOS 14 or later on Apple silicon. easl is signed with a Developer ID 
 4. Ask it something, like "what does this note say?". The chip goes with your prompt, and Get Started checks off both steps.
 5. Open your project with File › Open Board… (⇧⌘O), open a file as a code tile with ⌘O, and Hyper-click a line of it.
 
+To create a fresh, independent board, select a local board window and choose
+File › Open Board… or the tab bar's + button. Click **New Folder**, name a folder **outside any
+Git repository**, and choose **Open Board**. No existing easl data is required. A folder inside
+a Git repository opens that repository's board instead; it does not create an independent board.
+The picker operates on this Mac. While a remote board is active, **New Folder** is unavailable;
+opening existing folders keeps its previous behavior.
+
 To start in a different folder when opening easl from Finder, and use that folder as the starting
 point for File › Open Board… and the tab bar's + button on local boards or with no board open,
 set a default board directory:
