@@ -618,4 +618,21 @@ extension ObjectExpiryTests {
         #expect(reply["error"]?["code"] == "not_found")
         #expect(registry.boards[board.id] !== board)
     }
+
+    @Test func expiryTimerRearmsAfterClearingAndAfterFiring() async throws {
+        let deadline = ObjectExpiry(Date().addingTimeInterval(0.3))
+        let kept = board.create(type: .note, props: .object(["markdown": "kept"]), expires: deadline)
+        _ = try board.update(kept.id, expires: .set(nil))
+        let first = board.create(type: .note, props: .object(["markdown": "first"]), expires: deadline)
+        for index in 0..<50 {
+            _ = try board.update(kept.id, props: .object(["title": .string("status \(index)")]))
+        }
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(board.objects[kept.id]?.expires == nil)
+        #expect(board.objects[kept.id] != nil)
+        #expect(board.objects[first.id] == nil)
+        let second = board.create(type: .note, props: .object(["markdown": "second"]), expires: deadline)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(board.objects[second.id] == nil)
+    }
 }

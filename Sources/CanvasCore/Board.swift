@@ -205,17 +205,21 @@ public final class Board {
     /// Per terminal, the code tile its last ⌘-click opened or re-aimed and that tile's `rev`
     /// then (`openCode`); in memory only.
     var codePreviews: [ObjectID: (tile: ObjectID, rev: Int)] = [:]
-    var questionExpiry: DispatchWorkItem?
+    var questionExpiry: DispatchSourceTimer?
+    var questionExpiryDeadline: Date?
     /// The `archiveAfter` a new question that names none gets (`questionToCreate`): its host's
     /// setting, given by the registry that opened it (`BoardRegistry.open`); in memory, never saved.
     var defaultQuestionArchiveAfter = QuestionSpec.defaultArchiveAfter
     public private(set) var isClosed = false
+
+    deinit { questionExpiry?.cancel() }
 
     func deactivate() {
         isClosed = true
         terminalSessionStates = [:]
         questionExpiry?.cancel()
         questionExpiry = nil
+        questionExpiryDeadline = nil
         onChange = nil
         onEvent = nil
         onTerminalsEnded = nil
@@ -622,7 +626,7 @@ public final class Board {
         forgetComposerPrompts(of: id)
         let marked = attention.removeValue(forKey: id) != nil
         onChange?()
-        scheduleQuestionExpiry()
+        if removed.expires != nil || removed.type == .question { scheduleQuestionExpiry() }
         onEvent?(.objectDeleted(id))
         if tray.count != before { trayChanged() }
         if marked { onEvent?(.attentionChanged(object: id, attention: nil)) }
@@ -705,15 +709,17 @@ public final class Board {
     }
 
     private func commit(_ object: CanvasObject) {
+        let before = objects[object.id]
+        let affectsExpiry = before?.expires != object.expires || before?.type == .question || object.type == .question
         retainTerminalSessionIdentity(for: object)
         bumpRevision()
-        reindexKey(object.id, from: objects[object.id]?.props, to: object.props)
-        renamed(object.id, from: objects[object.id]?.props, to: object.props, type: object.type)
+        reindexKey(object.id, from: before?.props, to: object.props)
+        renamed(object.id, from: before?.props, to: object.props, type: object.type)
         objects[object.id] = object
         changedAt[object.id] = revision
         revHighWater[object.id] = max(revHighWater[object.id] ?? 0, object.rev)
         onChange?()
-        scheduleQuestionExpiry()
+        if affectsExpiry { scheduleQuestionExpiry() }
     }
 
     private func reindexKey(_ id: ObjectID, from old: JSONValue?, to new: JSONValue?) {

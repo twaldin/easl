@@ -506,8 +506,6 @@ extension Board {
     }
 
     public func scheduleQuestionExpiry(now: Date = Date()) {
-        questionExpiry?.cancel()
-        questionExpiry = nil
         guard !isRemote, !isClosed else { return }
         var next: Date?
         for object in objects.values {
@@ -518,19 +516,33 @@ extension Board {
                 next = next.map { min($0, deadline) } ?? deadline
             }
         }
-        guard let next else { return }
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.questionExpiry = nil
-                self.expireObjects()
-                self.expireQuestions()
-                self.archiveQuestions()
-                self.scheduleQuestionExpiry()
-            }
+        guard let next else {
+            questionExpiry?.cancel()
+            questionExpiry = nil
+            questionExpiryDeadline = nil
+            return
         }
-        questionExpiry = work
-        DispatchQueue.main.asyncAfter(wallDeadline: .now() + min(max(0, next.timeIntervalSince(now)), 24 * 3600), execute: work)
+        if questionExpiryDeadline == next, questionExpiry != nil { return }
+        questionExpiryDeadline = next
+        let timer: DispatchSourceTimer
+        if let existing = questionExpiry {
+            timer = existing
+        } else {
+            timer = DispatchSource.makeTimerSource(queue: .main)
+            timer.setEventHandler { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, !self.isClosed else { return }
+                    self.questionExpiryDeadline = nil
+                    self.expireObjects()
+                    self.expireQuestions()
+                    self.archiveQuestions()
+                    self.scheduleQuestionExpiry()
+                }
+            }
+            questionExpiry = timer
+            timer.resume()
+        }
+        timer.schedule(wallDeadline: .now() + min(max(0, next.timeIntervalSince(now)), 24 * 3600))
     }
 
     /// Questions still waiting on the user, oldest first (the board's open-asks count).
