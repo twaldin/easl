@@ -31,6 +31,7 @@ struct BoardStackingMigrationTests {
             let root = directory.appendingPathComponent("format-\(format ?? 0)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let store = BoardStore(directory: root.appendingPathComponent("boards"))
+            try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
             let original = snapshot(format: format, root: root)
             try BoardStore.encoder.encode(original).write(to: store.url(for: original.id))
 

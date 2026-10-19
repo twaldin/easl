@@ -77,6 +77,7 @@ struct RepoBoardTests {
         }
         for format in [nil, 1, 2, 3] as [Int?] {
             let store = BoardStore(directory: boards.appendingPathComponent("format-\(format ?? 0)"))
+            try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
             let existing = BoardSnapshot(format: format, id: BoardStore.repoID(commonDir: common), root: repo.root.path, revision: 19,
                                          objects: objects("obj_existing"), repo: RepoRecord(commonDir: common))
             let source = BoardSnapshot(format: format, id: BoardStore.pathID(repo.url("src")), root: repo.url("src").path, revision: 19,
