@@ -79,6 +79,9 @@ func (r *Router) boardClose(p map[string]any) (any, error) {
 	if err := r.reg.Close(b.ID(), func() error { return r.forgetClosed(b) }); err != nil {
 		return nil, closing.failure(err)
 	}
+	for _, terminal := range closing.terminals {
+		delete(r.startedSessions, terminal.ID)
+	}
 	r.dropOwnedSockets(closing.terminals)
 	r.closedBoard(closing)
 	kept := []any{}

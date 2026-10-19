@@ -77,7 +77,7 @@ final class ObjectExpiryTests {
         let deadline = try #require(relative.expires?.date)
         #expect(deadline.timeIntervalSince(start) >= 4500)
         #expect(deadline.timeIntervalSinceNow <= 4500)
-        let absolute = try await create(["expires": "2099-01-02T03:04:05.250+02:00"])
+        let absolute = try await create(["expires": "2099-01-02t03:04:05.250+02:00"])
         let stamp = try #require(JSONValue(absolute)["expires"]?.string)
         #expect(QuestionSpec.date(stamp) == QuestionSpec.date("2099-01-02T01:04:05.250Z"))
         #expect(stamp.hasSuffix("Z"))
@@ -192,6 +192,17 @@ final class ObjectExpiryTests {
         #expect(batch["error"] != nil)
         #expect(try board.object(id).expires == updated.expires)
         #expect(try board.object(id).props == updated.props)
+    }
+
+    @Test func expiryOnlyEditsRemainVisibleInBoardHistory() throws {
+        let object = board.create(type: .note, props: .object(["markdown": "history"]))
+        let cursor = board.activity.query(since: nil, limit: 100).cursor
+        _ = try board.update(object.id, expires: .set(ObjectExpiry(Date().addingTimeInterval(3600))))
+        _ = try board.update(object.id, expires: .set(nil))
+        let entries = board.activity.query(since: .seq(cursor), limit: 100).entries
+        #expect(entries.map(\.kind) == [.updated, .updated])
+        #expect(entries.map(\.id) == [object.id, object.id])
+        #expect(entries.map(\.rev) == [2, 3])
     }
 
     @Test func zeroDeadlineAndNormalUndoRestoreExpiryWithoutExtraWrites() throws {

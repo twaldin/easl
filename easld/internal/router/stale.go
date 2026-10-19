@@ -20,10 +20,15 @@ func (r *Router) boardStale(p map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	observed := map[string]model.Object{}
+	type observedTerminal struct {
+		object  model.Object
+		started bool
+	}
+	observed := map[string]observedTerminal{}
 	for id, o := range b.Objects() {
 		if o.Type == model.Terminal && board.TerminalHost(o) == "" {
-			observed[id] = o
+			started, known := r.startedSessions[id]
+			observed[id] = observedTerminal{o, known && started.board == b && started.createdAt.Equal(o.CreatedAt)}
 		}
 	}
 	sessions := r.ownSessions()
@@ -36,7 +41,8 @@ func (r *Router) boardStale(p map[string]any) (any, error) {
 	}
 	exited := map[string]bool{}
 	if sessions != nil {
-		for id, before := range observed {
+		for id, observation := range observed {
+			before := observation.object
 			o, exists := b.Objects()[id]
 			if !exists || o.Rev != before.Rev || !o.CreatedAt.Equal(before.CreatedAt) || b.AwaitsRelaunchedAgent(id) {
 				continue
@@ -45,7 +51,7 @@ func (r *Router) boardStale(p map[string]any) (any, error) {
 				continue
 			}
 			s, listed := sessions[id]
-			if !listed {
+			if !listed && observation.started {
 				exited[id] = true
 			} else if !s.Unreachable && s.Carries(r.Owns.Labels(b.ID(), id), mergedInto(b)...) && s.Ended {
 				exited[id] = true

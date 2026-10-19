@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/model"
@@ -35,6 +36,11 @@ type lifecycle struct {
 // a sweep for orphans.
 type sessionJob func()
 
+type startedSession struct {
+	board     *board.Board
+	createdAt time.Time
+}
+
 // terminals is the registry's Board.OnTerminals, under its lock: the sessions of the owned
 // terminals (no `props.host`: a hosted one's is its Mac's to start and end) a step created and
 // ended are started and ended once the request that closed it has let go of the lock.
@@ -50,6 +56,7 @@ func (r *Router) terminals(b *board.Board, created, ended []model.Object) {
 		r.queueSession(func() { r.startSession(b, o, spawn) })
 	}
 	for _, o := range ended {
+		delete(r.startedSessions, o.ID)
 		if board.TerminalHost(o) != "" {
 			continue
 		}
@@ -177,9 +184,24 @@ func (r *Router) startSession(b *board.Board, o model.Object, spawn session.Spaw
 		r.sessionFailed(b, o, "easld couldn't start its session: "+err.Error())
 		return
 	}
+	r.sessionStarted(b, o)
 	if created && r.Log != nil {
 		fmt.Fprintf(r.Log, "easld: terminal %s of board %s %s\n", o.ID, b.ID(), startNote(o.Props))
 	}
+}
+
+func (r *Router) sessionStarted(b *board.Board, o model.Object) {
+	r.reg.Mu.Lock()
+	defer r.reg.Mu.Unlock()
+	current, open := r.reg.Board(b.ID())
+	terminal, present := b.Objects()[o.ID]
+	if !open || current != b || !present || !terminal.CreatedAt.Equal(o.CreatedAt) {
+		return
+	}
+	if r.startedSessions == nil {
+		r.startedSessions = map[string]startedSession{}
+	}
+	r.startedSessions[o.ID] = startedSession{board: b, createdAt: o.CreatedAt}
 }
 
 // startNote is what a new session of terminal `props` runs (session.InitialArgv), and why: the

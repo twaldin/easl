@@ -109,3 +109,23 @@ func TestBoardStaleDurationValidationAndZeroAge(t *testing.T) {
 		t.Fatalf("zero age = %v", got)
 	}
 }
+
+func TestBoardStaleDoesNotInferExitBeforeQueuedStart(t *testing.T) {
+	f, _ := owning(t)
+	cleanupExpiryFixture(t, f)
+	f.router.holdSessions()
+	t.Cleanup(func() {
+		f.router.StartSessions()
+		f.router.reg.Mu.Lock()
+		queued := f.router.queuedSessions()
+		f.router.reg.Mu.Unlock()
+		f.router.waitSessions(queued)
+	})
+	f.router.reg.Mu.Lock()
+	o := f.board.Create("terminal", map[string]any{"name": "starting"}, nil, "", "")
+	f.router.reg.Mu.Unlock()
+	got := f.result("board.stale", map[string]any{})["objects"]
+	if !reflect.DeepEqual(got, []any{}) {
+		t.Fatalf("terminal %s has not started, but stale returned %v", o.ID, got)
+	}
+}

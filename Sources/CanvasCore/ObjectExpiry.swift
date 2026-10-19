@@ -36,7 +36,7 @@ public struct ObjectExpiry: Codable, Equatable, Sendable {
         let digits = text.index(after: point)
         let end = text[digits...].firstIndex { !$0.isNumber } ?? text.endIndex
         guard let fraction = Double("0." + text[digits..<end]),
-              let whole = QuestionSpec.date(String(text[..<point]) + text[end...].uppercased()) else { return nil }
+              let whole = QuestionSpec.date(String(text[..<point]).uppercased() + text[end...].uppercased()) else { return nil }
         return whole.addingTimeInterval(fraction)
     }
 
