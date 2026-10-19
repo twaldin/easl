@@ -25,7 +25,7 @@ struct BoardStackingMigrationTests {
         ])
     }
 
-    @Test func legacySavedBoardsKeepTheirVisibleTiersAndSameTierOrder() throws {
+    @Test func legacySavedBoardsKeepTheirVisibleTiersAndSameTierOrder() async throws {
         defer { try? FileManager.default.removeItem(at: directory) }
         for format in [nil, 1, 2] as [Int?] {
             let root = directory.appendingPathComponent("format-\(format ?? 0)")
@@ -34,7 +34,7 @@ struct BoardStackingMigrationTests {
             let original = snapshot(format: format, root: root)
             try BoardStore.encoder.encode(original).write(to: store.url(for: original.id))
 
-            let board = store.load(root: root, id: original.id)
+            let board = await store.load(root: root, id: original.id)
             let saved = board.snapshot
             #expect(saved.format == 3)
             #expect(saved.objects.map(\.id) == ["obj_group_a", "obj_group_z", "obj_tile_low", "obj_tile_a", "obj_tile_z", "obj_ink_a", "obj_shape_b", "obj_arrow", "obj_text"])
@@ -53,13 +53,13 @@ struct BoardStackingMigrationTests {
             try store.saveChecked(board)
             let onDisk = try BoardStore.decoder.decode(BoardSnapshot.self, from: Data(contentsOf: store.url(for: board.id)))
             #expect(onDisk.format == 3 && onDisk.objects == saved.objects)
-            let reopened = BoardStore(directory: store.directory).load(root: root, id: board.id)
+            let reopened = await BoardStore(directory: store.directory).load(root: root, id: board.id)
             #expect(reopened.objects == board.objects)
             #expect(reopened.revision == 19 && !reopened.history.canUndo)
         }
     }
 
-    @Test func format3KeepsLiteralZAcrossRestackingSavingAndReopening() throws {
+    @Test func format3KeepsLiteralZAcrossRestackingSavingAndReopening() async throws {
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let original = snapshot(format: 3, root: directory)
@@ -70,7 +70,7 @@ struct BoardStackingMigrationTests {
         try board.update("obj_tile_low", z: -100)
         let store = BoardStore(directory: directory.appendingPathComponent("boards"))
         try store.saveChecked(board)
-        let reopened = BoardStore(directory: store.directory).load(root: directory, id: board.id)
+        let reopened = await BoardStore(directory: store.directory).load(root: directory, id: board.id)
         #expect(reopened.snapshot.objects.map(\.z) == [-100, -40, -40, -10, 5, 500, 500, 700, 900])
         #expect(reopened.snapshot.objects.map(\.id) == ["obj_tile_low", "obj_ink_a", "obj_shape_b", "obj_arrow", "obj_text", "obj_tile_a", "obj_tile_z", "obj_group_a", "obj_group_z"])
         #expect(try reopened.object("obj_tile_low").z == -100)
