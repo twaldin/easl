@@ -2,7 +2,52 @@
 
 Each version's section is its GitHub release's notes.
 
-## Unreleased
+## 0.3.0
+
+Deckbox-hosted boards on easld now work fully from a Mac. Browser relay, host-backed HTML and video, shared stacking, and whole-board rendering complete the remote-board work deferred from 0.2.8.
+
+**easld and the app should match.** Update the Macs that view or draw boards and easld together. The coordinator deploys easld on deckbox right after the apps update. Running terminal sessions keep going.
+
+The changes since 0.2.8 that need the new easld are:
+
+- Browser relay, drawing-Mac switching, and streamed uploads (#143), plus the relay's adaptive video and refresh handling (#151).
+- The `video` object type and exact video fitting (#141). HTML host assets, host-private HTTP, seekable byte reads, and GIF animation ship with the viewer.
+- Late delegated diagram failures (#147).
+- Browser-owner render routing (#157), including unseen-browser snapshots in whole-board renders (#160).
+- Shared stacking and board format 3 (#158).
+- Object expiry and `board.stale` (#159).
+
+The other changes are Mac-side: terminal sharpness and scrolling (#99, #100), terminal HTML links (#101), the default board directory and New Folder picker (#150, #155), asynchronous board loading (#146), host-file transport and batching (#154 and the file-read part of #160), and automatic updates (#152, #156). Remote-use deferral needs updated drawing or hosting Macs and viewers; it does not update easld.
+
+**Mixed versions.** Both releases use API schema version 2, so neither pairing is refused solely for its version. A 0.3.0 app can view and edit a board on 0.2.8 easld, but that host lacks browser relay and switching, video objects and fitting, expiry and stale listing, late diagram failures, and browser-owner render routing. New methods or parameters are refused rather than added by the app update. Viewer-side HTML assets, HTTP, GIFs, file-read improvements, and closed-board inspection still work. Mixed shape/tile restacking is not preserved when that old host saves and the board later migrates to format 3.
+
+A 0.2.8 app can view and edit objects it knows on 0.3.0 easld, but it does not gain the new viewer features or serve relayed browser streams. A board containing the new `video` type cannot be decoded by that app. Update all viewers before adding video tiles.
+
+**Board format 3.** Both new hosts migrate older boards once, preserving their previous visible stacking before allowing drawings and tiles to share one order. A 0.2.8 Mac app opens a format-3 board containing only types it knows, but draws shapes and arrows above tiles again. Saving with that app writes format 2 with the object's z values, not the format-3 stacking semantics. On the next 0.3.0 load, migration restores the old tiers and renumbers z, losing any mixed drawing/tile order. A 0.2.8 easld instead refuses a format-3 file and leaves it unchanged. Do not open or save upgraded boards with older hosts.
+
+**Auto-update.** "Install Updates Automatically" in Settings is off by default. When on, it installs after 10 minutes with no local or remote use. Explicit installation still proceeds immediately and reports which remote sessions it interrupts.
+
+**Updating from 0.2.4 or 0.2.6.** The update still runs the installed version's own install helper. If Update in 0.2.4 stops with nothing replaced, quit easl and install 0.3.0 from its zip on [GitHub Releases](https://github.com/twaldin/easl/releases), or run `brew upgrade --cask easl` for a Homebrew install. The install-helper fix shipped in 0.2.5, so 0.2.6 can use Check for Updates normally.
+
+### Remote performance
+
+Candidate `18ed11b` was measured in two headless macOS guests on home's network, viewing a scratch easld on deckbox. Each browser action has 30 samples per path. Median / p95 completion times, in milliseconds:
+
+| Browser action | Local WebKit, no stream | Second-Mac relay |
+|---|---:|---:|
+| Click | 105 / 139 | 243 / 2,901 |
+| Typing | 119 / 149 | 252 / 491 |
+| Scroll | 107 / 141 | 244 / 621 |
+
+All 180 browser observations completed. These are native-capture-observed completion times, not intrinsic input-to-pixel latency. The capture pipeline alone measured 104 / 132 ms; intrinsic local latency is not resolved. The relay uses the candidate's H.264-negotiating path with adaptive fallback. Network, codec and scheduling contributions were not isolated. Relay-click outliers remain in the distribution; this is not a controlled attribution to an app change.
+
+Thirty opens of the 50-image board all drew every image, with zero open/offline errors: median first full draw **2.045 s**, p95 **4.509 s**, maximum **5.301 s**. HTML first-paint proxy, measured after host JSON rendered and two WebKit animation frames: **447 / 729 ms**. This proxy is not a physical presentation timestamp. Host-language-server ⌘-click navigation, including observed native code pixels: **1.457 / 3.460 s**, after three labelled warmups; this measurement includes a 150 ms input-helper wait, polling and capture overhead.
+
+On 2026-10-19 at 22:17–22:19 UTC, application round trips over the approved guest→home→deckbox route measured **34.97 / 49.91 ms**. Five hash-verified fresh-SSH 8 MiB transfers per direction measured median **8.78 Mbit/s** deckbox→guest and **9.11 Mbit/s** guest→deckbox. Home→deckbox ICMP measured **33.33 / 121.15 ms**, with 30/30 replies. Direct guest→deckbox ICMP received 0/30 replies. Application RPC is not ICMP RTT. These measurements describe this route and session, not promised capacity or latency.
+
+The relayed-browser click tail (p95 2.9 s) is being investigated for 0.3.1.
+
+### Changes
 
 - Mac boards read their files and check saved anchors off the main thread. Tiles appear before Git checks finish. Unverified anchor metadata stays out of API replies and events, then allowed anchors return without object revisions or undo steps. Undo and redo retain allowed anchors in local and remote viewers. Local and remote windows build their native shell and contents, then appear, on separate main-loop wakes, with shared preparation for concurrent opens. Client metadata loads off the main thread. Startup preserves saved tabs through interrupted restoration and registers background-only loads before API requests resume. Update tab restoration preserves separate groups, restores minimized groups without first showing them, and retains their native Window-menu entries. It does not hold the API behind remote connections and keeps the app running if a concurrent window closes. Closing during a pending open detaches terminal frontends before ending their sessions.
 - Native board preparation decodes the app icon off main and preserves Retina representation sizes; a missing or damaged icon no longer prevents windows opening. Terminal command-path checks, shell probes and font-family discovery run off main, and delayed surfaces cannot attach to closed boards or closed remote hosts.
