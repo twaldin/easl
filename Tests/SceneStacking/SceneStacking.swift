@@ -28,7 +28,7 @@ private enum SceneStacking {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeFixture(to: root.appendingPathComponent("cyan.png"))
         let board = Board(id: "scene-stacking-regression", root: root)
-        let canvas = CanvasView(board: board)
+        let canvas = CanvasView(board: board, viewport: nil)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false

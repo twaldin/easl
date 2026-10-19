@@ -458,10 +458,10 @@ final class DiagramTests {
 
     /// A router computing diagrams with `languages` as the app does on a board without a window,
     /// and a client on its socket.
-    func api(_ languages: LanguageService) throws -> (board: Board, router: ApiRouter, server: SocketServer, client: LineClient) {
+    func api(_ languages: LanguageService) async throws -> (board: Board, router: ApiRouter, server: SocketServer, client: LineClient) {
         let home = dir.appendingPathComponent(".home")
         let registry = BoardRegistry(store: BoardStore(directory: home.appendingPathComponent("boards"), debounce: 60))
-        let board = registry.open(root: dir)
+        let board = await registry.open(root: dir)
         let router = ApiRouter(registry: registry)
         router.refreshDiagram = { board, tile in
             let graph = try await DiagramRefresh.run(tile, on: board, languages: languages)
@@ -488,7 +488,7 @@ final class DiagramTests {
     /// the tile to it.
     @Test func aDiagramCreatedWithSizeFitWaitsForItsFirstGraphAndFitsIt() async throws {
         let slow = lateServer(2)
-        let (board, _, server, client) = try api(slow)
+        let (board, _, server, client) = try await api(slow)
         defer { server.stop() }
         func create(_ params: String) async throws -> JSONValue {
             client.send(#"{"id":"1","method":"object.create","params":{"type":"diagram","size":"fit",\#(params)}}"#)
@@ -550,7 +550,7 @@ final class DiagramTests {
     /// past the router's wait: each answers with the graph not loaded, and the computation goes on.
     @Test func aDiagramWaitEndsAtItsTimeoutWhileTheServerHasntAnswered() async throws {
         let late = lateServer(120)
-        let (board, router, server, client) = try api(late)
+        let (board, router, server, client) = try await api(late)
         defer { server.stop() }
         router.diagramTimeoutMs = 500
         client.send(#"{"id":"1","method":"object.create","params":{"type":"diagram","size":"fit",\#(Self.callersProps)}}"#)
@@ -578,7 +578,7 @@ final class DiagramTests {
         ])
         defer { Task { await failing.stopAll() } }
         let previous = try await build(Self.callers)
-        let (board, _, server, client) = try api(failing)
+        let (board, _, server, client) = try await api(failing)
         defer { server.stop() }
         let diagram = board.create(type: .diagram, props: .object([
             "path": "Sources/Lib/Spool.swift", "symbol": "Spool.read", "direction": "incoming", "depth": 1, "graph": previous.json

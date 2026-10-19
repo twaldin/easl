@@ -13,11 +13,11 @@ final class AgentMessageTests {
     let board: Board
     var typed: [String] = []
 
-    init() throws {
+    init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("other"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        board = registry.open(root: dir.appendingPathComponent("root"))
+        board = await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry)
         self.router = router
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
@@ -159,7 +159,7 @@ final class AgentMessageTests {
             let reply = try await call(client, "agent.wait", params)
             return reply["result"]?["agent"]?["tile"] ?? reply["error"] ?? .null
         }
-        let other = registry.open(root: dir.appendingPathComponent("other"))
+        let other = await registry.open(root: dir.appendingPathComponent("other"))
         let here = terminal("reviewer"), there = terminal("reviewer", on: other), lead = terminal("lead")
 
         #expect(try await resolved("reviewer@root") == .string(here))
@@ -360,7 +360,7 @@ final class AgentMessageTests {
             let reply = try await call(client, "agent.wait", params)
             return reply["result"]?["agent"]?["tile"] ?? reply["error"] ?? .null
         }
-        let other = registry.open(root: dir.appendingPathComponent("other"))
+        let other = await registry.open(root: dir.appendingPathComponent("other"))
         let renamed = terminal("reviewer"), elsewhere = terminal("reviewer", on: other)
         let lead = terminal("lead"), scout = terminal("scout", on: other)
         _ = try board.update(renamed, props: .object(["name": "critic"]))
@@ -379,7 +379,7 @@ final class AgentMessageTests {
         let client = try connect()
         let roots = ["a/client", "b/client", "gone"].map { dir.appendingPathComponent($0) }
         for root in roots { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true) }
-        let (first, second, archived) = (registry.open(root: roots[0]), registry.open(root: roots[1]), registry.open(root: roots[2]))
+        let (first, second, archived) = (await registry.open(root: roots[0]), await registry.open(root: roots[1]), await registry.open(root: roots[2]))
         try FileManager.default.removeItem(at: roots[2])
         let tiles: [(ObjectID, String)] = [
             (terminal("reviewer", on: first), "reviewer@\(first.id)"),
@@ -415,7 +415,7 @@ final class AgentMessageTests {
         _ = try await sent(client, ["target": "reviewer", "text": "Nightly failed.", "from": "machine-watch", "when": "next-turn"])
         registry.store.save(board)
 
-        let reloaded = registry.store.load(root: dir.appendingPathComponent("root"))
+        let reloaded = await registry.store.load(root: dir.appendingPathComponent("root"))
         let saved = try #require(board.messages[reviewer]), loaded = try #require(reloaded.messages[reviewer])
         #expect(loaded.map(\.id) == saved.map(\.id))
         for (was, now) in zip(saved, loaded) {

@@ -12,11 +12,11 @@ final class KeyTests {
     let client: LineClient
     var sequence = 0
 
-    init() throws {
+    init() async throws {
         let root = dir.appendingPathComponent("root")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        board = registry.open(root: root)
+        board = await registry.open(root: root)
         let router = ApiRouter(registry: registry)
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
             await router.handle(request, connection: connection)

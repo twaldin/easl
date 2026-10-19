@@ -180,7 +180,7 @@ struct WorktreeTests {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let registry = BoardRegistry(store: BoardStore(directory: home.appendingPathComponent("boards"), debounce: 60))
-        let board = registry.open(root: repo.root)
+        let board = await registry.open(root: repo.root)
         let router = ApiRouter(registry: registry)
         let server = SocketServer(path: home.appendingPathComponent("s").path) { request, connection in
             await router.handle(request, connection: connection)
@@ -253,7 +253,7 @@ struct WorktreeTests {
     /// user opened the board from.
     @Test func aDiagramIsOfItsRootsCheckout() async throws {
         let (repo, worktree) = try await fixture()
-        let board = BoardRegistry(store: BoardStore(directory: URL(fileURLWithPath: repo.root.path + "-boards"), debounce: 60)).open(root: repo.root)
+        let board = await BoardRegistry(store: BoardStore(directory: URL(fileURLWithPath: repo.root.path + "-boards"), debounce: 60)).open(root: repo.root)
         let fees = agent(on: board, in: worktree)
         let languages = LanguageService(configs: [])
         func scope(_ props: JSONValue, caller: ObjectID? = nil) async throws -> String {
@@ -263,7 +263,7 @@ struct WorktreeTests {
         #expect(try await scope(.object(["symbol": .string("fee"), "path": .string("src/fees.ts")])) == board.root.path)
         #expect(try await scope(.object(["symbol": .string("fee")]), caller: fees.id) == worktree.path, "a bare symbol: where its agent works")
         #expect(try await scope(.object(["symbol": .string("fee")])) == board.root.path)
-        board.opened(from: try #require(GitWorktree.containing(worktree.path)))
+        board.opened(from: WorktreeVisit(try #require(GitWorktree.containing(worktree.path))))
         #expect(board.workingRoot.path == worktree.path)
         #expect(try await scope(.object(["symbol": .string("fee")])) == worktree.path, "the user's: the checkout they opened")
     }

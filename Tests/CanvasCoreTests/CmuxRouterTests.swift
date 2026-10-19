@@ -13,10 +13,10 @@ final class CmuxRouterTests {
     var performed: [(ObjectID, CmuxBrowserCommand)] = []
     var drivers: [ObjectID?] = []
 
-    init() throws {
+    init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        board = registry.open(root: dir.appendingPathComponent("root"))
+        board = await registry.open(root: dir.appendingPathComponent("root"))
     }
 
     deinit {

@@ -13,10 +13,10 @@ final class ViewerHistoryTests {
     let viewer = "vw_0123456789ABCDEFGH"
     let other = "vw_otherwindow01"
 
-    init() throws {
+    init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        board = registry.open(root: dir.appendingPathComponent("root"))
+        board = await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry)
         self.router = router
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in

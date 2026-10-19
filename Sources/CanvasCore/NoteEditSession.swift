@@ -19,34 +19,44 @@ public final class NoteEditSession {
     public private(set) var conflicted = false
     /// Our own save echoes back as an update; it isn't someone else's change.
     private var writing = false
+    private var revision: Int
+    private var latest: String
 
     public init(_ object: CanvasObject) {
         objectID = object.id
         base = object.props["markdown"]?.string ?? ""
+        revision = object.rev
+        latest = base
     }
 
     /// A new revision of the note arrived while editing.
     public func observe(_ object: CanvasObject) {
-        guard !writing, object.id == objectID, (object.props["markdown"]?.string ?? "") != base else { return }
-        conflicted = true
+        guard !writing, object.id == objectID else { return }
+        let markdown = object.props["markdown"]?.string ?? ""
+        if object.rev != revision, markdown != latest { conflicted = true }
+        revision = object.rev
+        latest = markdown
     }
 
     /// Save `text`. `confirmed` is the user's explicit "save mine" (⌘↩); it overwrites only a
     /// conflict that was already shown, so a change detected at this very commit is shown first.
     public func commit(_ text: String, confirmed: Bool, on board: Board) throws -> Outcome {
         let current = try board.object(objectID)
+        let confirmedConflict = conflicted && confirmed
+        observe(current)
         let theirs = current.props["markdown"]?.string ?? ""
-        if theirs != base, !(conflicted && confirmed) {
-            conflicted = true
+        if conflicted, !confirmedConflict {
             return .conflict
         }
-        guard text != theirs else { return .unchanged }
+        guard text != theirs, conflicted || text != base else { return .unchanged }
         writing = true
         defer { writing = false }
         // Main-actor isolation makes the check and the write atomic; the current `rev` is passed
         // because a change that isn't to the markdown (a moved frame) is not a conflict.
-        try board.update(objectID, rev: current.rev, props: .object(["markdown": .string(text)]))
+        let updated = try board.update(objectID, rev: current.rev, props: .object(["markdown": .string(text)]))
         base = text
+        revision = updated.rev
+        latest = text
         conflicted = false
         return .saved
     }

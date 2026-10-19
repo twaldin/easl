@@ -26,7 +26,7 @@ final class LayoutApiTests {
     let client: LineClient
     var sequence = 0
 
-    init() throws {
+    init() async throws {
         let root = dir.appendingPathComponent("root")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         // 100 lines; line 12 is a tab plus 60 x's (64 columns), line 50 is the longest in the file.
@@ -35,7 +35,7 @@ final class LayoutApiTests {
         lines[49] = String(repeating: "y", count: 120)
         try lines.joined(separator: "\n").write(to: root.appendingPathComponent("src.txt"), atomically: true, encoding: .utf8)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        board = registry.open(root: root)
+        board = await registry.open(root: root)
         let router = ApiRouter(registry: registry)
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
             await router.handle(request, connection: connection)

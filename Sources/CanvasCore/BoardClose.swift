@@ -39,3 +39,18 @@ public struct BoardCloseResult: Sendable {
                  "kept": .array(kept.map(\.json)), "ended": .array(ended.map(\.json))])
     }
 }
+
+extension Board {
+    /// A window opened during shutdown must not start the session again.
+    public func beginEndingSession(_ id: ObjectID) {
+        endingSessions.insert(id)
+    }
+
+    public func endEndingSession(_ id: ObjectID) {
+        endingSessions.remove(id)
+    }
+
+    public func isEndingSession(_ id: ObjectID) -> Bool {
+        endingSessions.contains(id)
+    }
+}

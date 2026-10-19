@@ -16,10 +16,10 @@ final class BoardMirrorTests {
     /// What each host terminal was sent, in order.
     var typed: [ObjectID: [String]] = [:]
 
-    init() throws {
+    init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
-        host = registry.open(root: dir.appendingPathComponent("root"))
+        host = await registry.open(root: dir.appendingPathComponent("root"))
         router = ApiRouter(registry: registry)
         server = Self.serve(router, at: dir.appendingPathComponent("s").path)
         try server.start()
@@ -1119,7 +1119,7 @@ final class BoardMirrorTests {
         #expect(pasted == ["\(terminal.id): before close"])
         #expect(easld.prompts.count == 1)
         #expect(easld.attaches.count == 1)
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         _ = try reopened.update(edited.id, props: .object(["markdown": "after reopen"]))
         try await eventually {
             mirror.availability == .open && mirror.attachment == .attached(client: "cli_1", version: 1)
@@ -1168,7 +1168,7 @@ final class BoardMirrorTests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(mirror.availability == .closed)
         #expect(board.objects[edited.id] == final)
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         _ = try reopened.update(edited.id, props: .object(["markdown": "fresh reopen"]))
         try await eventually { mirror.availability == .open && board.objects[edited.id] == reopened.objects[edited.id] }
         #expect(board.objects[edited.id]?.props["markdown"] == .string("fresh reopen"))
@@ -1206,7 +1206,7 @@ final class BoardMirrorTests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(board.objects[page.id] == page)
         #expect(mirror.availability == .closed)
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         _ = try reopened.update(page.id, props: .object(["html": "<p>Reopened whole</p>"]))
         try await eventually { mirror.availability == .open && board.objects[page.id] == reopened.objects[page.id] }
         #expect(board.objects[page.id]?.props["html"] == .string("<p>Reopened whole</p>"))
@@ -1259,7 +1259,7 @@ final class BoardMirrorTests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(board.objects == [edited.id: edited])
         #expect(writes.withLock { $0.count } == 1)
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         try await eventually { mirror.availability == .open }
         _ = try board.update(edited.id, props: .object(["markdown": "new lifetime write"]))
         try await eventually { reopened.objects[edited.id]?.props["markdown"] == .string("new lifetime write") }
@@ -1301,7 +1301,7 @@ final class BoardMirrorTests {
         #expect(mirror.attachment == .waiting)
         #expect(attaches.withLock { $0.count } == 1)
         #expect(board.objects[terminal.id] == terminal)
-        _ = registry.open(root: host.root)
+        _ = await registry.open(root: host.root)
         try await eventually { mirror.availability == .open && mirror.attachment == .attached(client: "cli_1", version: 1) }
         try await mirror.prompt("after attachment recovered", to: terminal.id, mentions: [], answer: false)
         #expect(typed[terminal.id] == ["after attachment recovered"])
@@ -1335,7 +1335,7 @@ final class BoardMirrorTests {
             #expect(mirror.attachment == .waiting)
             #expect(easld.attaches.count == 1)
         }
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         _ = try reopened.update(edited.id, props: .object(["markdown": "fresh after reconnect"]))
         try reopened.delete(gone.id)
         let added = reopened.create(type: .note, props: .object(["markdown": "created after reopen"]))
@@ -1369,7 +1369,7 @@ final class BoardMirrorTests {
             #expect(failure.code == "not_found")
         }
         for unloaded in mirrors where unloaded.board == nil { unloaded.close() }
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         _ = try reopened.update(edited.id, props: .object(["markdown": "present again"]))
         try await eventually { mirror.availability == .open && board.objects[edited.id] == reopened.objects[edited.id] }
         #expect(board.objects[edited.id]?.props["markdown"] == .string("present again"))
@@ -1420,7 +1420,7 @@ final class BoardMirrorTests {
         }
         if closeBoard {
             #expect(typed[terminal.id] == ["before refusal"])
-            let reopened = registry.open(root: host.root)
+            let reopened = await registry.open(root: host.root)
             _ = try reopened.update(edited.id, props: .object(["markdown": "restored lifetime"]))
             try await eventually { mirror.availability == .open && board.objects[edited.id] == reopened.objects[edited.id] }
             #expect(board.objects[edited.id]?.props["markdown"] == .string("restored lifetime"))
@@ -1450,7 +1450,7 @@ final class BoardMirrorTests {
         let initiallyClosed = BoardMirror(hostName: "home", board: host.id, connection: .unixSocket(socket), diagrams: .unixSocket(socket))
         defer { initiallyClosed.close() }
         await #expect(throws: ApiRouter.Failure.self) { _ = try await initiallyClosed.load() }
-        _ = registry.open(root: host.root)
+        _ = await registry.open(root: host.root)
         try await eventually { mirror.availability == .open && board.objects[edited.id] == host.objects[edited.id] }
         #expect(board.objects[edited.id]?.props["markdown"] == "agent changed it while hidden")
     }
@@ -1469,7 +1469,7 @@ final class BoardMirrorTests {
         try registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         failure.withLock { $0 = "HTML reopen failed" }
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         _ = try reopened.update(page.id, props: .object(["html": "<p>Reopened</p>"]))
         try await eventually { mirror.reading == nil && mirror.problem != nil }
         #expect(mirror.availability == .open)
@@ -1514,7 +1514,7 @@ final class BoardMirrorTests {
         try registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         holdRead.withLock { $0 = true }
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         try await eventually { pending.withLock { $0 != nil } }
         _ = try reopened.update(edited.id, props: .object(["markdown": "changed during reopen read"]))
         #expect(mirror.availability == .closed)
@@ -1570,7 +1570,7 @@ final class BoardMirrorTests {
         try await eventually { mirror.availability == .closed }
         let lastSeen = board.objects
         holdRead.withLock { $0 = true }
-        let unfinished = registry.open(root: host.root)
+        let unfinished = await registry.open(root: host.root)
         try await eventually { pending.withLock { $0 != nil } }
         #expect(mirror.reading != nil)
         let terminal = unfinished.create(type: .terminal, props: .object(["cwd": .string(dir.path)]))
@@ -1589,7 +1589,7 @@ final class BoardMirrorTests {
         #expect(availability == [.closed])
         #expect(mirror.attachment == .waiting)
         #expect(attaches.withLock { $0 } == 1)
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         let fresh = try reopened.update(edited.id, props: .object(["markdown": "proper reopen"]))
         try await eventually {
             mirror.availability == .open && mirror.attachment == .attached(client: "cli_1", version: 1)
@@ -1627,7 +1627,7 @@ final class BoardMirrorTests {
         }
         try server.start()
         try await eventually { pending.withLock { $0 != nil } }
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         _ = try reopened.update(edited.id, props: .object(["markdown": "new lifetime"]))
         try await eventually { mirror.availability == .open && board.objects[edited.id] == reopened.objects[edited.id] }
         pending.withLock { $0 }?()
@@ -1653,7 +1653,7 @@ final class BoardMirrorTests {
         try await eventually { mirror.connection.state == .online && mirror.reading == nil }
         #expect(mirror.availability == .closed)
         #expect(board.objects[edited.id] == edited)
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         _ = try reopened.update(edited.id, props: .object(["markdown": "canonical reopen"]))
         try await eventually { mirror.availability == .open && board.objects[edited.id] == reopened.objects[edited.id] }
         #expect(board.id == "brd_old")
@@ -2108,7 +2108,7 @@ final class BoardMirrorTests {
         case "incarnation":
             try registry.close(host.id)
             try await eventually { mirror.availability == .closed }
-            _ = registry.open(root: host.root)
+            _ = await registry.open(root: host.root)
             try await eventually { mirror.availability == .open }
         case "offline-read-failure":
             easld.announce([client(destination.id, serving: host.id)], board: host.id)
@@ -2189,7 +2189,7 @@ final class BoardMirrorTests {
         #expect(board.objects[page.id] == page)
         #expect(board.objects[provisional.id] == nil)
 
-        let reopened = registry.open(root: host.root)
+        let reopened = await registry.open(root: host.root)
         try reopened.delete(page.id)
         pending.withLock { answer in
             defer { answer = nil }

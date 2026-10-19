@@ -205,15 +205,22 @@ public final class Board {
     var codePreviews: [ObjectID: (tile: ObjectID, rev: Int)] = [:]
     /// The pending check for the earliest open question's `expiresAt` or closed one's `archiveAt` (Question.swift).
     var questionExpiry: DispatchWorkItem?
+    /// Objects the load published without stored anchors git has yet to check, with what they
+    /// had (`BoardAnchorScrub`); empty once it has.
+    var heldAnchors: [ObjectID: BoardAnchorScrub.Held] = [:]
+    /// That check, through to what the store writes for it (`BoardStore`).
+    var anchorScrub: Task<Void, Never>?
     /// The `archiveAfter` a new question that names none gets (`questionToCreate`): its host's
     /// setting, given by the registry that opened it (`BoardRegistry.open`); in memory, never saved.
     var defaultQuestionArchiveAfter = QuestionSpec.defaultArchiveAfter
+    var endingSessions: Set<ObjectID> = []
     public private(set) var isClosed = false
 
     func deactivate() {
         isClosed = true
         questionExpiry?.cancel()
         questionExpiry = nil
+        anchorScrub?.cancel()
         onChange = nil
         onEvent = nil
         onTerminalsEnded = nil
@@ -505,14 +512,15 @@ public final class Board {
     }
 
     /// Re-finds a code range using an authorized read, not text supplied by a display tile.
-    /// Like bookkeeping, relocation changes no object rev, undo step, or activity log.
+    /// Like bookkeeping, relocation changes no object rev, undo step, or activity log. A tile
+    /// whose stored anchor the load holds back (`isAnchorScrubPending`) isn't re-anchored.
     @discardableResult
     public func reanchor(_ id: ObjectID, captured: [String]? = nil) async throws -> NoteExcerpt? {
         let before = try object(id)
         guard before.type == .code, CodeAnchor.fence(before.props) != nil else {
             throw BoardError.invalidParams("only a code tile showing a range, not a follow tile or pinned to a commit, is re-anchored")
         }
-        guard !isRemote, !Task.isCancelled else { return nil }
+        guard !isRemote, !Task.isCancelled, !isAnchorScrubPending(id) else { return nil }
         let excerpt = await CodeAnchor.excerpt(props: before.props, boardRoot: root, captured: captured)
         guard !Task.isCancelled, objects[id] == before else { return nil }
         if let excerpt, let range = excerpt.range, !excerpt.refused {
@@ -522,12 +530,13 @@ public final class Board {
         return excerpt
     }
 
-    func commitBookkeeping(_ before: CanvasObject, props: JSONValue) {
+    /// `persisting` false: the store writes these props itself (`settleAnchors`), so no save is due.
+    func commitBookkeeping(_ before: CanvasObject, props: JSONValue, persisting: Bool = true) {
         guard !isRemote else { return }
         var object = before
         object.props = object.props.merging(props)
         guard object != before else { return }
-        commit(object)
+        commit(object, persisting: persisting)
         Metrics.shared.record("board.bookkeeping")
         onEvent?(.objectUpdated(object))
     }
@@ -697,14 +706,14 @@ public final class Board {
         }
     }
 
-    private func commit(_ object: CanvasObject) {
+    private func commit(_ object: CanvasObject, persisting: Bool = true) {
         bumpRevision()
         reindexKey(object.id, from: objects[object.id]?.props, to: object.props)
         renamed(object.id, from: objects[object.id]?.props, to: object.props, type: object.type)
         objects[object.id] = object
         changedAt[object.id] = revision
         revHighWater[object.id] = max(revHighWater[object.id] ?? 0, object.rev)
-        onChange?()
+        if persisting { onChange?() }
         if object.type == .question { scheduleQuestionExpiry() }
     }
 

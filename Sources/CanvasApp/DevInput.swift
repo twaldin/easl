@@ -148,7 +148,12 @@ enum DevInput {
         if fields["kind"] == "perf" {
             // A performance probe span over an idle stretch (DevPerf): what redraws and runs while
             // nobody touches the app, also with the window minimized or covered (no frames then).
-            let window = CanvasWindowController.frontmost?.window ?? NSApp.windows.first { $0.windowController is CanvasWindowController }
+            let window: NSWindow?
+            if let key = NSApp.keyWindow, key.windowController is CanvasWindowController {
+                window = key
+            } else {
+                window = NSApp.windows.first { $0.isVisible && $0.windowController is CanvasWindowController }
+            }
             return DevPerf.idle(ms: Double(fields["ms"] ?? "") ?? 5000, window: window)
         }
         if fields["kind"] == "stall" {
@@ -183,6 +188,8 @@ enum DevInput {
                     "board": .string(controller.board.id),
                     "closed": .bool(controller.hostBoardClosed),
                     "selected": .bool(window.tabGroup?.selectedWindow === window || window.tabGroup == nil),
+                    "minimized": .bool(window.isMiniaturized),
+                    "tabs": .array((window.tabGroup?.windows ?? [window]).map { .number(Double($0.windowNumber)) }),
                     "selectedObjects": .array(controller.canvas.selection.sorted().map(JSONValue.string)),
                     "viewport": controller.canvas.viewport.json,
                     "responder": .string(window.firstResponder.map { String(describing: type(of: $0)) } ?? ""),

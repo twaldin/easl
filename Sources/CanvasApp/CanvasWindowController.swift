@@ -1,5 +1,6 @@
 import AppKit
 import CanvasCore
+import ImageIO
 
 /// One window per board: the canvas scene plus the composer (the tray bar).
 @MainActor
@@ -11,8 +12,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private let navigator = NavigatorPanel()
     private let nothingHere = NothingHerePill(frame: .zero)
     private let emptyHint = EmptyBoardHint()
-    private let basics = BasicsPanel()
-    private let getStarted = GetStartedPanel()
+    private var basics: BasicsPanel?
+    private var getStarted: GetStartedPanel?
     /// The open-asks count beside the drawing toolbar (`AsksChip`).
     private let asks = AsksChip()
     /// The walk-through's progress while Get Started is open.
@@ -42,38 +43,118 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// A repository board opened from one of its worktrees (`Board.opened(from:)`): the
     /// subtitle names that worktree and its branch, and the view goes to the worktree's region
     /// when it has one. Opened from the main checkout, the subtitle is the board root again.
-    func showWorktree(openedAt directory: URL) {
-        if let worktree = board.workingWorktree {
-            window?.subtitle = "\(worktree.toplevel) · \(worktree.branch ?? "detached HEAD")"
+    func showWorktree(_ visit: WorktreeVisit?) {
+        if let visit, !visit.worktree.isMain {
+            window?.subtitle = "\(visit.worktree.toplevel) · \(visit.branch ?? "detached HEAD")"
         } else {
             window?.subtitle = board.root.path
         }
-        guard let worktree = GitWorktree.containing(directory.standardizedFileURL.path), worktree.commonDir == board.repo?.commonDir,
-              !worktree.isMain, let region = board.region(for: worktree) else { return }
+        guard let visit, visit.worktree.commonDir == board.repo?.commonDir,
+              !visit.worktree.isMain, let region = board.region(for: visit) else { return }
         // On the next turn, once the window has laid the canvas out and after the board's own
         // opening view (`CanvasView.placeOpeningView`): the worktree's region wins over the saved view.
         DispatchQueue.main.async { [weak self] in self?.canvas.reveal(region) }
     }
 
-    /// `remote`: the window mirrors a board another easl hosts; nothing about it is written here.
-    init(board: Board, registry: BoardRegistry, remote: RemoteSource? = nil) {
-        self.board = board
-        self.registry = registry
-        self.remote = remote
-        canvas = CanvasView(board: board, remote: remote)
-        let bar = ComposerBar(frame: .zero)
-        tray = bar
-        composer = ComposerController(board: board, bar: bar, file: remote == nil ? AppPaths.composer(of: board.id) : nil)
+    private static let windowIconPixels = Task {
+        await offPool {
+            Result { () throws -> (images: [(image: CGImage, size: CGSize)], size: CGSize) in
+                let urls: [URL]
+                if Bundle.main.bundleURL.pathExtension == "app" {
+                    urls = Bundle.main.resourceURL.map { [$0.appendingPathComponent("AppIcon.icns")] } ?? []
+                } else if let resources = AppPaths.resources {
+                    urls = [resources.appendingPathComponent("AppIcon.icns"),
+                            resources.appendingPathComponent("scripts/AppIcon.icns")]
+                } else {
+                    urls = []
+                }
+                var loaded: (url: URL, source: CGImageSource)?
+                for url in urls {
+                    if let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) {
+                        loaded = (url, source)
+                        break
+                    }
+                }
+                guard let loaded else {
+                    throw ApiRouter.Failure("unavailable", "No readable AppIcon.icns image source at \(urls.map(\.path).joined(separator: ", "))")
+                }
+                let count = CGImageSourceGetCount(loaded.source)
+                var images: [(image: CGImage, size: CGSize)] = []
+                images.reserveCapacity(count)
+                var size = CGSize.zero
+                for index in 0..<count {
+                    guard let image = CGImageSourceCreateImageAtIndex(loaded.source, index, [
+                        kCGImageSourceShouldCache: true,
+                        kCGImageSourceShouldCacheImmediately: true,
+                    ] as CFDictionary) else { continue }
+                    let properties = CGImageSourceCopyPropertiesAtIndex(loaded.source, index, nil) as? [CFString: Any]
+                    let dpiWidth = (properties?[kCGImagePropertyDPIWidth] as? NSNumber)?.doubleValue ?? 72
+                    let dpiHeight = (properties?[kCGImagePropertyDPIHeight] as? NSNumber)?.doubleValue ?? 72
+                    let points = CGSize(width: CGFloat(image.width) * 72 / (dpiWidth.isFinite && dpiWidth > 0 ? dpiWidth : 72),
+                                        height: CGFloat(image.height) * 72 / (dpiHeight.isFinite && dpiHeight > 0 ? dpiHeight : 72))
+                    images.append((image, points))
+                    size.width = max(size.width, points.width)
+                    size.height = max(size.height, points.height)
+                }
+                guard !images.isEmpty else {
+                    throw ApiRouter.Failure("unavailable", "No AppIcon.icns representation decoded at \(loaded.url.path)")
+                }
+                if images.count != count {
+                    NSLog("easl: skipped %d undecodable icon representations at %@", count - images.count, loaded.url.path)
+                }
+                return (images, size)
+            }
+        }
+    }
+    private static var windowIconPrepared = false
+
+    static func prepareWindowIcon() async {
+        guard !windowIconPrepared else { return }
+        let result = await windowIconPixels.value
+        guard !Task.isCancelled, !windowIconPrepared else { return }
+        windowIconPrepared = true
+        switch result {
+        case let .success(pixels):
+            DevPerf.time("board.window.icon") {
+                let image = NSImage(size: pixels.size)
+                for pixels in pixels.images {
+                    let representation = NSBitmapImageRep(cgImage: pixels.image)
+                    representation.size = pixels.size
+                    image.addRepresentation(representation)
+                }
+                // Native tabs use this public application image; pixel-equal 1x/2x reps keep their point sizes.
+                NSApp.applicationIconImage = image
+            }
+        case let .failure(error):
+            NSLog("easl: native tab icon preparation failed; keeping the system icon: \(error)")
+        }
+    }
+
+    static func makeWindow(isRemote: Bool) -> CanvasWindow {
+        precondition(windowIconPrepared, "Await prepareWindowIcon() before making a board window")
         let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = remote?.title(of: board) ?? board.root.lastPathComponent
-        window.subtitle = remote.map { "\(board.root.path) on \($0.host.name)" } ?? board.root.path
-        window.acceptsMouseMovedEvents = true
-        if remote != nil {
-            // Nothing of another Mac's board is kept here: AppKit saves a titled window's state
-            // and a snapshot of it for restoration unless told not to.
+        window.isReleasedWhenClosed = false
+        window.isExcludedFromWindowsMenu = true
+        if isRemote {
+            // Nothing of another Mac's board is kept here, even before its controller is built.
             window.isRestorable = false
             window.disableSnapshotRestoration()
         }
+        return window
+    }
+
+    /// `remote`: the window mirrors a board another easl hosts; nothing about it is written here.
+    init(window: CanvasWindow, board: Board, registry: BoardRegistry, viewport: SavedViewport.Recorder?, composerState: ComposerState, remote: RemoteSource? = nil) {
+        self.board = board
+        self.registry = registry
+        self.remote = remote
+        canvas = CanvasView(board: board, viewport: viewport, remote: remote)
+        let bar = ComposerBar(frame: .zero)
+        tray = bar
+        composer = ComposerController(board: board, bar: bar, file: remote == nil ? AppPaths.composer(of: board.id) : nil, state: composerState)
+        window.title = remote?.title(of: board) ?? board.root.lastPathComponent
+        window.subtitle = remote.map { "\(board.root.path) on \($0.host.name)" } ?? board.root.path
+        window.acceptsMouseMovedEvents = true
         if let frame = DevInput.frame {
             // A development instance opens where its launcher says (a headless screen): the
             // Space a new window joins is the one of the display holding its frame. No saved
@@ -133,7 +214,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             ])
         }
         asks.onGo = { [weak self] in self?.canvas.goToNextAsk() }
-        canvas.chromeInsets = { [weak container, weak tray, weak drawing, weak getStarted] in
+        canvas.chromeInsets = { [weak self, weak container, weak tray, weak drawing] in
             guard let container else { return NSEdgeInsets() }
             // The toolbar and tray sit at fixed offsets, so only a window never laid out needs a
             // pass here; attention pills ask on every pan step, sometimes from inside layout.
@@ -141,7 +222,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             let top = drawing?.toolbar.map { $0.isHidden ? 0 : container.bounds.maxY - $0.frame.minY } ?? 0
             let bottom = tray.map { $0.isHidden ? 0 : $0.frame.maxY } ?? 0
             // Get Started's fixed width at its fixed leading offset, laid out or not.
-            let left = getStarted.map { $0.isOpen ? GetStartedPanel.leading + GetStartedPanel.width : 0 } ?? 0
+            let left = self?.getStarted?.isOpen == true ? GetStartedPanel.leading + GetStartedPanel.width : 0
             return NSEdgeInsets(top: top, left: left, bottom: bottom, right: 0)
         }
         // Edge pills with no clear stretch of the view's edge go to the toolbar row beside the
@@ -161,7 +242,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             self.refreshAsks()
         }
         // Above the toolbar and tray, so the navigator is never covered.
-        for view in [nothingHere, getStarted, basics, navigator] {
+        for view in [nothingHere, navigator] {
             view.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(view)
         }
@@ -174,20 +255,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             navigator.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
             navigatorWidth,
             navigator.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
-        ])
-        let basicsHeight = basics.heightAnchor.constraint(equalToConstant: 620)
-        basicsHeight.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            basics.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
-            basics.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
-            basics.widthAnchor.constraint(equalToConstant: BasicsPanel.width),
-            basicsHeight,
-            basics.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -64),
-        ])
-        NSLayoutConstraint.activate([
-            getStarted.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
-            getStarted.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: GetStartedPanel.leading),
-            getStarted.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -64),
         ])
         navigator.onGo = { [weak self] target in
             switch target {
@@ -205,17 +272,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
         navigator.searchSymbols = { [weak self] name in await self?.workspaceSymbols(named: name) ?? NavigatorPanel.SymbolAnswer(rows: []) }
         nothingHere.onBack = { [weak self] in self?.canvas.zoomToFit() }
-        basics.onHideChrome = { [weak self] in self?.toggleCanvasChrome(nil) }
-        getStarted.onClose = { [weak self] in self?.getStartedClosed() }
-        getStarted.onNewTerminal = { [weak self] in self?.newTerminal(nil) }
-        getStarted.onShowPractice = { [weak self] in self?.showPracticeNote() }
         canvas.onTab = { [weak self] backward in
             guard let getStarted = self?.getStarted, getStarted.isOpen else { return false }
             getStarted.takeKeyboard(backward: backward)
             return true
         }
-        canvas.panelOpen = { [weak self] in self?.getStarted.isOpen ?? false }
-        canvas.closePanel = { [weak self] in self?.getStarted.close() }
+        canvas.panelOpen = { [weak self] in self?.getStarted?.isOpen ?? false }
+        canvas.closePanel = { [weak self] in self?.getStarted?.close() }
         canvas.onContentInViewChange = { [weak self] inView in self?.nothingHere.isHidden = inView }
 
         tray.onReveal = { [weak self] mention in self?.canvas.revealMention(mention.target) }
@@ -589,7 +652,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// attachment ends or stays as the app delegate decides (`RemoteClose`).
     var onClose: (() -> Void)?
     var apiCloseInProgress = false
-    var isBoardOpen = true
+    var isBoardOpen = false
     /// A remote board's close as the user asked for it, taken before AppKit changes the window's
     /// tab group (`CanvasWindow.close`); nil while the window isn't closing.
     var closing: RemoteClose?
@@ -616,8 +679,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// on working, headless) and come back when the folder is opened again. With any terminal on
     /// the board a sheet says so first, naming what keeps running: Keep Running (Return), End
     /// Sessions (⌘⌫: its terminals close as in the close-terminal sheet, then the tab), Cancel (Esc).
-    /// Closing the last board window quits easl, unless background attach keeps a remote board
-    /// attached, which the sheet says; the next launch reopens the board (`AppDelegate.saveOpenBoards`).
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard !apiCloseInProgress else { return false }
         // A remote board's terminals are its host's: closing the window ends nothing on the host.
@@ -625,7 +686,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let terminals = canvas.tiles.values.compactMap { $0.content as? TerminalTile }.sorted { $0.objectID < $1.objectID }
         guard !terminals.isEmpty else { return true }
         let tabs = sender.tabbedWindows?.count ?? 1
-        let last = isLastOpenBoard && (NSApp.delegate as? AppDelegate)?.holdsBackgroundAttachments != true
+        let last = isLastOpenBoard && (NSApp.delegate as? AppDelegate)?.keepsRunningWithoutWindows != true
         let keep = SessionProcesses.keepRunningText(terminals.map { $0.sessionProcesses() })
         let alert = NSAlert()
         alert.messageText = "Close “\(board.root.lastPathComponent)” and keep \(terminals.count == 1 ? "its terminal" : "its terminals") running?"
@@ -738,26 +799,59 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// Esc on the canvas shows the chrome again.
     @objc func toggleCanvasChrome(_ sender: Any?) {
         canvas.chromeHidden.toggle()
-        if canvas.chromeHidden { basics.close() }
+        if canvas.chromeHidden { basics?.close() }
     }
 
     /// Help › easl Basics opens (or closes) the legend over this board.
     @objc func toggleBasics(_ sender: Any?) {
-        if basics.isOpen { basics.close() } else { basics.open() }
+        if let basics {
+            if basics.isOpen { basics.close() } else { basics.open() }
+            return
+        }
+        guard let container = window?.contentView else { return }
+        let panel = BasicsPanel()
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(panel, positioned: .below, relativeTo: navigator)
+        let height = panel.heightAnchor.constraint(equalToConstant: 620)
+        height.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            panel.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
+            panel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            panel.widthAnchor.constraint(equalToConstant: BasicsPanel.width),
+            height,
+            panel.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -64),
+        ])
+        panel.onHideChrome = { [weak self] in self?.toggleCanvasChrome(nil) }
+        basics = panel
+        panel.open()
     }
 
     /// Help › Get Started opens (or closes) the first-run walk-through over this board; at the
     /// first launch of a new home the app opens it (`GetStarted.Store.launch`).
     @objc func toggleGetStarted(_ sender: Any?) {
-        if getStarted.isOpen { getStarted.close() } else { showGetStarted() }
+        if getStarted?.isOpen == true { getStarted?.close() } else { showGetStarted() }
     }
 
     /// Opens Get Started with its practice note in view and selected (so ⇧⌘M works on it
     /// straight away), counting from what the tray holds now.
     func showGetStarted() {
-        guard !getStarted.isOpen else { return }
+        guard getStarted?.isOpen != true, let container = window?.contentView else { return }
+        if getStarted == nil {
+            let panel = GetStartedPanel()
+            panel.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(panel, positioned: .below, relativeTo: (basics as NSView?) ?? navigator)
+            NSLayoutConstraint.activate([
+                panel.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
+                panel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: GetStartedPanel.leading),
+                panel.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -64),
+            ])
+            panel.onClose = { [weak self] in self?.getStartedClosed() }
+            panel.onNewTerminal = { [weak self] in self?.newTerminal(nil) }
+            panel.onShowPractice = { [weak self] in self?.showPracticeNote() }
+            getStarted = panel
+        }
         guide = GetStarted.Progress(delivered: board.delivered, trayCount: board.tray.count)
-        getStarted.open()
+        getStarted?.open()
         showPracticeNote()
         refreshTray()
         refreshEmptyHint()
@@ -796,12 +890,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         } else {
             board.objects.values.contains { $0.type == .terminal } ? .choose : .none
         }
-        getStarted.show(progress.step, target: shown)
+        getStarted?.show(progress.step, target: shown)
     }
 
     /// The empty-board hint shows on an empty board, unless Get Started is open over it.
     private func refreshEmptyHint() {
-        emptyHint.isHidden = !board.objects.isEmpty || getStarted.isOpen
+        emptyHint.isHidden = !board.objects.isEmpty || getStarted?.isOpen == true
     }
 
     /// Go to's file, symbol and Recent rows: a code tile in view already showing the lines, else
@@ -1188,10 +1282,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             item.title = selection.count > 1 ? "Copy Object IDs" : "Copy Object ID"
             return !selection.isEmpty
         case #selector(toggleGetStarted(_:)):
-            item.state = getStarted.isOpen ? .on : .off
+            item.state = getStarted?.isOpen == true ? .on : .off
             return true
         case #selector(toggleBasics(_:)):
-            item.state = basics.isOpen ? .on : .off
+            item.state = basics?.isOpen == true ? .on : .off
             return true
         case #selector(toggleCanvasChrome(_:)):
             item.state = canvas.chromeHidden ? .on : .off

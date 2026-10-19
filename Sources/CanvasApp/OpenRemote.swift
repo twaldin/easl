@@ -131,12 +131,13 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
     }
 
     private func loadHosts() {
-        let recents = RemoteHost.Recents.load(AppPaths.remoteHosts)
-        hosts = RemoteHost.candidates(peers: [], recents: recents)
-        hostTable.reloadData()
         hostStatus.stringValue = "Asking Tailscale for the tailnet's Macs…"
         work.append(Task { [weak self] in
             do {
+                let recents = try await ClientFiles.read { RemoteHost.Recents.load(AppPaths.remoteHosts) }
+                guard !Task.isCancelled else { return }
+                self?.hosts = RemoteHost.candidates(peers: [], recents: recents)
+                self?.hostTable.reloadData()
                 let peers = try await Tailnet.peers()
                 self?.merge(peers, recents: recents)
             } catch {
@@ -224,7 +225,7 @@ final class OpenRemotePanel: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     private func connect(to host: RemoteHost) {
         self.host = host
-        RemoteHost.Recents.remember(host, in: AppPaths.remoteHosts)
+        ClientFiles.enqueue { RemoteHost.Recents.remember(host, in: AppPaths.remoteHosts) }
         let connection = host.connection()
         self.connection = connection
         work.append(Task { [weak self] in

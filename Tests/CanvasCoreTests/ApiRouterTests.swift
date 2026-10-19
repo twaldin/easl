@@ -14,10 +14,10 @@ final class ApiRouterTests {
     let board: Board
     var submitted: [String] = []
 
-    init() throws {
+    init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        board = registry.open(root: dir.appendingPathComponent("root"))
+        board = await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry)
         self.router = router
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
@@ -230,7 +230,7 @@ final class ApiRouterTests {
         let here = terminal()
         let otherRoot = dir.appendingPathComponent("other")
         try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
-        let other = registry.open(root: otherRoot)
+        let other = await registry.open(root: otherRoot)
         let there = other.create(type: .terminal, props: .object(["cwd": .string(otherRoot.path)])).id
         let client = try connect()
         let agents = try await call(client, "agent.list", [:])["result"]?["agents"]?.array ?? []
@@ -609,7 +609,7 @@ final class ApiRouterTests {
         var opened: [(String, Bool)] = []
         router.openBoard = { [unowned self] root, select in
             opened.append((root.path, select))
-            return registry.open(root: root)
+            return await registry.open(root: root)
         }
         let client = try connect()
         client.send(#"{"id":"a","method":"board.open","params":{"root":"\#(second.path)"}}"#)
@@ -886,7 +886,7 @@ final class ApiRouterTests {
         let agent = terminal()
         let otherRoot = dir.appendingPathComponent("other")
         try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
-        let other = registry.open(root: otherRoot)
+        let other = await registry.open(root: otherRoot)
         let client = try connect()
         let created = try await call(client, "object.create", ["board": .string(other.id), "caller": .string(agent), "type": .string("note"),
                                                                "props": .object(["markdown": .string("from next door")])])
