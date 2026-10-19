@@ -192,31 +192,25 @@ extension ShapeLayer {
     /// just short of a box's edge means that box.
     static let arrowSnap: CGFloat = 16
 
-    /// What an arrow end dropped at a document point binds to, as the API's `{object}` ends: the
-    /// topmost drawn shape under it (within `tolerance`), else the topmost tile, else the
-    /// nearest shape within `arrowSnap`, else the nearest tile within it, else the point itself.
     func binding(at point: NSPoint) -> ArrowBinding {
-        let shapes = items.values.filter { $0.shape != nil }
-        if let shape = shapes.filter({ $0.frame.insetBy(dx: -tolerance, dy: -tolerance).contains(point) }).max(by: { $0.object.z < $1.object.z }) {
-            return .object(shape.object.id)
-        }
-        let document = canvas.document
-        let tiles = Array(canvas.tiles.values)
-        let tile = tiles.filter { $0.frame.contains(point) }.max { lhs, rhs in
-            (document.subviews.firstIndex(of: lhs) ?? 0) < (document.subviews.firstIndex(of: rhs) ?? 0)
-        }
-        if let tile { return .object(tile.objectID) }
         let snap = Self.arrowSnap / max(canvas.magnification, 0.1)
-        func distance(_ rect: NSRect) -> CGFloat {
-            hypot(max(rect.minX - point.x, 0, point.x - rect.maxX), max(rect.minY - point.y, 0, point.y - rect.maxY))
+        var best: (id: ObjectID, z: Double, distance: CGFloat)?
+        func consider(_ id: ObjectID, z: Double, frame: NSRect, padding: CGFloat) {
+            let distance = frame.insetBy(dx: -padding, dy: -padding).contains(point) ? 0
+                : hypot(max(frame.minX - point.x, 0, point.x - frame.maxX), max(frame.minY - point.y, 0, point.y - frame.maxY))
+            guard distance <= snap else { return }
+            if let previous = best {
+                guard distance < previous.distance || distance == previous.distance && (z, id) > (previous.z, previous.id) else { return }
+            }
+            best = (id, z, distance)
         }
-        if let shape = shapes.map({ ($0.object.id, distance($0.frame)) }).filter({ $0.1 <= snap }).min(by: { $0.1 < $1.1 }) {
-            return .object(shape.0)
+        for item in items.values where item.shape != nil {
+            consider(item.object.id, z: item.object.z, frame: item.frame, padding: tolerance)
         }
-        if let near = tiles.map({ ($0.objectID, distance($0.frame)) }).filter({ $0.1 <= snap }).min(by: { $0.1 < $1.1 }) {
-            return .object(near.0)
+        for tile in canvas.tiles.values where !tile.isHidden {
+            consider(tile.objectID, z: tile.z, frame: tile.frame, padding: 0)
         }
-        return .point(Self.canvasPoint(point))
+        return best.map { .object($0.id) } ?? .point(Self.canvasPoint(point))
     }
 
     // MARK: Creation
@@ -358,14 +352,14 @@ extension ShapeLayer {
     private func attach(_ editor: ShapeEditing) {
         self.editor = editor
         editor.begin()
-        if let id = editor.editing, let item = items[id] { invalidate(item.bounds) }
+        if let id = editor.editing, let item = items[id] { invalidate(item) }
     }
 
     /// Called by an editor after it committed or cancelled.
     func editorEnded(_ editor: ShapeEditing) {
         guard self.editor === editor else { return }
         self.editor = nil
-        if let id = editor.editing, let item = items[id] { invalidate(item.bounds) }
+        if let id = editor.editing, let item = items[id] { invalidate(item) }
         if tool == .text { tool = .select }
     }
 }

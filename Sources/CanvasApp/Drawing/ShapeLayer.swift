@@ -1,10 +1,6 @@
 import AppKit
 import CanvasCore
 
-/// The hand-drawn layer: renders `.shape` and `.arrow` objects in document coordinates above the
-/// tiles and below the Hyper outline. Only strokes, text, and fills take the mouse (plus the whole
-/// canvas while a drawing tool is active); everything else passes through to the tiles beneath.
-/// All changes go through `board.create`/`board.update` as the user, so undo and persistence apply.
 @MainActor
 final class ShapeLayer: NSView {
     enum Tool: String, CaseIterable {
@@ -65,6 +61,7 @@ final class ShapeLayer: NSView {
     private(set) weak var toolbar: NSView?
 
     private(set) var items: [ObjectID: DrawnItem] = [:]
+    private var itemViews: [ObjectID: DrawnItemView] = [:]
     /// Each tile's frame and z as last seen, so a tile that moves or restacks redraws the
     /// default-ink drawings over where it was and where it is (`surfaceChanged`).
     var surfaceFrames: [ObjectID: (frame: Frame, z: Double)] = [:]
@@ -125,8 +122,6 @@ final class ShapeLayer: NSView {
 
     // MARK: Install
 
-    /// Adds the layer to `canvas` (above its tiles), its toolbar to `container`, and sets the
-    /// canvas' drawn-object seams.
     @discardableResult
     static func install(on canvas: CanvasView, toolbarIn container: NSView) -> ShapeLayer {
         let layer = ShapeLayer(canvas: canvas)
@@ -651,7 +646,8 @@ final class ShapeLayer: NSView {
 
     // MARK: Painting
 
-    private func invalidate(_ item: DrawnItem) {
+    func invalidate(_ item: DrawnItem) {
+        syncView(item.object.id)
         invalidate(item.bounds)
         if dragPreview.ids.contains(item.object.id) {
             invalidate(item.bounds.offsetBy(dx: dragPreview.offset.width, dy: dragPreview.offset.height))
@@ -671,6 +667,41 @@ final class ShapeLayer: NSView {
         return paintOrder
     }
 
+    private func syncView(_ id: ObjectID) {
+        guard let item = items[id] else {
+            itemViews.removeValue(forKey: id)?.removeFromSuperview()
+            return
+        }
+        let view: DrawnItemView
+        let restacks: Bool
+        if let existing = itemViews[id] {
+            view = existing
+            restacks = view.z != item.object.z
+        } else {
+            view = DrawnItemView(item: item, drawing: self)
+            itemViews[id] = view
+            canvas.document.addSubview(view)
+            restacks = true
+        }
+        view.z = item.object.z
+        let offset = dragPreview.ids.contains(id) && item.shape != nil ? dragPreview.offset : .zero
+        view.frame = item.bounds.offsetBy(dx: offset.width, dy: offset.height)
+        view.needsDisplay = true
+        if restacks && superview != nil { canvas.restack() }
+    }
+
+    fileprivate func drawItem(_ id: ObjectID, in context: CGContext, viewOrigin: NSPoint) {
+        guard let item = items[id], editor?.editing != id else { return }
+        let offset = dragPreview.ids.contains(id) && item.shape != nil ? dragPreview.offset : .zero
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.translateBy(x: offset.width - viewOrigin.x, y: offset.height - viewOrigin.y)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        context.setLineWidth(DrawingGeometry.strokeWidth)
+        item.draw(in: context, ink: ink(for: item))
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         let perfStart = DevPerf.mark()
         defer { DevPerf.record("draw.ShapeLayer", since: perfStart) }
@@ -678,40 +709,19 @@ final class ShapeLayer: NSView {
         context.setLineCap(.round)
         context.setLineJoin(.round)
         context.setLineWidth(DrawingGeometry.strokeWidth)
-        for id in ordered {
-            guard let item = items[id], editor?.editing != id else { continue }
-            let offset = dragPreview.ids.contains(id) && item.shape != nil ? dragPreview.offset : .zero
-            guard item.bounds.offsetBy(dx: offset.width, dy: offset.height).intersects(dirtyRect) else { continue }
-            if offset != .zero {
-                context.saveGState()
-                context.translateBy(x: offset.width, y: offset.height)
-                item.draw(in: context, ink: ink(for: item))
-                context.restoreGState()
-            } else {
-                item.draw(in: context, ink: ink(for: item))
-            }
-        }
         drawGesture(in: context)
         drawHandles(in: context, dirtyRect: dirtyRect)
     }
 
-    /// `view.render`: draws the committed drawn objects whose bounds meet `docRect` (document
-    /// coordinates; the context maps them) in paint order, without handles, gestures, or drag
-    /// previews, and returns what it drew.
-    func renderItems(in context: CGContext, docRect: NSRect, excluding excluded: RenderExclusion) -> [(object: CanvasObject, bounds: NSRect)] {
-        settleArrows()
+    func renderItem(_ id: ObjectID, in context: CGContext, docRect: NSRect, excluding excluded: RenderExclusion) -> NSRect? {
+        guard let item = items[id], !excluded.hides(item.object), item.bounds.intersects(docRect) else { return nil }
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineCap(.round)
         context.setLineJoin(.round)
         context.setLineWidth(DrawingGeometry.strokeWidth)
-        var drawn: [(object: CanvasObject, bounds: NSRect)] = []
-        for id in ordered {
-            guard let item = items[id], !excluded.hides(item.object), item.bounds.intersects(docRect) else { continue }
-            item.draw(in: context, ink: ink(for: item, excluding: excluded))
-            drawn.append((item.object, item.bounds))
-        }
-        return drawn
+        item.draw(in: context, ink: ink(for: item, excluding: excluded))
+        return item.bounds
     }
 
     // MARK: Hit testing
@@ -721,6 +731,9 @@ final class ShapeLayer: NSView {
         let tolerance = self.tolerance
         for id in ordered.reversed() {
             guard let item = items[id], item.bounds.contains(point), item.hits(point, tolerance: tolerance) else { continue }
+            if canvas.tiles.values.contains(where: { tile in
+                !tile.isHidden && tile.frame.contains(point) && (tile.z, tile.objectID) > (item.object.z, id)
+            }) { return nil }
             return item
         }
         return nil
@@ -851,5 +864,29 @@ final class ShapeLayer: NSView {
     static func moveProps(_ object: CanvasObject, dx: Double, dy: Double) -> JSONValue? {
         guard object.type == .arrow, let spec = ArrowSpec(object.props)?.translated(dx: dx, dy: dy) else { return nil }
         return .object(["from": spec.from.json, "to": spec.to.json])
+    }
+}
+
+@MainActor
+final class DrawnItemView: NSView {
+    let objectID: ObjectID
+    var z: Double
+    private unowned let drawing: ShapeLayer
+
+    init(item: DrawnItem, drawing: ShapeLayer) {
+        objectID = item.object.id
+        z = item.object.z
+        self.drawing = drawing
+        super.init(frame: item.bounds)
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+    nonisolated override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        drawing.drawItem(objectID, in: context, viewOrigin: frame.origin)
     }
 }

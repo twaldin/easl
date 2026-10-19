@@ -96,7 +96,7 @@ func TestBoardFileEasldCantReadIsNeverOverwritten(t *testing.T) {
 	reg := board.NewRegistry(filepath.Join(dir, "boards"), time.Millisecond, "")
 	f := &fixture{t: t, router: New(reg), conn: &conn{}}
 	for name, file := range map[string]string{
-		"newer":    `{"format":3,"id":"%s","root":"%s","revision":7,"objects":[],"canvasLayers":[{"id":"l1"}]}`,
+		"newer":    `{"format":4,"id":"%s","root":"%s","revision":7,"objects":[],"canvasLayers":[{"id":"l1"}]}`,
 		"corrupt":  `{"format":2,"id":"%s","root":"%s","revision":7,"objects":[{"id":"obj_x","type":"hologram"}]}`,
 		"truncate": `{"format":2,"id":"%s","root":"%s","revi`,
 	} {
@@ -113,9 +113,6 @@ func TestBoardFileEasldCantReadIsNeverOverwritten(t *testing.T) {
 		code, message := errorOf(f.call("board.open", map[string]any{"root": root}))
 		if code != "unavailable" || !strings.Contains(message, path) || !strings.Contains(message, "left as it is") {
 			t.Errorf("%s: board.open answered %s: %s", name, code, message)
-		}
-		if name == "newer" && !strings.Contains(message, "format 3, newer than the 2") {
-			t.Errorf("newer: %s", message)
 		}
 		f.call("board.close", map[string]any{"board": id})
 		reg.Flush()

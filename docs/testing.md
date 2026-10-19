@@ -173,6 +173,17 @@ Browser tests: `EASL_DEV_DOWNLOADS=<folder>` (passed through by `dev.sh`) saves 
 
 Run `scripts/dev.sh stop` when the test is done, not at the end of the session: it also kills the instance's zmx sessions.
 
+### Mixed drawing and tile stacking
+
+Build the native app objects, then run the AppKit regression on an isolated GUI test machine:
+
+```sh
+swift build --build-system native -j 2 --product Easl
+python3 Tests/SceneStacking/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+The runner uses disposable homes and links the prebuilt `CanvasApp`. It checks actual `view.render` pixels and object order in normal and full-content modes, snapshot metadata, native hit testing, both stacking commands, arrow and ink transitions, and unfilled-interior pass-through. It never rebuilds the app. This is not WindowServer proof. Capture the real overlapping note and rectangle locally and in both remote viewers before and after restacking.
+
 ### Seeing the window
 
 Verify what the screen shows with real pixels: the window itself, or `scripts/dev.sh shot` (with yabai; see "Optional: a machine shared with other agents"), a WindowServer capture of the window. `shot` captures by window id, including on an unviewed Space, without moving or activating the window. Confirm that changed content appears in the capture; hidden surfaces can throttle their rendering.

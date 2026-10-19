@@ -258,6 +258,7 @@ public enum RepoBoardMigration {
         let canonical = GitWorktree.canonicalRoot(commonDir: commonDir)
         let main = GitWorktree.containing(canonical).flatMap { $0.isMain && $0.commonDir == commonDir ? $0 : nil }
         var target = existing ?? BoardSnapshot(format: Board.format, id: BoardStore.repoID(commonDir: commonDir), root: canonical, revision: 0, objects: [])
+        target.migrateFormat()
         target.root = canonical
         var repo = target.repo ?? RepoRecord(commonDir: commonDir)
         let before = target.objects.count
@@ -286,7 +287,8 @@ public enum RepoBoardMigration {
         var sources: [ObjectID: (board: BoardID, modified: Date, label: String?)] = [:]
         for object in target.objects { sources[object.id] = (target.id, existingModified, nil) }
         for legacy in ordered {
-            let snapshot = legacy.snapshot
+            var snapshot = legacy.snapshot
+            snapshot.migrateFormat()
             let anchor: Rerooter.Anchor
             let branch: String?
             switch legacy.identity {
@@ -321,11 +323,7 @@ public enum RepoBoardMigration {
             let rerootBranch = legacy.identity == .path ? nil : branch
             var rerooter = Rerooter(oldRoot: URL(fileURLWithPath: snapshot.root).standardizedFileURL.path, top: legacy.top, live: legacy.live, anchor: anchor,
                                     destinationRoot: URL(fileURLWithPath: target.root))
-            var objects = snapshot.objects.map { object -> CanvasObject in
-                var object = object
-                if (snapshot.format ?? 1) < 2, RenderMath.isTile(object.type) { object.frame.h += RenderMath.tileTitleHeight }
-                return rerooter.reroot(object, branch: rerootBranch)
-            }
+            var objects = snapshot.objects.map { rerooter.reroot($0, branch: rerootBranch) }
             let tray = (snapshot.tray ?? []).map { rerooter.reroot($0) }
             let messages = (snapshot.messages ?? [:]).mapValues { $0.map { rerooter.reroot($0) } }
 

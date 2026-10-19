@@ -240,6 +240,7 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 		format := Format
 		target = &Snapshot{Format: &format, ID: RepoID(commonDir), Root: canonical, Objects: []model.Object{}}
 	}
+	target.MigrateFormat()
 	target.Root = canonical
 	repo := RepoRecord{CommonDir: commonDir, Worktrees: []WorktreeRecord{}}
 	if target.Repo != nil {
@@ -309,16 +310,13 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 		}
 
 		r := rerooter{oldRoot: Standardized(snap.Root), top: p.top, live: true, anchor: anchor, destinationRoot: Standardized(target.Root)}
-		format := 1
-		if snap.Format != nil {
-			format = *snap.Format
-		}
 		objects := make([]model.Object, len(snap.Objects))
 		for i, o := range snap.Objects {
-			o = o.Clone()
-			if format < 2 && o.Type.IsTile() {
-				o.Frame.H += route.TileTitleHeight
-			}
+			objects[i] = o.Clone()
+		}
+		migrated := Snapshot{Format: snap.Format, Objects: objects}
+		migrated.MigrateFormat()
+		for i, o := range objects {
 			objects[i] = r.reroot(o)
 		}
 		tray := make([]model.Mention, len(snap.Tray))
