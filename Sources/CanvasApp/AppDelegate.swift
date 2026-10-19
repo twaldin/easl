@@ -1933,15 +1933,15 @@ extension AppDelegate: NSMenuItemValidation {
     /// Menu items that don't apply now are disabled (the board window decides).
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(increaseChromeText(_:)): return ChromeText.canStep(bigger: true)
-        case #selector(decreaseChromeText(_:)): return ChromeText.canStep(bigger: false)
-        case #selector(resetChromeText(_:)): return ChromeText.scale != ChromeTextScale.normal
+        case #selector(increaseChromeText(_:)): return localRestore == nil && ChromeText.canStep(bigger: true)
+        case #selector(decreaseChromeText(_:)): return localRestore == nil && ChromeText.canStep(bigger: false)
+        case #selector(resetChromeText(_:)): return localRestore == nil && ChromeText.scale != ChromeTextScale.normal
         case #selector(togglePerformanceHUD(_:)):
             item.state = MetricsHUD.shared.isShown ? .on : .off
             return true
         case #selector(toggleBackgroundAttach(_:)):
             item.state = backgroundAttach ? .on : .off
-            return true
+            return localRestore == nil
         case #selector(toggleAutomaticUpdates(_:)):
             item.state = automaticUpdates ? .on : .off
             return localRestore == nil
