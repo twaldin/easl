@@ -100,6 +100,11 @@ struct ViewerHistory {
         return receipt
     }
 
+    mutating func rewriteObjects(_ transform: (CanvasObject) -> CanvasObject) {
+        for index in undo.indices { UndoHistory.rewriteObjects(in: &undo[index].changes, transform) }
+        for index in redo.indices { UndoHistory.rewriteObjects(in: &redo[index].changes, transform) }
+    }
+
     private mutating func forget(_ id: Int) {
         var retired = receiptFloor
         receipts = receipts.filter {
@@ -154,6 +159,14 @@ struct ViewerHistories {
     private var clock: UInt64 = 0
 
     func contains(_ viewer: String) -> Bool { histories[viewer] != nil }
+
+    mutating func rewriteObjects(_ transform: (CanvasObject) -> CanvasObject) {
+        var index = histories.startIndex
+        while index != histories.endIndex {
+            histories.values[index].rewriteObjects(transform)
+            histories.formIndex(after: &index)
+        }
+    }
 
     mutating func with<T>(_ viewer: String, _ body: (inout ViewerHistory) -> T) -> T {
         clock += 1

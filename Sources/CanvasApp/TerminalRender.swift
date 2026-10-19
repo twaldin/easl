@@ -1,5 +1,6 @@
 import AppKit
 import CanvasCore
+import CoreText
 
 /// Draws a terminal's screen from `zmx history --vt` text for renders, cards, and
 /// `view.snapshot` covers (Ghostty draws through Metal, which AppKit can't capture): the
@@ -20,11 +21,23 @@ enum TerminalRender {
 
     // MARK: Font
 
+    // Equal-ranked fuzzy matches retain AppKit's alphabetic family precedence.
+    nonisolated private static let installedFamilies = (CTFontManagerCopyAvailableFontFamilyNames() as! [String])
+        .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    private static let fontPreparation = Task {
+        await offPool(qos: .userInitiated) { _ = installedFamilies }
+    }
+
+    /// Resolve the font service off main before the synchronous raster and snapshot draws.
+    static func prepareFonts() async {
+        await fontPreparation.value
+    }
+
     /// Font families, best first: the user's Ghostty `font-family` (matched loosely, preferring
     /// its single-width "Mono" Nerd Font variant), then any installed Nerd Font Mono, then the
     /// plain JetBrains Mono Ghostty embeds, then Menlo.
     static let families: [String] = {
-        let installed = NSFontManager.shared.availableFontFamilies
+        let installed = installedFamilies
         var wanted: [String] = []
         for configured in TerminalConfig.shared.fontFamilies {
             if installed.contains(configured) { wanted.append(configured) }
@@ -62,6 +75,8 @@ enum TerminalRender {
 
     /// Fonts at the tile's font size, or at the size whose advance fills `cellWidth` when the grid is known.
     static func fonts(size fontSize: CGFloat, cellWidth: CGFloat?) -> Fonts {
+        let start = DevPerf.mark()
+        defer { DevPerf.record("terminal.fonts", since: start) }
         let base = families.lazy.compactMap { NSFont(name: $0, size: fontSize) ?? NSFontManager.shared.font(withFamily: $0, traits: [], weight: 5, size: fontSize) }.first
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let advance = base.maximumAdvancement.width > 0 ? base.maximumAdvancement.width : base.advancement(forGlyph: base.glyph(withName: "M")).width

@@ -13,10 +13,10 @@ final class NoteAnchorPolicyTests {
     let server: SocketServer
     let board: Board
 
-    init() throws {
+    init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("board/src"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
-        board = registry.open(root: dir.appendingPathComponent("board"))
+        board = await registry.open(root: dir.appendingPathComponent("board"))
         let router = ApiRouter(registry: registry)
         self.router = router
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
@@ -122,7 +122,7 @@ final class NoteAnchorPolicyTests {
         let clone = try await TempRepo(cloning: repo)
         defer { try? FileManager.default.removeItem(at: clone.root) }
         try await clone.write("src/a.txt", Self.marker + "\n")
-        let board = registry.open(root: repo.root)
+        let board = await registry.open(root: repo.root)
 
         let live = "```txt file=src/a.txt#L1\n```\n\n```txt file=\(worktree.path)/src/a.txt#L1\n```\n\n```txt file=\(clone.root.path)/src/a.txt#L1\n```\n"
         #expect(try await stored(["markdown": .string(live)], on: board)

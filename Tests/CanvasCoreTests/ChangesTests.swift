@@ -245,7 +245,7 @@ final class ChangesApiTests {
     @Test func objectGetListsFilesHunksAndReviewedActions() async throws {
         let repo = try await workRepo()
         let registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        let board = registry.open(root: repo.root)
+        let board = await registry.open(root: repo.root)
         let router = ApiRouter(registry: registry)
         let server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
             await router.handle(request, connection: connection)

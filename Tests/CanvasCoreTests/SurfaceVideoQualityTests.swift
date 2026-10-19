@@ -184,7 +184,10 @@ private enum BrowserQuality {
                 let row = try frame(motion, checkpoint: "caret-\(index)", decoder: decoder,
                     expected: index.isMultiple(of: 2) ? offPixels : onPixels, width: off.width, height: off.height)
                 result.frames.append(row)
-                if motion.refresh { encoder.acknowledgeRefinement() }
+                if motion.refresh {
+                    try check(motion.data.count <= SurfaceImageEncoder.refinementBytes, "Sharp IDR exceeds refresh transport bound")
+                    encoder.acknowledgeRefinement()
+                }
             }
             try check(try capture(off, at: 2.1 + Double(caretTransitions) * 0.5) == nil, "Quiet caret sequence rearmed another refresh")
         } catch {

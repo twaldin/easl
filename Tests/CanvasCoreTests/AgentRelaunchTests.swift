@@ -34,9 +34,9 @@ final class AgentRelaunchTests {
         try? FileManager.default.removeItem(at: dir)
     }
 
-    func launch() throws -> Launch {
+    func launch() async throws -> Launch {
         let registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60), agentReports: spool)
-        let board = registry.open(root: root)
+        let board = await registry.open(root: root)
         let router = ApiRouter(registry: registry)
         router.submitToTerminal = { [unowned self] _, _, text in
             typed.append(text)
@@ -80,7 +80,7 @@ final class AgentRelaunchTests {
     }
 
     @Test func anAgentThatFinishedWhileCanvasWasAwayComesBackDoneWithItsAnswer() async throws {
-        let before = try launch()
+        let before = try await launch()
         let codex = before.board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
         try before.board.reportLifecycle(tile: codex, kind: "codex", state: .working, message: nil, seq: 100, source: "canvas-codex")
         before.quit()
@@ -91,7 +91,7 @@ final class AgentRelaunchTests {
         try spooled(codex, seq: 150, ["kind": "codex", "state": "working", "source": "canvas-codex", "call": "f0c82fec96cbd7c6"])
         try spooled(codex, seq: 200, ["kind": "codex", "state": "idle", "source": "canvas-codex", "final": "No blocking findings in d93c070."])
 
-        let after = try launch()
+        let after = try await launch()
         func lifecycle() -> JSONValue? { after.board.objects[codex]?.props["lifecycle"] }
         try await eventually { lifecycle()?["state"] == .string("done") }
         #expect(lifecycle()?["seen"] == .bool(false), "unseen: the user hasn't read it")
@@ -104,14 +104,14 @@ final class AgentRelaunchTests {
     }
 
     @Test func theLastAnswerOutlastsARelaunchUntilTheNextTurn() async throws {
-        let before = try launch()
+        let before = try await launch()
         let omp = before.board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .idle, message: nil, seq: 2, source: "canvas-omp", final: "Committed d327349.")
         before.board.markSeen(omp)
         before.quit()
 
-        let after = try launch()
+        let after = try await launch()
         let final = try await call(after, "agent.read", ["target": .string(omp), "final": .bool(true)])
         #expect(final["result"]?["text"] == .string("Committed d327349."), "\(final)")
         // A report older than one applied before the quit is stale after it too.
@@ -124,7 +124,7 @@ final class AgentRelaunchTests {
     }
 
     @Test func anAgentThatExitedWhileCanvasWasAwayComesBackReleased() async throws {
-        let before = try launch()
+        let before = try await launch()
         let omp = before.board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 100, source: "canvas-omp")
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .idle, message: nil, seq: 200, source: "canvas-omp")
@@ -132,26 +132,26 @@ final class AgentRelaunchTests {
 
         // A release older than the last report applied (a new session had started) is stale.
         try spooled(omp, seq: 150, method: "agent.release", ["kind": "omp", "source": "canvas-omp"])
-        let stale = try launch()
+        let stale = try await launch()
         try await eventually { spoolIsEmpty(omp) }
         #expect(stale.board.objects[omp]?.props["lifecycle"]?["state"] == .string("done"))
         stale.quit()
 
         try spooled(omp, seq: 300, method: "agent.release", ["kind": "omp", "source": "canvas-omp"])
-        let after = try launch()
+        let after = try await launch()
         try await eventually { after.board.objects[omp]?.props["agent"] == nil }
         #expect(after.board.objects[omp]?.props["lifecycle"] == nil, "a plain shell again")
     }
 
     @Test func anAgentThatAskedWhileCanvasWasAwayIsBlockedAndAPromptIsRefused() async throws {
-        let before = try launch()
+        let before = try await launch()
         let omp = before.board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 100, source: "canvas-omp")
         before.quit()
 
         // omp's `ask` came up while easl was closed; the extension spooled its blocked report.
         try spooled(omp, seq: 101, ["kind": "omp", "state": "blocked", "source": "canvas-omp", "message": "Commit?"])
-        let after = try launch()
+        let after = try await launch()
         func lifecycle() -> JSONValue? { after.board.objects[omp]?.props["lifecycle"] }
         try await eventually { lifecycle()?["state"] == .string("blocked") }
         #expect(lifecycle()?["message"] == .string("Commit?") && lifecycle()?["restored"] == nil, "confirmed by the replay")
@@ -163,13 +163,13 @@ final class AgentRelaunchTests {
     }
 
     @Test func aWorkingStateNobodyConfirmedSinceTheRelaunchIsNotTypedInto() async throws {
-        let before = try launch()
+        let before = try await launch()
         let omp = before.board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 100, source: "canvas-omp")
         before.quit()
 
         // An extension from before the spool dropped what it said while easl was closed.
-        let after = try launch()
+        let after = try await launch()
         let listed = try await call(after, "agent.list", [:])["result"]?["agents"]?.array?.first
         #expect(listed?["lifecycle"]?["state"] == .string("working") && listed?["lifecycle"]?["restored"] == .bool(true), "\(String(describing: listed))")
         let refused = try await call(after, "agent.prompt", ["target": .string(omp), "text": "Don't commit yet"])

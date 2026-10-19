@@ -54,6 +54,21 @@ public struct WorktreeInfo: Equatable, Sendable {
     }
 }
 
+/// A worktree a board is opened from or works in, with what recording it reads from disk: its
+/// branch and its top level resolved. Made off the main actor.
+public struct WorktreeVisit: Equatable, Sendable {
+    public var worktree: GitWorktree
+    public var branch: String?
+    /// `GitWorktree.normalized` of its top level.
+    public var path: String
+
+    public init(_ worktree: GitWorktree) {
+        self.worktree = worktree
+        branch = worktree.branch
+        path = GitWorktree.normalized(worktree.toplevel)
+    }
+}
+
 extension RepoRecord {
     /// The worktrees to report: the live ones of the repository (main checkout first) and every
     /// recorded one, without repeats; `objects` are the board's (a record's region must exist).
@@ -81,10 +96,9 @@ extension RepoRecord {
         return worktrees.first(where: { $0.path == path && $0.branch == nil && $0.region.map { objects[$0] != nil } == true })?.region
     }
 
-    /// Records the worktree at `path` (`GitWorktree.normalized`) with the branch it has now;
-    /// false when it was already recorded so.
+    /// Records the worktree at `path` (already `GitWorktree.normalized`) with the branch it has
+    /// now; false when it was already recorded so.
     mutating func record(path: String, branch: String?) -> Bool {
-        let path = GitWorktree.normalized(path)
         guard !worktrees.contains(where: { $0.path == path && $0.branch == branch }) else { return false }
         worktrees.append(WorktreeRecord(path: path, branch: branch))
         return true
@@ -92,12 +106,12 @@ extension RepoRecord {
 }
 
 extension Board {
-    /// The board was opened from `worktree` (a directory in it): a linked worktree becomes the
+    /// The board was opened from `visit` (a directory in it): a linked worktree becomes the
     /// working worktree and is recorded; the main checkout clears the working worktree.
-    public func opened(from worktree: GitWorktree) {
-        guard repo?.commonDir == worktree.commonDir else { return }
-        workingWorktree = worktree.isMain ? nil : worktree
-        if !worktree.isMain { record(worktree) }
+    public func opened(from visit: WorktreeVisit) {
+        guard repo?.commonDir == visit.worktree.commonDir else { return }
+        workingWorktree = visit.worktree.isMain ? nil : visit.worktree
+        if !visit.worktree.isMain { record(visit) }
     }
 
     /// The checkout the user opened the board from: the board root's place in the working
@@ -107,8 +121,8 @@ extension Board {
     }
 
     /// The region to show for the worktree the board was opened from (`opened(from:)`).
-    public func region(for worktree: GitWorktree) -> ObjectID? {
-        repo?.region(branch: worktree.branch, path: GitWorktree.normalized(worktree.toplevel), objects: objects)
+    public func region(for visit: WorktreeVisit) -> ObjectID? {
+        repo?.region(branch: visit.branch, path: visit.path, objects: objects)
     }
 
     /// Worktree and branch a terminal created with `props` starts in, stamped on its props
@@ -141,8 +155,9 @@ extension Board {
     /// that is one of the board's repository, a linked one recorded on the board; else nil.
     private func worktreeStamp(_ directory: String) -> [String: JSONValue]? {
         guard let repo, let worktree = GitWorktree.containing(directory), worktree.commonDir == repo.commonDir else { return nil }
-        if !worktree.isMain { record(worktree) }
-        return ["worktree": .string(GitWorktree.normalized(worktree.toplevel)), "branch": worktree.branch.map(JSONValue.string) ?? .null]
+        let visit = WorktreeVisit(worktree)
+        if !worktree.isMain { record(visit) }
+        return ["worktree": .string(visit.path), "branch": visit.branch.map(JSONValue.string) ?? .null]
     }
 
     /// The checkout Review Changes and Review Branch review, as a changes tile's `root`: the
@@ -165,8 +180,8 @@ extension Board {
         return own.siblings.filter { $0.gitDir != own.gitDir }
     }
 
-    private func record(_ worktree: GitWorktree) {
-        guard var record = repo, record.record(path: worktree.toplevel, branch: worktree.branch) else { return }
+    private func record(_ visit: WorktreeVisit) {
+        guard var record = repo, record.record(path: visit.path, branch: visit.branch) else { return }
         repo = record
         onChange?()
     }

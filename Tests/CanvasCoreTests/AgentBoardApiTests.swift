@@ -15,10 +15,10 @@ final class AgentBoardApiTests {
     /// Line caps the router asked the app to read.
     var readLimits: [Int] = []
 
-    init() throws {
+    init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
-        board = registry.open(root: dir.appendingPathComponent("root"))
+        board = await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry)
         self.router = router
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
@@ -143,7 +143,7 @@ final class AgentBoardApiTests {
         board.create(type: .note, props: .object(["markdown": .string("kept")]))
         let worktree = dir.appendingPathComponent("worktree")
         try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
-        let doomed = registry.open(root: worktree)
+        let doomed = await registry.open(root: worktree)
         doomed.create(type: .note, props: .object(["markdown": .string("a")]))
         doomed.create(type: .note, props: .object(["markdown": .string("b")]))
         registry.store.flush([doomed])
@@ -151,7 +151,7 @@ final class AgentBoardApiTests {
         try FileManager.default.removeItem(at: worktree)
         let sub = dir.appendingPathComponent("root/sub", isDirectory: true)
         try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
-        let fresh = registry.open(root: sub)
+        let fresh = await registry.open(root: sub)
 
         let boards = try #require(try await call("board.list")["result"]?["boards"]?.array)
         let byID = Dictionary(uniqueKeysWithValues: boards.map { ($0["board"]?.string ?? "", $0) })
@@ -174,7 +174,7 @@ final class AgentBoardApiTests {
         try git("init", "-q", "-b", "main", repo.path)
         try git("-C", repo.path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
         try git("-C", repo.path, "worktree", "add", "-q", "-b", "feature", before.path)
-        let original = registry.open(root: before)
+        let original = await registry.open(root: before)
         #expect(original.root.path == repo.path, "rooted at the main checkout")
         original.create(type: .note, props: .object(["markdown": .string("n")]))
         registry.store.flush([original])
@@ -182,9 +182,9 @@ final class AgentBoardApiTests {
         let savedAt = try #require(registry.store.list().first { $0.id == original.id }?.updatedAt)
 
         try git("-C", repo.path, "worktree", "move", before.path, after.path)
-        let moved = registry.open(root: after)
+        let moved = await registry.open(root: after)
         #expect(moved.id == original.id, "a board follows its repository, not a worktree's path")
-        #expect(registry.open(root: repo) === moved)
+        #expect(await registry.open(root: repo) === moved)
 
         let boards = try #require(try await call("board.list")["result"]?["boards"]?.array)
         let entry = try #require(boards.first { $0["board"] == .string(moved.id) })
@@ -300,7 +300,7 @@ final class AgentBoardApiTests {
         #expect(try await send(reviewer, #"[{"object":"\#(note)","lines":{"start":1,"end":1}}]"#)["error"]?["code"] == .string("invalid_params"))
         #expect(try await send(reviewer, #"[{"object":"\#(note)","range":1}]"#)["error"]?["code"] == .string("invalid_params"))
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("other"), withIntermediateDirectories: true)
-        let elsewhere = registry.open(root: dir.appendingPathComponent("other")).create(type: .note, props: .object(["markdown": "o"])).id
+        let elsewhere = await registry.open(root: dir.appendingPathComponent("other")).create(type: .note, props: .object(["markdown": "o"])).id
         #expect(try await send(reviewer, #"[{"object":"\#(elsewhere)"}]"#)["error"]?["code"] == .string("not_found"), "objects come from the target's board")
 
         router.submitToTerminal = { _, _, _ in false }

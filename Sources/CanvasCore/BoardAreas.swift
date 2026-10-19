@@ -67,17 +67,8 @@ public struct BoardAreas: Sendable {
 
     /// Checks path and commit policy without reading text. Live files also require `openNoFollow`.
     func authorize(_ path: String, commit: String?, root: URL) async throws -> AuthorizedFile {
-        guard !path.isEmpty, !path.contains("\0"), !path.hasPrefix("~") else { throw NoteSourceError.refused }
-        let requested = Board.hostPath(path, under: root.path)
-        guard let commit else {
-            guard let real = resolve(live: requested) else { throw NoteSourceError.refused }
-            return .live(real)
-        }
-        guard NoteSource.isRevision(commit) else { throw NoteSourceError.invalidRevision(commit) }
-        guard let found = written(requested) else { throw NoteSourceError.refused }
-        let relative = String(requested.dropFirst(found.base.count).drop(while: { $0 == "/" }))
-        guard !relative.isEmpty else { throw NoteSourceError.notAtCommit(commit) }
-        let directory = URL(fileURLWithPath: found.area.real)
+        let file = try preauthorize(path, commit: commit, root: root)
+        guard case .committed(let directory, let relative, let commit) = file else { return file }
         let entry: Data
         do {
             entry = try await GitRunner.shared.run(["--literal-pathspecs", "ls-tree", "-z", commit, "--", relative], in: directory, timeout: NoteSource.timeout)
@@ -88,7 +79,23 @@ public struct BoardAreas: Sendable {
         // A symlink's blob names a file elsewhere: refused, as the host's reader refuses it.
         if mode == "120000 " { throw NoteSourceError.refused }
         guard mode == "100644 " || mode == "100755 " else { throw NoteSourceError.notAtCommit(commit) }
-        return .committed(directory: directory, relative: relative, revision: commit)
+        return file
+    }
+
+    /// `authorize` short of git: a live file is authorized; a file at a commit is where git must
+    /// still find a regular file (`authorize`).
+    func preauthorize(_ path: String, commit: String?, root: URL) throws -> AuthorizedFile {
+        guard !path.isEmpty, !path.contains("\0"), !path.hasPrefix("~") else { throw NoteSourceError.refused }
+        let requested = Board.hostPath(path, under: root.path)
+        guard let commit else {
+            guard let real = resolve(live: requested) else { throw NoteSourceError.refused }
+            return .live(real)
+        }
+        guard NoteSource.isRevision(commit) else { throw NoteSourceError.invalidRevision(commit) }
+        guard let found = written(requested) else { throw NoteSourceError.refused }
+        let relative = String(requested.dropFirst(found.base.count).drop(while: { $0 == "/" }))
+        guard !relative.isEmpty else { throw NoteSourceError.notAtCommit(commit) }
+        return .committed(directory: URL(fileURLWithPath: found.area.real), relative: relative, revision: commit)
     }
 
     /// The text of `path`, read only where the board's areas permit it.

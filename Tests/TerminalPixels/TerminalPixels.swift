@@ -66,6 +66,14 @@ private enum TerminalPixels {
             window.close()
         }
         try await Task.sleep(for: .milliseconds(200))
+        let closedObject = board.create(type: .terminal, props: .object([:]), frame: Frame(x: 900, y: 900, w: 200, h: 100))
+        let closedRemote = TerminalTile(object: closedObject, board: board, attach: ["/usr/bin/true"])
+        closedRemote.setHostBoardClosed(true)
+        document.addSubview(closedRemote)
+        await MainTurns.next()
+        await MainTurns.next()
+        require(closedRemote.terminal.controller == nil, "a closed remote board attached its delayed terminal surface")
+        closedRemote.discard()
         let originalSize = tile.terminal.frame.size
         let originalFrame = frame.frame
         frame.place(NSRect(x: originalFrame.minX, y: originalFrame.minY, width: 560.2, height: 400.2), zoom: 1)

@@ -4,12 +4,13 @@ import QuartzCore
 /// Development performance probes (`EASL_DEV_PERF=1`; see docs/testing.md "Performance
 /// probes"). Off, every call returns after one flag check.
 ///
-/// A span covers an input-replay burst (plus a settle after it) or an idle window
-/// (`dev-input <pid> perf <ms>`). While it runs, a display link on the canvas window counts frames
-/// and missed vsyncs, a main run-loop observer measures each busy stretch of the main thread
-/// (from waking to going back to sleep: a stretch over one frame is a hitch), and code paths
-/// report counts (`count`, e.g. draws per view type) and timed sections (`time`). When the span
-/// ends, `app.log` gets one `DevPerf:` line per phase.
+/// A span covers launch restoration, an input-replay burst (plus its settle), or an idle
+/// window (`dev-input <pid> perf <ms>`). Launch starts at applicationDidFinishLaunching,
+/// before asynchronous restoration; the next explicit span closes it, including its open wake.
+/// A display link counts frames when a canvas window is available. A main run-loop observer
+/// measures busy stretches from waking to sleeping, independently of that window. Timed
+/// sections and counts accompany each phase's log, with the longest wake's start and CPU time.
+/// Wakes of at least 50 ms also log their own wall/CPU time and timed sections.
 @MainActor
 enum DevPerf {
     static let enabled = ProcessInfo.processInfo.environment["EASL_DEV_PERF"] == "1"
@@ -29,6 +30,7 @@ enum DevPerf {
         /// what the stretch needed, whatever else the Mac ran (a stretch's wall time grows
         /// with preemption; its CPU time doesn't).
         var cpu = 0.0, longestCpu = 0.0
+        var longestBusyStart = 0.0, longestBusyCpu = 0.0
         var counts: [String: Int] = [:]
         var timings: [String: (count: Int, total: Double, max: Double)] = [:]
 
@@ -47,12 +49,14 @@ enum DevPerf {
     }
 
     private static var span: Span?
-    private static var observer: CFRunLoopObserver?
+    private static var wakeObserver: CFRunLoopObserver?
+    private static var sleepObserver: CFRunLoopObserver?
     private static var wokeAt: CFTimeInterval?
     /// The main thread's CPU time (ms) when its current stretch began: `begin` is called inside
     /// a stretch, so a span's first `beforeWaiting` measures from here, not from 0 or an earlier
     /// span's wake.
     private static var wokeCpu = 0.0
+    private static var wakeTimings: [String: (count: Int, total: Double, max: Double)] = [:]
 
     /// The main thread's CPU time so far, in milliseconds (the observer runs on it).
     private static var threadCpu: Double { Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)) / 1e6 }
@@ -80,6 +84,13 @@ enum DevPerf {
         entry.total += ms
         entry.max = max(entry.max, ms)
         span.phases[index].timings[name] = entry
+        if wokeAt != nil {
+            var wake = wakeTimings[name] ?? (0, 0, 0)
+            wake.count += 1
+            wake.total += ms
+            wake.max = max(wake.max, ms)
+            wakeTimings[name] = wake
+        }
     }
 
     /// Start of a section timed with `record(_:since:)`; nil when no span runs (cheap in draws).
@@ -103,6 +114,7 @@ enum DevPerf {
         self.span = span
         wokeAt = CACurrentMediaTime()
         wokeCpu = threadCpu
+        wakeTimings.removeAll(keepingCapacity: true)
         guard let view = window?.contentView else { return }
         let link = view.displayLink(target: Ticker.shared, selector: #selector(Ticker.tick(_:)))
         link.add(to: .main, forMode: .common)
@@ -118,6 +130,7 @@ enum DevPerf {
 
     static func end() {
         guard enabled, let span else { return }
+        finishWake(at: CACurrentMediaTime(), cpu: threadCpu)
         span.link?.invalidate()
         self.span = nil
         let period = span.period * 1000
@@ -127,9 +140,10 @@ enum DevPerf {
             let timings = phase.timings.sorted { $0.key < $1.key }.map {
                 String(format: "%@=%d/%.1f/%.1f", $0.key, $0.value.count, $0.value.total, $0.value.max)
             }.joined(separator: " ")
-            NSLog("DevPerf: %@ %@ %.0f ms: frames %d missed %d (vsync %.1f ms, longest frame %.1f ms), main busy %.0f ms, hitches %d (longest %.1f ms), main cpu %.0f ms (longest %.1f ms); counts: %@; timings (n/total/max ms): %@",
+            NSLog("DevPerf: %@ %@ %.0f ms: frames %d missed %d (vsync %.1f ms, longest frame %.1f ms), main busy %.0f ms, hitches %d (longest %.1f ms), main cpu %.0f ms (longest %.1f ms); longest wake: start+%.1f ms cpu %.1f ms; counts: %@; timings (n/total/max ms): %@",
                   span.label, phase.name, ms, phase.frames, phase.missed, period, phase.longestFrame,
-                  phase.busy, phase.hitches, phase.longestBusy, phase.cpu, phase.longestCpu, counts, timings)
+                  phase.busy, phase.hitches, phase.longestBusy, phase.cpu, phase.longestCpu,
+                  phase.longestBusyStart, phase.longestBusyCpu, counts, timings)
         }
     }
 
@@ -158,33 +172,54 @@ enum DevPerf {
     }
 
     private static func installObserver() {
-        guard observer == nil else { return }
-        let activities = CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue
-        let observer = CFRunLoopObserverCreateWithHandler(nil, activities, true, 0) { _, activity in
+        guard wakeObserver == nil else { return }
+        let wake = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue, true, CFIndex.min) { _, activity in
             MainActor.assumeIsolated { runLoop(activity) }
         }
-        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
-        self.observer = observer
+        // AppKit display and Core Animation commit observers run after order zero.
+        let sleep = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, true, CFIndex.max) { _, activity in
+            MainActor.assumeIsolated { runLoop(activity) }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), wake, .commonModes)
+        CFRunLoopAddObserver(CFRunLoopGetMain(), sleep, .commonModes)
+        wakeObserver = wake
+        sleepObserver = sleep
     }
 
     private static func runLoop(_ activity: CFRunLoopActivity) {
         let now = CACurrentMediaTime()
         let cpu = threadCpu
         if activity == .afterWaiting {
+            wakeTimings.removeAll(keepingCapacity: true)
             wokeAt = now
             wokeCpu = cpu
             return
         }
+        finishWake(at: now, cpu: cpu)
+    }
+
+    private static func finishWake(at now: CFTimeInterval, cpu: Double) {
         guard let woke = wokeAt, let span else { return }
         wokeAt = nil
         let index = span.phases.count - 1
         let ms = (now - woke) * 1000
         span.phases[index].busy += ms
-        span.phases[index].longestBusy = max(span.phases[index].longestBusy, ms)
-        if ms > span.period * 1000 { span.phases[index].hitches += 1 }
         let used = cpu - wokeCpu
+        if ms > span.phases[index].longestBusy {
+            span.phases[index].longestBusy = ms
+            span.phases[index].longestBusyStart = (woke - span.phases[index].start) * 1000
+            span.phases[index].longestBusyCpu = used
+        }
+        if ms > span.period * 1000 { span.phases[index].hitches += 1 }
         span.phases[index].cpu += used
         span.phases[index].longestCpu = max(span.phases[index].longestCpu, used)
+        if ms >= 50 {
+            let timings = wakeTimings.sorted { $0.key < $1.key }.map {
+                String(format: "%@=%d/%.1f/%.1f", $0.key, $0.value.count, $0.value.total, $0.value.max)
+            }.joined(separator: " ")
+            NSLog("DevPerfWake: %@ %@ start+%.1f ms wall %.1f ms cpu %.1f ms; timings (n/total/max ms): %@",
+                  span.label, span.phases[index].name, (woke - span.phases[index].start) * 1000, ms, used, timings)
+        }
     }
 
     @MainActor private final class Ticker: NSObject {

@@ -129,12 +129,12 @@ struct ActivityTests {
         #expect(!log.query(since: .seq(3), limit: 100).truncated)
     }
 
-    @Test func appStartIsMarkedAndAnOldCursorReportsTheRestart() throws {
+    @Test func appStartIsMarkedAndAnOldCursorReportsTheRestart() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-restart-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        let board = registry.open(root: dir.appendingPathComponent("root"))
+        let board = await registry.open(root: dir.appendingPathComponent("root"))
         board.create(type: .note, props: .object(["markdown": .string("x")]))
 
         let first = board.activity.query(since: nil, limit: 100).entries.first

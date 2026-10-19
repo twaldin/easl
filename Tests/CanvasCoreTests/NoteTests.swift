@@ -1193,10 +1193,10 @@ final class AnchorStatusApiTests {
     let board: Board
     let server: SocketServer
 
-    init() throws {
+    init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root/src"), withIntermediateDirectories: true)
         let registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
-        board = registry.open(root: dir.appendingPathComponent("root"))
+        board = await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry)
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
             await router.handle(request, connection: connection)

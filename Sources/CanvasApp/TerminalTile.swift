@@ -35,33 +35,55 @@ final class TerminalTile: NSView, TileContent {
     private(set) var discarded = false
     private let references: HostReferences?
     private var referenceTask: Task<Void, Never>?
+    private var launchTask: Task<Void, Never>?
     private var referenceGeneration = UUID()
-    var endingSession = false {
-        didSet {
-            if endingSession { terminal.cancelImageInput() }
+    var endingSession: Bool { board.isEndingSession(objectID) }
+
+    private var canAttachSurface: Bool {
+        !discarded && launchTask == nil && !endingSession && !hostBoardClosed
+            && !board.isClosed && board.objects[objectID] != nil
+    }
+
+    func sessionShutdownChanged() {
+        if endingSession {
+            terminal.cancelImageInput()
+            terminal.controller = nil
+        } else if canAttachSurface, terminal.controller == nil {
+            terminal.controller = TerminalConfig.shared.controller
+            host?.add(self)
         }
     }
 
     private var hostBoardClosed = false
+    private var hostSnapshotTask: Task<Void, Never>?
     private var lastRemoteScreen: (lines: [TerminalLine], cursorRow: Int?)?
 
     func setHostBoardClosed(_ closed: Bool) {
         guard isRemote, hostBoardClosed != closed, !discarded else { return }
+        hostSnapshotTask?.cancel()
+        hostSnapshotTask = nil
         if closed {
             lastRemoteScreen = liveScreen()
             hostBoardClosed = true
             referenceTask?.cancel()
             referenceTask = nil
             referenceGeneration = UUID()
-            snapshotHistory = lastRemoteScreen
-            showSnapshot(true)
+            if lastRemoteScreen != nil {
+                hostSnapshotTask = Task { [weak self] in
+                    await TerminalRender.prepareFonts()
+                    guard let self, !Task.isCancelled, !discarded, hostBoardClosed else { return }
+                    snapshotHistory = lastRemoteScreen
+                    showSnapshot(true)
+                    hostSnapshotTask = nil
+                }
+            }
             terminal.cancelImageInput()
             terminal.controller = nil
         } else {
             hostBoardClosed = false
             showSnapshot(false)
             lastRemoteScreen = nil
-            terminal.controller = TerminalConfig.shared.controller
+            if canAttachSurface { terminal.controller = TerminalConfig.shared.controller }
         }
         updateSurfaceVisibility()
     }
@@ -70,6 +92,10 @@ final class TerminalTile: NSView, TileContent {
         guard !discarded else { return }
         discarded = true
         referenceTask?.cancel()
+        launchTask?.cancel()
+        launchTask = nil
+        hostSnapshotTask?.cancel()
+        hostSnapshotTask = nil
         referenceGeneration = UUID()
         terminal.cancelImageInput()
         handler.tile = nil
@@ -104,20 +130,33 @@ final class TerminalTile: NSView, TileContent {
         pasteHostTarget = HostedTerminal.host(of: object)
         terminal = CanvasTerminalView(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         super.init(frame: terminal.frame)
-        if let attach {
-            terminal.configuration = TerminalSurfaceOptions(backend: .exec, workingDirectory: NSHomeDirectory(), envVars: [:], command: RemoteHost.terminalCommand(attach))
-        } else {
-            let environment = Self.environment(tile: object.id, board: board)
-            terminal.configuration = TerminalSurfaceOptions(
-                backend: .exec,
-                // A hosted session's `cwd` is the host's; ssh runs here.
-                workingDirectory: host == nil ? object.props["cwd"]?.string ?? board.root.path : board.root.path,
-                envVars: environment,
-                command: host.map { Self.hostedCommand(session: sessionName, tile: object.id, board: board, route: $0.route, keep: Set(environment.keys)) }
-                    ?? Self.command(session: sessionName, object: object, board: board, environment: environment)
-            )
+        let environment = attach == nil ? Self.environment(tile: object.id, board: board) : [:]
+        let command = attach.map { RemoteHost.terminalCommand($0) }
+            ?? host.map { Self.hostedCommand(session: sessionName, tile: object.id, board: board, route: $0.route, keep: Set(environment.keys)) }
+        terminal.configuration = TerminalSurfaceOptions(
+            backend: .exec,
+            workingDirectory: attach != nil ? NSHomeDirectory()
+                : (host == nil ? object.props["cwd"]?.string ?? board.root.path : board.root.path),
+            envVars: environment, command: command
+        )
+        let session = sessionName, local = attach == nil && host == nil
+        launchTask = Task { [weak self] in
+            let command: String?
+            if local {
+                command = await Self.command(session: session, object: object, board: board, environment: environment)
+            } else {
+                command = nil
+            }
+            await MainTurns.next()
+            guard let self, !discarded, !Task.isCancelled else { return }
+            if let command {
+                var options = terminal.configuration
+                options.command = command
+                terminal.configuration = options
+            }
+            launchTask = nil
+            if canAttachSurface { terminal.controller = TerminalConfig.shared.controller }
         }
-        terminal.controller = TerminalConfig.shared.controller
         handler.tile = self
         terminal.delegate = handler
         if isRemote {
@@ -245,9 +284,14 @@ final class TerminalTile: NSView, TileContent {
     /// like a fresh login session and the user's startup files set their own variables. `ZMX_DIR` is
     /// kept when it is one of those variables, so attach uses the same directory as `zmx list`. The
     /// initial command gets the PATH of the tile's interactive shell (`commandPath`).
-    static func command(session: String, object: CanvasObject, board: Board, environment: [String: String], start initial: String? = nil) -> String {
+    static func command(session: String, object: CanvasObject, board: Board, environment: [String: String], start initial: String? = nil) async -> String {
         let command = initial ?? initialCommand(object)
-        let path = command == nil ? nil : commandPath(environment, in: object.props["cwd"]?.string ?? board.root.path)
+        let path: String?
+        if command != nil {
+            path = await commandPath(environment, in: object.props["cwd"]?.string ?? board.root.path)
+        } else {
+            path = nil
+        }
         let start = LoginSession.tileStart(shell: AppPaths.userShell, command: command, path: path)
         guard let zmx = AppPaths.zmx else { return ShellWords.quote(start) }
         let strip = LoginSession.strippedForTile(ProcessInfo.processInfo.environment, keep: Set(environment.keys)).flatMap { ["-u", $0] }
@@ -263,12 +307,14 @@ final class TerminalTile: NSView, TileContent {
     /// The PATH a tile's initial command runs with (`LoginSession.tileStart`): what the user's
     /// interactive login shell sets up in the tile's `cwd` from its own PATH (`environment`'s, else
     /// the app's) and the user's ZDOTDIR (`LoginShell.interactivePath`), easl's bin first; nil
-    /// when that shell didn't answer. Blocks while the shell is asked: once per directory until a
-    /// startup file changes.
-    static func commandPath(_ environment: [String: String], in cwd: String) -> String? {
+    /// when that shell didn't answer. Both cache validation and a shell probe run off main.
+    static func commandPath(_ environment: [String: String], in cwd: String) async -> String? {
         let path = environment["PATH"] ?? ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        return LoginShell.shared.interactivePath(from: path, in: cwd, zdotdir: environment["EASL_ZSH_ZDOTDIR"])
-            .map { LoginSession.commandPath($0, bin: AppPaths.resources.map { $0.path + "/bin" }) }
+        let zdotdir = environment["EASL_ZSH_ZDOTDIR"], bin = AppPaths.resources.map { $0.path + "/bin" }
+        let resolved = await offPool(qos: .userInitiated) {
+            LoginShell.shared.interactivePath(from: path, in: cwd, zdotdir: zdotdir)
+        }
+        return resolved.map { LoginSession.commandPath($0, bin: bin) }
     }
 
     /// A prologue for `sh -c` with $1 = zmx, $2 = session name, $3 = this instance's home label:
@@ -457,6 +503,11 @@ final class TerminalTile: NSView, TileContent {
         guard !isRemote else {
             throw ApiRouter.Failure("unsupported", "terminal \(objectID) is on a remote board: its host restarts it (agent.restart on the host's easl)")
         }
+        await launchTask?.value
+        try Task.checkCancellation()
+        guard !discarded, !board.isClosed else {
+            throw ApiRouter.Failure("not_found", "terminal \(objectID) was closed while it started")
+        }
         if let host {
             restartedAt = Date()
             try await host.restart(self, running: argv, killing: killing, ended: ended)
@@ -481,8 +532,13 @@ final class TerminalTile: NSView, TileContent {
         foregroundJob = nil
         restartedAt = Date()
         guard let object = board.objects[objectID] else { throw ApiRouter.Failure("not_found", "terminal \(objectID) was closed while it restarted") }
+        let command = await Self.command(session: sessionName, object: object, board: board, environment: terminal.configuration.envVars, start: ShellWords.quote(argv))
+        try Task.checkCancellation()
+        guard !discarded, !board.isClosed, board.objects[objectID] != nil else {
+            throw ApiRouter.Failure("not_found", "terminal \(objectID) was closed while it restarted")
+        }
         var options = terminal.configuration
-        options.command = Self.command(session: sessionName, object: object, board: board, environment: options.envVars, start: ShellWords.quote(argv))
+        options.command = command
         // The coordinator rebuilds only on a configuration that differs.
         if options.command == terminal.configuration.command { reattach() } else { terminal.configuration = options }
         refreshProgram()
@@ -1438,6 +1494,7 @@ final class TerminalTile: NSView, TileContent {
     /// `view.snapshot` covers draw the session's styled text on the tile's grid instead (a remote
     /// terminal's session is on its host: the live surface's text, unstyled).
     func render(_ request: TileRenderRequest) async -> TileRender {
+        await TerminalRender.prepareFonts()
         let grid = TerminalRender.grid(for: request.size, known: grid, style: TerminalConfig.shared.style(for: request.appearance))
         let session = sessionName, route = host?.route
         let rows = grid.rows
@@ -1447,7 +1504,9 @@ final class TerminalTile: NSView, TileContent {
                 : route.map { "terminal session \(session) on \($0.target) can't be read" } ?? "terminal session \(session) is not running")
         }
         let screen = TerminalRender.screen(history.lines, cursorRow: history.cursorRow, rows: rows)
-        let image = request.image { bounds in TerminalRender.draw(screen, grid: grid, in: bounds, appearance: request.appearance) }
+        let image = DevPerf.time("terminal.card.draw") {
+            request.image { bounds in TerminalRender.draw(screen, grid: grid, in: bounds, appearance: request.appearance) }
+        }
         return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered)
     }
 
@@ -1461,6 +1520,7 @@ final class TerminalTile: NSView, TileContent {
 
     /// `zmx history` blocks until zmx exits, so it runs off the main actor before the cover is drawn.
     func prepareSnapshot() async {
+        await TerminalRender.prepareFonts()
         let session = sessionName, route = host?.route, rows = snapshotGrid.rows
         snapshotHistory = isRemote ? liveScreen() : await offPool(qos: .userInitiated) { Self.styledHistory(session: session, on: route, rows: rows) }
     }

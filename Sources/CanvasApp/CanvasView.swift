@@ -224,10 +224,10 @@ final class CanvasView: NSScrollView {
         var lasso: Bool
     }
 
-    init(board: Board, remote: RemoteSource? = nil) {
+    init(board: Board, viewport: SavedViewport.Recorder?, remote: RemoteSource? = nil) {
         self.board = board
         self.remote = remote
-        viewportRecorder = remote == nil ? SavedViewport.Recorder(store: SavedViewport.Store(url: AppPaths.viewport(of: board.id))) : nil
+        viewportRecorder = viewport
         super.init(frame: .zero)
         documentView = document
         document.canvas = self
@@ -255,7 +255,10 @@ final class CanvasView: NSScrollView {
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didBecomeActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didResignActiveNotification, object: nil)
         // Placement aims at what the user can see: the viewport clear of the toolbar and tray.
-        board.viewport = { [weak self] in self?.clearViewport }
+        board.viewport = { [weak self] in
+            guard let self, self.viewPlaced else { return nil }
+            return self.clearViewport
+        }
         // A mention of a shape drawn on a page lists the elements under it.
         board.pageElements = { [weak self] id, rect in await self?.pageElements(id, canvasRect: rect) }
         // Mentions name a terminal as its header does, one of a whole terminal carries its screen,
@@ -276,10 +279,16 @@ final class CanvasView: NSScrollView {
         for marker in board.attention.values { showMarker(marker.object, message: marker.message) }
         restack()
         refreshGroups()
-        DispatchQueue.main.async { [weak self] in self?.placeOpeningView() }
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    func scheduleOpeningView() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.discarded, !self.viewPlaced else { return }
+            self.placeOpeningView()
+        }
+    }
 
     func discard() {
         discarded = true

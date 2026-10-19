@@ -32,12 +32,11 @@ final class ComposerController {
     private var recall: (index: Int, shown: ComposerDraft)?
     private var saveWork: DispatchWorkItem?
 
-    init(board: Board, bar: ComposerBar, file: URL?) {
+    init(board: Board, bar: ComposerBar, file: URL?, state initial: ComposerState) {
         self.board = board
         self.bar = bar
         self.file = file
-        // A damaged file never reaches the sync with marks its tokens don't match.
-        state = (file.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(ComposerState.self, from: $0) } ?? ComposerState()).repaired
+        state = initial.repaired
         state.alsoTo.removeAll { board.objects[$0]?.type != .terminal }
         var draft = state.draft
         syncing = true

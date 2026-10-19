@@ -160,18 +160,20 @@ final class NoteTile: NSView, TileContent {
         let changed = object.props["markdown"] != self.object.props["markdown"]
         let rerooted = object.props["root"] != self.object.props["root"] || object.props["ref"] != self.object.props["ref"]
         self.object = object
-        if rerooted { reading = nil }
-        guard changed else {
-            if rerooted {
-                excerpts = [:]
-                captured = [:]
-                resolve()
-            }
-            return
+        if rerooted {
+            reading = nil
+            excerpts = [:]
+            captured = [:]
         }
         if let session {
             session.observe(object)
             if session.conflicted { showConflict() }
+            return
+        }
+        guard changed else {
+            if rerooted {
+                resolve()
+            }
             return
         }
         applyMarkdown()
@@ -348,11 +350,11 @@ final class NoteTile: NSView, TileContent {
     /// from what the tile shows: a note may show any file on this Mac, but nothing the app
     /// writes into its markdown comes from outside the board.
     private func persistAnchors() {
-        guard !board.isRemote, session == nil, let reading, fences.contains(where: NoteMarkdown.needsAnchor) else { return }
+        guard !board.isRemote, !board.isAnchorScrubPending(object.id), session == nil, let reading, fences.contains(where: NoteMarkdown.needsAnchor) else { return }
         let markdown = markdown, captured = captured, board = board, id = object.id, rev = object.rev
         Task { [weak self] in
             let text = await NoteMarkdown.anchoringRanges(markdown, reading: reading, within: BoardAreas(boardRoot: board.root), captured: captured)
-            guard text != markdown, let self, self.session == nil, self.markdown == markdown else { return }
+            guard text != markdown, let self, !board.isClosed, !board.isAnchorScrubPending(id), self.session == nil, self.markdown == markdown else { return }
             _ = try? board.update(id, rev: rev, props: .object(["markdown": .string(text)]), actor: .system)
         }
     }

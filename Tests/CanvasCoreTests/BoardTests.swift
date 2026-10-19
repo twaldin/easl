@@ -59,20 +59,20 @@ struct BoardTests {
     @Test func stagedMentionsSurviveSaveAndReload() async throws {
         let store = BoardStore(directory: root.appendingPathComponent("boards"))
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let board = store.load(root: root)
+        let board = await store.load(root: root)
         let note = board.create(type: .note, props: .object(["markdown": .string("keep me staged")]))
         let mention = try board.stage(.object(note.id))
         store.save(board)
 
-        let reloaded = store.load(root: root)
+        let reloaded = await store.load(root: root)
         #expect(reloaded.tray.map(\.id) == [mention.id])
         #expect(await reloaded.drain().context.contains("keep me staged"))
     }
 
-    @Test func unseenMarkersSurviveSaveAndReloadWithTheirTurn() throws {
+    @Test func unseenMarkersSurviveSaveAndReloadWithTheirTurn() async throws {
         let store = BoardStore(directory: root.appendingPathComponent("boards"))
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let board = store.load(root: root)
+        let board = await store.load(root: root)
         let agent = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))
         let old = board.create(type: .note, props: .object(["markdown": .string("old")]))
         let seen = board.create(type: .note, props: .object(["markdown": .string("seen")]))
@@ -85,7 +85,7 @@ struct BoardTests {
         try board.reportLifecycle(tile: agent.id, kind: "omp", state: .working, message: nil, seq: 3, source: "canvas-omp")
         store.save(board)
 
-        let reloaded = store.load(root: root)
+        let reloaded = await store.load(root: root)
         #expect(Array(reloaded.attention.keys) == [old.id], "seen and deleted objects' markers are gone")
         #expect(reloaded.attention[old.id]?.message == "look at \(old.id)")
         // Still a marker from an earlier turn after the restart: the agent's next one replaces it.

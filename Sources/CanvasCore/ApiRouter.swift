@@ -9,6 +9,8 @@ public final class BoardRegistry {
     public let store: BoardStore
     private var subscribers: [(connection: SocketServer.Connection, board: BoardID?, events: Set<String>?)] = []
     private var closedWindows: Set<BoardID> = []
+    /// Boards loading for `open`: an open of one still loading waits for it.
+    private var loading: [BoardID: Task<Board, Never>] = [:]
     private var closedComposerReceipts: [BoardID: [ComposerNotice]] = [:]
     /// App-level observer for every board's events (UI reconciliation). Socket subscribers are fed separately.
     public var onEvent: ((Board, BoardEvent) -> Void)?
@@ -31,7 +33,11 @@ public final class BoardRegistry {
     }
     /// The host's `archiveAfter` for new questions that name none, on every board it opens
     /// (`Board.defaultQuestionArchiveAfter`): the app's `UISettings.questionArchiveAfter`.
-    private let defaultQuestionArchiveAfter: TimeInterval
+    public var defaultQuestionArchiveAfter: TimeInterval {
+        didSet {
+            for board in boards.values { board.defaultQuestionArchiveAfter = defaultQuestionArchiveAfter }
+        }
+    }
 
     public init(store: BoardStore = BoardStore(), agentReports: URL? = nil, defaultQuestionArchiveAfter: TimeInterval = QuestionSpec.defaultArchiveAfter) {
         self.store = store
@@ -41,19 +47,36 @@ public final class BoardRegistry {
 
     /// The board for a directory: its repository's board (rooted at the repository's canonical
     /// root) when it is in git, tagged with the worktree it was opened from
-    /// (`Board.opened(from:)`), else the directory's own board.
+    /// (`Board.opened(from:)`), else the directory's own board. The directory's git files and
+    /// the board's file are read off the main actor; opens of one board share one load.
     @discardableResult
-    public func open(root: URL) -> Board {
-        let worktree = GitWorktree.containing(root.standardizedFileURL.path)
-        let id = worktree.map { BoardStore.repoID(commonDir: $0.commonDir) } ?? BoardStore.pathID(root)
-        if let existing = boards[id] {
-            setWindowOpen(true, board: existing.id)
-            if let worktree { existing.opened(from: worktree) }
-            return existing
+    public func open(root: URL) async -> Board {
+        let found = await offPool { () -> (visit: WorktreeVisit?, root: URL, id: BoardID) in
+            let worktree = GitWorktree.containing(root.standardizedFileURL.path)
+            return (worktree.map(WorktreeVisit.init), worktree.map { URL(fileURLWithPath: $0.canonicalRoot) } ?? root,
+                    worktree.map { BoardStore.repoID(commonDir: $0.commonDir) } ?? BoardStore.pathID(root))
         }
-        let board = store.load(root: worktree.map { URL(fileURLWithPath: $0.canonicalRoot) } ?? root, id: id, repo: worktree?.commonDir)
+        let board: Board
+        if let existing = boards[found.id] {
+            setWindowOpen(true, board: existing.id)
+            board = existing
+        } else if let load = loading[found.id] {
+            board = await load.value
+            setWindowOpen(true, board: board.id)
+        } else {
+            let load = Task { self.install(await self.store.load(root: found.root, id: found.id, repo: found.visit?.worktree.commonDir), as: found.id) }
+            loading[found.id] = load
+            board = await load.value
+        }
+        if let visit = found.visit { board.opened(from: visit) }
+        return board
+    }
+
+    /// `board`, just loaded, becomes the open board `id` (one already open stays it).
+    private func install(_ board: Board, as id: BoardID) -> Board {
+        loading[id] = nil
+        if let existing = boards[id] { return existing }
         board.composerReceipts = closedComposerReceipts.removeValue(forKey: id) ?? []
-        if let worktree { board.opened(from: worktree) }
         board.onEvent = { [weak self, weak board] event in
             guard let self, let board else { return }
             self.onEvent?(board, event)
@@ -109,7 +132,7 @@ public final class BoardRegistry {
         if changed { broadcast(open ? "board.opened" : "board.closed", data: .object([:]), board: board.id) }
     }
 
-    func windowIsOpen(_ id: BoardID) -> Bool { !closedWindows.contains(id) }
+    public func windowIsOpen(_ id: BoardID) -> Bool { !closedWindows.contains(id) }
 
     public func close(_ id: BoardID, beforeEviction: () throws -> Void = {}) throws {
         guard let board = board(id: id) else { throw ApiRouter.Failure("not_found", "board \(id)") }
@@ -239,7 +262,7 @@ public final class ApiRouter {
     /// `DiagramRefresh.summary` once done. The router bounds the wait (`computeDiagram`).
     public var refreshDiagram: ((Board, ObjectID) async throws -> JSONValue)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
-    public var openBoard: ((URL, _ select: Bool) -> Board)?
+    public var openBoard: ((URL, _ select: Bool) async -> Board)?
     /// Closes a local board or a remote viewer tab without showing the manual close sheet.
     /// Nil preserves sessions; a remote tab refuses any explicit sessions choice.
     public var closeBoard: ((BoardID, _ endSessions: Bool?) async throws -> BoardCloseResult)?
@@ -393,6 +416,7 @@ public final class ApiRouter {
             if method == "object.get" { return Self.ok(id, try await get(params)) }
             if method == "object.find" { return Self.ok(id, try await find(params)) }
             switch method {
+            case "board.open": return Self.ok(id, try await open(params))
             case "app.update":
                 guard let mode = params["mode"]?.string, mode == "check" || mode == "install" else {
                     throw Failure("invalid_params", "mode must be check or install")
@@ -1391,6 +1415,39 @@ public final class ApiRouter {
         return .object(result)
     }
 
+    /// `board.open`: the directory's board, opened in the app's UI when there is one. The
+    /// directory, its checkout and the board's file are read off the main actor.
+    private func open(_ p: JSONValue) async throws -> JSONValue {
+        guard let path = p["root"]?.string, !path.isEmpty else { throw Failure("invalid_params", "root is required") }
+        let expanded = (path as NSString).expandingTildeInPath
+        guard expanded.hasPrefix("/") else { throw Failure("invalid_params", "root must be an absolute path (or start with ~)") }
+        let root = URL(fileURLWithPath: expanded).standardizedFileURL
+        let found = await offPool { () -> (visit: WorktreeVisit?, id: BoardID)? in
+            guard BoardStore.isDirectory(root.path) else { return nil }
+            let worktree = GitWorktree.containing(root.path)
+            return (worktree.map(WorktreeVisit.init), worktree.map { BoardStore.repoID(commonDir: $0.commonDir) } ?? BoardStore.pathID(root))
+        }
+        guard let found else { throw Failure("not_found", "no directory at \(root.path)") }
+        if !closingBoards.isEmpty, let existing = registry.boards[found.id] {
+            try available(existing)
+        }
+        let board: Board
+        if let openBoard {
+            board = await openBoard(root, p["select"]?.bool ?? false)
+        } else {
+            board = await registry.open(root: root)
+        }
+        try available(board)
+        var result: [String: JSONValue] = ["board": .string(board.id), "root": .string(board.root.path), "objects": .number(Double(board.objects.count))]
+        if let visit = found.visit, visit.worktree.commonDir == board.repo?.commonDir {
+            var info: [String: JSONValue] = ["path": .string(visit.worktree.toplevel), "main": .bool(visit.worktree.isMain)]
+            if let branch = visit.branch { info["branch"] = .string(branch) }
+            if let region = board.region(for: visit) { info["region"] = .string(region) }
+            result["worktree"] = .object(info)
+        }
+        return .object(result)
+    }
+
     /// `board.open_remote`: the params are checked here, the rest is the app's (`openRemoteBoard`),
     /// whose failures keep their code: the host's (`not_found`) or the link's (`unavailable`).
     private func openRemote(_ p: JSONValue) async throws -> JSONValue {
@@ -1569,25 +1626,6 @@ public final class ApiRouter {
                 return .object(info)
             }
             return .object(["boards": .array(boards)])
-
-        case "board.open":
-            guard let path = p["root"]?.string, !path.isEmpty else { throw Failure("invalid_params", "root is required") }
-            let expanded = (path as NSString).expandingTildeInPath
-            guard expanded.hasPrefix("/") else { throw Failure("invalid_params", "root must be an absolute path (or start with ~)") }
-            let root = URL(fileURLWithPath: expanded).standardizedFileURL
-            guard BoardStore.isDirectory(root.path) else { throw Failure("not_found", "no directory at \(root.path)") }
-            if !closingBoards.isEmpty, let existing = registry.boards[BoardStore.boardID(for: root)] {
-                try available(existing)
-            }
-            let board = openBoard?(root, p["select"]?.bool ?? false) ?? registry.open(root: root)
-            var result: [String: JSONValue] = ["board": .string(board.id), "root": .string(board.root.path), "objects": .number(Double(board.objects.count))]
-            if let worktree = GitWorktree.containing(root.path), worktree.commonDir == board.repo?.commonDir {
-                var info: [String: JSONValue] = ["path": .string(worktree.toplevel), "main": .bool(worktree.isMain)]
-                if let branch = worktree.branch { info["branch"] = .string(branch) }
-                if let region = board.region(for: worktree) { info["region"] = .string(region) }
-                result["worktree"] = .object(info)
-            }
-            return .object(result)
 
         case "board.export":
             let board = try board(p)

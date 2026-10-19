@@ -202,10 +202,10 @@ struct RoughStrokeTests {
 struct ArrowBindingLifecycleTests {
     let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-drawing-\(UUID().uuidString)")
 
-    @Test func deletingABoundObjectLeavesTheArrowEndWhereItWasAndItsOtherEndStillFollows() throws {
+    @Test func deletingABoundObjectLeavesTheArrowEndWhereItWasAndItsOtherEndStillFollows() async throws {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = BoardStore(directory: root.appendingPathComponent("boards"))
-        let board = store.load(root: root)
+        let board = await store.load(root: root)
         let left = board.create(type: .shape, props: .object(["kind": .string("rect")]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         let right = board.create(type: .shape, props: .object(["kind": .string("rect")]), frame: Frame(x: 400, y: 0, w: 200, h: 100))
         // Drawn right to left: its direction must survive losing the source.
@@ -217,7 +217,7 @@ struct ArrowBindingLifecycleTests {
         #expect(detached.to == .object(left.id), "the surviving end stays bound")
 
         store.save(board)
-        let reloaded = try #require(ArrowSpec(try store.load(root: root).object(arrow.id).props))
+        let reloaded = try #require(ArrowSpec(try await store.load(root: root).object(arrow.id).props))
         #expect(reloaded == detached)
 
         // Moving the survivor still re-routes that end; the free end holds still.

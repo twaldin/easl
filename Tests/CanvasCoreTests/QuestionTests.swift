@@ -12,10 +12,10 @@ final class QuestionTests {
     let server: SocketServer
     let board: Board
 
-    init() throws {
+    init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
-        board = registry.open(root: dir.appendingPathComponent("root"))
+        board = await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry)
         self.router = router
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
@@ -280,18 +280,19 @@ final class QuestionTests {
         #expect(QuestionSpec(try board.object(delayed).props).archived, "never an archive the app made")
     }
 
-    /// Synchronous on the main actor, so the board's timer never runs between injected deadlines.
-    @Test func aHostsDefaultDelayArchivesOnlyQuestionsThatNameNoDelayOfTheirOwn() throws {
+    @Test func aHostsDefaultDelayArchivesOnlyQuestionsThatNameNoDelayOfTheirOwn() async throws {
         let root = dir.appendingPathComponent("thirty")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = BoardStore(directory: dir.appendingPathComponent("thirty-boards"), debounce: 60)
+        try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
         let stored = Board(id: BoardStore.boardID(for: root), root: root)
         let existing = try ask(on: stored)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(stored.snapshot).write(to: store.url(for: stored.id))
-        let configured = BoardRegistry(store: store, defaultQuestionArchiveAfter: 30)
-        let hosted = configured.open(root: root)
+        let configured = BoardRegistry(store: store)
+        let hosted = await configured.open(root: root)
+        configured.defaultQuestionArchiveAfter = 30
         #expect(throws: BoardError.self, "a caller's delay is never replaced") {
             try self.ask(on: hosted, ["archiveAfter": -1])
         }
@@ -353,10 +354,11 @@ final class QuestionTests {
         #expect(spec.keep && !spec.archived, "the reverted change left no deadline behind")
     }
 
-    @Test func loadingArchivesOnlyStoredQuestionsPastTheirDelayAndChangesNothingElse() throws {
+    @Test func loadingArchivesOnlyStoredQuestionsPastTheirDelayAndChangesNothingElse() async throws {
         let root = dir.appendingPathComponent("stored")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = BoardStore(directory: dir.appendingPathComponent("stored-boards"), debounce: 60)
+        try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
         let stored = Board(id: BoardStore.boardID(for: root), root: root)
         let due = try ask(on: stored), kept = try ask(on: stored, ["keep": .bool(true)])
         let recent = try ask(on: stored, ["archiveAfter": 60]), open = try ask(on: stored)
@@ -380,7 +382,7 @@ final class QuestionTests {
             expected.objects[index].props = expected.objects[index].props.merging(.object(["archived": .bool(true)]))
         }
 
-        let loaded = store.load(root: root)
+        let loaded = await store.load(root: root)
         #expect(QuestionSpec(try loaded.object(due).props).archived)
         for id in [kept, recent, open] { #expect(!QuestionSpec(try loaded.object(id).props).archived, "\(id)") }
         #expect(loaded.revision == expected.revision)
@@ -394,7 +396,7 @@ final class QuestionTests {
 
         let sentinel = Date(timeIntervalSince1970: 1_234_567_890)
         try FileManager.default.setAttributes([.modificationDate: sentinel], ofItemAtPath: store.url(for: stored.id).path)
-        let again = store.load(root: root)
+        let again = await store.load(root: root)
         #expect(try store.url(for: stored.id).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate == sentinel, "a second load writes nothing")
         #expect(again.archiveQuestions(now: Date().addingTimeInterval(15)) == [recent], "what was left of its delay, not a fresh one")
     }
@@ -475,7 +477,7 @@ final class QuestionTests {
         try await repo.commit("init")
         let worktree = URL(fileURLWithPath: repo.root.path + "-wt/fees")
         try await repo.git("worktree", "add", "-q", "-b", "feature", worktree.path)
-        let repoBoard = registry.open(root: repo.root)
+        let repoBoard = await registry.open(root: repo.root)
         let agent = repoBoard.create(type: .terminal, props: .object(["cwd": .string(worktree.appendingPathComponent("src").path), "command": .array([])])).id
         let home = repoBoard.create(type: .terminal, props: .object(["cwd": .string(repo.root.path), "command": .array([])])).id
         func ask(_ context: JSONValue, caller: ObjectID) async throws -> CanvasObject {
