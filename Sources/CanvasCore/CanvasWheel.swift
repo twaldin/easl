@@ -35,4 +35,56 @@ public enum CanvasWheel {
         if shift, dx == 0 { return .pan(dx: dy * scale, dy: 0) }
         return .pan(dx: dx * scale, dy: dy * scale)
     }
+
+    /// Whether a scroll of (`dx`, `dy`) goes sideways: a horizontal-dominant step, or a ⇧-wheel
+    /// that AppKit left vertical (`action` pans it sideways).
+    public static func sideways(dx: CGFloat, dy: CGFloat, precise: Bool, shift: Bool) -> Bool {
+        abs(dx) > abs(dy) || (!precise && shift && dx == 0 && dy != 0)
+    }
+}
+
+/// Who a trackpad gesture over a tile that scrolls goes to: the tile or the canvas behind it.
+/// Its first movement decides, and the gesture keeps that owner to its end, momentum included,
+/// so neither hands a gesture to the other halfway. A gesture whose start the tile didn't see
+/// (a pan or its momentum slid the tile under the pointer) stays the canvas's.
+public struct ScrollGesture: Sendable {
+    public enum Owner: Equatable, Sendable { case tile, canvas }
+
+    /// Where an event sits in its gesture (NSEvent's `phase`, then its `momentumPhase`).
+    public enum Step: Equatable, Sendable {
+        case began, changed, ended, momentumBegan, momentumChanged, momentumEnded
+    }
+
+    private var owner: Owner?
+    private var last: Step?
+    private var sequence: UInt64?
+
+    public init() {}
+
+    /// Returns nil until the gesture moves. `tileTakes` says whether the tile accepts its first movement.
+    /// The window increments `sequence` at each gesture start and phaseless step, even outside this tile.
+    public mutating func owner(of step: Step, sequence: UInt64, dx: CGFloat, dy: CGFloat, tileTakes: Bool) -> Owner? {
+        if self.sequence != sequence {
+            self.sequence = sequence
+            owner = nil
+            last = nil
+        }
+        if step == .began {
+            owner = nil
+        } else if !continues(step) {
+            owner = .canvas
+        }
+        if owner == nil, dx != 0 || dy != 0 { owner = tileTakes ? .tile : .canvas }
+        last = step == .ended && owner == nil ? nil : step
+        return owner
+    }
+
+    private func continues(_ step: Step) -> Bool {
+        switch step {
+        case .began: false
+        case .changed, .ended: last == .began || last == .changed
+        case .momentumBegan: last == .ended
+        case .momentumChanged, .momentumEnded: last == .momentumBegan || last == .momentumChanged
+        }
+    }
 }

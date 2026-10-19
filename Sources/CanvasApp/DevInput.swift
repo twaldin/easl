@@ -385,7 +385,7 @@ enum DevInput {
             // of relying on sendEvent's hit test (windows on other displays got nothing).
             guard let event = NSEvent(cgEvent: cg), let frame = content.superview,
                   let hit = content.hitTest(frame.convert(at, from: nil)) else { return }
-            if (window as? CanvasWindow)?.zoomsCanvas(event, at: at) == true { return }
+            if (window as? CanvasWindow)?.handleScroll(event, at: at) == true { return }
             hit.scrollWheel(with: event)
         case "magnify":
             // A trackpad pinch step as a real gesture event: CG type 29 (gesture) with HID type 8
