@@ -262,13 +262,14 @@ extension ViewerHistoryTests {
         let object = note("expiry")
         _ = try await call("object.update", ["id": .string(object.id), "expiresIn": "1h", "viewer": .string(viewer), "step": .number(1)])
         let expiry = try board.object(object.id).expires
-        _ = try await undo(2)
+        _ = try await undo(1)
         #expect(try board.object(object.id).expires == nil)
-        _ = try await undo(3, redo: true)
+        _ = try await undo(1, redo: true)
         #expect(try board.object(object.id).expires == expiry)
-        let later = ObjectExpiry(Date().addingTimeInterval(7200))
+        _ = try await call("object.update", ["id": .string(object.id), "expiresIn": "2h", "viewer": .string(viewer), "step": .number(2)])
+        let later = ObjectExpiry(Date().addingTimeInterval(10800))
         _ = try board.update(object.id, expires: .set(later))
-        let crossed = try await undo(4)
+        let crossed = try await undo(2)
         #expect(crossed["kept"] == .array([.string(object.id)]))
         #expect(try board.object(object.id).expires == later)
     }
