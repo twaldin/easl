@@ -29,6 +29,7 @@ enum DevPerf {
         /// what the stretch needed, whatever else the Mac ran (a stretch's wall time grows
         /// with preemption; its CPU time doesn't).
         var cpu = 0.0, longestCpu = 0.0
+        var longestBusyStart = 0.0, longestBusyCpu = 0.0
         var counts: [String: Int] = [:]
         var timings: [String: (count: Int, total: Double, max: Double)] = [:]
 
@@ -128,9 +129,10 @@ enum DevPerf {
             let timings = phase.timings.sorted { $0.key < $1.key }.map {
                 String(format: "%@=%d/%.1f/%.1f", $0.key, $0.value.count, $0.value.total, $0.value.max)
             }.joined(separator: " ")
-            NSLog("DevPerf: %@ %@ %.0f ms: frames %d missed %d (vsync %.1f ms, longest frame %.1f ms), main busy %.0f ms, hitches %d (longest %.1f ms), main cpu %.0f ms (longest %.1f ms); counts: %@; timings (n/total/max ms): %@",
+            NSLog("DevPerf: %@ %@ %.0f ms: frames %d missed %d (vsync %.1f ms, longest frame %.1f ms), main busy %.0f ms, hitches %d (longest %.1f ms), main cpu %.0f ms (longest %.1f ms); longest wake: start+%.1f ms cpu %.1f ms; counts: %@; timings (n/total/max ms): %@",
                   span.label, phase.name, ms, phase.frames, phase.missed, period, phase.longestFrame,
-                  phase.busy, phase.hitches, phase.longestBusy, phase.cpu, phase.longestCpu, counts, timings)
+                  phase.busy, phase.hitches, phase.longestBusy, phase.cpu, phase.longestCpu,
+                  phase.longestBusyStart, phase.longestBusyCpu, counts, timings)
         }
     }
 
@@ -185,9 +187,13 @@ enum DevPerf {
         let index = span.phases.count - 1
         let ms = (now - woke) * 1000
         span.phases[index].busy += ms
-        span.phases[index].longestBusy = max(span.phases[index].longestBusy, ms)
-        if ms > span.period * 1000 { span.phases[index].hitches += 1 }
         let used = cpu - wokeCpu
+        if ms > span.phases[index].longestBusy {
+            span.phases[index].longestBusy = ms
+            span.phases[index].longestBusyStart = (woke - span.phases[index].start) * 1000
+            span.phases[index].longestBusyCpu = used
+        }
+        if ms > span.period * 1000 { span.phases[index].hitches += 1 }
         span.phases[index].cpu += used
         span.phases[index].longestCpu = max(span.phases[index].longestCpu, used)
     }

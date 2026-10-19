@@ -961,8 +961,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 defer { selected.tabbingMode = tabbing }
                 if saved.minimized {
                     selected.miniaturize(nil)
-                    // Hidden tab selection does not register its Window-menu item.
-                    NSApp.changeWindowsItem(selected, title: selected.title, filename: false)
+                    // Re-register a hidden selected tab; AppKit composes its title and subtitle.
+                    if NSApp.windowsMenu?.items.contains(where: { ($0.target as? NSWindow) === selected }) != true {
+                        selected.isExcludedFromWindowsMenu = true
+                        selected.isExcludedFromWindowsMenu = false
+                    }
                 } else {
                     selected.orderBack(nil)
                 }
