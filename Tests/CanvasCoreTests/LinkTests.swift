@@ -29,6 +29,25 @@ struct LinkTests {
         #expect(board.objects.values.filter { $0.type == .browser }.count == 3)
     }
 
+    @Test func aTileShowingTheSameFileIsReused() {
+        let shown = browser("file:///tmp/site/report%20one.html")
+        let opened = board.openLink(URL(fileURLWithPath: "/tmp/site/./report one.html"), near: nil, caller: nil)
+        #expect(opened.existing && opened.object.id == shown.id, "a file is matched by its standardized path")
+        #expect(!board.openLink(URL(fileURLWithPath: "/tmp/site/other.html"), near: nil, caller: nil).existing, "another file is another page")
+        #expect(board.objects.values.filter { $0.type == .browser }.count == 2)
+        #expect(board.openLink(URL(string: "file://localhost/tmp/site/report%20one.html")!, near: nil, caller: nil).object.id == shown.id)
+    }
+
+    @Test func aFilesAnchorOrQueryIsAnotherPage() {
+        let shown = browser("file:///tmp/site/report.html")
+        for other in ["file:///tmp/site/report.html#appendix", "file:///tmp/site/report.html?tab=2"] {
+            let opened = link(other)
+            #expect(!opened.existing && opened.object.id != shown.id, "\(other)")
+        }
+        #expect(link("file:///tmp/site/./report.html#appendix").existing, "the anchored page's own tile")
+        #expect(link("file:///tmp/site/report.html").object.id == shown.id)
+    }
+
     @Test func aDifferentPathQueryOrFragmentIsAnotherPage() {
         let shown = browser("https://app.example.com/page?tab=1")
         for other in ["https://app.example.com/page", "https://app.example.com/page?tab=2", "https://app.example.com/page?tab=1#top", "http://app.example.com/page?tab=1"] {

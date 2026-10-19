@@ -527,6 +527,18 @@ final class CanvasView: NSScrollView {
                 }
                 self.recordNavigation(from: from, reaim: opened.reaim, landing: self.board.objects[opened.id].flatMap(CodeAim.init))
             }
+            terminal.onOpenedPage = { [weak self] opened, existing, source in
+                guard let self else { return }
+                let from = self.viewport
+                if existing {
+                    (self.tiles[opened]?.content as? BrowserTile)?.reloadIfFileChanged()
+                    self.goToShown(opened)
+                } else {
+                    self.reveal(opened, openedFrom: source.isNull ? .null : self.document.convert(source, from: nil))
+                    self.setSelection([opened])
+                }
+                self.recordNavigation(from: from)
+            }
             terminal.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
             terminal.onNotice = { [weak self] text in self?.showNotice(text) }
         }
