@@ -3,8 +3,8 @@ import CanvasCore
 
 /// `view.render`: part of the board drawn offscreen at a fixed scale, independent of the
 /// viewport (which it never touches). Everything is drawn from models into one bitmap:
-/// the canvas background, groups, tiles (chrome here, content from each tile's `render`), then
-/// shapes and arrows. App chrome (toolbar, tray, hints, rings, attention markers) never is.
+/// the canvas background, groups, then tiles and drawings in their shared z order.
+/// App chrome (toolbar, tray, hints, rings, attention markers) never is.
 extension CanvasView {
     private struct TileJob {
         let object: CanvasObject
@@ -114,8 +114,9 @@ extension CanvasView {
 
             // `full` targets extend past their frames over whatever lies there, so they paint last,
             // above drawn objects too.
-            let extended = request.full ? Set(outlines.keys) : []
-            let tiled = board.objects.values.filter { renders[$0.id] != nil }.sorted { $0.z < $1.z }
+            let extended = request.full ? Set(outlines.keys.filter { renders[$0] != nil }) : []
+            let stacked = board.objects.values.filter { renders[$0.id] != nil || $0.type == .shape || $0.type == .arrow }
+                .sorted { ($0.z, $0.id) < ($1.z, $1.id) }
             @MainActor func paint(_ object: CanvasObject) {
                 guard let render = renders[object.id] else { return }
                 let frame = outlines[object.id] ?? object.frame
@@ -126,14 +127,15 @@ extension CanvasView {
                 cg.restoreGState()
                 record(object, frame, render)
             }
-            for object in tiled where !extended.contains(object.id) { paint(object) }
-
-            if let layer = shapeLayer as? ShapeLayer {
-                for (object, bounds) in layer.renderItems(in: cg, docRect: docRegion, excluding: excluded) {
+            for object in stacked where !extended.contains(object.id) {
+                if renders[object.id] != nil {
+                    paint(object)
+                } else if let layer = shapeLayer as? ShapeLayer,
+                          let bounds = layer.renderItem(object.id, in: cg, docRect: docRegion, excluding: excluded) {
                     record(object, Frame(x: bounds.minX - origin.x, y: bounds.minY - origin.y, w: bounds.width, h: bounds.height))
                 }
             }
-            for object in tiled where extended.contains(object.id) { paint(object) }
+            for object in stacked where extended.contains(object.id) { paint(object) }
         }
         NSGraphicsContext.restoreGraphicsState()
 

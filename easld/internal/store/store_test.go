@@ -70,7 +70,7 @@ func TestReadRefusesBoardsItCantRead(t *testing.T) {
 	if snap, err := s.Read("brd_none"); snap != nil || err != nil {
 		t.Fatalf("no file: %v %v", snap, err)
 	}
-	newer := strings.Replace(swiftBoard, `"format":2`, `"format":3`, 1)
+	newer := strings.Replace(swiftBoard, `"format":2`, `"format":4`, 1)
 	for name, content := range map[string]string{"newer": newer, "truncated": swiftBoard[:200], "directory": ""} {
 		path := s.Path("brd_" + name)
 		if name == "directory" {
@@ -85,7 +85,7 @@ func TestReadRefusesBoardsItCantRead(t *testing.T) {
 		if snap != nil || !errors.As(err, &unreadable) || unreadable.Path != path {
 			t.Errorf("%s: %v %v", name, snap, err)
 		}
-		if name == "newer" && unreadable != nil && unreadable.Format != 3 {
+		if name == "newer" && unreadable != nil && unreadable.Format != 4 {
 			t.Errorf("newer: format %d", unreadable.Format)
 		}
 	}

@@ -198,8 +198,7 @@ final class CanvasView: NSScrollView {
 
     // MARK: Drawn objects (installed by the drawing layer)
 
-    /// The shape or arrow drawn at a document point. Only strokes, text, and fills hit, so an
-    /// empty shape interior never blocks the tiles beneath; drawn objects sit above tiles.
+    /// The visible shape or arrow at a document point. Empty interiors pass through.
     var shapeHitTest: ((NSPoint) -> ObjectID?)?
     /// Document-space outline of a drawn object at its committed position.
     var shapeOutline: ((ObjectID) -> NSRect?)?
@@ -622,9 +621,8 @@ final class CanvasView: NSScrollView {
         view.author = authorName(of: object)
     }
 
-    /// Orders document subviews: group regions, tiles by `z`, the drawing layer, then the
-    /// overlay. Reorders in place so tiles never leave the window.
-    private func restack() {
+    /// Reorders in place so live tiles never leave the window.
+    func restack() {
         document.sortSubviews({ a, b, _ in
             MainActor.assumeIsolated {
                 let lhs = CanvasView.stackRank(a), rhs = CanvasView.stackRank(b)
@@ -633,16 +631,17 @@ final class CanvasView: NSScrollView {
         }, context: nil)
     }
 
-    private static func stackRank(_ view: NSView) -> (Int, Double) {
+    private static func stackRank(_ view: NSView) -> (Int, Double, String) {
         switch view {
-        case is GroupView: (0, 0)
-        case let tile as TileFrameView: (1, tile.z)
-        case is SceneOverlay: (4, 0)
-        default: (2, 0)
+        case let group as GroupView: (0, 0, group.objectID)
+        case let tile as TileFrameView: (1, tile.z, tile.objectID)
+        case let drawing as DrawnItemView: (1, drawing.z, drawing.objectID)
+        case is SceneOverlay: (3, 0, "")
+        default: (2, 0, "")
         }
     }
 
-    /// The drawing layer sits above tiles and below the overlay.
+    /// Tools, editors, and selection handles remain above the object stack.
     func installShapeLayer(_ view: NSView) {
         shapeLayer = view
         document.addSubview(view, positioned: .below, relativeTo: overlay)

@@ -66,10 +66,10 @@ func TestFormatOneBoardLoadsMigrated(t *testing.T) {
 		t.Errorf("tray %v", b.Tray())
 	}
 	saved := b.Snapshot()
-	if *saved.Format != 2 || !reflect.DeepEqual(saved.FinalAnswers, map[string]string{"obj_term": "answer"}) || !reflect.DeepEqual(saved.LifecycleSeq, map[string]int{"obj_term|omp": 3}) {
+	if *saved.Format != 3 || !reflect.DeepEqual(saved.FinalAnswers, map[string]string{"obj_term": "answer"}) || !reflect.DeepEqual(saved.LifecycleSeq, map[string]int{"obj_term|omp": 3}) {
 		t.Errorf("saved %+v", saved)
 	}
-	// Loading what was saved changes nothing more (migration is idempotent; format 2 frames stay).
+	// Loading what was saved changes nothing more.
 	again := FromSnapshot(saved)
 	if !reflect.DeepEqual(again.Snapshot().JSON(), saved.JSON()) {
 		t.Error("a second load changed the board")
