@@ -48,12 +48,14 @@ extension ApiRouterTests {
         try shadow(poster.absoluteString, bytes: Data("shadow poster".utf8))
         try VideoHeader.movie(width: 800, height: 600).write(to: checkout.appendingPathComponent("relative.mp4"))
         try Data("checkout poster".utf8).write(to: checkout.appendingPathComponent("relative.png"))
-        let cases: [(String, String, CGSize, Data)] = [
-            (movie.absoluteString, poster.absoluteString, CGSize(width: 640, height: 360), posterBytes),
-            ("FILE:" + movie.absoluteString.dropFirst(5), "FILE:" + poster.absoluteString.dropFirst(5), CGSize(width: 640, height: 360), posterBytes),
-            ("relative.mp4", "relative.png", CGSize(width: 800, height: 600), Data("checkout poster".utf8))
+        let cases: [(String, String, CGSize, Data, String)] = [
+            (movie.absoluteString, poster.absoluteString, CGSize(width: 640, height: 360), posterBytes, board.root.path),
+            ("FILE:" + movie.absoluteString.dropFirst(5), "FILE:" + poster.absoluteString.dropFirst(5), CGSize(width: 640, height: 360), posterBytes, board.root.path),
+            ("relative.mp4", "relative.png", CGSize(width: 800, height: 600), Data("checkout poster".utf8), checkout.path),
+            (checkout.appendingPathComponent("relative.mp4").absoluteString, checkout.appendingPathComponent("relative.png").absoluteString,
+             CGSize(width: 800, height: 600), Data("checkout poster".utf8), checkout.path)
         ]
-        for (path, image, dimensions, expectedPoster) in cases {
+        for (path, image, dimensions, expectedPoster, expectedCheckout) in cases {
             let props: JSONValue = .object(["path": .string(path), "poster": .string(image)])
             let created = try await call(client, "object.create", ["board": .string(board.id), "caller": .string(caller), "type": "video", "props": props])
             let id = try #require(created["result"]?["object"]?["id"]?.string)
@@ -67,6 +69,7 @@ extension ApiRouterTests {
                 #expect(try await LocalVideo.naturalSize(path: storedPath, root: board.root) == dimensions)
                 let read = try await HostFiles.readLocal(HostFileRequest(source: .directory(board.root.path), policy: .boardAsset(storedPoster)))
                 #expect(read.data == expectedPoster)
+                #expect(PromptTarget.checkout(of: .object(tile), on: board)?.toplevel == expectedCheckout)
             }
         }
         let outside = dir.appendingPathComponent("outside.mp4")
