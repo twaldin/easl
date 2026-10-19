@@ -258,6 +258,8 @@ final class TerminalHost {
             if result["created"]?.bool == true {
                 tile.observeRunningSession(identity)
                 NSLog("easl: %@ started %@ on %@", tile.objectID, result["session"]?.string ?? "", target)
+            } else if let confirmed = await sessions(), confirmed.running[tile.objectID] != nil {
+                tile.observeRunningSession(identity)
             }
         } catch let failure as ApiRouter.Failure {
             failures[tile.objectID] = failure.message
