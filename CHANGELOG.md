@@ -20,6 +20,7 @@ Each version's section is its GitHub release's notes.
 
 ### Fixed
 
+- Bring to Front and Send to Back order shapes, text, arrows, and ink together with tiles on local and remote boards. Saved boards retain their previous visible stacking until restacked. Update remote hosts and viewers together.
 - Automatic updates wait for remote use too. Browser-stream input or changed frames, remote board input, and typing into attached terminals restart the ten-minute idle window. `easl app.update check` explains remote deferral. Explicit installation still proceeds immediately and warns which remote sessions it interrupts.
 - Remote diagrams leave "Asking" and show late delegated failures after a zero-timeout reload returns. The last graph stays visible when its aim still matches. Requires the easld host update.
 - **Scrolling up or down over a terminal no longer moves the board.** Over a terminal you hadn't clicked into, scrolling up or down panned the board unless the terminal had scrollback, so a full-screen program such as an agent's TUI, or a fresh shell, moved the board out from under the pointer. Vertical scrolling over a terminal now stays with it, focused or not: it scrolls the scrollback or reaches a program that reads the mouse, and over a full-screen program that doesn't it does nothing until you click in, so no stray ↑/↓ reaches a program you aren't typing in. Scrolling sideways still pans, ⇧-scroll with a mouse too, a trackpad gesture keeps whichever it started with, and scrolling over empty board pans as before.
