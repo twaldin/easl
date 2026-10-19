@@ -75,6 +75,33 @@ struct HostFileReadsTests {
         #expect(try await tasks[3].value.data == Data([128, 0, 2, 10]))
     }
 
+    @Test func missingDescriptorReaderNamesItsDependencyWithoutReplacingRefusals() async throws {
+        let fixture = try HostFileFixture()
+        try fixture.write("first.png", Data([1, 2, 3]))
+        try fixture.write("last.png", Data([4, 5, 6]))
+        let missing = String(decoding: try JSONEncoder().encode(fixture.directory.appendingPathComponent("missing-python3").path), as: UTF8.self)
+        let files = try fixture.reader(running: """
+        (() => {
+          const child = require('node:child_process'), spawn = child.spawnSync;
+          child.spawnSync = (command, args, options) => spawn(command === 'python3' ? \(missing) : command, args, options);
+        })();
+        """)
+        let replies = try await files.readBatch([
+            fixture.wireRequest("first.png"), fixture.wireRequest("last.png"), fixture.wireRequest("../outside.png"),
+        ], priority: .visible)
+        for reply in replies.prefix(2) {
+            guard case .failure(.unavailable(let message)) = reply else {
+                Issue.record("missing descriptor reader must be unavailable: \(String(describing: reply))")
+                return
+            }
+            #expect(message.lowercased().contains("python3"))
+        }
+        guard case .failure(.refused) = replies[2] else {
+            Issue.record("dependency failure replaced an independent policy refusal")
+            return
+        }
+    }
+
     @Test func batchBudgetDefersLargeMembersToIndependentReads() async throws {
         let fixture = try HostFileFixture()
         let first = Data(repeating: 17, count: 3 * 1024 * 1024)

@@ -763,8 +763,13 @@ public struct HostFiles: Sendable {
       else {
         pendingReads = [];
         const prepared = req.requests.map(request => readRequest(request));
-        const reads = readFiles(pendingReads, 4 * 1024 * 1024);
-        result = prepared.map(reply => reply.pending == null ? reply : { root: reply.root, ...reads[reply.pending] });
+        try {
+          const reads = readFiles(pendingReads, 4 * 1024 * 1024);
+          result = prepared.map(reply => reply.pending == null ? reply : { root: reply.root, ...reads[reply.pending] });
+        } catch (e) {
+          const failure = { ok: false, code: e.code || 'unreadable', message: e.message, commit: e.commit, limit: e.limit };
+          result = prepared.map(reply => reply.pending == null ? reply : failure);
+        }
       }
     } else result = readRequest(req);
     process.stdout.write(JSON.stringify(result));
