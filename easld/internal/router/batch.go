@@ -3,6 +3,7 @@ package router
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/twaldin/easl/easld/internal/board"
 	"github.com/twaldin/easl/easld/internal/model"
@@ -115,6 +116,7 @@ func (r *Router) batch(p map[string]any, from Conn) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
 	prepared := func(method string, raw any) map[string]any {
 		params := copyParams(asMap(raw))
 		if method == "object.create" || method == "object.upsert" {
@@ -174,6 +176,10 @@ func (r *Router) batch(p map[string]any, from Conn) (any, error) {
 				return nil, false, nil
 			})
 			raw := prepared(method, replaced)
+			raw, err := normalizedExpiry(raw, now)
+			if err != nil {
+				return err
+			}
 			if method == "object.upsert" {
 				key, err := str(raw, "key")
 				if err != nil {

@@ -48,12 +48,17 @@ const pascal = (s: string) => s.replace(/(^|[._])([a-z])/g, (_, __, c: string) =
 
 // ---------- TypeScript ----------
 
+const isNullable = (s: Schema): boolean => Array.isArray(s.type) && s.type.includes("null");
+
 function tsType(s: Schema, indent = ""): string {
+  if (Array.isArray(s.type)) return s.type.map((type) => tsType({ ...s, type }, indent)).join(" | ");
   if (s.$ref) return refName(s.$ref);
   if (s.const !== undefined) return JSON.stringify(s.const);
   if (s.enum) return s.enum.map((v) => JSON.stringify(v)).join(" | ");
   if (s.oneOf) return s.oneOf.map((o) => tsType(o, indent)).join(" | ");
   switch (s.type) {
+    case "null":
+      return "null";
     case "string":
       return "string";
     case "number":
@@ -129,11 +134,14 @@ const pyName = (k: string) => (PY_KEYWORDS[k] ? `${k}_` : k);
 const snake = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
 
 function pyType(s: Schema): string {
+  if (Array.isArray(s.type)) return s.type.map((type) => pyType({ ...s, type })).join(" | ");
   if (s.$ref) return `"${refName(s.$ref)}"`;
   if (s.const !== undefined) return `Literal[${JSON.stringify(s.const)}]`;
   if (s.enum) return `Literal[${s.enum.map((v) => JSON.stringify(v)).join(", ")}]`;
   if (s.oneOf) return `Union[${s.oneOf.map(pyType).join(", ")}]`;
   switch (s.type) {
+    case "null":
+      return "None";
     case "string":
       return "str";
     case "number":
@@ -178,6 +186,14 @@ function genPy(): string {
     "",
     `SCHEMA_VERSION = ${catalog.version}`,
     `ENV_DEFAULTS = ${JSON.stringify(ENV_DEFAULTS)}`,
+    `NULLABLE_PARAMS: dict[str, set[str]] = {${Object.entries(catalog.methods).filter(([, m]) => Object.values(m.params.properties ?? {}).some(isNullable)).map(([name, m]) => `${JSON.stringify(name)}: {${Object.entries(m.params.properties ?? {}).filter(([, s]) => isNullable(s)).map(([key]) => JSON.stringify(key)).join(", ")}}`).join(", ")}}`,
+    "",
+    "",
+    "class _Unset:",
+    "    pass",
+    "",
+    "",
+    "_UNSET = _Unset()",
     "",
     '_Api = TypeVar("_Api")',
     "",
@@ -226,7 +242,7 @@ function genPy(): string {
     const req = new Set(m.params.required ?? []);
     const args = Object.keys(props)
       .sort((a, b) => Number(req.has(b)) - Number(req.has(a)))
-      .map((k) => `${pyName(snake(k))}: ${pyType(props[k])}${req.has(k) ? "" : " | None = None"}`);
+      .map((k) => `${pyName(snake(k))}: ${pyType(props[k])}${req.has(k) ? "" : isNullable(props[k]) ? " | _Unset = _UNSET" : " | None = None"}`);
     const mapping = Object.keys(props).map((k) => `"${k}": ${pyName(snake(k))}`);
     const envKeys = envKeysOf(m);
     const lines = [

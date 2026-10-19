@@ -9,6 +9,14 @@ from typing import Any, Callable, Literal, NotRequired, Required, TypedDict, Typ
 
 SCHEMA_VERSION = 2
 ENV_DEFAULTS = {"caller":"EASL_TILE_ID","board":"EASL_BOARD_ID"}
+NULLABLE_PARAMS: dict[str, set[str]] = {"object.create": {"expires"}, "object.update": {"expires"}, "object.upsert": {"expires"}, "browser.report": {"pageTitle"}}
+
+
+class _Unset:
+    pass
+
+
+_UNSET = _Unset()
 
 _Api = TypeVar("_Api")
 
@@ -42,7 +50,7 @@ class RemoteUpdateSession(TypedDict):
     session: Required[str]
     kind: Required[Literal["browser", "board", "terminal"]]
     board: Required["Id"]
-    tile: Required[Any]
+    tile: Required[str | None]
 
 class ComposerReceipt(TypedDict):
     receipt: Required["Id"]
@@ -352,7 +360,17 @@ class CanvasObject(TypedDict):
     updatedBy: NotRequired["Actor"]
     createdAt: Required[str]
     updatedAt: Required[str]
+    expires: NotRequired[str]
     props: Required[dict[str, Any]]
+
+class StaleObject(TypedDict):
+    id: Required["Id"]
+    type: Required["ObjectType"]
+    title: Required[str]
+    key: NotRequired[str]
+    createdBy: Required["Actor"]
+    updatedAt: Required[float]
+    reasons: Required[list[Literal["creator-gone", "expired", "untouched", "exited"]]]
 
 class PageLogEntry(TypedDict):
     seq: Required[int]
@@ -437,7 +455,7 @@ class MessageSender(TypedDict):
 
 class TerminalCommand(TypedDict):
     command: NotRequired[str]
-    exit: NotRequired[Any]
+    exit: NotRequired[int | None]
     durationMs: NotRequired[int]
     finishedAt: NotRequired[str]
 
@@ -589,6 +607,11 @@ class BoardApi:
         params = {}
         return self._call("board.list", params, [])
 
+    def stale(self, *, board: "Id" | None = None, older_than: str | None = None) -> dict[str, Any]:
+        """Read-only cleanup candidates, sorted by id. Reasons are creator-gone (agent creator no longer has a terminal on this board), expired (deadline reached), untouched (updatedAt strictly before now minus olderThan), and exited (terminal process confirmed exited). Does not delete objects or change revisions, timestamps, or events."""
+        params = {"board": board, "olderThan": older_than}
+        return self._call("board.stale", params, ["board"])
+
     def open(self, *, root: str, select: bool | None = None) -> dict[str, Any]:
         """Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). A directory in a git repository opens the repository's board (one per repository, rooted at its main checkout), tagged with the worktree it is in: the window names it, New Terminal starts there, and the view goes to its region. The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true."""
         params = {"root": root, "select": select}
@@ -624,19 +647,19 @@ class ObjectApi:
         params = {"board": board, "key": key, "keyPrefix": key_prefix, "type": type, "status": status, "as": as_}
         return self._call("object.find", params, ["board"])
 
-    def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame", "SizeFrame"] | None = None, size: Literal["fit"] | None = None, parent: "Id" | None = None, viewer: "ViewerId" | None = None, step: int | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+    def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame", "SizeFrame"] | None = None, size: Literal["fit"] | None = None, parent: "Id" | None = None, expires: str | None | _Unset = _UNSET, expires_in: str | None = None, viewer: "ViewerId" | None = None, step: int | None = None, caller: "Id" | None = None) -> dict[str, Any]:
         """Create an object. Omit `frame` (or give only its `w` and `h`) to let the board place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). A code tile without a frame is as wide as its file's longest line needs at its `zoom`, from 640 up to 200 columns (1546 at zoom 1; the working-tree file, up to 1 MiB; a follow tile and one shown from git, `ref` or `pinnedCommit`, stay 640), and 446 tall. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 1546 (200 columns), and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: one without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`."""
-        params = {"board": board, "type": type, "props": props, "frame": frame, "size": size, "parent": parent, "viewer": viewer, "step": step, "caller": caller}
+        params = {"board": board, "type": type, "props": props, "frame": frame, "size": size, "parent": parent, "expires": expires, "expiresIn": expires_in, "viewer": viewer, "step": step, "caller": caller}
         return self._call("object.create", params, ["board","caller"])
 
-    def update(self, *, id: "Id", rev: int | None = None, frame: "FramePatch" | None = None, z: float | None = None, size: Literal["fit"] | None = None, props: dict[str, Any] | None = None, viewer: "ViewerId" | None = None, step: int | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+    def update(self, *, id: "Id", rev: int | None = None, frame: "FramePatch" | None = None, z: float | None = None, size: Literal["fit"] | None = None, props: dict[str, Any] | None = None, expires: str | None | _Unset = _UNSET, expires_in: str | None = None, viewer: "ViewerId" | None = None, step: int | None = None, caller: "Id" | None = None) -> dict[str, Any]:
         """Patch an object's frame, stacking order z, and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 1546; image: at most `frame.w`, default 960; never their current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content."""
-        params = {"id": id, "rev": rev, "frame": frame, "z": z, "size": size, "props": props, "viewer": viewer, "step": step, "caller": caller}
+        params = {"id": id, "rev": rev, "frame": frame, "z": z, "size": size, "props": props, "expires": expires, "expiresIn": expires_in, "viewer": viewer, "step": step, "caller": caller}
         return self._call("object.update", params, ["caller"])
 
-    def upsert(self, *, key: "ObjectKey", type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame", "SizeFrame"] | None = None, size: Literal["fit"] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+    def upsert(self, *, key: "ObjectKey", type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame", "SizeFrame"] | None = None, size: Literal["fit"] | None = None, expires: str | None | _Unset = _UNSET, expires_in: str | None = None, caller: "Id" | None = None) -> dict[str, Any]:
         """Create or update by key, so a script that rebuilds part of the board (a region per ticket) can run again and again without keeping ids: when an object on the board holds `key` it is updated (`props` shallow-merged, `frame` and `size` as object.update; its type must be `type`, else `conflict`), else one is created as object.create would with `key` added to its props. Either way the result names the object's id; `created` says which happened. In object.batch, later ops can name it as "$n" either way, and an upsert of a key an earlier op of the batch creates updates that one."""
-        params = {"board": board, "key": key, "type": type, "props": props, "frame": frame, "size": size, "caller": caller}
+        params = {"board": board, "key": key, "type": type, "props": props, "frame": frame, "size": size, "expires": expires, "expiresIn": expires_in, "caller": caller}
         return self._call("object.upsert", params, ["board","caller"])
 
     def delete(self, *, id: "Id", viewer: "ViewerId" | None = None, step: int | None = None, caller: "Id" | None = None) -> dict[str, Any]:
@@ -889,7 +912,7 @@ class BrowserApi:
         params = {"id": id, "method": method, "params": params, "caller": caller}
         return self._call("browser.call", params, ["caller"])
 
-    def report(self, *, id: "Id", url: str | None = None, page_title: Any | None = None, caller: "Id" | None = None, actor: Literal["user", "system"] | None = None) -> dict[str, Any]:
+    def report(self, *, id: "Id", url: str | None = None, page_title: str | None | _Unset = _UNSET, caller: "Id" | None = None, actor: Literal["user", "system"] | None = None) -> dict[str, Any]:
         """A drawing Mac reports committed page URL and title metadata to easld. Only an attached client serving this board whose persistent identity matches the tile's drawingMachine may report. URL commits preserve agent, user or system credit; pageTitle is bookkeeping with no rev bump. No page body, image, cookie, log or profile field is accepted. The Mac app's host API answers unsupported."""
         params = {"id": id, "url": url, "pageTitle": page_title, "caller": caller, "actor": actor}
         return self._call("browser.report", params, [])
@@ -924,7 +947,7 @@ class GeneratedApi:
         self.browser = BrowserApi(call)
         self.text = TextApi(call)
 
-METHODS = ["surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"]
+METHODS = ["surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.stale","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

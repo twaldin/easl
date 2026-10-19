@@ -47,16 +47,20 @@ func (r *Router) reanchorCode(id any) {
 }
 
 func (r *Router) writeObject(method string, p map[string]any, from Conn) (any, error) {
+	var err error
+	p, err = normalizedExpiry(p, time.Now())
+	if err != nil {
+		return nil, err
+	}
 	upsert := method == "object.upsert"
 	params := p
 	if upsert {
-		var err error
 		method, params, err = r.upserted(p, keyPlan{})
 		if err != nil {
 			return nil, err
 		}
 	}
-	params, err := r.inCallersCheckout(method, params, nil)
+	params, err = r.inCallersCheckout(method, params, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +157,10 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	expiry, err := expiryOf(p)
+	if err != nil {
+		return nil, err
+	}
 	typeName, err := str(p, "type")
 	if err != nil {
 		return nil, err
@@ -221,7 +229,7 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 	parent, _ := optStr(p, "parent")
 	var o model.Object
 	if err := b.AsViewerEdit(edit, func() error {
-		o = b.Create(typ, props, frame, parent, caller)
+		o = b.Create(typ, props, frame, parent, caller, expiry...)
 		return nil
 	}); err != nil {
 		return nil, err
@@ -242,6 +250,10 @@ func (r *Router) update(p map[string]any) (any, error) {
 		return nil, err
 	}
 	edit, err := board.ParseViewerEdit(p)
+	if err != nil {
+		return nil, err
+	}
+	expiry, err := expiryOf(p)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +311,7 @@ func (r *Router) update(p map[string]any) (any, error) {
 	var o model.Object
 	if err := b.AsViewerEdit(edit, func() error {
 		var err error
-		o, err = b.Update(id, rev, frame, z, written, caller, "")
+		o, err = b.Update(id, rev, frame, z, written, caller, "", expiry...)
 		return err
 	}); err != nil {
 		return nil, err
@@ -864,7 +876,7 @@ func (r *Router) reusableChanges(p map[string]any) (map[string]any, error) {
 	if s, ok := p["size"]; ok {
 		update["size"] = s
 	}
-	for _, k := range []string{"viewer", "step"} {
+	for _, k := range []string{"viewer", "step", "expires"} {
 		if v, ok := p[k]; ok {
 			update[k] = v
 		}

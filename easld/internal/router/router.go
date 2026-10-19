@@ -98,10 +98,11 @@ type Router struct {
 	// don't overwrite each other. Nothing deletes them: pruning is the app's housekeeping.
 	renderScratch int
 	// lifecycle runs owned terminals' sessions off the lock.
-	lifecycle lifecycle
-	cmuxMu    sync.Mutex
-	cmux      map[string]*cmuxSocket
-	adopted   map[string]int
+	lifecycle       lifecycle
+	cmuxMu          sync.Mutex
+	cmux            map[string]*cmuxSocket
+	adopted         map[string]int
+	startedSessions map[string]startedSession
 }
 
 // New is a router over reg; it observes every board's events (agent.wait), and measures the

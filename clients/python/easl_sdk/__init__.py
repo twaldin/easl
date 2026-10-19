@@ -43,7 +43,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from ._generated import ENV_DEFAULTS, METHODS, RESEND_METHODS, SCHEMA_VERSION, GeneratedApi
+from ._generated import ENV_DEFAULTS, METHODS, NULLABLE_PARAMS, RESEND_METHODS, SCHEMA_VERSION, GeneratedApi, _UNSET
 from .compositions import Compositions
 
 
@@ -146,7 +146,8 @@ class Easl(GeneratedApi):
 
         A RESEND_METHODS read (agent.wait) whose reply the connection lost is sent again once the
         app is back, with `timeoutMs` reduced by the time already spent."""
-        params = {k: v for k, v in params.items() if v is not None}
+        nullable = NULLABLE_PARAMS.get(method, ())
+        params = {k: v for k, v in params.items() if v is not _UNSET and (v is not None or k in nullable)}
         defaults = {"caller": self.tile_id, "board": self.board_id}
         for key in env_keys:
             if key not in params and defaults.get(key):

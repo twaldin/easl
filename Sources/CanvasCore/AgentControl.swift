@@ -141,16 +141,18 @@ extension ApiRouter {
     }
 
     /// agent.list: every terminal of the open boards, then of the closed ones (their saved files).
-    /// With zmx, each local terminal says whether its session runs (`live`), and the session's
-    /// foreground process stands in for a pid no integration reported; a hosted terminal's
-    /// `live` is its host's easld's session list (`hostedSessions`), when it answers.
+    /// With zmx, each local terminal says whether its session is confirmed running (`live`),
+    /// and its foreground process stands in for a pid no integration reported. A hosted
+    /// terminal's `live` comes from its host's confirmed sessions, when the host answers.
     func agentList() async -> JSONValue {
         var terminals: [(object: CanvasObject, entry: JSONValue)] = []
+        var observations: [(board: Board, object: CanvasObject, identity: TerminalSessionIdentity)] = []
         var listed: Set<ObjectID> = []
         for board in registry.boards.values.sorted(by: { $0.id < $1.id }) {
             for object in board.objects.values.sorted(by: { $0.id < $1.id }) where object.type == .terminal {
                 listed.insert(object.id)
                 terminals.append((object, agentEntry(object, on: board)))
+                if let identity = board.terminalSessionIdentity(object.id) { observations.append((board, object, identity)) }
             }
         }
         let directory = registry.store.directory, cache = storedTerminals
@@ -163,26 +165,30 @@ extension ApiRouter {
         }
         let local = await terminalSessions?()
         let hosts = Set(terminals.compactMap { HostedTerminal.host(of: $0.object) })
-        var hosted: [String: Set<ObjectID>] = [:]
+        var hosted: [String: TerminalSessions] = [:]
         if !hosts.isEmpty, let hostedSessions { hosted = await hostedSessions(hosts.sorted()) }
+        for (board, object, identity) in observations where registry.board(id: board.id) === board && board.objects[object.id]?.rev == object.rev {
+            let running = identity.host.map { hosted[$0]?.running[object.id] != nil } ?? (local?.running[object.id] != nil)
+            if running { board.observeRunningTerminalSession(identity) }
+        }
         let agents = terminals.map { Self.withSession($0.entry, host: HostedTerminal.host(of: $0.object), local: local, hosted: hosted) }
         return .object(["agents": .array(agents)])
     }
 
     /// `entry` with what its terminal's session says. A local terminal's is this Mac's zmx, when
-    /// sessions are known (`local` non-nil): `live`; without a session no process of it runs (a
-    /// pid reported before is stale, or another process's by now); with one, its foreground
-    /// process stands in for a pid no integration reported. A hosted terminal's (`host`) is its
-    /// host's: `live` when its easld listed its sessions (`hosted`), never this Mac's zmx.
-    private static func withSession(_ entry: JSONValue, host: String?, local: [ObjectID: TerminalSession]?, hosted: [String: Set<ObjectID>]) -> JSONValue {
+    /// sessions are known (`local` non-nil): `live`; without a confirmed session no process of
+    /// it is trusted (a pid reported before is stale, or another process's by now); with one,
+    /// its foreground process stands in for a pid no integration reported. A hosted terminal's
+    /// (`host`) uses its host's confirmed sessions (`hosted`), never this Mac's zmx.
+    private static func withSession(_ entry: JSONValue, host: String?, local: TerminalSessions?, hosted: [String: TerminalSessions]) -> JSONValue {
         guard case .object(var fields) = entry, let tile = fields["tile"]?.string else { return entry }
         if let host {
-            guard let running = hosted[host] else { return entry }
-            fields["live"] = .bool(running.contains(tile))
+            guard let sessions = hosted[host] else { return entry }
+            fields["live"] = .bool(sessions.running[tile] != nil)
             return .object(fields)
         }
         guard let local else { return entry }
-        let session = local[tile]
+        let session = local.running[tile]
         fields["live"] = .bool(session != nil)
         if session == nil { fields["pid"] = nil } else if fields["pid"] == nil, let pid = session?.pid { fields["pid"] = .number(Double(pid)) }
         return .object(fields)

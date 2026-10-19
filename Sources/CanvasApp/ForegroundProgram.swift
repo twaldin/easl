@@ -14,12 +14,16 @@ enum ForegroundProgram {
         case running([String])
     }
 
-    /// The pid of the session's shell (`zmx list`'s `pid=`); nil when zmx or the session is
-    /// missing. Blocks until zmx exits: call it off the main actor.
-    static func shellPid(session: String) -> pid_t? {
+    /// The shell of this instance's session on `board` or a board it merged; nil when zmx or
+    /// that owned session is missing. Blocks until zmx exits: call it off the main actor.
+    static func shellPid(session: String, home: String, legacy: [String], board: BoardID, merged: [BoardID]) -> pid_t? {
         for line in (Zmx.list() ?? "").split(whereSeparator: \.isNewline) {
             let fields = line.split(separator: "\t")
             guard fields.first?.drop(while: { $0 == " " || $0 == "*" }) == "name=\(session)" else { continue }
+            guard let owner = fields.first(where: { $0.hasPrefix("canvas.home=") })?.dropFirst("canvas.home=".count),
+                  owner == home || legacy.contains(String(owner)),
+                  let labelledBoard = fields.first(where: { $0.hasPrefix("canvas.board=") })?.dropFirst("canvas.board=".count),
+                  labelledBoard == board || merged.contains(String(labelledBoard)) else { continue }
             return fields.lazy.compactMap { $0.hasPrefix("pid=") ? pid_t($0.dropFirst(4)) : nil }.first
         }
         return nil

@@ -430,6 +430,9 @@ func Changes(before, after model.Object) (string, bool) {
 	if before.Z != after.Z {
 		parts = append(parts, "restacked")
 	}
+	if !sameExpiry(before.Expires, after.Expires) {
+		parts = append(parts, "expires")
+	}
 	var skipped map[string]bool
 	if before.Type == model.Terminal {
 		skipped = terminalBookkeeping

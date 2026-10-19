@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "126d8fb018b8888a"
+const SchemaHash = "2602431cd1be80b4"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -94,6 +94,10 @@ var Methods = map[string]ParamSpec{
 		Accepted: nil,
 		Required: nil,
 	},
+	"board.stale": {
+		Accepted: []string{"board", "olderThan"},
+		Required: nil,
+	},
 	"board.open": {
 		Accepted: []string{"root", "select"},
 		Required: []string{"root"},
@@ -119,15 +123,15 @@ var Methods = map[string]ParamSpec{
 		Required: nil,
 	},
 	"object.create": {
-		Accepted: []string{"board", "type", "props", "frame", "size", "parent", "viewer", "step", "caller"},
+		Accepted: []string{"board", "type", "props", "frame", "size", "parent", "expires", "expiresIn", "viewer", "step", "caller"},
 		Required: []string{"type", "props"},
 	},
 	"object.update": {
-		Accepted: []string{"id", "rev", "frame", "z", "size", "props", "viewer", "step", "caller"},
+		Accepted: []string{"id", "rev", "frame", "z", "size", "props", "expires", "expiresIn", "viewer", "step", "caller"},
 		Required: []string{"id"},
 	},
 	"object.upsert": {
-		Accepted: []string{"board", "key", "type", "props", "frame", "size", "caller"},
+		Accepted: []string{"board", "key", "type", "props", "frame", "size", "expires", "expiresIn", "caller"},
 		Required: []string{"key", "type", "props"},
 	},
 	"object.delete": {
@@ -944,8 +948,22 @@ type CanvasObject struct {
 	UpdatedBy Actor   `json:"updatedBy,omitempty"`
 	CreatedAt string  `json:"createdAt"`
 	UpdatedAt string  `json:"updatedAt"`
+	// absolute RFC3339 deletion deadline, set by the host; absent when no expiry is scheduled
+	Expires *string `json:"expires,omitempty"`
 	// one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | VideoProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)
 	Props map[string]any `json:"props"`
+}
+
+type StaleObject struct {
+	ID        Id         `json:"id"`
+	Type      ObjectType `json:"type"`
+	Title     string     `json:"title"`
+	Key       *string    `json:"key,omitempty"`
+	CreatedBy Actor      `json:"createdBy"`
+	// seconds since 2001-01-01T00:00:00Z, matching the object's API updatedAt
+	UpdatedAt float64 `json:"updatedAt"`
+	// all applicable reasons, in the listed order
+	Reasons []string `json:"reasons"`
 }
 
 type PageLogEntry struct {

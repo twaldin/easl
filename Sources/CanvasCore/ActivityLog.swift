@@ -281,6 +281,7 @@ extension ActivityLog {
             parts.append(String(format: "resized %.0f×%.0f → %.0f×%.0f", before.frame.w, before.frame.h, after.frame.w, after.frame.h))
         }
         if before.z != after.z { parts.append("restacked") }
+        if before.expires != after.expires { parts.append("expires") }
         // A terminal's own bookkeeping is too frequent to log; a page's title and a follow tile's
         // aim are what the history is for, even though ⌘Z skips them.
         let skipped = before.type == .terminal ? UndoHistory.terminalBookkeeping : []

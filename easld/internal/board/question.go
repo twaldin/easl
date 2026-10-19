@@ -192,11 +192,26 @@ func (b *Board) ArchiveQuestions(now time.Time) []string {
 	return due
 }
 
-// ScheduleQuestionExpiry is Board.scheduleQuestionExpiry: sets the board's question timer for
-// its earliest open `expiresAt` or closed archive deadline (at most a day out, then again). A
-// question already past it expires, or archives, on the next turn, expiries first (the timer
-// takes the board's Lock, so after the request that made it due). Called when the board opens
-// and whenever a question is stored.
+func (b *Board) ExpireObjects(now time.Time) []string {
+	var due []string
+	for id, o := range b.objects {
+		if o.Expires != nil && !o.Expires.After(now) {
+			due = append(due, id)
+		}
+	}
+	sort.Strings(due)
+	_ = b.unrecorded(func() error {
+		for _, id := range due {
+			if _, ok := b.objects[id]; ok {
+				_ = b.delete(id, "", SystemActor)
+			}
+		}
+		return nil
+	})
+	return due
+}
+
+// ScheduleQuestionExpiry requires callers to hold Lock while changing the schedule.
 func (b *Board) ScheduleQuestionExpiry() { b.scheduleQuestionExpiry(time.Now()) }
 
 func (b *Board) scheduleQuestionExpiry(now time.Time) {
@@ -207,6 +222,9 @@ func (b *Board) scheduleQuestionExpiry(now time.Time) {
 	var next time.Time
 	found := false
 	for _, o := range b.objects {
+		if o.Expires != nil && (!found || o.Expires.Before(next)) {
+			next, found = *o.Expires, true
+		}
 		if o.Type != model.Question {
 			continue
 		}
@@ -229,15 +247,18 @@ func (b *Board) scheduleQuestionExpiry(now time.Time) {
 	}
 	b.expirySeq++
 	seq := b.expirySeq
+	lock := b.Lock
 	b.questionExpiry = time.AfterFunc(min(max(0, next.Sub(now)), maxExpiryWait), func() {
-		b.Lock.Lock()
-		defer b.Lock.Unlock()
-		if b.expirySeq != seq {
+		lock.Lock()
+		defer lock.Unlock()
+		if b.closed || b.expirySeq != seq {
 			return
 		}
 		b.questionExpiry = nil
-		b.ExpireQuestions(time.Now())
-		b.ArchiveQuestions(time.Now())
+		now := time.Now()
+		b.ExpireObjects(now)
+		b.ExpireQuestions(now)
+		b.ArchiveQuestions(now)
 		b.ScheduleQuestionExpiry()
 	})
 }

@@ -1,0 +1,29 @@
+{
+  "description": "Object deadlines normalize durations, clear and renew through update/upsert, delete through host events on two connections, and board.stale reports leftovers without writing.",
+  "ignore": { "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked." },
+  "steps": [
+    { "call": "events.subscribe", "conn": "second", "params": { "board": "{{board}}" } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "note", "props": { "title": "Live note", "markdown": "Keep this" }, "frame": { "x": 0, "y": 0, "w": 300, "h": 180 } }, "save": "live" },
+    { "call": "board.stale", "params": { "board": "{{board}}" }, "expect": { "response.result.objects": [], "eventCount": 0 } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "Invalid deadline" }, "expires": "tomorrow" }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "Ambiguous deadline" }, "expires": null, "expiresIn": "2h" }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "board.stale", "params": { "board": "{{board}}", "olderThan": "-1d" }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "terminal", "props": { "command": ["/bin/cat"], "name": "cleanup-author" }, "frame": { "x": 10000, "y": 10000, "w": 300, "h": 180 } }, "save": "creator" },
+    { "call": "object.upsert", "params": { "board": "{{board}}", "type": "note", "key": "cleanup-leftover", "caller": "{{creator.object.id}}", "props": { "title": "Leftover", "markdown": "Task scratch" }, "frame": { "x": 400, "y": 0, "w": 300, "h": 180 } }, "save": "leftover" },
+    { "call": "board.stale", "params": { "board": "{{board}}" }, "expect": { "response.result.objects": [], "eventCount": 0 } },
+    { "call": "object.delete", "params": { "id": "{{creator.object.id}}" } },
+    { "call": "board.get", "params": { "board": "{{board}}" }, "save": "before" },
+    { "call": "board.stale", "params": { "board": "{{board}}" }, "expect": { "response.result.objects.0.id": "{{leftover.object.id}}", "response.result.objects.0.type": "note", "response.result.objects.0.key": "cleanup-leftover", "response.result.objects.0.title": "Leftover", "response.result.objects.0.createdBy": { "kind": "agent", "tile": "{{creator.object.id}}" }, "response.result.objects.0.updatedAt": "{{leftover.object.updatedAt}}", "response.result.objects.0.reasons": ["creator-gone"], "eventCount": 0 }, "expectShape": { "response.result.objects.0": "StaleObject" } },
+    { "call": "board.get", "params": { "board": "{{board}}" }, "expect": { "response.result.revision": "{{before.revision}}", "response.result.objects": "{{before.objects}}", "eventCount": 0 } },
+    { "call": "object.delete", "params": { "id": "{{leftover.object.id}}" } },
+    { "call": "board.stale", "params": { "board": "{{board}}", "olderThan": "0s" }, "expect": { "response.result.objects.0.id": "{{live.object.id}}", "response.result.objects.0.reasons": ["untouched"], "eventCount": 0 } },
+    { "call": "object.upsert", "params": { "board": "{{board}}", "type": "note", "key": "cleanup-cancel", "props": { "title": "Cancel expiry", "markdown": "Must survive" }, "expiresIn": "2s", "frame": { "x": 400, "y": 0, "w": 300, "h": 180 } }, "save": "cancel", "expect": { "response.result.created": true } },
+    { "call": "object.update", "params": { "id": "{{cancel.object.id}}", "expires": null }, "settleMs": 2300 },
+    { "call": "object.get", "params": { "id": "{{cancel.object.id}}" }, "expect": { "response.ok": true, "response.result.object.props.markdown": "Must survive" } },
+    { "call": "object.upsert", "params": { "board": "{{board}}", "type": "note", "key": "cleanup-cancel", "props": {}, "expiresIn": "1s" }, "save": "renew", "expect": { "response.result.created": false, "response.result.object.id": "{{cancel.object.id}}" }, "settleMs": 1500 },
+    { "call": "object.get", "params": { "id": "{{cancel.object.id}}" }, "expect": { "response.error.code": "not_found" } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "note", "props": { "title": "Absolute expiry", "markdown": "Already due" }, "expires": "2021-01-01T00:00:00Z", "frame": { "x": 400, "y": 0, "w": 300, "h": 180 } }, "save": "absolute", "settleMs": 300 },
+    { "call": "object.get", "params": { "id": "{{absolute.object.id}}" }, "expect": { "response.error.code": "not_found" } },
+    { "call": "board.stale", "params": { "board": "{{board}}" }, "expect": { "response.result.objects": [], "eventCount": 0 } }
+  ]
+}

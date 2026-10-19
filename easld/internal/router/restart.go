@@ -146,6 +146,7 @@ func (r *Router) relaunch(b *board.Board, tile string, launch session.Relaunch, 
 	case !created:
 		return fail(api.CodeUnavailable, "terminal %s's session was started again before the relaunch could", tile)
 	}
+	r.sessionStarted(b, terminal)
 	return nil
 }
 

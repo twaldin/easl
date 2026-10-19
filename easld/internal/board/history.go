@@ -63,7 +63,14 @@ func propsWithout(props map[string]any, keys map[string]bool) map[string]any {
 func contentProps(o model.Object) map[string]any { return propsWithout(o.Props, bookkeeping(o)) }
 
 func sameContent(a, b model.Object) bool {
-	return a.Frame == b.Frame && a.Z == b.Z && a.Parent == b.Parent && model.Equal(anyMap(contentProps(a)), anyMap(contentProps(b)))
+	return a.Frame == b.Frame && a.Z == b.Z && a.Parent == b.Parent && sameExpiry(a.Expires, b.Expires) && model.Equal(anyMap(contentProps(a)), anyMap(contentProps(b)))
+}
+
+func sameExpiry(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
 }
 
 func anyMap(m map[string]any) any {
@@ -77,6 +84,11 @@ func anyMap(m map[string]any) any {
 func restoring(target, current model.Object) model.Object {
 	o := current.Clone()
 	o.Frame, o.Z, o.Parent = target.Frame, target.Z, target.Parent
+	o.Expires = nil
+	if target.Expires != nil {
+		at := *target.Expires
+		o.Expires = &at
+	}
 	props := model.Clone(anyMap(contentProps(target))).(map[string]any)
 	for k := range bookkeeping(current) {
 		if v, ok := current.Props[k]; ok {

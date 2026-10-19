@@ -10,7 +10,7 @@ export type RemoteUpdateSession = {
   session: string;
   kind: "browser" | "board" | "terminal";
   board: Id;
-  tile: unknown;
+  tile: string | null;
 };
 
 export type ComposerReceipt = {
@@ -680,8 +680,22 @@ export type CanvasObject = {
   updatedBy?: Actor;
   createdAt: string;
   updatedAt: string;
+  /** absolute RFC3339 deletion deadline, set by the host; absent when no expiry is scheduled */
+  expires?: string;
   /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | VideoProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one) */
   props: Record<string, unknown>;
+};
+
+export type StaleObject = {
+  id: Id;
+  type: ObjectType;
+  title: string;
+  key?: string;
+  createdBy: Actor;
+  /** seconds since 2001-01-01T00:00:00Z, matching the object's API updatedAt */
+  updatedAt: number;
+  /** all applicable reasons, in the listed order */
+  reasons: ("creator-gone" | "expired" | "untouched" | "exited")[];
 };
 
 export type PageLogEntry = {
@@ -742,13 +756,16 @@ export type PageLog = {
   cursor?: string;
   /** milliseconds from navigation start (CLS unitless); null when not measured yet or not measured by WebKit (then named in `unsupported`), never a stand-in zero */
   vitals?: {
-    lcp?: unknown;
-    cls?: unknown;
-    longTasks?: unknown;
-    fcp?: unknown;
-    ttfb?: unknown;
-    domContentLoaded?: unknown;
-    load?: unknown;
+    lcp?: number | null;
+    cls?: number | null;
+    longTasks?: {
+      count?: number;
+      totalMs?: number;
+    } | null;
+    fcp?: number | null;
+    ttfb?: number | null;
+    domContentLoaded?: number | null;
+    load?: number | null;
     unsupported?: string[];
   };
 };
@@ -928,7 +945,7 @@ export type TerminalCommand = {
   /** the command line (its first line), as the shell integration titled the terminal while it ran; for an older block, the prompt row above its output */
   command?: string;
   /** exit status; null when the shell didn't report one */
-  exit?: unknown;
+  exit?: number | null;
   /** how long it ran */
   durationMs?: number;
   /** `lastCommand` only */
@@ -1141,19 +1158,19 @@ export type AppUpdateParams = {
 export type AppUpdateResult = {
   currentVersion: string;
   /** The latest feed version, including one that is not newer; null when unknown. */
-  availableVersion: unknown;
+  availableVersion: string | null;
   /** An update is downloading, verifying, waiting in verified staging, or installing. */
   installPending: boolean;
   /** The app updater's current phase. */
   phase: string;
   /** The update failure reason, including a retained failure from the previous install; null without a failure. */
-  error: unknown;
+  error: string | null;
   /** remote viewer active when automatic installation is deferred for recent remote activity, otherwise null; explicit install still proceeds. */
-  deferred: unknown;
+  deferred: string | null;
   /** Live remote sessions that installing now can interrupt. */
   interruptions: RemoteUpdateSession[];
   /** Human-readable interruption warning for explicit installation, otherwise null. */
-  warning: unknown;
+  warning: string | null;
 };
 
 export type BoardGetParams = {
@@ -1223,6 +1240,15 @@ export type BoardHistoryResult = {
 export type BoardListParams = Record<string, unknown>;
 export type BoardListResult = {
   boards: BoardInfo[];
+};
+
+export type BoardStaleParams = {
+  board?: Id;
+  /** finite nonnegative duration in seconds, minutes, hours or days; fractions allowed */
+  olderThan?: string;
+};
+export type BoardStaleResult = {
+  objects: StaleObject[];
 };
 
 export type BoardOpenParams = {
@@ -1342,7 +1368,7 @@ export type ObjectGetResult = {
   changes?: {
     repository?: string;
     /** full SHA of the base */
-    base?: unknown;
+    base?: string | null;
     /** HEAD, merge-base with main, or the commit as written */
     baseLabel?: string;
     added?: number;
@@ -1352,9 +1378,9 @@ export type ObjectGetResult = {
     /** changed files past the 300 the tile loads */
     omitted?: number;
     /** two commits compared (`head`, or a `ref` no worktree has checked out): full SHA of the head; `base` is its merge-base with the base */
-    head?: unknown;
+    head?: string | null;
     /** two commits compared: the head as written */
-    headLabel?: unknown;
+    headLabel?: string | null;
     /** two commits compared: full SHA of the commit the base names */
     baseTip?: string;
     /** two commits compared: nothing to stage, unstage, or discard */
@@ -1432,6 +1458,10 @@ export type ObjectCreateParams = {
   /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
   size?: "fit";
   parent?: Id;
+  /** RFC3339 timestamp with timezone, or null to clear; mutually exclusive with expiresIn */
+  expires?: string | null;
+  /** finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires */
+  expiresIn?: string;
   /** With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch. */
   viewer?: ViewerId;
   /** The viewer's gesture id; writes with the same id form one undo step. */
@@ -1463,6 +1493,10 @@ export type ObjectUpdateParams = {
   size?: "fit";
   /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props?: Record<string, unknown>;
+  /** RFC3339 timestamp with timezone, or null to clear; omission preserves the deadline; mutually exclusive with expiresIn */
+  expires?: string | null;
+  /** finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires */
+  expiresIn?: string;
   /** With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch. */
   viewer?: ViewerId;
   /** The viewer's gesture id; writes with the same id form one undo step. */
@@ -1489,6 +1523,10 @@ export type ObjectUpsertParams = {
   frame?: Frame | FitFrame | SizeFrame;
   /** as for object.create and object.update */
   size?: "fit";
+  /** RFC3339 timestamp with timezone, or null to clear; omission preserves an existing deadline; mutually exclusive with expiresIn */
+  expires?: string | null;
+  /** finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires */
+  expiresIn?: string;
   caller?: Id;
 };
 export type ObjectUpsertResult = {
@@ -2187,7 +2225,7 @@ export type BrowserReportParams = {
   id: Id;
   url?: string;
   /** the page's title; null removes it */
-  pageTitle?: unknown;
+  pageTitle?: string | null;
   /** explicit terminal credit from the drawing Mac, never filled from the reporting process's environment; mutually exclusive with actor */
   caller?: Id;
   /** URL credit when no caller is given; mutually exclusive with caller */
@@ -2260,6 +2298,8 @@ export interface CanvasApi {
     history(params?: BoardHistoryParams): Promise<BoardHistoryResult>;
     /** Every stored board, open or not, including archived boards whose root directory is gone. */
     list(params?: BoardListParams): Promise<BoardListResult>;
+    /** Read-only cleanup candidates, sorted by id. Reasons are creator-gone (agent creator no longer has a terminal on this board), expired (deadline reached), untouched (updatedAt strictly before now minus olderThan), and exited (terminal process confirmed exited). Does not delete objects or change revisions, timestamps, or events. */
+    stale(params?: BoardStaleParams): Promise<BoardStaleResult>;
     /** Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). A directory in a git repository opens the repository's board (one per repository, rooted at its main checkout), tagged with the worktree it is in: the window names it, New Terminal starts there, and the view goes to its region. The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true. */
     open(params: BoardOpenParams): Promise<BoardOpenResult>;
     /** The Mac app only (easld answers `unsupported`): open a board another Mac's easl hosts, as File › Open Remote… does, as a tab of the frontmost board window (its own window when there is none), viewed live over ssh (docs/contracts.md "Remote boards"). `host` is found as the picker finds it: the host opened before (`remote-hosts.json`) or the tailnet Mac whose ssh target or name it is, else it is an ssh host as typed into the picker; then the picker's host discovery over ssh, which remembers the host in `remote-hosts.json`, and the board is read from the host. That host list is the only file this writes: the board is viewed, never copied (no board file, viewport, composer or `open-boards.json` entry). The user's current tab stays in front and nothing takes focus unless `select` is true. A board already open from that host is answered (`alreadyOpen`) without asking the host again, selected when `select` is true, never opened twice. Fails `unavailable` when the host can't be reached or its easl doesn't answer, `not_found` when the host has no such board open (its `board.list` says which are `open`), `ambiguous` when two hosts have that name, `invalid_params` for a host that isn't one host (spaces, a leading `-`, `user@` or `@host`) or a board that isn't a board id. */
@@ -2416,6 +2456,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       redo: (params: BoardRedoParams) => call("board.redo", params ?? {}, ["board"]) as Promise<BoardRedoResult>,
       history: (params?: BoardHistoryParams) => call("board.history", params ?? {}, ["board"]) as Promise<BoardHistoryResult>,
       list: (params?: BoardListParams) => call("board.list", params ?? {}, []) as Promise<BoardListResult>,
+      stale: (params?: BoardStaleParams) => call("board.stale", params ?? {}, ["board"]) as Promise<BoardStaleResult>,
       open: (params: BoardOpenParams) => call("board.open", params ?? {}, []) as Promise<BoardOpenResult>,
       open_remote: (params: BoardOpenRemoteParams) => call("board.open_remote", params ?? {}, []) as Promise<BoardOpenRemoteResult>,
       close: (params?: BoardCloseParams) => call("board.close", params ?? {}, ["board"]) as Promise<BoardCloseResult>,
@@ -2496,7 +2537,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
+export const METHODS = ["surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.stale","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

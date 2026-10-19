@@ -227,8 +227,9 @@ struct GuardedInverse {
         let id: ObjectID
         var x: Double?, y: Double?, w: Double?, h: Double?, z: Double?
         var props: [String: JSONValue] = [:]
+        var expires: ObjectExpiryPatch = .unchanged
 
-        var isEmpty: Bool { x == nil && y == nil && w == nil && h == nil && z == nil && props.isEmpty }
+        var isEmpty: Bool { x == nil && y == nil && w == nil && h == nil && z == nil && props.isEmpty && expires == .unchanged }
     }
 
     var recreates: [CanvasObject] = []
@@ -350,6 +351,10 @@ extension Board {
                     patch.h = field(before.frame.h, after.frame.h, current.frame.h)
                 }
                 patch.z = field(before.z, after.z, current.z)
+                if before.expires != after.expires {
+                    if current.expires == after.expires { patch.expires = .set(before.expires) }
+                    else { keep(id) }
+                }
                 let old = UndoHistory.contentProps(before).object ?? [:], new = UndoHistory.contentProps(after).object ?? [:]
                 let now = current.props.object ?? [:]
                 for key in Set(old.keys).union(new.keys).sorted() where old[key] != new[key] {
@@ -381,7 +386,7 @@ extension Board {
             frame.y = patch.y ?? frame.y
             frame.w = patch.w ?? frame.w
             frame.h = patch.h ?? frame.h
-            _ = try update(patch.id, frame: frame == current.frame ? nil : frame, z: patch.z, props: patch.props.isEmpty ? nil : .object(patch.props))
+            _ = try update(patch.id, frame: frame == current.frame ? nil : frame, z: patch.z, props: patch.props.isEmpty ? nil : .object(patch.props), expires: patch.expires)
         }
         for id in plan.removes where objects[id] != nil { try delete(id) }
         if !plan.restage.isEmpty { restageMentions(plan.restage) }
