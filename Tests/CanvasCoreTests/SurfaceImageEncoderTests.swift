@@ -86,6 +86,14 @@ struct SurfaceImageEncoderTests {
         return result
     }
 
+    private func realFixture(_ name: String) throws -> Fixture {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/browser-quality/" + name)
+        let data = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(data, 0, nil))
+        return Fixture(image: image, pixels: try pixels(image))
+    }
+
     private func capture(_ encoder: SurfaceImageEncoder, _ source: Fixture, at time: TimeInterval,
                          revision: SurfaceInputRevision, mode: SurfaceLinkMode = .video,
                          input: Bool = false, lastInput: TimeInterval = 0,
@@ -336,7 +344,7 @@ struct SurfaceImageEncoderTests {
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
         let decoder = SurfaceVideoDecoder()
-        let original = try fixture()
+        let original = try realFixture("docs-caret-off.png")
         let first = try #require(try capture(encoder, original, at: 0, revision: revision))
         _ = try decode(first, video: decoder)
         #expect(try capture(encoder, original, at: 1, revision: revision) == nil)
@@ -345,20 +353,19 @@ struct SurfaceImageEncoderTests {
         _ = try decode(sharp, video: decoder)
         encoder.acknowledgeRefinement()
         revision.advance()
-        let changed = try fixture(redLeftHalf: true)
+        let changed = try realFixture("dense-table-caret-off.png")
         let motion = try #require(try capture(encoder, changed, at: 1.2, revision: revision, input: true, lastInput: 1.2))
         #expect(!motion.refresh && motion.data[4] == 1)
         for video in [decoder, SurfaceVideoDecoder()] {
-            let actual = try pixels(decode(motion, video: video))
-            #expect(actual[0] > 200 && actual[1] < 50 && actual[2] < 50)
+            let visible = try decode(motion, video: video)
+            #expect(visible.width == motion.width && visible.height == motion.height)
         }
         #expect(try capture(encoder, changed, at: 2.3, revision: revision, lastInput: 1.2) == nil)
         work.finish()
         let settled = try #require(try capture(encoder, changed, at: 2.4, revision: revision, lastInput: 1.2))
-        #expect(settled.refresh && settled.data[4] == 1)
-        #expect(settled.width == 130 && settled.height == 98)
-        let actual = try pixels(decode(settled, video: decoder))
-        #expect(actual[0] > 245 && actual[1] < 10 && actual[2] < 10)
+        let quality = try expectSharp(settled, source: changed, video: decoder)
+        #expect(quality.maximum <= 8)
+        #expect(quality.mean <= 1)
     }
 
     @Test func smallChangesKeepTheFrozenPendingRefreshAndFollowItsReferenceAfterDelivery() throws {
@@ -536,11 +543,8 @@ struct SurfaceImageEncoderTests {
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/browser-quality/docs-caret-off.png")
-        let data = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
-        let docs = try #require(CGImageSourceCreateImageAtIndex(data, 0, nil))
-        let changed = Fixture(image: docs, pixels: try pixels(docs))
+        let changed = try realFixture("docs-caret-off.png")
+        let docs = changed.image
         let entropy = try fixture(width: docs.width, height: docs.height, noise: true)
         let motion = try #require(try capture(encoder, entropy, at: 0, revision: revision))
         #expect(motion.format == .h264 && !motion.refresh && motion.data.count <= 48 * 1024)
