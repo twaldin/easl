@@ -22,10 +22,13 @@ enum TerminalRender {
     // MARK: Font
 
     nonisolated private static let installedFamilies = CTFontManagerCopyAvailableFontFamilyNames() as! [String]
+    private static let fontPreparation = Task {
+        await offPool(qos: .userInitiated) { _ = installedFamilies }
+    }
 
     /// Resolve the font service off main before the synchronous raster and snapshot draws.
     static func prepareFonts() async {
-        await offPool(qos: .userInitiated) { _ = installedFamilies }
+        await fontPreparation.value
     }
 
     /// Font families, best first: the user's Ghostty `font-family` (matched loosely, preferring
@@ -70,6 +73,8 @@ enum TerminalRender {
 
     /// Fonts at the tile's font size, or at the size whose advance fills `cellWidth` when the grid is known.
     static func fonts(size fontSize: CGFloat, cellWidth: CGFloat?) -> Fonts {
+        let start = DevPerf.mark()
+        defer { DevPerf.record("terminal.fonts", since: start) }
         let base = families.lazy.compactMap { NSFont(name: $0, size: fontSize) ?? NSFontManager.shared.font(withFamily: $0, traits: [], weight: 5, size: fontSize) }.first
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let advance = base.maximumAdvancement.width > 0 ? base.maximumAdvancement.width : base.advancement(forGlyph: base.glyph(withName: "M")).width

@@ -10,6 +10,7 @@ import QuartzCore
 /// A display link counts frames when a canvas window is available. A main run-loop observer
 /// measures busy stretches from waking to sleeping, independently of that window. Timed
 /// sections and counts accompany each phase's log, with the longest wake's start and CPU time.
+/// Wakes of at least 50 ms also log their own wall/CPU time and timed sections.
 @MainActor
 enum DevPerf {
     static let enabled = ProcessInfo.processInfo.environment["EASL_DEV_PERF"] == "1"
@@ -54,6 +55,7 @@ enum DevPerf {
     /// a stretch, so a span's first `beforeWaiting` measures from here, not from 0 or an earlier
     /// span's wake.
     private static var wokeCpu = 0.0
+    private static var wakeTimings: [String: (count: Int, total: Double, max: Double)] = [:]
 
     /// The main thread's CPU time so far, in milliseconds (the observer runs on it).
     private static var threadCpu: Double { Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)) / 1e6 }
@@ -81,6 +83,13 @@ enum DevPerf {
         entry.total += ms
         entry.max = max(entry.max, ms)
         span.phases[index].timings[name] = entry
+        if wokeAt != nil {
+            var wake = wakeTimings[name] ?? (0, 0, 0)
+            wake.count += 1
+            wake.total += ms
+            wake.max = max(wake.max, ms)
+            wakeTimings[name] = wake
+        }
     }
 
     /// Start of a section timed with `record(_:since:)`; nil when no span runs (cheap in draws).
@@ -104,6 +113,7 @@ enum DevPerf {
         self.span = span
         wokeAt = CACurrentMediaTime()
         wokeCpu = threadCpu
+        wakeTimings.removeAll(keepingCapacity: true)
         guard let view = window?.contentView else { return }
         let link = view.displayLink(target: Ticker.shared, selector: #selector(Ticker.tick(_:)))
         link.add(to: .main, forMode: .common)
@@ -174,6 +184,7 @@ enum DevPerf {
         let now = CACurrentMediaTime()
         let cpu = threadCpu
         if activity == .afterWaiting {
+            wakeTimings.removeAll(keepingCapacity: true)
             wokeAt = now
             wokeCpu = cpu
             return
@@ -196,6 +207,13 @@ enum DevPerf {
         if ms > span.period * 1000 { span.phases[index].hitches += 1 }
         span.phases[index].cpu += used
         span.phases[index].longestCpu = max(span.phases[index].longestCpu, used)
+        if ms >= 50 {
+            let timings = wakeTimings.sorted { $0.key < $1.key }.map {
+                String(format: "%@=%d/%.1f/%.1f", $0.key, $0.value.count, $0.value.total, $0.value.max)
+            }.joined(separator: " ")
+            NSLog("DevPerfWake: %@ %@ start+%.1f ms wall %.1f ms cpu %.1f ms; timings (n/total/max ms): %@",
+                  span.label, span.phases[index].name, (woke - span.phases[index].start) * 1000, ms, used, timings)
+        }
     }
 
     @MainActor private final class Ticker: NSObject {

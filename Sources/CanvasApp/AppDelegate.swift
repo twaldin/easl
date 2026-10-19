@@ -497,6 +497,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func present(_ controller: CanvasWindowController, visit: WorktreeVisit?, select: Bool, show: Bool) {
+        let start = DevPerf.mark()
+        defer { DevPerf.record("board.present", since: start) }
         let board = controller.board
         let newWindow = controllers[board.id] == nil
         if let window = controller.window { cancelHeldManualClose(window) }
@@ -963,6 +965,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 selected.tabbingMode = .disallowed
                 defer { selected.tabbingMode = tabbing }
                 if saved.minimized {
+                    // Hidden windows never get AppKit's normal show-time screen fitting.
+                    if let screen = selected.screen ?? NSScreen.screens.first(where: { $0.frame.intersects(selected.frame) }) ?? NSScreen.main {
+                        let visible = screen.visibleFrame
+                        var frame = selected.frame
+                        frame.size.width = min(frame.width, visible.width)
+                        frame.size.height = min(frame.height, visible.height)
+                        frame = selected.constrainFrameRect(frame, to: screen)
+                        if frame != selected.frame { selected.setFrame(frame, display: false) }
+                    }
                     selected.miniaturize(nil)
                     // Re-register a hidden selected tab; AppKit composes its title and subtitle.
                     if NSApp.windowsMenu?.items.contains(where: { ($0.target as? NSWindow) === selected }) != true {
@@ -1405,6 +1416,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// selected when `select`. Otherwise the tab in front stays in front, as `open(root:select:)`
     /// leaves it, and a window of its own is ordered in behind the others, never made key.
     private func show(_ controller: CanvasWindowController, select: Bool) {
+        let start = DevPerf.mark()
+        defer { DevPerf.record("board.present", since: start) }
         guard let window = controller.window else { return }
         let noActivate = CanvasApplication.neverActivate || suppressLaunchActivation
         if let host = tabHost(excluding: window) {
@@ -1421,7 +1434,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Separate it from insertion and selection. Look up the host again when showing:
     /// a board or native group can close while this opening yields.
     private func prepareTabHost(excluding window: NSWindow) async {
-        if DevPerf.time("board.tabhost", { tabHost(excluding: window) }) != nil {
+        if tabHost(excluding: window) != nil {
             await MainTurns.next()
         }
     }
@@ -1445,6 +1458,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Hidden and minimized groups remain hosts instead of spawning a window on the current Space.
     /// Update restoration's unshown windows are not hosts until their group is ready.
     private func tabHost(excluding window: NSWindow) -> NSWindow? {
+        let start = DevPerf.mark()
+        defer { DevPerf.record("board.tabhost", since: start) }
         var preferred: NSWindow?
         func consider(_ controller: CanvasWindowController) -> NSWindow? {
             guard controller.isBoardOpen, let member = controller.window, member !== window,

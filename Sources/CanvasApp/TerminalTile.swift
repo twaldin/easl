@@ -38,36 +38,51 @@ final class TerminalTile: NSView, TileContent {
     private var referenceGeneration = UUID()
     var endingSession: Bool { board.isEndingSession(objectID) }
 
+    private var canAttachSurface: Bool {
+        !discarded && launchTask == nil && !endingSession && !hostBoardClosed
+            && !board.isClosed && board.objects[objectID] != nil
+    }
+
     func sessionShutdownChanged() {
         if endingSession {
             terminal.cancelImageInput()
             terminal.controller = nil
-        } else if !discarded, launchTask == nil, !board.isClosed, board.objects[objectID] != nil, terminal.controller == nil {
+        } else if canAttachSurface, terminal.controller == nil {
             terminal.controller = TerminalConfig.shared.controller
             host?.add(self)
         }
     }
 
     private var hostBoardClosed = false
+    private var hostSnapshotTask: Task<Void, Never>?
     private var lastRemoteScreen: (lines: [TerminalLine], cursorRow: Int?)?
 
     func setHostBoardClosed(_ closed: Bool) {
         guard isRemote, hostBoardClosed != closed, !discarded else { return }
+        hostSnapshotTask?.cancel()
+        hostSnapshotTask = nil
         if closed {
             lastRemoteScreen = liveScreen()
             hostBoardClosed = true
             referenceTask?.cancel()
             referenceTask = nil
             referenceGeneration = UUID()
-            snapshotHistory = lastRemoteScreen
-            showSnapshot(true)
+            if lastRemoteScreen != nil {
+                hostSnapshotTask = Task { [weak self] in
+                    await TerminalRender.prepareFonts()
+                    guard let self, !Task.isCancelled, !discarded, hostBoardClosed else { return }
+                    snapshotHistory = lastRemoteScreen
+                    showSnapshot(true)
+                    hostSnapshotTask = nil
+                }
+            }
             terminal.cancelImageInput()
             terminal.controller = nil
         } else {
             hostBoardClosed = false
             showSnapshot(false)
             lastRemoteScreen = nil
-            terminal.controller = TerminalConfig.shared.controller
+            if canAttachSurface { terminal.controller = TerminalConfig.shared.controller }
         }
         updateSurfaceVisibility()
     }
@@ -78,6 +93,8 @@ final class TerminalTile: NSView, TileContent {
         referenceTask?.cancel()
         launchTask?.cancel()
         launchTask = nil
+        hostSnapshotTask?.cancel()
+        hostSnapshotTask = nil
         referenceGeneration = UUID()
         terminal.cancelImageInput()
         handler.tile = nil
@@ -136,7 +153,7 @@ final class TerminalTile: NSView, TileContent {
                 terminal.configuration = options
             }
             launchTask = nil
-            if !endingSession { terminal.controller = TerminalConfig.shared.controller }
+            if canAttachSurface { terminal.controller = TerminalConfig.shared.controller }
         }
         handler.tile = self
         terminal.delegate = handler
@@ -1466,7 +1483,9 @@ final class TerminalTile: NSView, TileContent {
                 : route.map { "terminal session \(session) on \($0.target) can't be read" } ?? "terminal session \(session) is not running")
         }
         let screen = TerminalRender.screen(history.lines, cursorRow: history.cursorRow, rows: rows)
-        let image = request.image { bounds in TerminalRender.draw(screen, grid: grid, in: bounds, appearance: request.appearance) }
+        let image = DevPerf.time("terminal.card.draw") {
+            request.image { bounds in TerminalRender.draw(screen, grid: grid, in: bounds, appearance: request.appearance) }
+        }
         return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered)
     }
 
