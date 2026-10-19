@@ -607,6 +607,160 @@ final class EaslConnectionTests {
         #expect(await server.pushes(0).isEmpty, "nothing pushed for the dropped link reached the next one")
     }
 
+    func blockedRelay(callID: String = "open", method: String = "surface.stream") throws ->
+        (connection: EaslConnection, request: URL, gate: URL, captured: URL) {
+        let request = dir.appendingPathComponent("request")
+        let gate = dir.appendingPathComponent("release")
+        let captured = dir.appendingPathComponent("captured")
+        try #require(mkfifo(gate.path, 0o600) == 0)
+        try #require(mkfifo(request.path, 0o600) == 0)
+        let script = """
+        IFS= read -r ping
+        printf '%s\\n' '{"id":"-1","ok":true,"result":{}}'
+        IFS= read -r start < '\(request.path)'
+        printf '%s\\n' '{"id":"\(callID)","method":"\(method)","params":{}}'
+        IFS= read -r release < '\(gate.path)'
+        exec 3>&1
+        exec cat > '\(captured.path)'
+        """
+        return (EaslConnection.process("/bin/sh", ["-c", script], backoff: fast), request, gate, captured)
+    }
+
+    func releaseBlockedRelay(_ gate: URL) throws {
+        let release = try FileHandle(forWritingTo: gate)
+        try release.write(contentsOf: Data("go\n".utf8))
+        try release.close()
+    }
+
+    @Test func aDelegatedReplyLargerThan32MiBArrivesWholeAndItsOriginStillPushes() async throws {
+        let (connection, request, gate, captured) = try blockedRelay(callID: "render", method: "view.render")
+        defer { connection.close() }
+        let text = String(repeating: "/", count: 33 << 19) + "é\nend"
+        let encodedText = try JSONEncoder().encode(text)
+        let emptyAnswer: JSONValue = .object(["id": "render", "ok": .bool(true), "result": ""])
+        let answerBytes = try JSONEncoder().encode(emptyAnswer).count - 2 + encodedText.count + 1
+        let origins = Locked<[EaslConnection.Origin]>([])
+        let (held, releaseAnswer) = AsyncStream.makeStream(of: Void.self)
+        defer { releaseAnswer.finish() }
+        connection.serve { call in
+            origins.withLock { $0.append(call.origin) }
+            for await _ in held {}
+            return .success(.string(text))
+        }
+        try #require(await reach(.online, connection))
+        try releaseBlockedRelay(request)
+        let deadline = Date().addingTimeInterval(30)
+        while origins.withLock({ $0.isEmpty }), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let origin = try #require(origins.withLock { $0.first })
+        try releaseBlockedRelay(gate)
+        releaseAnswer.finish()
+        while Date() < deadline {
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: captured.path)[.size] as? NSNumber)?.intValue ?? 0
+            if bytes >= answerBytes || connection.state == .offline { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let received = (try? Data(contentsOf: captured)) ?? Data()
+        try #require(received.count == answerBytes)
+        #expect(received.last == 0x0A)
+        let result = try #require(received.range(of: Data(#""result":"#.utf8)))
+        let scalar = received[result.upperBound...].prefix(encodedText.count)
+        #expect(scalar.elementsEqual(encodedText))
+        let message = try JSONDecoder().decode(JSONValue.self, from: received.dropLast())
+        let correctAnswer = message == .object(["id": "render", "ok": .bool(true), "result": .string(text)])
+        #expect(correctAnswer)
+
+        let after = try EventLine("surface.notice", board: "brd_a",
+                                  SurfaceEvent.notice(stream: "str_a", kind: .refused, reason: "after render"))
+        #expect(origin.isOpen)
+        #expect(origin.push(after))
+        var following = Data()
+        let arrival = Date().addingTimeInterval(30)
+        repeat {
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: captured.path)[.size] as? NSNumber)?.intValue ?? 0
+            if bytes >= answerBytes + after.data.count {
+                following = try Data(contentsOf: captured).dropFirst(answerBytes)
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        } while Date() < arrival
+        #expect(following.elementsEqual(after.data))
+        #expect(connection.state == .online)
+    }
+
+    @Test func aBlockedOriginStillDropsItsLinkWhenAggregateOutputExceedsTheBudget() async throws {
+        let (connection, request, _, _) = try blockedRelay()
+        defer { connection.close() }
+        let origins = Locked<[EaslConnection.Origin]>([])
+        connection.serve { call in
+            origins.withLock { $0.append(call.origin) }
+            return .success(.object(["stream": "str_a"]))
+        }
+        try #require(await reach(.online, connection))
+        try releaseBlockedRelay(request)
+        let deadline = Date().addingTimeInterval(30)
+        while origins.withLock({ $0.isEmpty }), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let origin = try #require(origins.withLock { $0.first })
+        let line = try EventLine("surface.frame", board: "brd_a",
+                                 .object(["data": .string(String(repeating: "x", count: 40 << 20))]))
+        #expect(origin.push(line))
+        #expect(origin.push(line))
+        #expect(connection.state == .online)
+        #expect(origin.push(line))
+        while origin.isOpen, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!origin.isOpen)
+    }
+
+    @Test func aBlockedOriginDropsCanceledRefreshBeforeItsMotionReplacement() async throws {
+        let (connection, request, gate, captured) = try blockedRelay()
+        defer { connection.close() }
+        let calls = Locked<[EaslConnection.Call]>([])
+        connection.serve { call in
+            calls.withLock { $0.append(call) }
+            return .success(.object(["stream": "str_a"]))
+        }
+        try #require(await reach(.online, connection))
+        try releaseBlockedRelay(request)
+        let deadline = Date().addingTimeInterval(30)
+        while calls.withLock({ $0.isEmpty }), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let origin = try #require(calls.withLock { $0.first?.origin })
+        let revision = SurfaceInputRevision()
+        func line(_ label: String, stream: String = "str_a", bytes: Int = 0) throws -> EventLine {
+            try EventLine("surface.frame", board: "brd_a", .object([
+                "stream": .string(stream), "label": .string(label),
+                "data": .string(String(repeating: "x", count: bytes)),
+            ]))
+        }
+        #expect(origin.push(try line("committed", bytes: 1 << 20)))
+        #expect(origin.push(try line("canceled"), whileCurrent: { revision.value == 0 }))
+        #expect(origin.push(try line("other", stream: "str_b"), whileCurrent: { true }))
+        #expect(connection.state == .online)
+        revision.advance()
+        #expect(origin.push(try line("motion")))
+        let after = try line("after")
+        #expect(origin.push(after))
+        try releaseBlockedRelay(gate)
+        var received = Data()
+        let arrival = Date().addingTimeInterval(30)
+        repeat {
+            received = (try? Data(contentsOf: captured)) ?? Data()
+            if received.suffix(after.data.count) == after.data { break }
+            try await Task.sleep(for: .milliseconds(10))
+        } while Date() < arrival
+        try #require(received.suffix(after.data.count) == after.data)
+        let messages = try received.split(separator: 0x0A).map {
+            try JSONDecoder().decode(JSONValue.self, from: Data($0))
+        }
+        #expect(messages.filter { $0["event"] != nil }.map { $0["data"]?["label"] } ==
+            [.string("committed"), .string("other"), .string("motion"), .string("after")])
+    }
     /// easld tells a pushed event from a request by its first bytes alone, so `event` leads.
     @Test func anEventLineLeadsWithItsEvent() throws {
         let line = try EventLine("surface.dialog", board: "brd_a",

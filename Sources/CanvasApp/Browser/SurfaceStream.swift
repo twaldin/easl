@@ -4,13 +4,6 @@ import CanvasCore
 /// One viewer's stream of a browser tile, owned by the connection that opened it (`owner`).
 @MainActor
 final class SurfaceStream {
-    enum Credit {
-        /// Frame `seq` was sent (0: the stream just opened) and isn't acknowledged yet.
-        case outstanding(Int)
-        /// The viewer acknowledged the last frame: frame `next` may go.
-        case granted(next: Int)
-    }
-
     /// Input batches a stream may have waiting before more is refused.
     static let maxQueued = 32
     private static let maxOpeningEvents = 32
@@ -24,7 +17,7 @@ final class SurfaceStream {
     let surface: BrowserSurface
     let scale: Double
     let format: SurfaceFormat
-    private(set) var credit = Credit.outstanding(0)
+    private var flow: SurfaceFrameFlow
     /// The highest seq accepted into the queue.
     private(set) var accepted = 0
     /// The highest seq WebKit handed the page (`BrowserSurface.native`).
@@ -34,9 +27,20 @@ final class SurfaceStream {
     /// The last frame's delivered input and full page state.
     private(set) var fence = 0
     private var lastSent: SurfaceEvent.Frame?
+    private let encoder = SurfaceImageEncoder()
+    private let inputRevision = SurfaceInputRevision()
+    private let delivery = DispatchQueue(label: "easl.surface.frames", qos: .userInitiated)
+    private var refinementTransfer: SurfaceRefreshTransmission?
     /// When it last accepted input (system uptime): the page's dialogs go to the latest.
     private(set) var lastInput: TimeInterval = 0
-    var closed = false
+    var closed = false {
+        didSet {
+            if closed {
+                inputRevision.advance()
+                refinementTransfer = nil
+            }
+        }
+    }
     /// Where the viewer's button is down, in web view points, and the keys it holds.
     var heldButton: NSPoint?
     weak var mouseTarget: NSView?
@@ -56,14 +60,14 @@ final class SurfaceStream {
         self.surface = surface
         self.scale = scale
         self.format = format
+        flow = SurfaceFrameFlow(adaptive: format == .h264)
         RemoteUpdateActivity.shared.begin(session: id, kind: .browser, board: board, tile: surface.tile?.objectID)
     }
 
     /// The seq the next frame takes, while one may go.
-    var next: Int? {
-        if case .granted(let next) = credit { return next }
-        return nil
-    }
+    var next: Int? { flow.next }
+
+    var captureFormat: SurfaceFormat { format == .h264 && flow.mode == .jpeg ? .jpeg : format }
 
     var holdsInput: Bool { heldButton != nil || !heldKeys.isEmpty }
 
@@ -75,22 +79,39 @@ final class SurfaceStream {
     /// Input accepted that hasn't reached the page yet.
     var pending: Bool { queued > 0 }
 
+    func encode(_ image: CGImage, width: Int, height: Int, forceState: Bool, at now: TimeInterval) async throws -> (SurfaceImageEncoding?, TimeInterval) {
+        let mode = flow.mode
+        let active = pending || delivered > fence || now - lastInput < 0.35
+        let lastInput = lastInput
+        let encoder = encoder, revision = inputRevision
+        let result = await offPool {
+            Result {
+                let frame = try encoder.capture(image, width: width, height: height, mode: mode, inputActive: active,
+                    lastInput: lastInput, forceState: mode == .probing || forceState, revision: revision, at: now)
+                return (frame, encoder.captureDelay)
+            }
+        }
+        return try result.get()
+    }
+
     /// The outstanding frame acknowledged grants exactly one more; an older ack changes nothing.
     func ack(_ frame: Int) throws {
-        switch credit {
-        case .outstanding(let sent):
-            guard frame <= sent else { throw ApiRouter.Failure("invalid_params", "frame \(frame) wasn't sent; the latest is \(sent)") }
-            guard frame == sent else { return }
+        switch flow.acknowledge(frame, at: ProcessInfo.processInfo.systemUptime) {
+        case .invalid:
+            throw ApiRouter.Failure("invalid_params", "frame \(frame) wasn't sent")
+        case .stale:
+            return
+        case .granted:
+            if lastSent?.refresh == true { encoder.acknowledgeRefinement() }
+            refinementTransfer = nil
             if !started {
                 started = true
                 for line in pendingEvents { owner.send(line) }
                 pendingEvents.removeAll()
                 pendingEventBytes = 0
+                surface.inputArrived()
             }
-            credit = .granted(next: sent + 1)
             surface.pump()
-        case .granted(let next):
-            guard frame < next else { throw ApiRouter.Failure("invalid_params", "frame \(frame) wasn't sent; the latest is \(next - 1)") }
         }
     }
 
@@ -106,6 +127,9 @@ final class SurfaceStream {
         }
         accepted = last.seq
         recordInput()
+        inputRevision.advance()
+        _ = flow.supersedeRefinement()
+        refinementTransfer = nil
         let batch = enqueue(fresh)
         surface.inputArrived()
         var result: [String: JSONValue] = ["accepted": .number(Double(fresh.count))]
@@ -152,22 +176,71 @@ final class SurfaceStream {
         }
     }
 
-    func send(_ frame: SurfaceEvent.Frame) -> Bool {
-        if let last = lastSent,
-           frame.input == last.input, frame.size == last.size, frame.scale == last.scale,
-           frame.width == last.width, frame.height == last.height, frame.format == last.format,
-           frame.back == last.back, frame.forward == last.forward, frame.loading == last.loading,
-           frame.data == last.data { return false }
-        credit = .outstanding(frame.seq)
+    func pageStateChanged(_ frame: SurfaceEvent.Frame) -> Bool {
+        frame.input != fence || (lastSent.map { !samePageState(frame, $0) } ?? true)
+    }
+
+    private func samePageState(_ frame: SurfaceEvent.Frame, _ last: SurfaceEvent.Frame) -> Bool {
+        frame.size == last.size && frame.scale == last.scale &&
+        frame.back == last.back && frame.forward == last.forward && frame.loading == last.loading
+    }
+
+    private func sameState(_ frame: SurfaceEvent.Frame, _ last: SurfaceEvent.Frame) -> Bool {
+        samePageState(frame, last) && frame.input == last.input &&
+        frame.width == last.width && frame.height == last.height && frame.format == last.format
+    }
+
+    func send(_ source: SurfaceEvent.Frame) -> Bool {
+        var frame = source
+        if format != .h264, let last = lastSent, sameState(frame, last), frame.data == last.data { return false }
+        frame.supersedes = flow.publish(frame.seq, refinement: frame.refresh, at: ProcessInfo.processInfo.systemUptime)
         fence = frame.input
         lastSent = frame
         Metrics.shared.record("surface.frame", bytes: frame.data.count)
-        let owner = owner, board = board
-        // Base64 and JSON of a whole page image take milliseconds: off the main thread.
+        if frame.refresh {
+            do {
+                var transfer = try SurfaceRefreshTransmission(frame: frame)
+                let parts = transfer.start()
+                refinementTransfer = transfer
+                parts.forEach(deliver)
+            } catch {
+                surface.end(self, "surface encoding failed")
+                return false
+            }
+        } else {
+            refinementTransfer = nil
+            deliver(frame)
+        }
+        return true
+    }
+
+    func progress(_ frame: Int, offset: Int) throws {
+        guard let lastSent, frame <= lastSent.seq else {
+            throw ApiRouter.Failure("invalid_params", "refresh frame wasn't sent")
+        }
+        guard frame == lastSent.seq, var transfer = refinementTransfer else { return }
+        let parts: [SurfaceEvent.Frame]
+        do {
+            parts = try transfer.progress(offset: offset)
+        } catch {
+            throw ApiRouter.Failure("invalid_params", "refresh part wasn't sent")
+        }
+        refinementTransfer = transfer
+        parts.forEach(deliver)
+    }
+
+    private func deliver(_ frame: SurfaceEvent.Frame) {
+        let owner = owner, board = board, revision = inputRevision
+        let ticket = revision.value
         let sentAt = ProcessInfo.processInfo.systemUptime
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let line = try? EventLine("surface.frame", board: board, frame.json) else { return }
-            if owner.send(line) {
+        delivery.async { [weak self] in
+            guard !frame.refresh || revision.value == ticket,
+                  let line = try? EventLine("surface.frame", board: board, frame.json),
+                  !frame.refresh || revision.value == ticket else { return }
+            let whileCurrent: (@Sendable () -> Bool)?
+            if frame.refresh { whileCurrent = { revision.value == ticket } }
+            else { whileCurrent = nil }
+            if owner.send(line, whileCurrent: whileCurrent) {
                 Metrics.shared.record("surface.frameWire", bytes: line.data.count)
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
@@ -178,7 +251,6 @@ final class SurfaceStream {
                 }
             }
         }
-        return true
     }
 
     /// Whether the stream's viewer hears `event` on the stream's board.

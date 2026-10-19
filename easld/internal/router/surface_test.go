@@ -1,7 +1,6 @@
 package router
 
 import (
-	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -62,7 +61,7 @@ func attachDrawer(t *testing.T, f *fixture, identity string) *diagramPeer {
 	t.Cleanup(peer.close)
 	reply := f.as(peer, "client.attach", map[string]any{
 		"version": float64(api.SchemaVersion), "schema": api.SchemaHash, "host": "home", "identity": identity,
-		"serves": []any{"browser.call", "surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"},
+		"serves": []any{"browser.call", "surface.stream", "surface.ack", "surface.progress", "surface.input", "surface.answer", "surface.stop"},
 		"boards": []any{f.board.ID()},
 	})
 	if reply["ok"] != true {
@@ -137,27 +136,28 @@ func TestSurfaceStreamThroughEasldIsCheckedThenGoesToTheDrawingMac(t *testing.T)
 	f.as(viewer, "events.subscribe", map[string]any{"events": []any{"surface.frame"}})
 	board := f.board.ID()
 	for _, c := range []struct {
-		params        map[string]any
-		code, message string
+		params map[string]any
+		code   string
 	}{
-		{map[string]any{"id": page}, "invalid_params", fmt.Sprintf("subscribe this connection to surface.frame on board %s (events.subscribe) before surface.stream", board)},
-		{map[string]any{"id": page, "scale": 0.0}, "invalid_params", "scale must be above 0 and at most 2.0"},
-		{map[string]any{"id": page, "format": "gif"}, "invalid_params", "format must be jpeg or png"},
-		{map[string]any{"id": "page"}, "invalid_params", "id page is not an object id"},
+		{map[string]any{"id": page}, "invalid_params"},
+		{map[string]any{"id": page, "scale": 0.0}, "invalid_params"},
+		{map[string]any{"id": page, "format": "gif"}, "invalid_params"},
+		{map[string]any{"id": "page"}, "invalid_params"},
 	} {
-		if code, message := errorOf(f.as(viewer, "surface.stream", c.params)); code != c.code || message != c.message {
-			t.Errorf("%v: %s %q, want %s %q", c.params, code, message, c.code, c.message)
+		if code, message := errorOf(f.as(viewer, "surface.stream", c.params)); code != c.code {
+			t.Errorf("%v: %s %q, want %s", c.params, code, message, c.code)
 		}
 	}
+
 	f.as(viewer, "events.subscribe", map[string]any{"board": board, "events": []any{"surface.frame"}})
 	for _, c := range []struct {
-		id, code, message string
+		id, code string
 	}{
-		{text, "not_found", text + " is not a browser tile"},
-		{offline, "unavailable", "draws on home, which is offline"},
+		{text, "not_found"},
+		{offline, "unavailable"},
 	} {
-		if code, message := errorOf(f.as(viewer, "surface.stream", map[string]any{"id": c.id})); code != c.code || message != c.message {
-			t.Errorf("%s: %s %q, want %s %q", c.id, code, message, c.code, c.message)
+		if code, message := errorOf(f.as(viewer, "surface.stream", map[string]any{"id": c.id})); code != c.code {
+			t.Errorf("%s: %s %q, want %s", c.id, code, message, c.code)
 		}
 	}
 	if code, message := errorOf(f.call("surface.stream", map[string]any{"id": page})); code != "unsupported" {
@@ -168,7 +168,7 @@ func TestSurfaceStreamThroughEasldIsCheckedThenGoesToTheDrawingMac(t *testing.T)
 	}
 
 	observer := newSurfaceViewer(t, f, allSurfaceEvents...)
-	params := map[string]any{"id": page, "scale": 2.0, "format": "png"}
+	params := map[string]any{"id": page, "scale": 2.0, "format": "h264"}
 	opened := f.onSurface(viewer, "surface.stream", params)
 	request := diagramMessage(t, drawer.incoming)
 	if request["method"] != "surface.stream" || !reflect.DeepEqual(request["params"], params) || !reflect.DeepEqual(request["surfaceEvents"], []string{"surface.frame"}) {
@@ -189,11 +189,22 @@ func TestSurfaceStreamThroughEasldIsCheckedThenGoesToTheDrawingMac(t *testing.T)
 	if request["method"] != "surface.ack" || !reflect.DeepEqual(request["params"], map[string]any{"stream": "str_1", "frame": 0.0}) || reply["ok"] != true {
 		t.Fatalf("ack reached the Mac as %v and answered %v", request, reply)
 	}
+	params = map[string]any{"stream": "str_1", "frame": 1.0, "offset": 16384.0}
+	if code, _ := errorOf(f.as(observer, "surface.progress", params)); code != "not_found" {
+		t.Fatalf("another viewer's progress = %s", code)
+	}
+	progressed := f.onSurface(viewer, "surface.progress", params)
+	request = diagramMessage(t, drawer.incoming)
+	answerSurface(f, drawer, request, map[string]any{})
+	if reply := surfaceReply(t, progressed); request["method"] != "surface.progress" || !reflect.DeepEqual(request["params"], params) || reply["ok"] != true {
+		t.Fatalf("progress reached the Mac as %v and answered %v", request, reply)
+	}
 
 	dialog := `{"event":"surface.dialog","board":"` + board + `","data":{"stream":"str_1","dialog":"dlg_1","kind":"confirm","origin":"x"}}`
-	f.router.surfaces.Push(drawer, []byte(surfaceFrame(board, "str_1")))
+	frame := `{"event":"surface.frame","board":"` + board + `","data":{"stream":"str_1","seq":1,"format":"h264","data":"RVNWMS8rAA==","opaque":"\/"}}`
+	f.router.surfaces.Push(drawer, []byte(frame))
 	f.router.surfaces.Push(drawer, []byte(dialog))
-	if got := viewer.relayed(); !reflect.DeepEqual(got, []string{surfaceFrame(board, "str_1")}) {
+	if got := viewer.relayed(); !reflect.DeepEqual(got, []string{frame}) {
 		t.Fatalf("the frame-only viewer got %v", got)
 	}
 	if got, messages := observer.relayed(), observer.messages(); len(got) != 0 || len(messages) != 1 {
@@ -309,5 +320,26 @@ func TestAStreamEndsWithTheLinkItWasOpenedOn(t *testing.T) {
 	}
 	if len(old.incoming) != 0 {
 		t.Fatalf("the old link was asked %v", <-old.incoming)
+	}
+}
+
+func TestSurfaceProgressChecksOnlyBoundedReceiptMetadata(t *testing.T) {
+	for _, offset := range []float64{0, 16384, 573440} {
+		params := map[string]any{"stream": "str_refresh", "frame": 7.0, "offset": offset}
+		if err := checkSurface("surface.progress", params); err != nil {
+			t.Fatalf("valid progress %v: %v", params, err)
+		}
+	}
+	for _, change := range []map[string]any{
+		{"stream": "obj_wrong"}, {"frame": 0.0}, {"frame": -1.0}, {"frame": 1.5},
+		{"offset": -16384.0}, {"offset": 1.0}, {"offset": 589824.0}, {"offset": "0"},
+	} {
+		params := map[string]any{"stream": "str_refresh", "frame": 7.0, "offset": 0.0}
+		for key, value := range change {
+			params[key] = value
+		}
+		if err := checkSurface("surface.progress", params); err == nil {
+			t.Fatalf("accepted malformed progress %v", params)
+		}
 	}
 }

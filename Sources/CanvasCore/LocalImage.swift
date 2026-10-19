@@ -28,11 +28,16 @@ public enum LocalImage {
     /// after symlinks resolve, with an image extension. Nil for anything else (other schemes,
     /// `..` escapes, files elsewhere on disk).
     public static func sandboxed(_ source: String, root: URL, tempDirectories: [String] = FollowFilter.tempDirectories) -> URL? {
-        guard let path = candidate(source, root: root.path) else { return nil }
-        let resolved = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
-        guard extensions.contains(resolved.pathExtension.lowercased()) else { return nil }
-        let allowed = [root.path] + tempDirectories
-        guard allowed.contains(where: { contains(URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path, resolved.path) }) else { return nil }
+        guard let path = candidate(source, root: root.path),
+              let resolved = confined(URL(fileURLWithPath: path), directories: [root.path] + tempDirectories),
+              extensions.contains(resolved.pathExtension.lowercased()) else { return nil }
+        return resolved
+    }
+
+    /// Returns the resolved file only inside one of the resolved directories.
+    public static func confined(_ file: URL, directories: [String]) -> URL? {
+        let resolved = file.standardizedFileURL.resolvingSymlinksInPath()
+        guard directories.contains(where: { contains(URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path, resolved.path) }) else { return nil }
         return resolved
     }
 

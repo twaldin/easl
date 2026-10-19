@@ -1,6 +1,5 @@
-// Package weblink is WebLink.swift: which text is a web address, and when two spellings are the
-// same page. Text is read as Foundation reads it (URL(string:) and URLComponents, rfc3986.go), so
-// the `url` a browser tile gets and the addresses tiles are compared by are the app's.
+// Package weblink ports the http(s) half of WebLink.swift. Text is read as Foundation reads it
+// (URL(string:) and URLComponents, rfc3986.go), so web URLs and their comparison keys match the app.
 package weblink
 
 import (
@@ -21,7 +20,7 @@ func Parse(text string) (string, bool) {
 	return u.s, true
 }
 
-// Address is WebLink.address of URL(string: url): the address as browser tiles are compared
+// Address ports the http(s) half of WebLink.address of URL(string: url)
 // (Board.openLink), with the scheme and host lowercased, a default port dropped and an empty
 // path `/`. The query and the fragment stay as written (a single-page app's `#/route` is another
 // page). False for a URL that isn't http(s), or whose host Foundation can't spell again.

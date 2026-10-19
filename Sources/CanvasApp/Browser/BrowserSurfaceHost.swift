@@ -34,6 +34,9 @@ final class BrowserSurfaceHost: NSObject {
         case .ack(let stream, let frame):
             try owned(stream, by: peer).ack(frame)
             return .object([:])
+        case .progress(let stream, let frame, let offset):
+            try owned(stream, by: peer).progress(frame, offset: offset)
+            return .object([:])
         case .input(let stream, let events):
             return try await owned(stream, by: peer).input(events)
         case .answer(let id, let dialog, let answer):
@@ -284,6 +287,7 @@ final class BrowserSurface {
 
     /// Captures while any stream may have its next frame, one capture at a time.
     func pump() {
+        wake()
         guard !capturing, streams.contains(where: { $0.next != nil }) else { return }
         capturing = true
         Task {
@@ -296,7 +300,7 @@ final class BrowserSurface {
     /// New input: the next frame comes at full rate.
     func inputArrived() {
         interval = Self.frameInterval
-        wake()
+        pump()
     }
 
     private func capture() async {
@@ -317,7 +321,7 @@ final class BrowserSurface {
         let presented = await Self.presented(webView)
         let size = webView.bounds.size
         let fitted = Self.fittedScale(for: size)
-        let scale = min(targets.lazy.map(\.scale).max() ?? 1, fitted)
+        let scale = min(streams.lazy.map(\.scale).max() ?? 1, fitted)
         let configuration = WKSnapshotConfiguration()
         configuration.afterScreenUpdates = false
         configuration.snapshotWidth = NSNumber(value: Double(size.width * scale / window.backingScaleFactor))
@@ -325,30 +329,56 @@ final class BrowserSurface {
         guard tile.webView === webView, let image = try? await webView.takeSnapshot(configuration: configuration),
               let pixels = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return idle() }
         let back = webView.canGoBack, forward = webView.canGoForward, loading = webView.isLoading
-        var images: [Variant: (data: Data, width: Int, height: Int)] = [:]
-        for variant in Set(targets.lazy.map { Variant(scale: min($0.scale, fitted), format: $0.format) }) {
-            let (width, height) = SurfaceEvent.Frame.fittedPixels(width: pixels.width, height: pixels.height, ratio: variant.scale / scale)
-            let format = variant.format
-            if let data = await offPool({ Self.encode(pixels, width: width, height: height, format: format) }) {
-                images[variant] = (data, width, height)
-            }
-        }
-        Metrics.shared.record("surface.capture", ms: (ProcessInfo.processInfo.systemUptime - started) * 1000)
-        var sent = false
+        var images: [Variant: Data] = [:]
+        var active = false
+        var nextDelay = Self.idleInterval
         for (stream, fence) in zip(targets, fences) {
-            let variant = Variant(scale: min(stream.scale, fitted), format: stream.format)
-            guard !stream.closed, let seq = stream.next, let image = images[variant] else { continue }
-            guard image.data.count <= Self.frameBytes else {
+            guard !stream.closed, let seq = stream.next else { continue }
+            let targetScale = min(stream.scale, fitted)
+            let raster = SurfaceEvent.Frame.fittedPixels(width: pixels.width, height: pixels.height,
+                ratio: targetScale / scale, format: stream.captureFormat)
+            // A timeout is not evidence that WebKit presented the delivered input.
+            let input = presented ? fence : stream.fence
+            var frame = SurfaceEvent.Frame(stream: stream.id, seq: seq, input: input, size: size, scale: targetScale, format: stream.format,
+                                           data: Data(), width: raster.width, height: raster.height, back: back, forward: forward, loading: loading)
+            if stream.format == .h264 {
+                let accepted = stream.accepted
+                do {
+                    let (encoded, delay) = try await stream.encode(pixels, width: raster.width, height: raster.height,
+                        forceState: stream.pageStateChanged(frame), at: ProcessInfo.processInfo.systemUptime)
+                    nextDelay = min(nextDelay, delay)
+                    guard let encoded else { continue }
+                    guard !encoded.refresh || stream.accepted == accepted else { continue }
+                    frame.format = encoded.format
+                    frame.data = encoded.data
+                    frame.width = encoded.width
+                    frame.height = encoded.height
+                    frame.canvas = encoded.canvas
+                    frame.refresh = encoded.refresh
+                } catch {
+                    end(stream, "surface encoding failed")
+                    continue
+                }
+            } else {
+                let variant = Variant(scale: targetScale, format: frame.format, width: frame.width, height: frame.height)
+                if images[variant] == nil,
+                   let data = await offPool({ Self.encode(pixels, width: variant.width, height: variant.height, format: variant.format) }) {
+                    images[variant] = data
+                }
+                guard let data = images[variant] else { continue }
+                frame.data = data
+            }
+            guard !stream.closed, stream.next == seq else { continue }
+            let limit = frame.refresh ? SurfaceImageEncoder.refinementBytes :
+                (frame.format == .h264 ? 48 * 1024 : SurfaceImageEncoder.motionBytes)
+            guard frame.data.count <= (stream.format == .h264 ? limit : Self.frameBytes) else {
                 end(stream, "frame too large")
                 continue
             }
-            // Without WebKit's own presentation callback nothing newer is known to be on screen.
-            let input = presented ? fence : stream.fence
-            let frame = SurfaceEvent.Frame(stream: stream.id, seq: seq, input: input, size: size, scale: variant.scale, format: stream.format,
-                                           data: image.data, width: image.width, height: image.height, back: back, forward: forward, loading: loading)
-            if stream.send(frame) { sent = true }
+            if stream.send(frame) { active = true }
         }
-        interval = sent ? Self.frameInterval : min(interval * 2, Self.idleInterval)
+        Metrics.shared.record("surface.capture", ms: (ProcessInfo.processInfo.systemUptime - started) * 1000)
+        interval = active ? Self.frameInterval : min(interval * 2, Self.idleInterval, nextDelay)
     }
 
     private func idle() {
@@ -358,6 +388,8 @@ final class BrowserSurface {
     private struct Variant: Hashable {
         let scale: Double
         let format: SurfaceFormat
+        let width: Int
+        let height: Int
     }
 
     private func pause(_ seconds: TimeInterval) async {
@@ -387,6 +419,12 @@ final class BrowserSurface {
     }
 
     nonisolated static func encode(_ image: CGImage, width: Int, height: Int, format: SurfaceFormat) -> Data? {
+        let type: UTType
+        switch format {
+        case .jpeg: type = .jpeg
+        case .png: type = .png
+        case .h264: return nil
+        }
         var source = image
         if image.width != width || image.height != height {
             guard let space = CGColorSpace(name: CGColorSpace.sRGB),
@@ -398,7 +436,6 @@ final class BrowserSurface {
             source = scaled
         }
         let output = NSMutableData()
-        let type = format == .png ? UTType.png : UTType.jpeg
         guard let destination = CGImageDestinationCreateWithData(output, type.identifier as CFString, 1, nil) else { return nil }
         let properties: [CFString: Any] = format == .jpeg ? [kCGImageDestinationLossyCompressionQuality: jpegQuality] : [:]
         CGImageDestinationAddImage(destination, source, properties as CFDictionary)

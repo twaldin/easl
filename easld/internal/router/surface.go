@@ -12,7 +12,7 @@ import (
 	"github.com/twaldin/easl/easld/internal/surfaces"
 )
 
-var surfaceMethods = map[string]bool{"surface.stream": true, "surface.ack": true, "surface.input": true, "surface.answer": true, "surface.stop": true}
+var surfaceMethods = map[string]bool{"surface.stream": true, "surface.ack": true, "surface.progress": true, "surface.input": true, "surface.answer": true, "surface.stop": true}
 
 var (
 	objectIDPattern = regexp.MustCompile(`^obj_[0-9A-Za-z]+$`)
@@ -148,8 +148,8 @@ func checkSurface(method string, p map[string]any) error {
 			if !ok {
 				return invalid("format must be a string")
 			}
-			if format != "jpeg" && format != "png" {
-				return invalid("format must be jpeg or png")
+			if format != "jpeg" && format != "png" && format != "h264" {
+				return invalid("format must be jpeg, png or h264")
 			}
 		}
 		return nil
@@ -158,6 +158,24 @@ func checkSurface(method string, p map[string]any) error {
 			return err
 		}
 		return surfaceInteger(p, "frame")
+	case "surface.progress":
+		if err := surfaceStreamID(p); err != nil {
+			return err
+		}
+		if err := surfaceInteger(p, "frame"); err != nil {
+			return err
+		}
+		if p["frame"].(float64) < 1 {
+			return invalid("frame must be positive")
+		}
+		if err := surfaceInteger(p, "offset"); err != nil {
+			return err
+		}
+		offset := p["offset"].(float64)
+		if offset > 573440 || math.Mod(offset, 16384) != 0 {
+			return invalid("offset must be aligned to 16384 bytes within the 576 KiB refresh limit")
+		}
+		return nil
 	case "surface.input":
 		events, ok := p["events"].([]any)
 		if !ok {

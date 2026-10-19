@@ -36,7 +36,8 @@
     },
     {
       "call": "surface.stream", "conn": "owner", "params": {"id": "{{browser.object.id}}", "format": "gif"},
-      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0}
+      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0},
+      "ignore": {"response.error.message": "Unknown formats are rejected by code, not fixed diagnostic wording."}
     },
     {
       "call": "surface.stream", "conn": "owner", "params": {"id": "{{browser.object.id}}", "scale": 1, "format": "png"},
@@ -61,7 +62,8 @@
     },
     {
       "call": "surface.ack", "conn": "owner", "params": {"stream": "{{stream.stream}}", "frame": 1},
-      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0}
+      "expect": {"response.ok": false, "response.error.code": "invalid_params", "eventCount": 0},
+      "ignore": {"response.error.message": "Future acknowledgements are rejected by code, not fixed diagnostic wording."}
     },
     {
       "call": "surface.ack", "conn": "owner", "params": {"stream": "{{stream.stream}}", "frame": 0}, "settleMs": 1500,

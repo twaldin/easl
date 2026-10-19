@@ -91,11 +91,10 @@ public struct ClientIdentity: Equatable, Sendable {
 @MainActor
 final class DelegatedCalls {
     /// A snapshot would put the window's picture on the viewer's disk: not a capability of a
-    /// remote board's viewer. The five `surface.*` methods stream a browser tile this Mac draws to
-    /// another Mac's viewer through easld; easld sends the four after `surface.stream` only on
-    /// the link that stream was opened on.
+    /// remote board's viewer. The `surface.*` methods stream a browser tile this Mac draws to
+    /// another Mac's viewer through easld, on the link that stream was opened on.
     static let served = ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure", "browser.call",
-                         "surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"]
+                         "surface.stream", "surface.ack", "surface.progress", "surface.input", "surface.answer", "surface.stop"]
     /// The longest line easld reads from a client (`easld/internal/server`, `defaultLimits`): past
     /// it easld closes the link, failing every call on it.
     nonisolated static let maxReply = 64 << 20

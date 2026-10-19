@@ -241,6 +241,7 @@ func TestOnlyTheOpeningViewerDrivesItsStreamThroughItsLink(t *testing.T) {
 		answer any
 	}{
 		{"surface.ack", map[string]any{"stream": "str_1", "frame": 0.0}, map[string]any{}},
+		{"surface.progress", map[string]any{"stream": "str_1", "frame": 1.0, "offset": 16384.0}, map[string]any{}},
 		{"surface.input", map[string]any{"stream": "str_1", "events": []any{map[string]any{"kind": "command", "seq": 1.0, "name": "copy"}}}, map[string]any{"accepted": 1.0, "text": "selected"}},
 		{"surface.answer", map[string]any{"stream": "str_1", "dialog": "dlg_1", "accept": true, "password": "hunter2"}, map[string]any{}},
 		{"surface.stop", map[string]any{"stream": "str_1"}, map[string]any{"stopped": true}},

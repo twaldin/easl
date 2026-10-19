@@ -139,6 +139,9 @@ protocol TileContent: NSView {
     var accessibleText: AccessibleTextElement? { get }
     /// Apply a new revision of the backing object.
     func update(_ object: CanvasObject)
+    /// The tile or the board moved in the window: content drawn outside AppKit (a terminal's
+    /// Metal surface) goes back onto device pixels (`PixelGrid`). Nothing for the rest.
+    func alignToPixels()
 }
 
 extension Notification.Name {
@@ -172,6 +175,8 @@ extension TileContent {
     var accessibleText: AccessibleTextElement? { nil }
 
     func enterKeyboard() -> Bool { false }
+
+    func alignToPixels() {}
 
     func cardSnapshot() async -> NSImage? {
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,

@@ -4,11 +4,11 @@
     {"call":"object.create","params":{"board":"{{board}}","type":"browser","props":{"url":"about:blank","drawingMachine":{"id":"mch_drawer","host":"drawer"}},"frame":{"x":0,"y":0,"w":640,"h":480}},"save":"browser"},
     {
       "call":"client.attach","conn":"drawer",
-      "params":{"version":"{{schemaVersion}}","schema":"{{schemaHash}}","host":"drawer","identity":"mch_drawer","serves":["browser.call","surface.stream","surface.ack","surface.input","surface.answer","surface.stop"],"boards":["{{board}}"]},
+      "params":{"version":"{{schemaVersion}}","schema":"{{schemaHash}}","host":"drawer","identity":"mch_drawer","serves":["browser.call","surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop"],"boards":["{{board}}"]},
       "replies":{
         "surface.stream":[{"result":{"stream":"str_A","size":{"w":640,"h":480},"scale":1}},{"result":{"stream":"str_B","size":{"w":640,"h":480},"scale":1}}],
         "surface.ack":[
-          {"result":{},"events":[{"event":"surface.frame","board":"{{board}}","data":{"stream":"str_A","seq":1,"input":0,"size":{"w":640,"h":480},"scale":1,"format":"png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC","width":1,"height":1,"back":false,"forward":false,"loading":false}}]},
+          {"result":{},"events":[{"event":"surface.frame","board":"{{board}}","data":{"stream":"str_A","seq":1,"input":0,"size":{"w":640,"h":480},"scale":1,"format":"h264","data":"RVNWMS8rAA==","width":640,"height":480,"back":false,"forward":false,"loading":false}}]},
           {"result":{},"events":[{"event":"surface.frame","board":"{{board}}","data":{"stream":"str_B","seq":1,"input":0,"size":{"w":640,"h":480},"scale":1,"format":"png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC","width":1,"height":1,"back":false,"forward":false,"loading":false}},{"event":"surface.dialog","board":"{{board}}","data":{"stream":"str_B","dialog":"dlg_B","kind":"confirm","origin":"fixture","message":"Continue?"}}]}
         ],
         "surface.input":[{"result":{"accepted":1,"text":"private selection"}}],
@@ -21,13 +21,13 @@
     {"call":"events.subscribe","conn":"a","params":{"board":"{{board}}","events":["surface.frame"]},"expect":{"response.ok":true,"eventCount":0}},
     {"call":"events.subscribe","conn":"b","params":{"board":"{{board}}","events":["surface.frame","surface.dialog","surface.notice"]},"expect":{"response.ok":true,"eventCount":0}},
     {"call":"events.subscribe","conn":"observer","params":{"board":"{{board}}","events":["surface.frame","surface.dialog","surface.notice"]},"expect":{"response.ok":true,"eventCount":0}},
-    {"call":"surface.stream","conn":"a","params":{"id":"{{browser.object.id}}","scale":1,"format":"png"},"save":"a","expect":{"response.ok":true,"eventCount":0}},
+    {"call":"surface.stream","conn":"a","params":{"id":"{{browser.object.id}}","scale":1,"format":"h264"},"save":"a","expect":{"response.ok":true,"eventCount":0}},
     {"call":"surface.stream","conn":"b","params":{"id":"{{browser.object.id}}","scale":1,"format":"png"},"save":"b","expect":{"response.ok":true,"eventCount":0}},
     {"call":"surface.ack","conn":"observer","params":{"stream":"{{a.stream}}","frame":0},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}},
     {"call":"surface.input","conn":"observer","params":{"stream":"{{a.stream}}","events":[{"kind":"text","seq":1,"text":"not authorized"}]},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}},
     {"call":"surface.answer","conn":"observer","params":{"stream":"{{b.stream}}","dialog":"dlg_B","accept":true},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}},
     {"call":"surface.stop","conn":"observer","params":{"stream":"{{a.stream}}"},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}},
-    {"call":"surface.ack","conn":"a","params":{"stream":"{{a.stream}}","frame":0},"expect":{"response.ok":true,"eventCount":1,"events.0.conn":"a","events.0.event":"surface.frame","events.0.data.stream":"{{a.stream}}","events.0.data.seq":1},"expectShape":{"events.0.data":"SurfaceFrame"}},
+    {"call":"surface.ack","conn":"a","params":{"stream":"{{a.stream}}","frame":0},"expect":{"response.ok":true,"eventCount":1,"events.0.conn":"a","events.0.event":"surface.frame","events.0.data.stream":"{{a.stream}}","events.0.data.seq":1,"events.0.data.format":"h264","events.0.data.data":"RVNWMS8rAA=="},"expectShape":{"events.0.data":"SurfaceFrame"}},
     {
       "call":"client.attach","conn":"forger","params":{"version":"{{schemaVersion}}","schema":"{{schemaHash}}","host":"forger","identity":"mch_forger","serves":["view.get"],"boards":["{{board}}"],"focused":"{{board}}"},
       "replies":{"view.get":[{"result":{"board":"{{board}}","viewport":{"rect":{"x":0,"y":0,"w":640,"h":480},"zoom":1},"selection":[],"visible":true,"appearance":"dark"},"events":[{"event":"surface.notice","board":"{{board}}","data":{"stream":"str_B","kind":"closed","reason":"forged close"}},{"event":"surface.dialog","board":"{{board}}","data":{"stream":"str_B","dialog":"dlg_forged","kind":"confirm","origin":"forged"}}]}]},
@@ -40,6 +40,8 @@
     {"call":"surface.input","conn":"b","params":{"stream":"{{b.stream}}","events":[{"kind":"command","seq":1,"name":"copy"}]},"expect":{"response.ok":true,"response.result.accepted":1,"response.result.text":"private selection","eventCount":0}},
     {"call":"surface.answer","conn":"b","params":{"stream":"{{b.stream}}","dialog":"dlg_B","accept":true},"expect":{"response.ok":true,"eventCount":0}},
     {"call":"object.update","params":{"id":"{{browser.object.id}}","props":{"drawingMachine":{"id":"mch_other","host":"other"}}},"expect":{"response.ok":true}},
-    {"call":"surface.input","conn":"b","params":{"stream":"{{b.stream}}","events":[{"kind":"text","seq":2,"text":"must not move with the page"}]},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}}
+    {"call":"surface.input","conn":"b","params":{"stream":"{{b.stream}}","events":[{"kind":"text","seq":2,"text":"must not move with the page"}]},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}},
+    {"call":"surface.progress","conn":"observer","params":{"stream":"{{a.stream}}","frame":1,"offset":0},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}},
+    {"call":"surface.progress","conn":"b","params":{"stream":"{{b.stream}}","frame":1,"offset":16384},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}}
   ]
 }

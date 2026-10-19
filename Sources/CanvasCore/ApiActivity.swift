@@ -23,7 +23,7 @@ public final class ApiActivity {
     /// A streamed browser's acks and input (`surface.*`) arrive at frame rate for as long as it is
     /// watched, and would keep the API from ever going quiet.
     static let waits: Set<String> = ["agent.wait", "agent.inbox", "agent.prompt", "agent.read", "view.render", "view.snapshot", "object.reload", "tray.drain", "events.subscribe",
-                                     "surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"]
+                                     "surface.stream", "surface.ack", "surface.progress", "surface.input", "surface.answer", "surface.stop"]
 
     private var inFlight = 0
     private var lastEnded = -Double.infinity

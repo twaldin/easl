@@ -1,7 +1,7 @@
 {
   "scenario": "client-surface-relay",
   "description": "Easld relays existing surface methods to the exact drawing attachment. Streams remain private to their opening viewer, unrelated subscribers and forged source events see no page data, stopping one viewer leaves another live, and moving drawing retires old streams. The scripted Mac exercises relay protocol ownership, not native drawing.",
-  "recordedOn": "scratch easld schema2 relay",
+  "recordedOn": "scratch easld negotiated H264 surface streaming",
   "steps": [
     {
       "step": "board.open",
@@ -127,6 +127,7 @@
           "browser.call",
           "surface.stream",
           "surface.ack",
+          "surface.progress",
           "surface.input",
           "surface.answer",
           "surface.stop"
@@ -219,7 +220,7 @@
       "method": "surface.stream",
       "conn": "a",
       "request": {
-        "format": "png",
+        "format": "h264",
         "id": "<obj:1>",
         "scale": 1
       },
@@ -240,7 +241,7 @@
           "conn": "drawer",
           "method": "surface.stream",
           "params": {
-            "format": "png",
+            "format": "h264",
             "id": "<obj:1>",
             "scale": 1
           },
@@ -381,10 +382,10 @@
           "conn": "a",
           "data": {
             "back": false,
-            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
-            "format": "png",
+            "data": "RVNWMS8rAA==",
+            "format": "h264",
             "forward": false,
-            "height": 1,
+            "height": 480,
             "input": 0,
             "loading": false,
             "scale": 1,
@@ -394,7 +395,7 @@
               "w": 640
             },
             "stream": "<str:1>",
-            "width": 1
+            "width": 640
           },
           "event": "surface.frame"
         }
@@ -758,6 +759,42 @@
           "message": "stream <str:2> is not open on this connection"
         },
         "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.progress",
+      "method": "surface.progress",
+      "conn": "observer",
+      "request": {
+        "frame": 1,
+        "offset": 0,
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:1> is not open on this connection"
+        },
+        "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.progress",
+      "method": "surface.progress",
+      "conn": "b",
+      "request": {
+        "frame": 1,
+        "offset": 16384,
+        "stream": "<str:2>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:2> is not open on this connection"
+        },
+        "id": "r7",
         "ok": false
       }
     }
