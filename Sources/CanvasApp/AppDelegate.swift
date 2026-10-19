@@ -469,8 +469,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard canShowWindow(of: board) else { return }
         await MainTurns.next()
         guard canShowWindow(of: board) else { return }
+        let window = DevPerf.time("board.window.shell") { CanvasWindowController.makeWindow(isRemote: false) }
+        await MainTurns.next()
+        guard canShowWindow(of: board) else {
+            window.close()
+            return
+        }
         let controller = DevPerf.time("board.window") {
-            CanvasWindowController(board: board, registry: registry, viewport: client.0, composerState: client.1)
+            CanvasWindowController(window: window, board: board, registry: registry, viewport: client.0, composerState: client.1)
         }
         openingWindows[key]?.controller = controller
         await MainTurns.next()
@@ -1236,8 +1242,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mirror.close()
             throw error
         }
+        let window = DevPerf.time("board.window.shell") { CanvasWindowController.makeWindow(isRemote: true) }
+        await MainTurns.next()
+        do {
+            try stillWanted()
+        } catch {
+            window.close()
+            mirror.close()
+            throw error
+        }
         let controller = DevPerf.time("board.window") {
-            CanvasWindowController(board: loaded, registry: registry, viewport: nil, composerState: ComposerState(), remote: RemoteSource(host: host, mirror: mirror))
+            CanvasWindowController(window: window, board: loaded, registry: registry, viewport: nil, composerState: ComposerState(), remote: RemoteSource(host: host, mirror: mirror))
         }
         loaded.onEvent = { [weak controller] event in controller?.apply(event) }
         await MainTurns.next()

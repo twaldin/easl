@@ -2108,7 +2108,7 @@ final class BoardMirrorTests {
         case "incarnation":
             try registry.close(host.id)
             try await eventually { mirror.availability == .closed }
-            _ = registry.open(root: host.root)
+            _ = await registry.open(root: host.root)
             try await eventually { mirror.availability == .open }
         case "offline-read-failure":
             easld.announce([client(destination.id, serving: host.id)], board: host.id)

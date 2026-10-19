@@ -55,8 +55,19 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         DispatchQueue.main.async { [weak self] in self?.canvas.reveal(region) }
     }
 
+    static func makeWindow(isRemote: Bool) -> CanvasWindow {
+        let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        window.isExcludedFromWindowsMenu = true
+        if isRemote {
+            // Nothing of another Mac's board is kept here, even before its controller is built.
+            window.isRestorable = false
+            window.disableSnapshotRestoration()
+        }
+        return window
+    }
+
     /// `remote`: the window mirrors a board another easl hosts; nothing about it is written here.
-    init(board: Board, registry: BoardRegistry, viewport: SavedViewport.Recorder?, composerState: ComposerState, remote: RemoteSource? = nil) {
+    init(window: CanvasWindow, board: Board, registry: BoardRegistry, viewport: SavedViewport.Recorder?, composerState: ComposerState, remote: RemoteSource? = nil) {
         self.board = board
         self.registry = registry
         self.remote = remote
@@ -64,16 +75,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let bar = ComposerBar(frame: .zero)
         tray = bar
         composer = ComposerController(board: board, bar: bar, file: remote == nil ? AppPaths.composer(of: board.id) : nil, state: composerState)
-        let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = remote?.title(of: board) ?? board.root.lastPathComponent
         window.subtitle = remote.map { "\(board.root.path) on \($0.host.name)" } ?? board.root.path
         window.acceptsMouseMovedEvents = true
-        if remote != nil {
-            // Nothing of another Mac's board is kept here: AppKit saves a titled window's state
-            // and a snapshot of it for restoration unless told not to.
-            window.isRestorable = false
-            window.disableSnapshotRestoration()
-        }
         if let frame = DevInput.frame {
             // A development instance opens where its launcher says (a headless screen): the
             // Space a new window joins is the one of the display holding its frame. No saved
@@ -86,7 +90,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         // Boards open as tabs of one window (AppDelegate.open adds them to the frontmost group).
         window.tabbingMode = .preferred
         window.tabbingIdentifier = "net.waldin.easl.board"
-        window.isExcludedFromWindowsMenu = true
         super.init(window: window)
         window.delegate = self
         // The titlebar's Update button, shown while a newer easl is on offer (`Updater`).

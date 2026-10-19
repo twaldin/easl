@@ -214,7 +214,8 @@ private enum BoardDirectoryPicker {
                                  board: board.id,
                                  connection: EaslConnection(.unixSocket(absent), backoff: backoff, handshakeTimeout: .seconds(1)),
                                  renders: EaslConnection(.unixSocket(absent), backoff: backoff, handshakeTimeout: .seconds(1)))
-        let controller = CanvasWindowController(board: board,
+        let controller = CanvasWindowController(window: CanvasWindowController.makeWindow(isRemote: true),
+                                                board: board,
                                                 registry: registry,
                                                 viewport: nil,
                                                 composerState: ComposerState(),
