@@ -614,8 +614,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// on working, headless) and come back when the folder is opened again. With any terminal on
     /// the board a sheet says so first, naming what keeps running: Keep Running (Return), End
     /// Sessions (⌘⌫: its terminals close as in the close-terminal sheet, then the tab), Cancel (Esc).
-    /// Closing the last board window quits easl, unless background attach keeps a remote board
-    /// attached, which the sheet says; the next launch reopens the board (`AppDelegate.saveOpenBoards`).
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard !apiCloseInProgress else { return false }
         // A remote board's terminals are its host's: closing the window ends nothing on the host.
