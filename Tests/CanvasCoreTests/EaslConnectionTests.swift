@@ -662,7 +662,6 @@ final class EaslConnectionTests {
         #expect(messages.filter { $0["event"] != nil }.map { $0["data"]?["label"] } ==
             [.string("committed"), .string("other"), .string("motion"), .string("after")])
     }
-
     /// easld tells a pushed event from a request by its first bytes alone, so `event` leads.
     @Test func anEventLineLeadsWithItsEvent() throws {
         let line = try EventLine("surface.dialog", board: "brd_a",

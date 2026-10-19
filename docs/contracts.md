@@ -605,7 +605,7 @@ The viewer uses only `NSImage` and `CGImage`, with no browser `WKWebView`, profi
 
 A connected stream keeps its host page driven even with no frame credit. Closing the last stream resumes the normal 60-second driven-page grace period and subsequent release policy. An interrupted input request closes and reopens the dedicated link, shows a notice to check the page before repeating the action, and never retries that batch.
 
-The `browser-surfaces` conformance scenario covers direct connection ownership, initial acknowledgement credit, sequence deduplication, batch validation, and dismissal of dialogs without a listener. `client-surface-relay` covers all five relayed methods, frame-only hearing, private delivery, forged event sources, independent viewers, and retirement after a drawing move.
+The `browser-surfaces` conformance scenario covers direct connection ownership, initial acknowledgement credit, sequence deduplication, batch validation, and dismissal of dialogs without a listener. `client-surface-relay` covers relayed methods, frame-only hearing, private delivery, forged event sources, independent viewers, and retirement after a drawing move.
 
 Agents open one with `board.open_remote {host, board, select?}` (the Mac app only; easld answers `unsupported`), through File › Open Remote…'s own path (`AppDelegate.openRemoteBoard(named:board:select:)`):
 

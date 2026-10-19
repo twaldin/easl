@@ -1,5 +1,6 @@
 import AppKit
 import CanvasCore
+
 import UniformTypeIdentifiers
 
 /// A remote board's browser tile whose page this Mac doesn't run. The Mac that runs it keeps the

@@ -5,6 +5,7 @@ import CanvasCore
 @MainActor
 final class SurfaceStream {
 
+
     /// Input batches a stream may have waiting before more is refused.
     static let maxQueued = 32
     private static let maxOpeningEvents = 32

@@ -142,15 +142,14 @@ func TestSurfaceStreamThroughEasldIsCheckedThenGoesToTheDrawingMac(t *testing.T)
 	}{
 		{map[string]any{"id": page}, "invalid_params", fmt.Sprintf("subscribe this connection to surface.frame on board %s (events.subscribe) before surface.stream", board)},
 		{map[string]any{"id": page, "scale": 0.0}, "invalid_params", "scale must be above 0 and at most 2.0"},
+		{map[string]any{"id": page, "format": "gif"}, "invalid_params", "format must be jpeg, png or h264"},
 		{map[string]any{"id": "page"}, "invalid_params", "id page is not an object id"},
 	} {
 		if code, message := errorOf(f.as(viewer, "surface.stream", c.params)); code != c.code || message != c.message {
 			t.Errorf("%v: %s %q, want %s %q", c.params, code, message, c.code, c.message)
 		}
 	}
-	if code, _ := errorOf(f.as(viewer, "surface.stream", map[string]any{"id": page, "format": "gif"})); code != "invalid_params" {
-		t.Errorf("unknown format: got %s, want invalid_params", code)
-	}
+
 	f.as(viewer, "events.subscribe", map[string]any{"board": board, "events": []any{"surface.frame"}})
 	for _, c := range []struct {
 		id, code, message string
