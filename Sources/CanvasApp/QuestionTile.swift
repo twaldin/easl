@@ -239,6 +239,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
 
     /// What a control does, clicked or pressed through accessibility.
     fileprivate func perform(_ hit: QuestionPainter.Hit) {
+        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
         switch hit {
         case .option(let id):
             window?.makeFirstResponder(self)
@@ -263,7 +264,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         page.needsDisplay = true
     }
 
-    fileprivate var selectedText: String? {
+    var selectedText: String? {
         guard let selection, let text = painter?.question, NSMaxRange(selection) <= (text.string as NSString).length else { return nil }
         return (text.string as NSString).substring(with: selection)
     }
@@ -296,6 +297,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
     /// Open: 1–9 pick the options in order, Return answers, Tab goes to the note. Closed: Return
     /// archives. Esc gives the keyboard back to the canvas.
     override func keyDown(with event: NSEvent) {
+        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option])
         guard modifiers.isEmpty else { return super.keyDown(with: event) }
         let open = spec.status == .open
@@ -437,7 +439,7 @@ private final class QuestionNoteText: NSTextView {
 
 /// The scrolling page a question tile paints on; clicks go to the tile.
 @MainActor
-private final class QuestionPage: NSView {
+final class QuestionPage: NSView {
     weak var tile: QuestionTile?
 
     nonisolated override var isFlipped: Bool { true }
@@ -467,7 +469,7 @@ private final class QuestionPage: NSView {
         guard let tile, tile.selectedText != nil else { return super.menu(for: event) }
         var view = superview
         var menu: NSMenu?
-        while let current = view, menu == nil {
+        while let current = view, menu == nil, (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true {
             menu = current.menu(for: event)
             view = current.superview
         }

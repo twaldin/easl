@@ -4,55 +4,62 @@ import ImageIO
 import UniformTypeIdentifiers
 import WebKit
 
-/// Browser tiles another Mac's viewer streams (`surface.*`, docs/design.md "Client mode"). The
-/// viewer shows this Mac's own page as images it holds in memory and drives it with native
-/// input, so the page keeps this Mac's profile and logins and the viewer runs no WebKit. A
-/// stream belongs to the connection that opened it: no other connection can see or drive it,
-/// and it ends when that connection closes (`sweep`). Ending one never releases the page; the
-/// tile's driven-page policy (`BrowserTile.markDriven`) takes it from there.
+/// Browser tiles another Mac's viewer streams (`surface.*`, docs/design.md "Client mode"): a
+/// viewer on this Mac's own socket (`SocketPeer`), or one easld relays on the board link it
+/// called on (`RelayPeer`). The viewer shows this Mac's own page as images it holds in memory and
+/// drives it with native input, so the page keeps this Mac's profile and logins and the viewer
+/// runs no WebKit. A stream belongs to the connection that opened it (`SurfacePeer.owner`): no
+/// other connection can see or drive it, and it ends once its peer closes (`sweep`). One host
+/// serves both kinds, so their viewers share one capture of a page. Ending a stream never
+/// releases the page; the tile's driven-page policy (`BrowserTile.markDriven`) takes it from there.
 @MainActor
 final class BrowserSurfaceHost: NSObject {
+    static let shared = BrowserSurfaceHost()
     static let sweepInterval: TimeInterval = 1
     /// How long after a viewer's press a menu opening on this Mac counts as the page's answer to it.
     static let menuWindow: TimeInterval = 2
 
-    private let registry: BoardRegistry
-    private let tile: (Board, ObjectID) -> BrowserTile?
     private var streams: [String: SurfaceStream] = [:]
     private var surfaces: [ObjectIdentifier: BrowserSurface] = [:]
     private var sweeper: Timer?
 
-    init(registry: BoardRegistry, tile: @escaping (Board, ObjectID) -> BrowserTile?) {
-        self.registry = registry
-        self.tile = tile
+    private override init() {
         super.init()
     }
 
-    func handle(_ request: SurfaceRequest, from connection: SocketServer.Connection) async throws -> JSONValue {
+    func handle(_ request: SurfaceRequest, from peer: some SurfacePeer) async throws -> JSONValue {
         switch request {
         case .stream(let id, let scale, let format):
-            return try await open(id, scale: scale, format: format, on: connection)
+            return try await open(id, scale: scale, format: format, for: peer)
         case .ack(let stream, let frame):
-            try owned(stream, by: connection).ack(frame)
+            try owned(stream, by: peer).ack(frame)
             return .object([:])
         case .input(let stream, let events):
-            return try await owned(stream, by: connection).input(events)
+            return try await owned(stream, by: peer).input(events)
         case .answer(let id, let dialog, let answer):
-            let stream = try owned(id, by: connection)
+            let stream = try owned(id, by: peer)
             try await stream.surface.answer(dialog, answer, from: stream)
             return .object([:])
         case .stop(let stream):
-            close(try owned(stream, by: connection), reason: nil)
+            close(try owned(stream, by: peer), reason: nil)
             return .object(["stopped": .bool(true)])
         }
     }
 
-    private func open(_ id: ObjectID, scale: Double, format: SurfaceFormat, on connection: SocketServer.Connection) async throws -> JSONValue {
-        guard let board = registry.board(containing: id), let tile = self.tile(board, id) else {
-            throw ApiRouter.Failure("unavailable", "browser tile \(id) is not open in a window")
+    /// Streams the tile the peer resolves now, and only if the peer still resolves that same tile
+    /// once its page is driven: a remount, an assignment that moved, a closed board or a dropped
+    /// link while it waited opens nothing. A viewer that can't hear frames gets no stream, which
+    /// would wait at frame 0 for good.
+    private func open(_ id: ObjectID, scale: Double, format: SurfaceFormat, for peer: some SurfacePeer) async throws -> JSONValue {
+        let (board, tile) = try peer.tile(id)
+        guard peer.hears("surface.frame", on: board) else {
+            throw ApiRouter.Failure("invalid_params", "subscribe this connection to surface.frame on board \(board) (events.subscribe) before surface.stream")
+        }
+        guard PageScript.isAvailable else {
+            throw ApiRouter.Failure("unsupported", "this Mac's WebKit can't run the browser relay's page helper without acting as a user gesture")
         }
         await tile.markDriven()
-        guard connection.isOpen, board.objects[id] != nil, tile.window != nil else {
+        guard peer.isOpen, let now = try? peer.tile(id), now.tile === tile, now.board == board, tile.window != nil else {
             throw ApiRouter.Failure("unavailable", "browser tile \(id) closed while its stream opened")
         }
         guard let webView = tile.webView, webView.bounds.width >= 1, webView.bounds.height >= 1 else {
@@ -60,7 +67,7 @@ final class BrowserSurfaceHost: NSObject {
         }
         let size = webView.bounds.size
         let surface = surface(for: tile)
-        let stream = SurfaceStream(id: IDs.make("str"), connection: connection, board: board.id, surface: surface,
+        let stream = SurfaceStream(id: IDs.make("str"), peer: peer, board: board, surface: surface,
                                    scale: min(scale, BrowserSurface.fittedScale(for: size)), format: format)
         streams[stream.id] = stream
         surface.add(stream)
@@ -74,14 +81,20 @@ final class BrowserSurfaceHost: NSObject {
         if let surface = surfaces[key], surface.tile === tile { return surface }
         // A tile freed before the sweep noticed left its surface under the address a new tile has now.
         if let stale = surfaces[key] { stale.streams.forEach { close($0, reason: "tile closed") } }
-        let surface = BrowserSurface(tile: tile, registry: registry) { [weak self] stream, reason in self?.close(stream, reason: reason) }
+        let surface = BrowserSurface(tile: tile) { [weak self] stream, reason in self?.close(stream, reason: reason) }
         surfaces[key] = surface
         return surface
     }
 
-    private func owned(_ id: String, by connection: SocketServer.Connection) throws -> SurfaceStream {
-        guard let stream = streams[id], stream.connection === connection else {
+    /// Stream `id`, when `peer`'s connection owns it. One whose own peer closed (its board's
+    /// incarnation ended) ends here as the sweep would end it.
+    private func owned(_ id: String, by peer: some SurfacePeer) throws -> SurfaceStream {
+        guard let stream = streams[id], stream.owner == peer.owner else {
             throw ApiRouter.Failure("not_found", "stream \(id) is not open on this connection")
+        }
+        guard stream.peer.isOpen else {
+            close(stream, reason: nil)
+            throw ApiRouter.Failure("not_found", "stream \(id) ended with its board")
         }
         return stream
     }
@@ -100,11 +113,11 @@ final class BrowserSurfaceHost: NSObject {
         NSLog("easl: browser stream %@ ended%@", stream.id, reason.map { ": \($0)" } ?? "")
     }
 
-    /// Closed connections and closed tiles, looked for while any stream is open: a stalled
-    /// viewer sends nothing that would tell.
+    /// Closed peers and closed tiles, looked for while any stream is open: a stalled viewer sends
+    /// nothing that would tell.
     private func sweep() {
         for stream in Array(streams.values) {
-            if !stream.connection.isOpen {
+            if !stream.peer.isOpen {
                 close(stream, reason: nil)
             } else if let reason = stream.surface.ended() {
                 close(stream, reason: reason)
@@ -176,8 +189,7 @@ final class BrowserSurface {
 
     let key: ObjectIdentifier
     private(set) weak var tile: BrowserTile?
-    let registry: BoardRegistry
-    private let end: (SurfaceStream, String) -> Void
+    let end: (SurfaceStream, String) -> Void
     private(set) var streams: [SurfaceStream] = []
     private var dialogs: [String: (stream: SurfaceStream, dialog: PageDialog)] = [:]
     private var capturing = false
@@ -190,10 +202,9 @@ final class BrowserSurface {
     /// Mac's own user does (`BrowserWebView.onUserInput`).
     var remoteDownAt: TimeInterval?
 
-    init(tile: BrowserTile, registry: BoardRegistry, end: @escaping (SurfaceStream, String) -> Void) {
+    init(tile: BrowserTile, end: @escaping (SurfaceStream, String) -> Void) {
         key = ObjectIdentifier(tile)
         self.tile = tile
-        self.registry = registry
         self.end = end
         tile.surface = self
         if let webView = tile.webView { prepare(webView) }
@@ -229,11 +240,21 @@ final class BrowserSurface {
         webView.allowsBackForwardNavigationGestures = true
         webView.configuration.preferences.isElementFullscreenEnabled = true
         tile.endSurfaceDrive()
-        Self.setSelectRelay(false, in: webView)
+        Task { [weak tile] in
+            guard tile?.surface == nil, tile?.webView === webView else { return }
+            _ = await Self.setSurfaceRelay(false, in: webView)
+        }
     }
 
-    /// A new document starts without the select relay.
+    /// A new document starts without the surface relay.
     func pageReady() {
+        for (id, pending) in dialogs {
+            if case .file = pending.dialog {
+                dialogs[id] = nil
+                pending.stream.push("surface.notice", SurfaceEvent.notice(stream: pending.stream.id, kind: .dialogClosed, dialog: id))
+                pending.dialog.dismiss()
+            }
+        }
         if let webView = tile?.webView { prepare(webView) }
     }
 
@@ -243,13 +264,17 @@ final class BrowserSurface {
         webView.allowsBackForwardNavigationGestures = false
         webView.configuration.preferences.isElementFullscreenEnabled = false
         tile?.beginSurfaceDrive()
-        Self.setSelectRelay(true, in: webView)
+        Task { [weak self] in
+            guard let self, self.tile?.surface === self, self.tile?.webView === webView else { return }
+            _ = await Self.setSurfaceRelay(true, in: webView)
+        }
     }
 
-    /// Why the streams should end, once the tile, its board or its window is gone.
+    /// Why the streams should end, once the tile, its board or its window is gone. A relayed
+    /// stream's board is easld's, which ends with its peer (`RelayPeer.isOpen`).
     func ended() -> String? {
         guard let tile else { return "tile closed" }
-        guard registry.boards[tile.board.id] === tile.board else { return "board closed" }
+        guard !tile.board.isClosed else { return "board closed" }
         guard tile.board.objects[tile.objectID] != nil else { return "tile closed" }
         return tile.window == nil ? "window closed" : nil
     }
@@ -414,12 +439,27 @@ final class BrowserSurface {
     /// callback leaves that class pending; a later key cannot credit an unconfirmed mouse.
     private func native(for stream: SurfaceStream, mouse: Bool, key: Bool,
                         _ body: @escaping @MainActor (BrowserSurface, BrowserTile, WKWebView) -> Void) async -> Bool {
+        guard let expectedPage = tile?.webView, tile?.surface === self, !stream.closed else {
+            end(stream, "page input unavailable")
+            return false
+        }
+        if !hasBlockingDialog {
+            let ready = await Self.setSurfaceRelay(true, in: expectedPage)
+            guard ready || hasBlockingDialog else {
+                end(stream, "page input unavailable")
+                return false
+            }
+        }
         let page = try? await SurfaceEventQueue.run { [weak self] () -> WKWebView? in
-            guard let self, !stream.closed, let tile = self.tile, let webView = tile.webView else { return nil }
+            guard let self, !stream.closed, let tile = self.tile, tile.surface === self,
+                  let webView = tile.webView, webView === expectedPage else { return nil }
             body(self, tile, webView)
             return webView
         }
-        guard let page else { return false }
+        guard let page else {
+            end(stream, "page input unavailable")
+            return false
+        }
         stream.mousePending = stream.mousePending || mouse
         stream.keyPending = stream.keyPending || key
         if stream.mousePending, await Self.processed("_doAfterProcessingAllPendingMouseEvents:", by: page) == true { stream.mousePending = false }
@@ -606,20 +646,20 @@ final class BrowserSurface {
     /// Mac's pasteboard, which Universal Clipboard may carry to other devices.
     private static func selection(in webView: WKWebView) async -> String? {
         let read = await bounded(selectionWait) { (done: @escaping @MainActor (String?) -> Void) in
-            Task { @MainActor in
-                let value = try? await webView.callAsyncJavaScript(BrowserScripts.ensure + "return window.__canvasCmux.selectedText()", arguments: [:],
-                                                                   in: nil, contentWorld: BrowserScripts.world)
-                done(value as? String)
+            PageScript.call(BrowserScripts.ensure + "return window.__canvasCmux.selectedText()", in: BrowserScripts.world, on: webView) { value, error in
+                done(error == nil ? value as? String : nil)
             }
         }
         return read ?? nil
     }
 
-    private static func setSelectRelay(_ on: Bool, in webView: WKWebView) {
-        Task {
-            _ = try? await webView.callAsyncJavaScript(BrowserScripts.ensure + "return window.__canvasCmux.setSelectRelay(on)", arguments: ["on": on],
-                                                       in: nil, contentWorld: BrowserScripts.world)
-        }
+    private static func setSurfaceRelay(_ on: Bool, in webView: WKWebView) async -> Bool {
+        await bounded(selectionWait) { (done: @escaping @MainActor (Bool) -> Void) in
+            PageScript.call(BrowserScripts.ensure + "return window.__canvasCmux.setSurfaceRelay(on)", ["on": on],
+                            in: BrowserScripts.world, on: webView) { _, error in
+                done(error == nil)
+            }
+        } ?? false
     }
 
     // MARK: Dialogs and notices
@@ -632,6 +672,7 @@ final class BrowserSurface {
         case login(@MainActor @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void)
         /// The select the page helper relayed (`chooseSelect`), with its choice count.
         case select(token: Int, choices: Int)
+        case file(token: String, multiple: Bool, webView: WKWebView)
 
         var kind: SurfaceEvent.DialogKind {
             switch self {
@@ -640,6 +681,7 @@ final class BrowserSurface {
             case .prompt: .prompt
             case .login: .login
             case .select: .select
+            case .file: .file
             }
         }
 
@@ -651,14 +693,27 @@ final class BrowserSurface {
             case .prompt(_, let done): done(nil)
             case .login(let done): done(.cancelAuthenticationChallenge, nil)
             case .select: break
+            case .file(let token, _, let webView):
+                Task { _ = await BrowserSurface.install(nil, token: token, in: webView) }
+            }
+        }
+    }
+
+    // A relayed JavaScript dialog blocks helper evaluation until its viewer answers.
+    private var hasBlockingDialog: Bool {
+        dialogs.values.contains {
+            switch $0.dialog {
+            case .alert, .confirm, .prompt: true
+            default: false
             }
         }
     }
 
     /// Hands the dialog to the latest driving viewer. With no listener, dismiss it here rather
     /// than asking this Mac's user to answer a request from a remote page.
-    func relay(_ dialog: PageDialog, origin: String, message: String? = nil, text: String? = nil, choices: [String]? = nil, selected: Int? = nil) {
-        let listening = streams.filter { !$0.closed && $0.connection.isOpen && $0.hears("surface.dialog") }
+    func relay(_ dialog: PageDialog, origin: String, message: String? = nil, text: String? = nil, choices: [String]? = nil, selected: Int? = nil,
+               multiple: Bool? = nil, accept: [String]? = nil) {
+        let listening = streams.filter { !$0.closed && $0.peer.isOpen && $0.hears("surface.dialog") }
         guard let stream = listening.reversed().max(by: { $0.lastInput < $1.lastInput }) else {
             dialog.dismiss()
             refuse(dialog.kind.rawValue)
@@ -667,7 +722,7 @@ final class BrowserSurface {
         let id = IDs.make("dlg")
         dialogs[id] = (stream, dialog)
         stream.push("surface.dialog", SurfaceEvent.dialog(stream: stream.id, dialog: id, kind: dialog.kind, origin: origin, message: message,
-                                                          text: text, choices: choices, selected: selected))
+                                                          text: text, choices: choices, selected: selected, multiple: multiple, accept: accept))
     }
 
     func answer(_ id: String, _ answer: SurfaceAnswer, from stream: SurfaceStream) async throws {
@@ -691,6 +746,11 @@ final class BrowserSurface {
             guard let webView = tile?.webView, await Self.choose(token, choice, in: webView) else {
                 throw ApiRouter.Failure("invalid_params", "choice \(choice) can't be chosen: it is disabled, or the select changed or went away")
             }
+        case .file(let token, _, let webView):
+            guard tile?.surface === self, tile?.webView === webView, !stream.closed, stream.peer.isOpen,
+                  await Self.install(answer.accept ? answer.files : nil, token: token, in: webView) else {
+                throw ApiRouter.Failure("unavailable", "the page's file input changed or went away; nothing was uploaded")
+            }
         }
     }
 
@@ -699,6 +759,16 @@ final class BrowserSurface {
         if answer.text != nil, kind != .prompt { throw ApiRouter.Failure("invalid_params", "text answers a prompt only") }
         if answer.user != nil || answer.password != nil, kind != .login { throw ApiRouter.Failure("invalid_params", "user and password answer a login only") }
         if answer.choice != nil, kind != .select { throw ApiRouter.Failure("invalid_params", "choice answers a select only") }
+        if answer.files != nil, kind != .file { throw ApiRouter.Failure("invalid_params", "files answer a file picker only") }
+        if case .file(_, let multiple, _) = dialog {
+            if answer.accept {
+                guard let files = answer.files, !files.isEmpty, multiple || files.count == 1 else {
+                    throw ApiRouter.Failure("invalid_params", "accepting this file picker takes \(multiple ? "1 to 32 files" : "one file")")
+                }
+            } else if answer.files != nil {
+                throw ApiRouter.Failure("invalid_params", "a cancelled file picker takes no files")
+            }
+        }
         if case .select(_, let count) = dialog, answer.accept, (answer.choice ?? count) >= count {
             throw ApiRouter.Failure("invalid_params", "accepting this select takes a choice below \(count)")
         }
@@ -706,12 +776,28 @@ final class BrowserSurface {
 
     private static func choose(_ token: Int, _ index: Int, in webView: WKWebView) async -> Bool {
         await bounded(selectionWait) { (done: @escaping @MainActor (Bool) -> Void) in
-            Task { @MainActor in
-                let chosen = try? await webView.callAsyncJavaScript(BrowserScripts.ensure + "return window.__canvasCmux.chooseSelect(token, index)",
-                                                                    arguments: ["token": token, "index": index], in: nil, contentWorld: BrowserScripts.world)
-                done((chosen as? Bool) == true)
+            PageScript.call(BrowserScripts.ensure + "return window.__canvasCmux.chooseSelect(token, index)", ["token": token, "index": index],
+                            in: BrowserScripts.world, on: webView) { value, error in
+                done(error == nil && (value as? Bool) == true)
             }
         } ?? false
+    }
+
+    func uploadRequested(_ body: Any, in webView: WKWebView, origin: String) {
+        guard tile?.surface === self, tile?.webView === webView,
+              let message = body as? [String: Any], let token = message["token"] as? String,
+              let multiple = message["multiple"] as? Bool, let accept = message["accept"] as? [String] else { return }
+        relay(.file(token: token, multiple: multiple, webView: webView), origin: origin, multiple: multiple, accept: accept)
+    }
+
+    private static func install(_ files: [SurfaceFile]?, token: String, in webView: WKWebView) async -> Bool {
+        let payload: [[String: Any]]? = files?.map { file in
+            var fields: [String: Any] = ["name": file.name, "type": file.type, "data": file.data]
+            if let modified = file.modified { fields["modified"] = modified }
+            return fields
+        }
+        return await PageScript.value(BrowserScripts.ensure + "return window.__canvasCmux.setFiles(token, files)",
+                                      ["token": token, "files": payload as Any? ?? NSNull()], in: BrowserScripts.world, on: webView) { ($0 as? Bool) == true }
     }
 
     /// The page helper kept a select's menu from opening here (`relaySelect`).
@@ -722,8 +808,7 @@ final class BrowserSurface {
         relay(.select(token: token, choices: choices.count), origin: origin, choices: choices, selected: selected.flatMap { (0..<choices.count).contains($0) ? $0 : nil })
     }
 
-    /// Something the page asked that this Mac won't do for a viewer (a file to upload, a
-    /// certificate, the camera, a menu): refused, and the viewers told.
+    /// Drawing-Mac permissions and native surfaces the viewer cannot grant.
     func refuse(_ reason: String) {
         NSLog("easl: browser %@ refused %@ while streamed", tile?.objectID ?? "?", reason)
         notify(.refused, reason: reason)
@@ -766,168 +851,6 @@ final class BrowserSurface {
 @MainActor
 private final class Once {
     var done = false
-}
-
-/// One viewer's stream of a browser tile, owned by the connection that opened it.
-@MainActor
-final class SurfaceStream {
-    enum Credit {
-        /// Frame `seq` was sent (0: the stream just opened) and isn't acknowledged yet.
-        case outstanding(Int)
-        /// The viewer acknowledged the last frame: frame `next` may go.
-        case granted(next: Int)
-    }
-
-    /// Input batches a stream may have waiting before more is refused.
-    static let maxQueued = 32
-
-    let id: String
-    let connection: SocketServer.Connection
-    let board: BoardID
-    let surface: BrowserSurface
-    let scale: Double
-    let format: SurfaceFormat
-    private(set) var credit = Credit.outstanding(0)
-    /// The highest seq accepted into the queue.
-    private(set) var accepted = 0
-    /// The highest seq WebKit handed the page (`BrowserSurface.native`).
-    private(set) var delivered = 0
-    var mousePending = false
-    var keyPending = false
-    /// The last frame's delivered input and full page state.
-    private(set) var fence = 0
-    private var lastSent: SurfaceEvent.Frame?
-    /// When it last accepted input (system uptime): the page's dialogs go to the latest.
-    private(set) var lastInput: TimeInterval = 0
-    var closed = false
-    /// Where the viewer's button is down, in web view points, and the keys it holds.
-    var heldButton: NSPoint?
-    weak var mouseTarget: NSView?
-    var heldKeys: [UInt16: (chars: String, plain: String)] = [:]
-    private var pipeline: Task<Void, Never>?
-    private var queued = 0
-
-    init(id: String, connection: SocketServer.Connection, board: BoardID, surface: BrowserSurface, scale: Double, format: SurfaceFormat) {
-        self.id = id
-        self.connection = connection
-        self.board = board
-        self.surface = surface
-        self.scale = scale
-        self.format = format
-    }
-
-    /// The seq the next frame takes, while one may go.
-    var next: Int? {
-        if case .granted(let next) = credit { return next }
-        return nil
-    }
-
-    var holdsInput: Bool { heldButton != nil || !heldKeys.isEmpty }
-
-    func markDelivered(_ seq: Int) {
-        guard !mousePending, !keyPending else { return }
-        delivered = max(delivered, seq)
-    }
-
-    /// Input accepted that hasn't reached the page yet.
-    var pending: Bool { queued > 0 }
-
-    /// The outstanding frame acknowledged grants exactly one more; an older ack changes nothing.
-    func ack(_ frame: Int) throws {
-        switch credit {
-        case .outstanding(let sent):
-            guard frame <= sent else { throw ApiRouter.Failure("invalid_params", "frame \(frame) wasn't sent; the latest is \(sent)") }
-            guard frame == sent else { return }
-            credit = .granted(next: sent + 1)
-            surface.pump()
-        case .granted(let next):
-            guard frame < next else { throw ApiRouter.Failure("invalid_params", "frame \(frame) wasn't sent; the latest is \(next - 1)") }
-        }
-    }
-
-    /// Queues the batch's new events (seq past `accepted`; the rest were accepted before) and
-    /// answers once they are queued, not delivered: frames report delivery (`fence`). A copy
-    /// waits up to `BrowserSurface.selectionWait` for the selected text.
-    func input(_ events: [SurfaceInputEvent]) async throws -> JSONValue {
-        let fresh = events.drop(while: { $0.seq <= accepted })
-        guard let last = fresh.last else { return .object(["accepted": .number(0)]) }
-        guard surface.tile != nil else { throw ApiRouter.Failure("unavailable", "the streamed tile closed") }
-        guard queued < Self.maxQueued else {
-            throw ApiRouter.Failure("unavailable", "this Mac hasn't delivered the stream's last \(queued) batches yet (a menu or drag here holds its event queue); nothing in this batch was accepted")
-        }
-        accepted = last.seq
-        lastInput = ProcessInfo.processInfo.systemUptime
-        let batch = enqueue(fresh)
-        surface.inputArrived()
-        var result: [String: JSONValue] = ["accepted": .number(Double(fresh.count))]
-        if fresh.contains(where: \.readsSelection) {
-            let read = await BrowserSurface.bounded(BrowserSurface.selectionWait) { (done: @escaping @MainActor (String?) -> Void) in
-                Task { done(await batch.value) }
-            }
-            guard let read, let text = read else {
-                throw ApiRouter.Failure("unavailable", "the page's selection couldn't be read within \(Int(BrowserSurface.selectionWait)) s; the batch's input was accepted")
-            }
-            result["text"] = .string(text)
-        }
-        return .object(result)
-    }
-
-    /// Batches reach the page one after another, each once the one before is through.
-    private func enqueue(_ events: ArraySlice<SurfaceInputEvent>) -> Task<String?, Never> {
-        let previous = pipeline
-        queued += 1
-        let batch = Task { () -> String? in
-            await previous?.value
-            defer { self.queued -= 1 }
-            guard !self.closed else { return nil }
-            return await self.surface.deliver(events, for: self)
-        }
-        pipeline = Task { _ = await batch.value }
-        return batch
-    }
-
-    /// Until the accepted input has reached the page, or `limit` passes.
-    func settle(within limit: TimeInterval) async {
-        guard let pipeline else { return }
-        _ = await BrowserSurface.bounded(limit) { (done: @escaping @MainActor (Bool) -> Void) in
-            Task {
-                await pipeline.value
-                done(true)
-            }
-        }
-    }
-
-    func send(_ frame: SurfaceEvent.Frame) -> Bool {
-        if let last = lastSent,
-           frame.input == last.input, frame.size == last.size, frame.scale == last.scale,
-           frame.width == last.width, frame.height == last.height, frame.format == last.format,
-           frame.back == last.back, frame.forward == last.forward, frame.loading == last.loading,
-           frame.data == last.data { return false }
-        credit = .outstanding(frame.seq)
-        fence = frame.input
-        lastSent = frame
-        Metrics.shared.record("surface.frame", bytes: frame.data.count)
-        let connection = connection, board = board
-        // Base64 and JSON of a whole page image take milliseconds: off the main thread.
-        DispatchQueue.global(qos: .userInitiated).async {
-            guard let line = try? JSONEncoder().encode(SurfaceEvent.envelope("surface.frame", board: board, frame.json)) else { return }
-            if connection.send(encoded: line) {
-                Metrics.shared.record("surface.frameWire", bytes: line.count + 1)
-            }
-        }
-        return true
-    }
-
-    /// Whether the connection subscribed to `event` on the stream's board.
-    func hears(_ event: String) -> Bool {
-        surface.registry.subscribes(connection, to: event, on: board)
-    }
-
-    /// A dialog or notice, to this stream's own connection only, once it subscribed to it.
-    func push(_ event: String, _ data: JSONValue) {
-        guard !closed, hears(event) else { return }
-        connection.send(SurfaceEvent.envelope(event, board: board, data))
-    }
 }
 
 /// Streamed input's place in this app's own event queue. A batch waits behind the events already

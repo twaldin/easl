@@ -15,7 +15,8 @@ final class EaslConnectionTests {
 
     /// A stand-in for easl's socket: `system.ping`, `events.subscribe` (remembered, so the test
     /// can push events), `echo` (its params), `later` (answered after `ms`, out of order), `fail`;
-    /// and easld's own calls to the client (`call`), whose answers it keeps.
+    /// and easld's own calls to the client (`call`), whose answers it keeps, as it keeps the
+    /// events the client pushes.
     final class FakeServer: @unchecked Sendable {
         /// What the server was asked, shared with its handler.
         final class Log: @unchecked Sendable {
@@ -27,6 +28,8 @@ final class EaslConnectionTests {
             var links: [SocketServer.Connection] = []
             /// The client's answers to `call`s, in the order they came.
             var answers: [JSONValue] = []
+            /// The events the client pushed, in the order they came.
+            var pushes: [JSONValue] = []
         }
 
         let server: SocketServer
@@ -37,7 +40,11 @@ final class EaslConnectionTests {
             server = SocketServer(path: path) { request, connection in
                 let id = request["id"] ?? .null
                 guard let method = request["method"]?.string else {
-                    log.lock.withLock { log.answers.append(request) }
+                    if request["event"] != nil {
+                        log.lock.withLock { log.pushes.append(request) }
+                    } else {
+                        log.lock.withLock { log.answers.append(request) }
+                    }
                     return nil
                 }
                 let params = request["params"] ?? .object([:])
@@ -79,9 +86,12 @@ final class EaslConnectionTests {
 
         func stop() { server.stop() }
 
-        /// Sends the client a call of easld's on the latest link.
-        func call(_ id: String, _ method: String, _ params: JSONValue) {
-            log.lock.withLock { log.links.last }?.send(.object(["id": .string(id), "method": .string(method), "params": params]))
+        /// Sends the client a call of easld's on the latest link; `surfaceEvents` goes beside its
+        /// params, as easld sends a relayed `surface.stream`.
+        func call(_ id: String, _ method: String, _ params: JSONValue, surfaceEvents: [String]? = nil) {
+            var message: [String: JSONValue] = ["id": .string(id), "method": .string(method), "params": params]
+            if let surfaceEvents { message["surfaceEvents"] = .array(surfaceEvents.map(JSONValue.string)) }
+            log.lock.withLock { log.links.last }?.send(.object(message))
         }
 
         /// The client's answers once there are `count` (or what came within 30 s).
@@ -89,6 +99,13 @@ final class EaslConnectionTests {
             let deadline = Date().addingTimeInterval(30)
             while log.lock.withLock({ log.answers.count }) < count, Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
             return log.lock.withLock { log.answers }
+        }
+
+        /// The events the client pushed once there are `count` (or what came within 30 s).
+        func pushes(_ count: Int) async -> [JSONValue] {
+            let deadline = Date().addingTimeInterval(30)
+            while log.lock.withLock({ log.pushes.count }) < count, Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+            return log.lock.withLock { log.pushes }
         }
 
         var calls: [String] { log.lock.withLock { log.methods } }
@@ -550,5 +567,57 @@ final class EaslConnectionTests {
         let answers = await server.answers(1)
         #expect(answers.map { $0["id"] } == [.string("easld-7")])
         #expect(answers.first?["ok"] == .bool(false) && answers.first?["error"]?["code"] == .string("unavailable"))
+    }
+
+    /// A stream answering one of easld's calls pushes its events on the link that call came on,
+    /// and on no other: once that link drops, its origin is closed and a push goes nowhere, so
+    /// nothing encoded for it reaches the server on the next link.
+    @Test func anOriginPushesOnlyOnTheLinkItsCallCameOn() async throws {
+        var server = try FakeServer(path: path)
+        let connection = EaslConnection.unixSocket(path, backoff: fast)
+        defer { connection.close() }
+        let calls = Locked<[EaslConnection.Call]>([])
+        connection.serve { call in
+            calls.withLock { $0.append(call) }
+            return .success(.object(["stream": "str_1"]))
+        }
+        #expect(await reach(.online, connection))
+        server.call("easld-1", "surface.stream", .object(["id": "obj_page"]), surfaceEvents: ["surface.frame", "surface.notice"])
+        _ = await server.answers(1)
+        let opened = try #require(calls.withLock { $0.first })
+        #expect(opened.surfaceEvents == ["surface.frame", "surface.notice"])
+        #expect(opened.origin.isOpen)
+        let notice = try EventLine("surface.notice", board: "brd_a", SurfaceEvent.notice(stream: "str_1", kind: .refused, reason: "menu"))
+        #expect(opened.origin.push(notice))
+        #expect(await server.pushes(1) == [.object(["event": "surface.notice", "board": "brd_a", "data": .object(["stream": "str_1", "kind": "refused", "reason": "menu"])])])
+
+        server.stop()
+        #expect(await reach(.offline, connection))
+        #expect(!opened.origin.isOpen)
+        server = try FakeServer(path: path)
+        defer { server.stop() }
+        #expect(await reach(.online, connection))
+        #expect(!opened.origin.push(notice), "a reconnect is a new link")
+        server.call("easld-1", "surface.ack", .object(["stream": "str_1", "frame": 0]))
+        _ = await server.answers(1)
+        let next = try #require(calls.withLock { $0.last })
+        #expect(next.origin != opened.origin && next.origin.isOpen)
+        #expect(next.surfaceEvents.isEmpty, "only a relayed open says what its viewer hears")
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await server.pushes(0).isEmpty, "nothing pushed for the dropped link reached the next one")
+    }
+
+    /// easld tells a pushed event from a request by its first bytes alone, so `event` leads.
+    @Test func anEventLineLeadsWithItsEvent() throws {
+        let line = try EventLine("surface.dialog", board: "brd_a",
+                                 SurfaceEvent.dialog(stream: "str_1", dialog: "dlg_1", kind: .confirm, origin: "https://a.example", message: "Leave?"))
+        let text = String(decoding: line.data, as: UTF8.self)
+        #expect(text.hasPrefix(#"{"event":"surface.dialog","board":"brd_a","data":{"#))
+        #expect(text.hasSuffix("}\n") && text.filter { $0 == "\n" }.count == 1)
+        #expect(line.line.count == line.data.count - 1 && line.line.last == UInt8(ascii: "}"), "a socket adds its own newline")
+        #expect(try JSONDecoder().decode(JSONValue.self, from: line.line) == .object([
+            "event": "surface.dialog", "board": "brd_a",
+            "data": .object(["stream": "str_1", "dialog": "dlg_1", "kind": "confirm", "origin": "https://a.example", "message": "Leave?"]),
+        ]))
     }
 }

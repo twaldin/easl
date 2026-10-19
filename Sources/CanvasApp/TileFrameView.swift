@@ -15,6 +15,7 @@ final class TileFrameView: NSView {
     /// and draws magnified in place, while the title bar stays at 1×.
     private let zoomView = ContentZoomView()
     private let zoomControl = TileZoomControl()
+    private let machineControl = DrawingMachineControl()
     private let titleBar = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     /// The agent terminal that made the object (`AuthorMark`), small and muted at the right.
@@ -27,6 +28,7 @@ final class TileFrameView: NSView {
     private var cardTitle = NSTextField(labelWithString: "")
     private let cardTint = CardTint()
     private(set) var isLive = true
+    private var hostBoardClosed = false
     /// Stacking order among tiles (the object's `z`).
     private(set) var z: Double = 0
     private var lifecycleState: String?
@@ -35,6 +37,7 @@ final class TileFrameView: NSView {
     var onFrameCommit: ((NSRect) -> Void)?
     /// The title bar's − / % / + asked for this content zoom.
     var onZoom: ((Double) -> Void)?
+    var onDrawingMachine: ((DrawingMachine) -> Void)?
     /// Live resize, so the canvas can keep rings and groups around the tile.
     var onResizing: (() -> Void)?
     var onClose: (() -> Void)?
@@ -107,6 +110,9 @@ final class TileFrameView: NSView {
         zoomControl.onStep = { [weak self] bigger in self?.stepZoom(bigger: bigger) }
         zoomControl.onReset = { [weak self] in self?.onZoom?(1) }
         titleBar.addSubview(zoomControl)
+        machineControl.isHidden = object.type != .browser
+        machineControl.onChoose = { [weak self] machine in self?.onDrawingMachine?(machine) }
+        titleBar.addSubview(machineControl)
         addSubview(titleBar)
         zoomView.addSubview(content)
         addSubview(zoomView)
@@ -251,6 +257,10 @@ final class TileFrameView: NSView {
         default: titleLabel.toolTip = nil
         }
         z = object.z
+        if object.type == .browser {
+            machineControl.show(DrawingMachine(object.props))
+            layoutTitle()
+        }
         accessibilityDetail = Self.accessibilityDetail(for: object)
         let state = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
         badge.isHidden = object.type != .terminal
@@ -286,6 +296,12 @@ final class TileFrameView: NSView {
         layoutTitle()
     }
 
+    func setDrawingMachines(_ machines: [DrawingMachine]?, canSwitch: Bool) {
+        guard !machineControl.isHidden else { return }
+        machineControl.choices(machines, canSwitch: canSwitch)
+        layoutTitle()
+    }
+
     /// Puts the title into the labels (also for `view.snapshot` of a window nobody sees).
     func syncTitle() {
         guard titleLabel.stringValue != title else { return }
@@ -310,6 +326,7 @@ final class TileFrameView: NSView {
         statusLabel.font = ChromeText.font(Self.statusFont)
         closeButton.font = ChromeText.font(closeBaseFont)
         zoomControl.applyScale()
+        machineControl.applyScale()
         updateZoomControl()
     }
 
@@ -337,7 +354,9 @@ final class TileFrameView: NSView {
         let width = bounds.width
         let zoomWidth = zoomControl.isHidden ? 0 : zoomControl.fittedWidth
         zoomControl.frame = TileTitleBar.zoomControlFrame(width: width, controlWidth: zoomWidth) ?? .zero
-        let trailing = zoomWidth > 0 ? zoomWidth + 4 : 0
+        let machineWidth = machineControl.isHidden ? 0 : min(machineControl.fittedWidth, max(0, width - 42 - zoomWidth))
+        machineControl.frame = TileTitleBar.machineControlFrame(width: width, zoomControlWidth: zoomWidth, controlWidth: machineWidth) ?? .zero
+        let trailing = (zoomWidth > 0 ? zoomWidth + 4 : 0) + (machineWidth > 0 ? machineWidth + 4 : 0)
         let status = statusLabel.isHidden ? 0 : min(statusLabel.fittingSize.width, max(0, width / 3))
         let line = Self.line(15, scale: ChromeText.scale)
         statusLabel.frame = NSRect(x: width - 32 - trailing - status, y: line.y, width: status, height: line.height)
@@ -474,7 +493,7 @@ final class TileFrameView: NSView {
     func setLive(_ live: Bool) {
         guard live != isLive else { return }
         isLive = live
-        cardRequest += 1
+        invalidateCard()
         if live {
             showContent(true)
             revealWhenReady()
@@ -482,6 +501,49 @@ final class TileFrameView: NSView {
             requestCard()
         }
         updateTint()
+    }
+
+    func setHostBoardClosed(_ closed: Bool) {
+        guard hostBoardClosed != closed else { return }
+        hostBoardClosed = closed
+        invalidateCard()
+        if closed {
+            if let terminal = content as? TerminalTile {
+                terminal.setHostBoardClosed(true)
+            } else if let note = content as? NoteTile {
+                note.setHostBoardClosed(true)
+            } else if let code = content as? CodeTile {
+                code.setHostBoardClosed(true)
+            } else if let changes = content as? ChangesTile {
+                changes.setHostBoardClosed(true)
+            } else if let html = content as? HtmlTile {
+                html.setHostBoardClosed(true)
+                html.showSnapshot(true)
+            } else {
+                content.showSnapshot(true)
+            }
+        } else {
+            (content as? HtmlTile)?.setHostBoardClosed(false)
+            (content as? ChangesTile)?.setHostBoardClosed(false)
+            content.setLive(isLive)
+            (content as? TerminalTile)?.setHostBoardClosed(false)
+            (content as? NoteTile)?.setHostBoardClosed(false)
+            (content as? CodeTile)?.setHostBoardClosed(false)
+            if !(content is TerminalTile) { content.showSnapshot(false) }
+        }
+        (content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
+        if closed {
+            if !isLive || !(content is NoteTile || content is CodeTile || content is TerminalTile || content is QuestionTile || content is ChangesTile) {
+                requestCard()
+            } else {
+                revealWhenReady()
+            }
+        } else if isLive {
+            showContent(true)
+            revealWhenReady()
+        } else {
+            requestCard()
+        }
     }
 
     /// Longest a card covers content that never reports ready (a page whose script fails).
@@ -513,7 +575,7 @@ final class TileFrameView: NSView {
     func startAsCard() {
         guard isLive else { return }
         isLive = false
-        cardRequest += 1
+        invalidateCard()
         cardTitle.isHidden = false
         showContent(false)
         startCardDue = true
@@ -533,7 +595,10 @@ final class TileFrameView: NSView {
                 }
             }
         }
-        guard let window else { return }
+        guard let window else {
+            invalidateCard()
+            return
+        }
         if window.occlusionState.contains(.visible) { syncTitle() }
         guard startCardDue else { return }
         startCardDue = false
@@ -541,15 +606,31 @@ final class TileFrameView: NSView {
     }
 
     private func requestCard() {
+        invalidateCard()
         syncTitle()
+        if hostBoardClosed {
+            if contentLive {
+                let scale = (isLive ? (window?.backingScaleFactor ?? 1) : Self.cardPixelsPerPoint) * zoom
+                let request = TileRenderRequest(size: content.bounds.size, scale: scale,
+                                                full: false, appearance: effectiveAppearance)
+                let image = request.image(of: content)
+                card.image = isLive ? image : image.map { cardImage($0) }
+                card.isHidden = card.image == nil
+                cardTitle.isHidden = card.image != nil
+            }
+            showContent(false)
+            return
+        }
         let request = cardRequest
         let asked = DevPerf.mark()
         let kind = String(describing: type(of: content))
         let started = Metrics.now()
         DevPerf.time("card.call.\(type(of: content))") {
             Metrics.shared.span("card", "card.call.\(kind)", detail: objectID) {
-                content.cardSnapshot { [weak self] image in
-                    guard let self, !self.isLive, self.cardRequest == request else { return }
+                cardTask = Task { [weak self, content] in
+                    let image = await content.cardSnapshot()
+                    guard !Task.isCancelled, let self, !self.isLive, self.cardRequest == request else { return }
+                    self.cardTask = nil
                     DevPerf.record("card.latency.\(type(of: self.content))", since: asked)
                     Metrics.shared.record("card.latency.\(kind)", ms: (Metrics.now() - started) * 1000)
                     DevPerf.time("card.install.\(type(of: self.content))") {
@@ -575,15 +656,25 @@ final class TileFrameView: NSView {
     /// model first (`cardSnapshot` reloads a model that isn't current), so it shows what the
     /// tile holds now.
     func refreshCard() async {
+        guard !hostBoardClosed else { return }
         guard !isLive, !contentLive else { return }
+        invalidateCard()
         let request = cardRequest
-        let image = await withCheckedContinuation { (continuation: CheckedContinuation<NSImage?, Never>) in
-            content.cardSnapshot { continuation.resume(returning: $0) }
+        let task = Task { [weak self, content] in
+            let image = await content.cardSnapshot()
+            guard !Task.isCancelled, let self, self.cardRequest == request else { return }
+            self.cardTask = nil
+            guard !self.hostBoardClosed, !self.isLive, let image else { return }
+            self.card.image = self.cardImage(image)
+            self.card.isHidden = false
+            self.cardTitle.isHidden = true
         }
-        guard !isLive, cardRequest == request, let image else { return }
-        card.image = cardImage(image)
-        card.isHidden = false
-        cardTitle.isHidden = true
+        cardTask = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     /// Below the readable zoom: the tile is one handle (click selects, drag moves) and shows its
@@ -593,6 +684,18 @@ final class TileFrameView: NSView {
     }
 
     private var cardRequest = 0
+    private var cardTask: Task<Void, Never>?
+
+    deinit {
+        cardTask?.cancel()
+    }
+
+    private func invalidateCard() {
+        cardRequest += 1
+        cardTask?.cancel()
+        cardTask = nil
+    }
+
     private var contentLive = true
     /// Whether this tile's live content counts in `app.metrics` (`live.<Kind>`): while it is on a
     /// board.
@@ -612,6 +715,7 @@ final class TileFrameView: NSView {
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
         let onBoard = superview != nil
+        if !onBoard { invalidateCard() }
         guard onBoard != countedLive else { return }
         countedLive = onBoard
         if contentLive { Metrics.shared.adjust("live.\(type(of: content))", by: onBoard ? 1 : -1) }
@@ -673,7 +777,8 @@ final class TileFrameView: NSView {
         // dot, a status or the gaps between them selects the tile and turns the keyboard to it,
         // the first click into an inactive window included (the bar's own view takes no first
         // click, so a press on it was lost and typing stayed in the tile that had the keyboard).
-        if TileTitleBar.part(at: local, width: bounds.width, zoomControlWidth: zoomControl.isHidden ? 0 : zoomControl.frame.width) == .handle { return self }
+        if TileTitleBar.part(at: local, width: bounds.width, zoomControlWidth: zoomControl.isHidden ? 0 : zoomControl.frame.width,
+                             machineControlWidth: machineControl.isHidden ? 0 : machineControl.frame.width) == .handle { return self }
         return super.hitTest(point)
     }
 

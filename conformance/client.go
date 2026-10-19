@@ -55,7 +55,11 @@ func (k *conn) read() {
 		k.mu.Lock()
 		switch {
 		case line["method"] != nil:
-			k.received = append(k.received, map[string]any{"method": line["method"], "params": line["params"]})
+			received := map[string]any{"method": line["method"], "params": line["params"]}
+			if events, ok := line["surfaceEvents"]; ok {
+				received["surfaceEvents"] = events
+			}
+			k.received = append(k.received, received)
 			k.lastEvent = time.Now()
 			k.answer(line)
 		case line["event"] != nil:
@@ -112,6 +116,16 @@ func (k *conn) answer(request map[string]any) {
 	data, err := json.Marshal(line)
 	if err == nil {
 		k.writeLine(data)
+	}
+	for _, event := range reply.Events {
+		data, err := json.Marshal(struct {
+			Event any `json:"event"`
+			Board any `json:"board"`
+			Data  any `json:"data"`
+		}{event["event"], event["board"], event["data"]})
+		if err == nil {
+			k.writeLine(data)
+		}
 	}
 }
 

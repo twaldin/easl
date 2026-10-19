@@ -34,6 +34,7 @@ public final class HtmlWorkQueue {
             try await withCheckedThrowingContinuation { waiting.append($0) }
         }
         defer { release() }
+        guard generation == self.generation else { throw HtmlError.cancelled }
         let job = Task { @MainActor in try await work() }
         active[id] = { job.cancel() }
         defer { active[id] = nil }

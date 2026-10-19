@@ -45,6 +45,20 @@ struct KeyboardFocusTests {
         #expect(part(100, 30) == nil, "the content")
     }
 
+    @Test func theMachineSelectorIsNotATitleDragHandle() {
+        func part(_ x: CGFloat, zoom: CGFloat = 72) -> TileTitleBar.Part? {
+            TileTitleBar.part(at: CGPoint(x: x, y: 13), width: 1000, zoomControlWidth: zoom, machineControlWidth: 110)
+        }
+        #expect(part(783) == .handle)
+        #expect(part(784) == .drawingMachine)
+        #expect(part(893) == .drawingMachine)
+        #expect(part(894) == .handle)
+        #expect(part(930) == .zoomControl)
+        #expect(part(984) == .close)
+        #expect(part(890, zoom: 0) == .drawingMachine)
+        #expect(part(859, zoom: 0) == .handle)
+    }
+
     @Test func theTrayNamesTheTerminalYouAreTypingInWhenItIsNotTheTarget() {
         // The tray said "→ codex" while the prompt ran in the plain shell holding the keyboard.
         let codex = KeyboardFocus.Named("codex", name: "codex · Fix forecast tests")

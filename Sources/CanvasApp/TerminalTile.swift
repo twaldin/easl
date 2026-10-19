@@ -55,16 +55,21 @@ final class TerminalTile: NSView, TileContent {
         guard isRemote, hostBoardClosed != closed, !discarded else { return }
         if closed {
             lastRemoteScreen = liveScreen()
+            hostBoardClosed = true
+            referenceTask?.cancel()
+            referenceTask = nil
+            referenceGeneration = UUID()
             snapshotHistory = lastRemoteScreen
             showSnapshot(true)
             terminal.cancelImageInput()
             terminal.controller = nil
         } else {
+            hostBoardClosed = false
             showSnapshot(false)
             lastRemoteScreen = nil
             terminal.controller = TerminalConfig.shared.controller
         }
-        hostBoardClosed = closed
+        updateSurfaceVisibility()
     }
 
     func discard() {
@@ -515,7 +520,7 @@ final class TerminalTile: NSView, TileContent {
     /// marker can reach its line editor in pieces.
     func submit(_ text: String) async -> Bool {
         await terminal.submitOrdered({ [self] in
-            guard !discarded, !endingSession, !board.isClosed else { return false }
+            guard !discarded, !endingSession, !hostBoardClosed, !board.isClosed else { return false }
             refreshProgram()
             if shell != nil, program == nil, let typing = ShellTyping.action(text) {
                 return terminal.performBindingAction(typing)
@@ -1116,6 +1121,7 @@ final class TerminalTile: NSView, TileContent {
     }
 
     private func resolveRemote(_ candidates: [TerminalReferences.Candidate], newTile: Bool) {
+        guard !hostBoardClosed, !discarded, !board.isClosed else { return }
         referenceTask?.cancel()
         let generation = UUID()
         referenceGeneration = generation
@@ -1131,7 +1137,7 @@ final class TerminalTile: NSView, TileContent {
             do {
                 let outcome = try await references.resolve(request)
                 guard let self, !Task.isCancelled, self.referenceGeneration == generation,
-                      !self.discarded, !self.board.isClosed else { return }
+                      !self.discarded, !self.hostBoardClosed, !self.board.isClosed else { return }
                 switch outcome {
                 case .failure(let failure):
                     self.onNotice?(failure.message)
@@ -1141,14 +1147,14 @@ final class TerminalTile: NSView, TileContent {
                     if let test = candidate.reference.test, let bytes = resolved.pytestBytes {
                         let line = await offPool { PytestNode.line(of: test, in: String(decoding: bytes, as: UTF8.self)) } ?? 1
                         guard !Task.isCancelled, self.referenceGeneration == generation,
-                              !self.discarded, !self.board.isClosed else { return }
+                              !self.discarded, !self.hostBoardClosed, !self.board.isClosed else { return }
                         lines = LineRange(start: line, end: line)
                     }
                     self.open(.init(file: resolved.path, lines: lines, runs: candidate.runs), newTile: newTile)
                 }
             } catch {
                 guard let self, !Task.isCancelled, self.referenceGeneration == generation,
-                      !self.discarded, !self.board.isClosed else { return }
+                      !self.discarded, !self.hostBoardClosed, !self.board.isClosed else { return }
                 self.onNotice?(HostReferenceOutcome.Failure.unavailable.message)
             }
         }
@@ -1177,6 +1183,7 @@ final class TerminalTile: NSView, TileContent {
     }
 
     private func open(_ hit: TerminalReferences.Hit, newTile: Bool) {
+        guard !hostBoardClosed, !discarded, !board.isClosed else { return }
         if let test = hit.test, !isRemote {
             // A pytest node id: its line is the test's `def`, read off the main thread.
             let file = hit.file
@@ -1206,6 +1213,7 @@ final class TerminalTile: NSView, TileContent {
     /// file path goes to the system, as `open` would. Remote file links use the host resolver
     /// instead and are never logged.
     func openLink(_ text: String) {
+        guard !hostBoardClosed, !discarded, !board.isClosed else { return }
         if isRemote {
             let url = URL(string: text)
             let parsed = TerminalReferences.reference(in: text, at: 0)
@@ -1302,7 +1310,7 @@ final class TerminalTile: NSView, TileContent {
     /// change, and only occlusion stops it.
     private func updateSurfaceVisibility() {
         let shown = window.map { $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) } ?? false
-        let wanted = isLive && shown
+        let wanted = isLive && shown && !hostBoardClosed
         if wanted != countedDrawable {
             countedDrawable = wanted
             UserIdleWatch.shared.terminalDrawable(wanted)
@@ -1398,7 +1406,7 @@ final class TerminalTile: NSView, TileContent {
         return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered)
     }
 
-    private var snapshotView: NSImageView?
+    private var snapshotView: NSView?
     /// The session's styled screen text `prepareSnapshot` fetched for the next `showSnapshot`.
     private var snapshotHistory: (lines: [TerminalLine], cursorRow: Int?)?
 
@@ -1434,6 +1442,36 @@ final class TerminalTile: NSView, TileContent {
         guard show, let history else { return }
         let grid = snapshotGrid
         let screen = TerminalRender.screen(history.lines, cursorRow: history.cursorRow, rows: grid.rows)
+        if hostBoardClosed {
+            let style = TerminalConfig.shared.style(for: effectiveAppearance)
+            let text = ClosedTerminalTextView(frame: bounds)
+            text.isEditable = false
+            text.isSelectable = true
+            text.isRichText = false
+            text.backgroundColor = style.background
+            text.textContainerInset = style.padding
+            text.textContainer?.lineFragmentPadding = 0
+            text.textContainer?.widthTracksTextView = true
+            text.isVerticallyResizable = true
+            text.autoresizingMask = [.width]
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = grid.cell.height
+            paragraph.maximumLineHeight = grid.cell.height
+            paragraph.lineBreakMode = .byClipping
+            let string = screen.map { $0.runs.map(\.text).joined() }.joined(separator: "\n")
+            text.textStorage?.setAttributedString(NSAttributedString(string: string, attributes: [
+                .font: TerminalRender.fonts(size: style.fontSize, cellWidth: grid.cell.width).regular,
+                .foregroundColor: style.foreground, .paragraphStyle: paragraph,
+            ]))
+            let scroll = NSScrollView(frame: bounds)
+            scroll.documentView = text
+            scroll.hasVerticalScroller = true
+            scroll.autohidesScrollers = true
+            scroll.autoresizingMask = [.width, .height]
+            addSubview(scroll)
+            snapshotView = scroll
+            return
+        }
         let request = TileRenderRequest(size: bounds.size, scale: window?.backingScaleFactor ?? 2, full: false, appearance: effectiveAppearance)
         let view = NSImageView(frame: bounds)
         view.image = request.image { rect in TerminalRender.draw(screen, grid: grid, in: rect, appearance: request.appearance) }
@@ -1601,5 +1639,16 @@ private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, Term
     /// clipboard managers. A local terminal's copies are ordinary.
     var terminalClipboardWritesArePrivate: Bool {
         tile?.isRemote == true
+    }
+}
+
+private final class ClosedTerminalTextView: NSTextView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func copy(_ sender: Any?) {
+        let range = selectedRange()
+        guard range.length > 0 else { return }
+        NSPasteboard.general.clear(privately: true)
+        NSPasteboard.general.setString((string as NSString).substring(with: range), forType: .string)
     }
 }

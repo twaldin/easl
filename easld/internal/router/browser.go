@@ -45,6 +45,9 @@ func (r *Router) clientsChanged(boards []string) {
 	r.reg.Mu.Lock()
 	defer r.reg.Mu.Unlock()
 	r.announceClients(boards)
+	for _, id := range boards {
+		r.surfaces.Recheck(id)
+	}
 }
 
 func clientEntries(listed []clients.ListedClient, board string) []any {

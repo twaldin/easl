@@ -145,6 +145,7 @@ func TestCmuxPageCommandReachesTheDrawingMacAndCloseDropsTheSocket(t *testing.T)
 	if result["url"] != "https://example.com/drawn" || result["surface_id"] != page {
 		t.Fatalf("navigate result %v", result)
 	}
+
 	conn.Close()
 	f.result("object.delete", map[string]any{"id": tile})
 	deadline := time.Now().Add(2 * time.Second)

@@ -71,7 +71,7 @@ case "mainmenu":
 case "close":
     guard let number = rest.first, Int(number) != nil else { exit(2) }
     info["window"] = number
-case "reopen":
+case "reopen", "state":
     guard rest.isEmpty else { exit(2) }
 case "drag":
     guard rest.count >= 4 else { exit(2) }

@@ -49,7 +49,8 @@ public enum SurfaceRequest: Sendable, Equatable {
         case "surface.answer":
             let answer = SurfaceAnswer(accept: try p.bool("accept"), text: try p.string("text", optional: true),
                                        user: try p.string("user", optional: true), password: try p.string("password", optional: true),
-                                       choice: try p.integer("choice", 0...Self.maxInteger, optional: true))
+                                       choice: try p.integer("choice", 0...Self.maxInteger, optional: true),
+                                       files: try SurfaceFile.parse(p.values["files"]))
             self = .answer(stream: try p.stream(), dialog: try p.string("dialog"), answer)
         case "surface.stop":
             self = .stop(stream: try p.stream())
@@ -232,6 +233,7 @@ public struct SurfaceAnswer: Sendable, Equatable {
     public let user: String?
     public let password: String?
     public let choice: Int?
+    public let files: [SurfaceFile]?
 }
 
 /// What a viewer receives (`SurfaceEvent`), sent only to its stream's own connection.
@@ -284,11 +286,11 @@ public enum SurfaceEvent {
     }
 
     public enum DialogKind: String, Sendable {
-        case alert, confirm, prompt, login, select
+        case alert, confirm, prompt, login, select, file
     }
 
     public enum NoticeKind: String, Sendable {
-        case closed, download, refused
+        case closed, dialogClosed, download, refused
     }
 
     public static func size(_ size: CGSize) -> JSONValue {
@@ -296,27 +298,53 @@ public enum SurfaceEvent {
     }
 
     public static func dialog(stream: String, dialog: String, kind: DialogKind, origin: String, message: String? = nil, text: String? = nil,
-                              choices: [String]? = nil, selected: Int? = nil) -> JSONValue {
+                              choices: [String]? = nil, selected: Int? = nil, multiple: Bool? = nil, accept: [String]? = nil) -> JSONValue {
         var data: [String: JSONValue] = ["stream": .string(stream), "dialog": .string(dialog), "kind": .string(kind.rawValue), "origin": .string(origin)]
         if let message { data["message"] = .string(message) }
         if let text { data["text"] = .string(text) }
         if let choices { data["choices"] = .array(choices.map(JSONValue.string)) }
         if let selected { data["selected"] = .number(Double(selected)) }
+        if let multiple { data["multiple"] = .bool(multiple) }
+        if let accept { data["accept"] = .array(accept.map(JSONValue.string)) }
         return .object(data)
     }
 
-    public static func notice(stream: String, kind: NoticeKind, reason: String? = nil, name: String? = nil, state: String? = nil) -> JSONValue {
+    public static func notice(stream: String, kind: NoticeKind, reason: String? = nil, name: String? = nil, state: String? = nil,
+                              dialog: String? = nil) -> JSONValue {
         var data: [String: JSONValue] = ["stream": .string(stream), "kind": .string(kind.rawValue)]
         if let reason { data["reason"] = .string(reason) }
         if let name { data["name"] = .string(name) }
         if let state { data["state"] = .string(state) }
+        if let dialog { data["dialog"] = .string(dialog) }
         return .object(data)
     }
+}
 
-    /// The pushed line: `{event, board, data}`.
-    public static func envelope(_ name: String, board: BoardID, _ data: JSONValue) -> JSONValue {
-        .object(["event": .string(name), "board": .string(board), "data": data])
+/// One private surface event (`SurfaceEvent`) as the line that carries it,
+/// `{"event":…,"board":…,"data":…}`, encoded once for a direct viewer's socket and for the easld
+/// link a relayed stream was opened on alike. `event` comes first: easld takes a client's line
+/// that starts `{"event":` as an event of a stream that client serves, never as a request.
+public struct EventLine: Sendable {
+    /// The line and its newline.
+    public let data: Data
+
+    public init(_ event: String, board: BoardID, _ payload: JSONValue) throws {
+        let encoder = JSONEncoder()
+        let name = try encoder.encode(event), id = try encoder.encode(board), body = try encoder.encode(payload)
+        let head = Array(#"{"event":"#.utf8), boardKey = Array(#","board":"#.utf8), dataKey = Array(#","data":"#.utf8)
+        var line = Data(capacity: head.count + name.count + boardKey.count + id.count + dataKey.count + body.count + 2)
+        line.append(contentsOf: head)
+        line.append(name)
+        line.append(contentsOf: boardKey)
+        line.append(id)
+        line.append(contentsOf: dataKey)
+        line.append(body)
+        line.append(contentsOf: [UInt8(ascii: "}"), 0x0A])
+        data = line
     }
+
+    /// The line without its newline, sharing its bytes.
+    public var line: Data { data.dropLast() }
 }
 
 /// A closed JSON object's fields, read with the schema's types.

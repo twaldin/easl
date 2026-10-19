@@ -9,6 +9,7 @@ enum BrowserScripts {
     static let messageName = "canvasBrowser"
     /// Message handler (in `world`) for a select menu a streamed page relays (`BrowserSurface`).
     static let selectMessageName = "canvasSelect"
+    static let fileMessageName = "canvasFile"
 
     /// Prefix for calls into the helper: installs it first on documents that loaded before the
     /// user script could run (the initial about:blank, pages restored from the back cache).
@@ -466,12 +467,12 @@ enum BrowserScripts {
       // A select's menu would open on this Mac, where nobody sees it and its tracking holds the
       // app's event queue: while streamed, the choices go to the viewer, and the choice it makes
       // reaches the page as untrusted input and change events.
-      let selectRelay = false, relayed = null, relayToken = 0;
+      let surfaceRelay = false, relayed = null, relayToken = 0;
       const relayable = (el) => el instanceof HTMLSelectElement && !el.multiple && el.size <= 1 && !el.disabled;
       const menuKeys = new Set([' ', 'ArrowUp', 'ArrowDown']);
       function relaySelect(event) {
         const el = event.target;
-        if (!selectRelay || !relayable(el)) return;
+        if (!surfaceRelay || !relayable(el)) return;
         if (event.type === 'mousedown' ? event.button !== 0 : !menuKeys.has(event.key)) return;
         event.preventDefault();
         el.focus({ preventScroll: true });
@@ -482,9 +483,9 @@ enum BrowserScripts {
       }
       addEventListener('mousedown', relaySelect, true);
       addEventListener('keydown', relaySelect, true);
-      function setSelectRelay(on) {
-        selectRelay = on;
-        if (!on) relayed = null;
+      function setSurfaceRelay(on) {
+        surfaceRelay = on;
+        if (!on) { relayed = null; fileChoice = null; }
         return {};
       }
       function chooseSelect(token, index) {
@@ -495,12 +496,50 @@ enum BrowserScripts {
         return true;
       }
 
+      const fileDocument = Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-');
+      let fileSequence = 0, fileChoice = null;
+      addEventListener('click', (event) => {
+        const input = event.composedPath()[0];
+        if (!surfaceRelay || !(input instanceof HTMLInputElement) || input.type !== 'file' || input.disabled) return;
+        if (!navigator.userActivation.isActive || input.webkitdirectory || input.hasAttribute('directory')) return;
+        event.preventDefault();
+        const token = `${fileDocument}-${++fileSequence}`;
+        fileChoice = { token, element: new WeakRef(input), multiple: input.multiple };
+        try {
+          window.webkit.messageHandlers.canvasFile.postMessage({
+            token, multiple: input.multiple, accept: input.accept.split(',').map(s => s.trim()).filter(Boolean)
+          });
+        } catch { fileChoice = null; }
+      }, true);
+      function setFiles(token, files) {
+        if (fileChoice?.token !== token) return false;
+        const choice = fileChoice;
+        fileChoice = null;
+        const input = choice.element.deref();
+        if (!surfaceRelay || !input || !input.isConnected || input.type !== 'file' || input.disabled || input.ownerDocument !== document ||
+            input.webkitdirectory || input.hasAttribute('directory') || input.multiple !== choice.multiple) return false;
+        if (files === null) { input.dispatchEvent(new Event('cancel', { bubbles: true })); return true; }
+        if (!files.length || files.length > 32 || (!input.multiple && files.length !== 1)) return false;
+        const transfer = new DataTransfer();
+        for (const file of files) {
+          const bytes = Uint8Array.from(atob(file.data), c => c.charCodeAt(0));
+          const options = { type: file.type };
+          if (file.modified !== undefined) options.lastModified = file.modified;
+          transfer.items.add(new File([bytes], file.name, options));
+        }
+        input.files = transfer.files;
+        fire(input, 'input');
+        fire(input, 'change');
+        return true;
+      }
+
       // Load milestones wake automation waits whether or not the tile is visible.
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => post('ready'), { once: true });
       else post('ready');
       if (document.readyState !== 'complete') addEventListener('load', () => post('load'), { once: true });
+      addEventListener('pageshow', (event) => { if (event.persisted) post('ready'); });
 
-      window.__canvasCmux = { snapshot, act, press, waitFor, setActivity, selectedText, setSelectRelay, chooseSelect,
+      window.__canvasCmux = { snapshot, act, press, waitFor, setActivity, selectedText, setSurfaceRelay, chooseSelect, setFiles,
         scroll(dx, dy) { scrollBy(dx, dy); return { scroll_x: scrollX, scroll_y: scrollY }; } };
     })();
     """#

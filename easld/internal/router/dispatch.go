@@ -20,8 +20,6 @@ func (r *Router) dispatch(method string, p map[string]any, from Conn) (any, erro
 	switch method {
 	case "system.ping":
 		return map[string]any{"version": float64(api.SchemaVersion), "app": "easl"}, nil
-	case "surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop":
-		return nil, fail(api.CodeUnsupported, "browser surface streaming requires a Mac app host; easld does not relay it")
 	case "app.metrics":
 		if boolParam(p, "watch") {
 			metrics.Shared.Watching()

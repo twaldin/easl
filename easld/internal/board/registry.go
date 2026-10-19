@@ -270,6 +270,21 @@ func (r *Registry) Subscribe(sink Sink, board string, events []string) {
 	metrics.Shared.Gauge("events.subscribers", float64(len(r.subscribers)))
 }
 
+// Hears is those of events sink subscribed to on board itself (an every-board subscription
+// doesn't count), in events' order: what of a browser stream's private events may reach it.
+func (r *Registry) Hears(sink Sink, board string, events []string) []string {
+	var out []string
+	for _, e := range events {
+		for _, s := range r.subscribers {
+			if s.sink == sink && s.board == board && (s.events == nil || s.events[e]) {
+				out = append(out, e)
+				break
+			}
+		}
+	}
+	return out
+}
+
 func (r *Registry) broadcast(name string, data any, board string) {
 	kept := r.subscribers[:0]
 	for _, s := range r.subscribers {

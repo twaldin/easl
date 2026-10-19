@@ -6,6 +6,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,6 +61,14 @@ type Handler func(req any, c *Conn) any
 // the connection's own requests (which may be waiting for it).
 type Answers func(c *Conn, line map[string]any) bool
 
+// PushPrefix starts every line a client pushes: an event of a browser stream it draws, which
+// it writes `event` first. Such a line is never a request.
+var PushPrefix = []byte(`{"event":`)
+
+// Pushes takes a line that starts with PushPrefix on the connection's reader, before it is
+// decoded or queued, so a frame waits on neither. The line is valid only during the call.
+type Pushes func(c *Conn, line []byte)
+
 // malformedLine is the reply to a line that isn't JSON.
 var malformedLine = map[string]any{
 	"ok":    false,
@@ -93,6 +102,7 @@ type Conn struct {
 
 	inbox   inbox
 	answers Answers
+	pushes  Pushes
 	text    TextLine
 
 	// unanswered are the requests handed to the handler whose reply hasn't been sent yet, in
@@ -143,6 +153,15 @@ func (c *Conn) Send(v any) bool {
 
 func (c *Conn) sendRaw(line string) bool {
 	return c.write(append([]byte(line), '\n'))
+}
+
+// SendLine queues line, one JSON line already encoded and without its newline, as it is: Send's
+// order and output budget apply. line is copied, so the caller may reuse it.
+func (c *Conn) SendLine(line []byte) bool {
+	out := make([]byte, len(line)+1)
+	copy(out, line)
+	out[len(line)] = '\n'
+	return c.write(out)
 }
 
 // expect starts a request's accounting: `api.<method>` counts it when its reply is sent, with
@@ -405,6 +424,10 @@ func (c *Conn) readLoop() {
 		if len(line) == 0 {
 			continue
 		}
+		if c.pushes != nil && bytes.HasPrefix(line, PushPrefix) {
+			c.pushes(c, line)
+			continue
+		}
 		var value any
 		if json.Unmarshal(line, &value) != nil {
 			if c.text != nil {
@@ -463,6 +486,7 @@ type Server struct {
 	listener *net.UnixListener
 	handler  Handler
 	answers  Answers
+	pushes   Pushes
 	text     TextLine
 	limits   limits
 	// bound is the socket file Listen created: instances sharing a directory bind the same
@@ -486,19 +510,20 @@ func sunPathMax() int {
 }
 
 // Listen binds path (mode 0600, creating its directory 0700) and serves h on every connection
-// until Close, with answers (nil: none) taking the answers to requests the server sends. It
-// replaces only a stale socket (one nothing listens on, left by a crashed server): a path that
-// isn't a socket, or a socket another server answers on, is refused.
-func Listen(path string, h Handler, answers Answers) (*Server, error) {
-	return listen(path, h, answers, nil, defaultLimits)
+// until Close, with answers taking the answers to requests the server sends and pushes the
+// lines a client pushes (nil: none). It replaces only a stale socket (one nothing listens on,
+// left by a crashed server): a path that isn't a socket, or a socket another server answers on,
+// is refused.
+func Listen(path string, h Handler, answers Answers, pushes Pushes) (*Server, error) {
+	return listen(path, h, answers, pushes, nil, defaultLimits)
 }
 
 // ListenText is Listen, and non-JSON lines go to text instead of a malformed-JSON error.
 func ListenText(path string, h Handler, text TextLine) (*Server, error) {
-	return listen(path, h, nil, text, defaultLimits)
+	return listen(path, h, nil, nil, text, defaultLimits)
 }
 
-func listen(path string, h Handler, answers Answers, text TextLine, l limits) (*Server, error) {
+func listen(path string, h Handler, answers Answers, pushes Pushes, text TextLine, l limits) (*Server, error) {
 	if len(path) >= sunPathMax() {
 		return nil, &net.OpError{Op: "listen", Net: "unix", Addr: &net.UnixAddr{Name: path, Net: "unix"}, Err: syscall.ENAMETOOLONG}
 	}
@@ -513,7 +538,7 @@ func listen(path string, h Handler, answers Answers, text TextLine, l limits) (*
 		return nil, err
 	}
 	listener.SetUnlinkOnClose(false)
-	s := &Server{path: path, listener: listener, handler: h, answers: answers, text: text, limits: l, conns: map[*Conn]struct{}{}}
+	s := &Server{path: path, listener: listener, handler: h, answers: answers, pushes: pushes, text: text, limits: l, conns: map[*Conn]struct{}{}}
 	if info, err := os.Lstat(path); err == nil {
 		s.bound = info
 	}
@@ -580,6 +605,7 @@ func (s *Server) acceptLoop() {
 		}
 		c := newConn(nc, s.limits)
 		c.answers = s.answers
+		c.pushes = s.pushes
 		c.text = s.text
 		s.mu.Lock()
 		if s.closed {

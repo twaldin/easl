@@ -588,6 +588,13 @@ func expandReplies(replies map[string][]Reply, vars map[string]any) (map[string]
 				}
 				reply.Error, _ = e.(map[string]any)
 			}
+			for index, event := range reply.Events {
+				expanded, err := expand(event, vars)
+				if err != nil {
+					return nil, err
+				}
+				reply.Events[index] = expanded.(map[string]any)
+			}
 			out[method] = append(out[method], reply)
 		}
 	}

@@ -68,6 +68,9 @@ func (r *Router) attach(p map[string]any, c Conn) (any, error) {
 		return nil, err
 	}
 	r.announceClients(boards)
+	for _, id := range boards {
+		r.surfaces.Recheck(id)
+	}
 	r.fillMissingOwners(a.Boards)
 	return map[string]any{"client": client.ID, "version": float64(api.SchemaVersion), "schema": api.SchemaHash}, nil
 }

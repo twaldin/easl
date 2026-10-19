@@ -13,6 +13,7 @@ public enum TileTitleBar {
         case close
         /// The content zoom control (− / % / +).
         case zoomControl
+        case drawingMachine
     }
 
     public static let height = CGFloat(RenderMath.tileTitleHeight)
@@ -28,12 +29,19 @@ public enum TileTitleBar {
         controlWidth > 0 ? CGRect(x: width - 30 - controlWidth, y: 4, width: controlWidth, height: 18) : nil
     }
 
+    public static func machineControlFrame(width: CGFloat, zoomControlWidth: CGFloat, controlWidth: CGFloat) -> CGRect? {
+        guard controlWidth > 0 else { return nil }
+        let trailing = zoomControlWidth > 0 ? zoomControlWidth + 4 : 0
+        return CGRect(x: width - 30 - trailing - controlWidth, y: 4, width: controlWidth, height: 18)
+    }
+
     /// What a press at `point` (the bar's own points, top-left origin) is on a bar `width` wide
     /// whose zoom control is `zoomControlWidth` wide (0: hidden); nil below the bar.
-    public static func part(at point: CGPoint, width: CGFloat, zoomControlWidth: CGFloat) -> Part? {
+    public static func part(at point: CGPoint, width: CGFloat, zoomControlWidth: CGFloat, machineControlWidth: CGFloat = 0) -> Part? {
         guard point.y >= 0, point.y < height, point.x >= 0, point.x < width else { return nil }
         if closeFrame(width: width).contains(point) { return .close }
         if zoomControlFrame(width: width, controlWidth: zoomControlWidth)?.contains(point) == true { return .zoomControl }
+        if machineControlFrame(width: width, zoomControlWidth: zoomControlWidth, controlWidth: machineControlWidth)?.contains(point) == true { return .drawingMachine }
         return .handle
     }
 }

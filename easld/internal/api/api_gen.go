@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "608eca66886347ba"
+const SchemaHash = "a111af1ab5b95922"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -51,7 +51,7 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"stream", "events"},
 	},
 	"surface.answer": {
-		Accepted: []string{"stream", "dialog", "accept", "text", "user", "password", "choice"},
+		Accepted: []string{"stream", "dialog", "accept", "text", "user", "password", "choice", "files"},
 		Required: []string{"stream", "dialog", "accept"},
 	},
 	"surface.stop": {
@@ -355,24 +355,40 @@ type SurfaceFrame struct {
 	Loading bool   `json:"loading"`
 }
 
+// SurfaceFile: A viewer-picked file held only in memory. All files in one answer total at most 8 MiB decoded, including empty files. No viewer path or drawing-machine staging file is sent.
+type SurfaceFile struct {
+	// 1 to 1024 UTF-8 bytes.
+	Name string `json:"name"`
+	// At most 256 UTF-8 bytes.
+	Type string `json:"type"`
+	// Last modification time in milliseconds since the Unix epoch.
+	Modified *float64 `json:"modified,omitempty"`
+	Data     string   `json:"data"`
+}
+
 // SurfaceDialog: surface.dialog data, private to the subscribed owning connection. Completed once by surface.answer, safely dismissed when the connection or stream closes.
 type SurfaceDialog struct {
 	Stream SurfaceStream `json:"stream"`
 	Dialog string        `json:"dialog"`
-	// One of "alert", "confirm", "prompt", "login", "select".
+	// One of "alert", "confirm", "prompt", "login", "select", "file".
 	Kind     string   `json:"kind"`
 	Origin   string   `json:"origin"`
 	Message  *string  `json:"message,omitempty"`
 	Text     *string  `json:"text,omitempty"`
 	Choices  []string `json:"choices,omitempty"`
 	Selected *int     `json:"selected,omitempty"`
+	Multiple *bool    `json:"multiple,omitempty"`
+	// File picker type hints from the initiating input.
+	Accept []string `json:"accept,omitempty"`
 }
 
-// SurfaceNotice: surface.notice data, private to the subscribed owning connection. Downloads remain host files. File uploads are refused, not silently accepted.
+// SurfaceNotice: surface.notice data, private to the subscribed owning connection. Downloads remain drawing-machine files. Folder uploads and file inputs in frames remain refused.
 type SurfaceNotice struct {
 	Stream SurfaceStream `json:"stream"`
-	// One of "closed", "download", "refused".
-	Kind   string  `json:"kind"`
+	// One of "closed", "dialogClosed", "download", "refused".
+	Kind string `json:"kind"`
+	// Required for dialogClosed. The invalidated dialog id on this stream. The viewer dismisses its picker without sending an answer or file bytes.
+	Dialog *string `json:"dialog,omitempty"`
 	Reason *string `json:"reason,omitempty"`
 	Name   *string `json:"name,omitempty"`
 	State  *string `json:"state,omitempty"`

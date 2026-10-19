@@ -29,6 +29,10 @@ final class CodeRowsView: NSView {
     /// base, not a pinned commit).
     var canEdit = true
 
+    private var inspectingClosedBoard: Bool {
+        (window?.windowController as? CanvasWindowController)?.hostBoardClosed == true
+    }
+
     let cache = CodeLineCache()
     private var anchor: CodeRows.Position?
 
@@ -136,7 +140,7 @@ final class CodeRowsView: NSView {
     override func mouseDown(with event: NSEvent) {
         onInteract?()
         let point = convert(event.locationInWindow, from: nil)
-        if isInGutter(point), let sign = painter?.sign(atY: point.y) {
+        if !inspectingClosedBoard, isInGutter(point), let sign = painter?.sign(atY: point.y) {
             onSign?(sign)
             return
         }
@@ -217,7 +221,7 @@ final class CodeRowsView: NSView {
 
     @objc func copy(_ sender: Any?) {
         guard let text = selectedText else { return }
-        NSPasteboard.general.clearContents()
+        NSPasteboard.general.clear(privately: inspectingClosedBoard)
         NSPasteboard.general.setString(text, forType: .string)
     }
 
@@ -229,8 +233,8 @@ final class CodeRowsView: NSView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
-        if let mention = CanvasView.mentionItem(in: self, for: event) { menu.addItem(mention) }
-        if canEdit {
+        if !inspectingClosedBoard, let mention = CanvasView.mentionItem(in: self, for: event) { menu.addItem(mention) }
+        if canEdit, !inspectingClosedBoard {
             let edit = NSMenuItem(title: "Edit Here", action: #selector(editHere(_:)), keyEquivalent: "")
             edit.target = self
             edit.representedObject = NSValue(point: convert(event.locationInWindow, from: nil))

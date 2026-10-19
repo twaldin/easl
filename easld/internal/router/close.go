@@ -197,6 +197,7 @@ func (r *Router) dropOwnedSockets(terminals []model.Object) {
 
 func (r *Router) closedBoard(closing *boardClose) {
 	r.announceClients(r.clients.RemoveBoard(closing.board.ID()))
+	r.surfaces.Recheck(closing.board.ID())
 	terminals := map[string]bool{}
 	for _, terminal := range closing.terminals {
 		terminals[terminal.ID] = true

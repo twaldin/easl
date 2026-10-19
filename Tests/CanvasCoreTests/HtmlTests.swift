@@ -238,6 +238,36 @@ struct HtmlWorkQueueTests {
         let after = Task { try await queue.perform { 42 } }
         #expect(try await after.value == 42)
     }
+
+    @Test func cancelAllRejectsHandedOffWorkBeforeExecutionAndReleasesItsSlot() async throws {
+        let queue = HtmlWorkQueue(maxRunning: 1, maxQueued: 1)
+        let gate = Gate()
+        var executed: [String] = []
+        let first = Task {
+            _ = try await queue.perform { try await gate.job() }
+            #expect(queue.running == 1 && queue.queued == 0)
+            queue.cancelAll()
+            return try await queue.perform {
+                executed.append("after cancellation")
+                return 42
+            }
+        }
+        while gate.started == 0 { await Task.yield() }
+        let handedOff = Task {
+            try await queue.perform {
+                executed.append("stale work")
+                return -1
+            }
+        }
+        while queue.queued == 0 { await Task.yield() }
+        #expect(queue.running == 1 && queue.queued == 1)
+
+        gate.releaseAll()
+        await #expect(throws: HtmlError.cancelled) { try await handedOff.value }
+        #expect(try await first.value == 42)
+        #expect(executed == ["after cancellation"])
+        #expect(queue.running == 0 && queue.queued == 0)
+    }
 }
 
 struct SourceExcerptTests {
