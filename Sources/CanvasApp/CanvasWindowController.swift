@@ -57,6 +57,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     static func makeWindow(isRemote: Bool) -> CanvasWindow {
         let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         window.isExcludedFromWindowsMenu = true
         if isRemote {
             // Nothing of another Mac's board is kept here, even before its controller is built.

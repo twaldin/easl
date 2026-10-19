@@ -578,7 +578,7 @@ final class DiagramTests {
         ])
         defer { Task { await failing.stopAll() } }
         let previous = try await build(Self.callers)
-        let (board, _, server, client) = try api(failing)
+        let (board, _, server, client) = try await api(failing)
         defer { server.stop() }
         let diagram = board.create(type: .diagram, props: .object([
             "path": "Sources/Lib/Spool.swift", "symbol": "Spool.read", "direction": "incoming", "depth": 1, "graph": previous.json
