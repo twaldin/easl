@@ -196,16 +196,18 @@ func New(id, root string) *Board {
 // TileTitleHeight is a tile's title bar (RenderMath.tileTitleHeight).
 const TileTitleHeight = 26.0
 
-// FromSnapshot is a board as saved (Board.init(snapshot:)): `props.scale` migrated, legacy
-// group `name` → `title`, format-1 tile frames grown by the title bar, terminals saved working or
-// blocked marked `restored`, group frames refit, and what refers to missing objects dropped.
+// FromSnapshot is a board as saved (Board.init(snapshot:)): stored frames and stacking migrated,
+// `props.scale` migrated, legacy group `name` → `title`, terminals saved working or blocked
+// marked `restored`, group frames refit, and what refers to missing objects dropped.
 func FromSnapshot(s *store.Snapshot) *Board {
+	if s.Format == nil || *s.Format < store.Format {
+		migrated := *s
+		migrated.Objects = slices.Clone(s.Objects)
+		migrated.MigrateFormat()
+		s = &migrated
+	}
 	b := New(s.ID, s.Root)
 	b.revision = s.Revision
-	format := 1
-	if s.Format != nil {
-		format = *s.Format
-	}
 	for _, o := range s.Objects {
 		o = MigratedZoom(o.Clone())
 		if o.Type == model.Group {
@@ -215,9 +217,6 @@ func FromSnapshot(s *store.Snapshot) *Board {
 					o.Props["title"] = name
 				}
 			}
-		}
-		if format < 2 && o.Type.IsTile() {
-			o.Frame.H += TileTitleHeight
 		}
 		MarkRestored(o)
 		b.objects[o.ID] = o

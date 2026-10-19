@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/route"
 	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
-// Format is the on-disk format Board.snapshot writes. 2: a tile's frame is its whole drawn box,
-// title bar included (format 1 stored the body below the title bar).
-const Format = 2
+// Format is the on-disk format Board.snapshot writes. 2 includes tile title bars in frames.
+// 3 stores tiles and drawings in one z order instead of separate visual tiers.
+const Format = 3
 
 // Snapshot is the serializable board state BoardStore persists (BoardSnapshot in Board.swift).
 // Optional parts are nil when absent, so older board files load and are written back as they
@@ -44,6 +45,51 @@ type Snapshot struct {
 	// Unknown holds the file's top-level keys easld doesn't know (written by a newer app), so a
 	// board easld rewrites keeps them.
 	Unknown map[string]any
+}
+
+// MigrateFormat upgrades stored geometry and stacking without recording object edits.
+// It only changes value fields, leaving object props and other shared state untouched.
+func (s *Snapshot) MigrateFormat() {
+	previous := 1
+	if s.Format != nil {
+		previous = *s.Format
+	}
+	if previous >= Format {
+		return
+	}
+	if previous < 2 {
+		for i := range s.Objects {
+			if s.Objects[i].Type.IsTile() {
+				s.Objects[i].Frame.H += route.TileTitleHeight
+			}
+		}
+	}
+	if previous < 3 {
+		tier := func(t model.ObjectType) int {
+			if t == model.Group {
+				return 0
+			}
+			if t.IsTile() {
+				return 1
+			}
+			return 2
+		}
+		sort.Slice(s.Objects, func(i, j int) bool {
+			a, b := s.Objects[i], s.Objects[j]
+			if x, y := tier(a.Type), tier(b.Type); x != y {
+				return x < y
+			}
+			if a.Z != b.Z {
+				return a.Z < b.Z
+			}
+			return a.ID < b.ID
+		})
+		for i := range s.Objects {
+			s.Objects[i].Z = float64(i + 1)
+		}
+	}
+	format := Format
+	s.Format = &format
 }
 
 // snapshotKeys are the top-level keys of BoardSnapshot.

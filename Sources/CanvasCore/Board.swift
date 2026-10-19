@@ -84,6 +84,29 @@ public struct BoardSnapshot: Codable, Sendable {
     /// Terminals whose relaunched agent (agent.restart) hasn't reported yet
     /// (`Board.relaunchedAgents`); optional so older board files still load.
     public var relaunchedAgents: [ObjectID]?
+
+    mutating func migrateFormat() {
+        let previous = format ?? 1
+        guard previous < Board.format else { return }
+        if previous < 2 {
+            for index in objects.indices where RenderMath.isTile(objects[index].type) {
+                objects[index].frame.h += RenderMath.tileTitleHeight
+            }
+        }
+        if previous < 3 {
+            func tier(_ type: ObjectType) -> Int {
+                if type == .group { return 0 }
+                return RenderMath.isTile(type) ? 1 : 2
+            }
+            objects.sort {
+                let a = tier($0.type), b = tier($1.type)
+                if a != b { return a < b }
+                return $0.z == $1.z ? $0.id < $1.id : $0.z < $1.z
+            }
+            for index in objects.indices { objects[index].z = Double(index + 1) }
+        }
+        format = Board.format
+    }
 }
 
 /// One canvas: all objects for one root directory, the selection tray, and agent lifecycle.
@@ -312,16 +335,17 @@ public final class Board {
         self.host = host
     }
 
-    /// Board format written by `snapshot`. 2: a tile's frame is its whole drawn box, title bar
-    /// included (format 1 stored the body below the title bar).
-    nonisolated public static let format = 2
+    /// Board format written by `snapshot`. 2 includes tile title bars in frames.
+    /// 3 stores tiles and drawings in one z order instead of separate visual tiers.
+    nonisolated public static let format = 3
 
     public init(snapshot: BoardSnapshot) {
+        var snapshot = snapshot
+        snapshot.migrateFormat()
         id = snapshot.id
         root = URL(fileURLWithPath: snapshot.root)
         isRemote = false
         revision = snapshot.revision
-        let format = snapshot.format ?? 1
         // `props.scale` became a tile's content `zoom` (frame kept) and a text shape's `textSize`.
         for var object in snapshot.objects.map(ObjectZoom.migrated) {
             // Groups were labelled by `name` before they became titled regions.
@@ -329,8 +353,6 @@ public final class Board {
                 if props["title"] == nil { props["title"] = name }
                 object.props = .object(props)
             }
-            // Format 1 stored a tile's body; the title bar drew above it. Same box on screen.
-            if format < 2, RenderMath.isTile(object.type) { object.frame.h += RenderMath.tileTitleHeight }
             // A terminal saved `working` or `blocked` said so before easl last closed: until its
             // agent reports again (live, or a spooled report replayed), that is only what it was.
             if object.type == .terminal, var props = object.props.object, var lifecycle = props["lifecycle"]?.object,
@@ -368,7 +390,7 @@ public final class Board {
     }
 
     public var snapshot: BoardSnapshot {
-        BoardSnapshot(format: Self.format, id: id, root: root.path, revision: revision, objects: objects.values.sorted { $0.z < $1.z }, tray: tray,
+        BoardSnapshot(format: Self.format, id: id, root: root.path, revision: revision, objects: objects.values.sorted { $0.z == $1.z ? $0.id < $1.id : $0.z < $1.z }, tray: tray,
                       attention: attention.isEmpty ? nil : attention.values.sorted { $0.object < $1.object },
                       promptTarget: promptTarget == PromptTarget.State() ? nil : promptTarget,
                       finalAnswers: finalAnswers.isEmpty ? nil : finalAnswers, turnErrors: turnErrors.isEmpty ? nil : turnErrors,

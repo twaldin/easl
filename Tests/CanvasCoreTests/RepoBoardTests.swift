@@ -59,6 +59,55 @@ struct RepoBoardTests {
         return try #require(reply["result"])
     }
 
+    @Test func rawRepositoryMergeInputsMigrateBeforeBeingSavedAsFormat3() async throws {
+        let (repo, _) = try await fixture()
+        defer {
+            try? FileManager.default.removeItem(at: repo.root)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let common = try #require(GitWorktree.containing(repo.root.path)).commonDir
+        let at = Date(timeIntervalSince1970: 1_760_000_000)
+        func objects(_ prefix: String) -> [CanvasObject] {
+            [
+                CanvasObject(id: "\(prefix)_shape", type: .shape, frame: Frame(x: 0, y: 0, w: 200, h: 100), z: -10, rev: 7,
+                             createdBy: .user, createdAt: at, props: .object(["kind": "rect"])),
+                CanvasObject(id: "\(prefix)_note", type: .note, frame: Frame(x: 0, y: 0, w: 200, h: 100), z: 100, rev: 7,
+                             createdBy: .user, createdAt: at, props: .object(["markdown": "tile"])),
+            ]
+        }
+        for format in [nil, 1, 2, 3] as [Int?] {
+            let store = BoardStore(directory: boards.appendingPathComponent("format-\(format ?? 0)"))
+            let existing = BoardSnapshot(format: format, id: BoardStore.repoID(commonDir: common), root: repo.root.path, revision: 19,
+                                         objects: objects("obj_existing"), repo: RepoRecord(commonDir: common))
+            let source = BoardSnapshot(format: format, id: BoardStore.pathID(repo.url("src")), root: repo.url("src").path, revision: 19,
+                                       objects: objects("obj_source"))
+            for snapshot in [existing, source] {
+                try BoardStore.encoder.encode(snapshot).write(to: store.url(for: snapshot.id))
+            }
+            let report = RepoBoardMigration.run(directory: store.directory)
+            #expect(report.repos.first?.legacy.map(\.status) == ["merged"])
+            let merged = try BoardStore.decoder.decode(BoardSnapshot.self, from: Data(contentsOf: store.url(for: existing.id)))
+            let visible = merged.objects.filter { $0.type != .group }
+            #expect(merged.format == 3 && merged.revision == 20)
+            if format == 3 {
+                #expect(visible.map(\.id) == ["obj_existing_shape", "obj_existing_note", "obj_source_shape", "obj_source_note"])
+                #expect(visible.map(\.z) == [-10, 100, 101, 211])
+            } else {
+                #expect(visible.map(\.id) == ["obj_existing_note", "obj_existing_shape", "obj_source_note", "obj_source_shape"])
+                #expect(visible.map(\.z) == [1, 2, 3, 4])
+            }
+            let reopened = Board(snapshot: merged)
+            for object in visible {
+                #expect(object.rev == 7 && object.createdAt == at && object.updatedAt == at)
+                #expect(object.frame.h == (object.type == .note && (format ?? 1) < 2 ? 126 : 100))
+                #expect(try reopened.object(object.id) == object, "opening a merged format-3 file must not grow titles or migrate stacking again")
+            }
+            let backedUp = store.directory.appendingPathComponent(RepoBoardMigration.backupFolder).appendingPathComponent("\(source.id).json")
+            #expect(try Data(contentsOf: backedUp) == BoardStore.encoder.encode(source))
+            #expect(!reopened.history.canUndo)
+        }
+    }
+
     @Test func twoBranchBoardsMergeIntoOneRepositoryBoardWithTheirArrowsAndARegionForTheBranch() async throws {
         let (repo, worktree) = try await fixture()
         // The main checkout's board was opened at a subdirectory: its paths are relative to it.

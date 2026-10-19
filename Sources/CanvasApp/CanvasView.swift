@@ -102,8 +102,6 @@ final class CanvasDocumentView: NSView {
     override func selectAll(_ sender: Any?) { canvas?.selectAll() }
 }
 
-/// The pan/zoom scene for one board: tiles are real NSViews positioned by object frames; groups
-/// are regions behind them; drawings (installed by the drawing layer) and the overlay sit above.
 /// Zoom is capped at 100%; below `liveThreshold` tiles become cards and release resources.
 /// The viewport only moves on user input, never in response to agents.
 @MainActor
@@ -198,8 +196,6 @@ final class CanvasView: NSScrollView {
 
     // MARK: Drawn objects (installed by the drawing layer)
 
-    /// The shape or arrow drawn at a document point. Only strokes, text, and fills hit, so an
-    /// empty shape interior never blocks the tiles beneath; drawn objects sit above tiles.
     var shapeHitTest: ((NSPoint) -> ObjectID?)?
     /// Document-space outline of a drawn object at its committed position.
     var shapeOutline: ((ObjectID) -> NSRect?)?
@@ -376,7 +372,7 @@ final class CanvasView: NSScrollView {
             let carried = rekeyed.removeValue(forKey: object.id)
             let provisional = carried?.browser?.objectID
             add(object, reusing: carried?.browser)
-            restack()
+            if object.type != .shape && object.type != .arrow { restack() }
             scheduleGeometry()
             if let carried {
                 if carried.selected {
@@ -413,7 +409,7 @@ final class CanvasView: NSScrollView {
             } else {
                 // Unarchived (or Archive undone): back in its place in the stack, not on top.
                 add(object)
-                restack()
+                if object.type != .shape && object.type != .arrow { restack() }
             }
             scheduleGeometry()
         case .objectDeleted(let id):
@@ -631,9 +627,7 @@ final class CanvasView: NSScrollView {
         view.author = authorName(of: object)
     }
 
-    /// Orders document subviews: group regions, tiles by `z`, the drawing layer, then the
-    /// overlay. Reorders in place so tiles never leave the window.
-    private func restack() {
+    func restack() {
         document.sortSubviews({ a, b, _ in
             MainActor.assumeIsolated {
                 let lhs = CanvasView.stackRank(a), rhs = CanvasView.stackRank(b)
@@ -642,16 +636,16 @@ final class CanvasView: NSScrollView {
         }, context: nil)
     }
 
-    private static func stackRank(_ view: NSView) -> (Int, Double) {
+    private static func stackRank(_ view: NSView) -> (Int, Double, String) {
         switch view {
-        case is GroupView: (0, 0)
-        case let tile as TileFrameView: (1, tile.z)
-        case is SceneOverlay: (4, 0)
-        default: (2, 0)
+        case let group as GroupView: (0, 0, group.objectID)
+        case let tile as TileFrameView: (1, tile.z, tile.objectID)
+        case let drawing as DrawnItemView: (1, drawing.z, drawing.objectID)
+        case is SceneOverlay: (3, 0, "")
+        default: (2, 0, "")
         }
     }
 
-    /// The drawing layer sits above tiles and below the overlay.
     func installShapeLayer(_ view: NSView) {
         shapeLayer = view
         document.addSubview(view, positioned: .below, relativeTo: overlay)
@@ -824,9 +818,6 @@ final class CanvasView: NSScrollView {
         remote.mirror.userInput()
     }
 
-    /// Clicks that land on tiles or drawings, seen before any view: tile bodies select their tile
-    /// and still receive the click (a terminal keeps focusing); drawn objects are selected and
-    /// dragged here because they have no view of their own.
     private func handleMouse(_ event: NSEvent) -> NSEvent? {
         guard !isHidden, remote?.mirror.availability != .closed, event.window === window, !HyperMonitor.isHyper(event.modifierFlags) else { return event }
         switch event.type {

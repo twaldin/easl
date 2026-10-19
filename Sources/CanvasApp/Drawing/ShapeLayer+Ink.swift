@@ -8,21 +8,22 @@ import CanvasCore
 extension ShapeLayer {
     /// The ink for a drawing of the default color over `rect` (document coordinates);
     /// `excluded`: the tiles a render leaves out (`RenderExclusion`), which then aren't under it.
-    func defaultInk(over rect: NSRect, excluding excluded: RenderExclusion = RenderExclusion()) -> InkContrast.Ink {
+    func defaultInk(over rect: NSRect, below drawing: CanvasObject? = nil, excluding excluded: RenderExclusion = RenderExclusion()) -> InkContrast.Ink {
         let appearance = effectiveAppearance
         let canvasLuminance = Self.canvasLuminance(appearance)
         let tiles = canvas.tiles.values.filter { $0.frame.intersects(rect) }
-        let surfaces = tiles.compactMap { tile -> (z: Double, surface: InkContrast.Surface)? in
+        let surfaces = tiles.compactMap { tile -> (z: Double, id: ObjectID, surface: InkContrast.Surface)? in
             guard let object = canvas.board.objects[tile.objectID], !excluded.hides(object) else { return nil }
+            if let drawing, (object.z, object.id) >= (drawing.z, drawing.id) { return nil }
             let luminance = tile.content.surfaceLuminance ?? DrawingStyle.luminance(.textBackgroundColor, in: appearance) ?? canvasLuminance
-            return (tile.z, InkContrast.Surface(rect: tile.frame, luminance: luminance))
+            return (tile.z, tile.objectID, InkContrast.Surface(rect: tile.frame, luminance: luminance))
         }
-        return InkContrast.ink(for: rect, over: surfaces.sorted { $0.z < $1.z }.map(\.surface), canvas: canvasLuminance)
+        return InkContrast.ink(for: rect, over: surfaces.sorted { ($0.z, $0.id) < ($1.z, $1.id) }.map(\.surface), canvas: canvasLuminance)
     }
 
     /// The ink an item draws in: its default ink resolved, or nil for an explicit color.
     func ink(for item: DrawnItem, excluding excluded: RenderExclusion = RenderExclusion()) -> InkContrast.Ink? {
-        item.usesDefaultInk ? defaultInk(over: item.frame.isEmpty ? item.bounds : item.frame, excluding: excluded) : nil
+        item.usesDefaultInk ? defaultInk(over: item.frame.isEmpty ? item.bounds : item.frame, below: item.object, excluding: excluded) : nil
     }
 
     /// A color being drawn with right now (a gesture, the text editor) over `rect`.
@@ -37,7 +38,7 @@ extension ShapeLayer {
     /// Something under drawings changed how it looks (a page loaded, a tile moved): the
     /// default-ink drawings over `rect` redraw.
     func surfaceChanged(_ rect: NSRect) {
-        for item in items.values where item.usesDefaultInk && item.bounds.intersects(rect) { invalidate(item.bounds) }
+        for item in items.values where item.usesDefaultInk && item.bounds.intersects(rect) { invalidate(item) }
     }
 
     /// A tile appeared, moved, restacked, or went: what is under the drawings over it changed.
