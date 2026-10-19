@@ -4,7 +4,6 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
-- Tiles can expire on both hosts with `expires` or `expiresIn`; `board.stale` lists cleanup candidates without changing the board, and the CLI accepts `--expires 2h` and `board.stale --older-than 7d`.
 - Create a fresh board from File › Open Board… or the tab bar's + button using the picker's New Folder button while a local board is in front. Folder creation is unavailable on remote tabs. A fresh independent board requires a folder outside a Git repository; a folder inside one opens the repository's board. Existing folders still open normally.
 - Remote renders use native viewer tiles and the browser's drawing Mac; disconnected browser streams report failure instead of exporting a stale frame as fresh.
 - **HTML tiles load board data and scripts.** JSON, CSV, JavaScript, stylesheets, fonts, images and media use the board's host-file policy on local and remote boards. Loaded-file edits refresh the live page without reopening its tile; briefly parked pages resume without an unnecessary reload.
@@ -19,6 +18,7 @@ Each version's section is its GitHub release's notes.
 - Remote host file reads use one queued SSH channel, separate from terminals and language servers. Progressing transfers can exceed 20 seconds without failing as SSH status 255. Read-only transport failures get at most three attempts. Real file errors and Git mutations do not retry.
 - Remote HTML tiles show the reason when a host image cannot load instead of silently returning not found. These are viewer-side fixes and do not require an easld update.
 - **Install updates while your Mac is idle.** Enable easl › Install Updates Automatically, off by default, to download and verify newer releases and install after 10 minutes without input anywhere in your login session. Updates reopen your local and remote tabs without taking focus or changing Spaces. Agents can check with `easl app.update check` or install immediately with `easl app.update install`. Both paths keep the manual updater's signature, Team ID, and Gatekeeper checks. Atomic bundle replacement keeps a complete app at its installed path if interrupted. Failures report why when you next look at easl. Failed board recovery offers Retry or Discard without replacing your normal reopen list on later launches.
+- Tiles can expire on both hosts with `expires` or `expiresIn`; `board.stale` lists cleanup candidates without changing the board, and the CLI accepts `--expires 2h` and `board.stale --older-than 7d`.
 
 ### Fixed
 

@@ -1,7 +1,7 @@
 {
   "scenario": "object-cleanup",
   "description": "Object deadlines normalize durations, clear and renew through update/upsert, delete through host events on two connections, and board.stale reports leftovers without writing.",
-  "recordedOn": "easld scratch preliminary, replaced by Swift guest recording before merge",
+  "recordedOn": "Swift 6.4 guest app 4cfe90eecf777f7f79e82125f73749c550f01eec",
   "steps": [
     {
       "step": "board.open",
