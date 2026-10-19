@@ -959,8 +959,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let tabbing = selected.tabbingMode
                 selected.tabbingMode = .disallowed
                 defer { selected.tabbingMode = tabbing }
-                selected.orderBack(nil)
-                if saved.minimized { selected.miniaturize(nil) }
+                if saved.minimized {
+                    selected.miniaturize(nil)
+                } else {
+                    selected.orderBack(nil)
+                }
             }
         }
         guard !Task.isCancelled, !terminating else { return }

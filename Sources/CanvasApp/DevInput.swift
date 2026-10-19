@@ -148,7 +148,12 @@ enum DevInput {
         if fields["kind"] == "perf" {
             // A performance probe span over an idle stretch (DevPerf): what redraws and runs while
             // nobody touches the app, also with the window minimized or covered (no frames then).
-            let window = CanvasWindowController.frontmost?.window ?? NSApp.windows.first { $0.windowController is CanvasWindowController }
+            let window: NSWindow?
+            if let key = NSApp.keyWindow, key.windowController is CanvasWindowController {
+                window = key
+            } else {
+                window = NSApp.windows.first { $0.isVisible && $0.windowController is CanvasWindowController }
+            }
             return DevPerf.idle(ms: Double(fields["ms"] ?? "") ?? 5000, window: window)
         }
         if fields["kind"] == "stall" {
