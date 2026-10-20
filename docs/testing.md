@@ -422,7 +422,7 @@ Idle CPU is a ten-second CPU-time delta before the gestures, with all eight stre
 
 These are post-open quiet observations, not proof that every card on the board has settled. Gestures also use fixed two-second setup waits. Record remaining card activity in profiles, and retain slower or failed observations. Use at least five interleaved observations before attributing a timing difference; a single observation at another board size is diagnostic.
 
-`command()` subprocess calls have a 120-second limit, and native activation/OCR JSON helpers a 30-second limit. A timed-out JSON helper retains its partial stdout and stderr before the failed row enters cleanup.
+`command()` subprocess calls have a 120-second limit, and native activation/OCR JSON helpers a 30-second limit. A timed-out JSON helper retains its partial stdout and stderr before the failed row enters cleanup. Ownership-inspection `lsof` calls also have a 30-second limit; an inspection failure marks cleanup failed and preserves the scratch directory, stopping the matrix before another run.
 
 The pan uses 40 × 20 point steps, reverses every 60 scheduled steps, and must traverse more than one viewport width. The pinch uses 0.01 steps and reverses every 120 steps. Both use `--repeat 601 --interval 16.666667 --realtime`: missed timer ticks coalesce into the corresponding trajectory displacement instead of stretching 601 deliveries beyond ten seconds. `DevInput.delivery` confirms real-time mode and records delivered/coalesced counts. `DevInput.motion` records the observed pan and magnification range; a gesture without sufficient movement fails the runner.
 

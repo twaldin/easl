@@ -335,7 +335,7 @@ class Run:
                 pid, parent, argv = fields
                 processes[int(pid)] = {'pid': int(pid), 'parent': int(parent), 'command': argv}
         cwd = subprocess.run(['lsof', '-a', '-u', str(os.getuid()), '-d', 'cwd', '-Fpn'],
-                             capture_output=True, text=True, check=True)
+                             capture_output=True, text=True, check=True, timeout=30)
         current = None
         for line in cwd.stdout.splitlines():
             if line.startswith('p'):
