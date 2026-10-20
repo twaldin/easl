@@ -461,7 +461,7 @@ final class DiagramTests {
     func api(_ languages: LanguageService) async throws -> (board: Board, router: ApiRouter, server: SocketServer, client: LineClient) {
         let home = dir.appendingPathComponent(".home")
         let registry = BoardRegistry(store: BoardStore(directory: home.appendingPathComponent("boards"), debounce: 60))
-        let board = await registry.open(root: dir)
+        let board = try await registry.open(root: dir)
         let router = ApiRouter(registry: registry)
         router.refreshDiagram = { board, tile in
             let graph = try await DiagramRefresh.run(tile, on: board, languages: languages)

@@ -180,7 +180,7 @@ struct WorktreeTests {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         let registry = BoardRegistry(store: BoardStore(directory: home.appendingPathComponent("boards"), debounce: 60))
-        let board = await registry.open(root: repo.root)
+        let board = try await registry.open(root: repo.root)
         let router = ApiRouter(registry: registry)
         let server = SocketServer(path: home.appendingPathComponent("s").path) { request, connection in
             await router.handle(request, connection: connection)
@@ -253,7 +253,7 @@ struct WorktreeTests {
     /// user opened the board from.
     @Test func aDiagramIsOfItsRootsCheckout() async throws {
         let (repo, worktree) = try await fixture()
-        let board = await BoardRegistry(store: BoardStore(directory: URL(fileURLWithPath: repo.root.path + "-boards"), debounce: 60)).open(root: repo.root)
+        let board = try await BoardRegistry(store: BoardStore(directory: URL(fileURLWithPath: repo.root.path + "-boards"), debounce: 60)).open(root: repo.root)
         let fees = agent(on: board, in: worktree)
         let languages = LanguageService(configs: [])
         func scope(_ props: JSONValue, caller: ObjectID? = nil) async throws -> String {

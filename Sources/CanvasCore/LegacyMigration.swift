@@ -155,6 +155,17 @@ public struct LegacyMigration {
     /// `source`'s moved yet then).
     func migrate(from source: Name, defaults: some DefaultsDomains, stamp: String) -> (log: [String], done: Bool) {
         let files = FileManager.default
+        for name in [source, target] {
+            let boards = support(name).appendingPathComponent("boards", isDirectory: true)
+            guard let walk = files.enumerator(at: boards, includingPropertiesForKeys: nil) else { continue }
+            for case let file as URL in walk where file.pathExtension == "json" && file.lastPathComponent != RepoBoardMigration.reportFile {
+                do {
+                    _ = try BoardFile.read(file)
+                } catch {
+                    return (["could not migrate \(source.name)'s data: \(error.localizedDescription)"], false)
+                }
+            }
+        }
         var log: [String] = []
         let backup = staleBackup(stamp)
         // Settings a migration didn't write: everything in the domain but the markers.

@@ -44,8 +44,8 @@ public final class BoardStore {
     /// first takes in the boards of the store that belong to it (`Files.mergeIntoRepositoryBoard`).
     /// The board comes back as soon as its file is read: anchors only git can check are held
     /// back until it has (`hold`).
-    public func load(root opened: URL, id known: BoardID? = nil, repo knownRepo: String? = nil) async -> Board {
-        let found = await files.load(root: opened, id: known, repo: knownRepo)
+    public func load(root opened: URL, id known: BoardID? = nil, repo knownRepo: String? = nil) async throws -> Board {
+        let found = try await files.load(root: opened, id: known, repo: knownRepo)
         let board = found.prepared.map { Board(snapshot: $0.published) } ?? Board(id: found.id, root: found.root)
         if let commonDir = found.commonDir, board.repo?.commonDir != commonDir {
             board.repo = RepoRecord(commonDir: commonDir, worktrees: board.repo?.worktrees ?? [], merged: board.repo?.merged)
@@ -145,7 +145,7 @@ public final class BoardStore {
     public func list() -> [Stored] {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         return files.filter { $0.pathExtension == "json" }.compactMap { file -> Stored? in
-            guard let data = try? Data(contentsOf: file), let snapshot = try? Self.decoder.decode(BoardSnapshot.self, from: data) else { return nil }
+            guard let snapshot = try? BoardFile.read(file) else { return nil }
             let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
             let objects = Dictionary(snapshot.objects.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             return Stored(id: snapshot.id, root: snapshot.root, archived: !Self.isDirectory(snapshot.root), updatedAt: modified, objectCount: snapshot.objects.count,
@@ -239,8 +239,12 @@ private final class Files: @unchecked Sendable {
         var read: Int
     }
 
-    func load(root opened: URL, id known: BoardID?, repo knownRepo: String?) async -> Loaded {
-        await run { self.read(root: opened, id: known, repo: knownRepo) }
+    func load(root opened: URL, id known: BoardID?, repo knownRepo: String?) async throws -> Loaded {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                continuation.resume(with: Result { try self.read(root: opened, id: known, repo: knownRepo) })
+            }
+        }
     }
 
     func migrate(knownRoots: [URL]) async -> RepoBoardMigration.Report? {
@@ -307,18 +311,21 @@ private final class Files: @unchecked Sendable {
     /// On `queue`: the board for a directory (`BoardStore.load`), read with its anchors checked
     /// short of git (`BoardAnchorScrub.prepare`). When that refused any and none waits for git,
     /// the file is written without them here.
-    private func read(root opened: URL, id known: BoardID?, repo knownRepo: String?) -> Loaded {
+    private func read(root opened: URL, id known: BoardID?, repo knownRepo: String?) throws -> Loaded {
         let worktree = knownRepo == nil ? GitWorktree.containing(opened.standardizedFileURL.path) : nil
         let commonDir = knownRepo ?? worktree?.commonDir
         let root = worktree.map { URL(fileURLWithPath: $0.canonicalRoot) } ?? opened
         let id = known ?? commonDir.map(BoardStore.repoID(commonDir:)) ?? BoardStore.pathID(root)
+        var stored = try BoardFile.read(url(for: id))
         makeDirectory()
-        if loaded.insert(id).inserted, let commonDir {
-            mergeIntoRepositoryBoard(commonDir: commonDir, stored: FileManager.default.fileExists(atPath: url(for: id).path))
+        if !loaded.contains(id), let commonDir,
+           mergeIntoRepositoryBoard(commonDir: commonDir, stored: stored != nil) {
+            stored = try BoardFile.read(url(for: id))
         }
+        loaded.insert(id)
         if commonDir != nil { repositoryLoaded = true }
         let read = writes(of: id)
-        guard let data = try? Data(contentsOf: url(for: id)), var snapshot = try? BoardStore.decoder.decode(BoardSnapshot.self, from: data) else {
+        guard var snapshot = stored else {
             return Loaded(id: id, root: root, commonDir: commonDir, prepared: nil, read: read)
         }
         // The root may have moved (renamed checkout); the board follows its identity.
@@ -338,32 +345,27 @@ private final class Files: @unchecked Sendable {
     /// when the repository board isn't stored yet, legacy boards the launch migration couldn't
     /// place. Boards loaded this session are left for the next launch. Starts no git process:
     /// a path-keyed board costs the walk up its directory for `.git` (`GitWorktree.containing`).
-    private func mergeIntoRepositoryBoard(commonDir: String, stored: Bool) {
+    private func mergeIntoRepositoryBoard(commonDir: String, stored: Bool) -> Bool {
         if unresolvedLegacy == nil { unresolvedLegacy = RepoBoardMigration.pending(in: directory).unresolved }
         let adopting = storedPathBoards().contains { id, root in
             !loaded.contains(id) && BoardStore.isDirectory(root) && GitWorktree.containing(URL(fileURLWithPath: root).standardizedFileURL.path)?.commonDir == commonDir
         }
-        guard adopting || (!stored && unresolvedLegacy?.isEmpty == false) else { return }
+        guard adopting || (!stored && unresolvedLegacy?.isEmpty == false) else { return false }
         let report = RepoBoardMigration.run(directory: directory, only: commonDir, skipping: loaded)
         unresolvedLegacy = report.unresolved.map(\.board)
         for legacy in report.repos.flatMap(\.legacy) where legacy.status != "conflict" { pathBoards?[legacy.board] = nil }
+        return true
     }
 
     /// `pathBoards`, read from the store's files the first time.
     private func storedPathBoards() -> [BoardID: String] {
         if let pathBoards { return pathBoards }
-        /// What tells a path-keyed board from a repository's or a legacy one.
-        struct Header: Decodable {
-            var id: BoardID
-            var root: String
-            var repo: RepoRecord?
-        }
         var found: [BoardID: String] = [:]
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         for file in files where file.pathExtension == "json" {
-            guard let data = try? Data(contentsOf: file), let header = try? BoardStore.decoder.decode(Header.self, from: data),
-                  header.repo == nil, header.id == BoardStore.pathID(URL(fileURLWithPath: header.root)) else { continue }
-            found[header.id] = header.root
+            guard let snapshot = try? BoardFile.read(file),
+                  snapshot.repo == nil, snapshot.id == BoardStore.pathID(URL(fileURLWithPath: snapshot.root)) else { continue }
+            found[snapshot.id] = snapshot.root
         }
         pathBoards = found
         return found

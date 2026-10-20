@@ -104,8 +104,16 @@ public enum RepoBoardMigration {
         var repoBoards: [String: (url: URL, snapshot: BoardSnapshot)] = [:]
         var nonGit: [BoardID] = []
         var legacy: [(url: URL, snapshot: BoardSnapshot)] = []
+        var unresolved: [Unresolved] = []
         for file in files {
-            guard let data = try? Data(contentsOf: file), let snapshot = try? decoder.decode(BoardSnapshot.self, from: data) else { continue }
+            let snapshot: BoardSnapshot
+            do {
+                guard let stored = try BoardFile.read(file, backupUnreadable: !dryRun) else { continue }
+                snapshot = stored
+            } catch {
+                unresolved.append(Unresolved(board: file.deletingPathExtension().lastPathComponent, root: "", objects: 0))
+                continue
+            }
             if let repo = snapshot.repo {
                 repoBoards[repo.commonDir] = (file, snapshot)
             } else if skipping.contains(snapshot.id) {
@@ -128,7 +136,6 @@ public enum RepoBoardMigration {
         if let only { commons.insert(only) }
 
         var byRepo: [String: [Legacy]] = [:]
-        var unresolved: [Unresolved] = []
         for (url, snapshot) in legacy {
             if let found = identify(snapshot, url: url, commons: commons.sorted()), only == nil || found.commonDir == only {
                 byRepo[found.commonDir, default: []].append(found)
@@ -139,7 +146,22 @@ public enum RepoBoardMigration {
 
         var reports: [RepoReport] = []
         for commonDir in byRepo.keys.sorted() {
-            let existing = repoBoards[commonDir]
+            let targetURL = directory.appendingPathComponent("\(BoardStore.repoID(commonDir: commonDir)).json")
+            let existing: (url: URL, snapshot: BoardSnapshot)?
+            do {
+                if let snapshot = try BoardFile.read(targetURL, backupUnreadable: !dryRun) {
+                    existing = (targetURL, snapshot)
+                } else {
+                    existing = repoBoards[commonDir]
+                }
+            } catch {
+                // A target with no decodable header still owns this path. Leave its sources
+                // in place so repairing the target can resume the migration.
+                unresolved += byRepo[commonDir]!.map {
+                    Unresolved(board: $0.snapshot.id, root: $0.snapshot.root, objects: $0.snapshot.objects.count)
+                }
+                continue
+            }
             var (target, report, merged) = merge(byRepo[commonDir]!, into: existing?.snapshot, modified: existing.map { modified($0.url) } ?? .distantPast,
                                                  commonDir: commonDir, now: now)
             reports.append(report)

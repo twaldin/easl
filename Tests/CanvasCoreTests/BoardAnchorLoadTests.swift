@@ -50,7 +50,7 @@ final class BoardAnchorLoadTests {
         }
 
         let registry = BoardRegistry(store: store)
-        let loaded = await registry.open(root: board.root)
+        let loaded = try await registry.open(root: board.root)
         #expect(try loaded.object(note.id).props["markdown"] == .string(cleaned))
         #expect(try loaded.object(code.id).props["anchor"] == nil)
         #expect(loaded.revision == snapshot.revision)
@@ -77,7 +77,7 @@ final class BoardAnchorLoadTests {
 
         let sentinel = Date(timeIntervalSince1970: 1234567890)
         try FileManager.default.setAttributes([.modificationDate: sentinel], ofItemAtPath: store.url(for: board.id).path)
-        let again = await store.load(root: board.root)
+        let again = try await store.load(root: board.root)
         #expect(try again.object(note.id).props["markdown"] == .string(cleaned))
         #expect(try store.url(for: board.id).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate == sentinel)
         #expect(try Data(contentsOf: store.url(for: board.id)) == BoardStore.encoder.encode(expected))
@@ -90,7 +90,7 @@ final class BoardAnchorLoadTests {
         let expected = #"~~~txt file=../outside.txt#L1  title="keep anchor=fake"    "# + "\r\nbody anchor=authored\r\n~~~\r\n```txt file=../outside.txt#L1  caption='stay'\r\n```\r\n"
         let note = board.create(type: .note, props: .object(["markdown": .string(markdown)]))
         try persist(board.snapshot, in: store)
-        let loaded = await store.load(root: board.root)
+        let loaded = try await store.load(root: board.root)
         #expect(try loaded.object(note.id).props["markdown"] == .string(expected))
     }
 
@@ -104,7 +104,7 @@ final class BoardAnchorLoadTests {
         let outside = board.create(type: .note, props: .object(["root": "..", "markdown": "```txt file=root/missing.txt#L1 anchor=DROP\n```\n"]))
         let code = board.create(type: .code, props: .object(["path": "missing.txt", "anchor": "keep missing"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         try persist(board.snapshot, in: store)
-        let loaded = await store.load(root: board.root)
+        let loaded = try await store.load(root: board.root)
         #expect(try loaded.object(kept.id).props == kept.props)
         #expect(try loaded.object(code.id).props == code.props)
         #expect(try loaded.object(outside.id).props["markdown"] == "```txt file=root/missing.txt#L1 \n```\n")
@@ -131,7 +131,7 @@ final class BoardAnchorLoadTests {
         let code = board.create(type: .code, props: .object(["path": "link.txt", "pinnedCommit": .string(sha), "anchor": "DROP_CODE_PINNED"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         let refCode = board.create(type: .code, props: .object(["path": "src/a.txt", "ref": "snapshot", "anchor": "KEEP_CODE_REF"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         try persist(board.snapshot, in: store)
-        let loaded = await store.load(root: repo.root)
+        let loaded = try await store.load(root: repo.root)
         await loaded.waitForAnchorScrub()
         #expect(try loaded.object(pinned.id).props["markdown"] == .string(markdown.replacingOccurrences(of: "anchor=DROP_PINNED_SYMLINK", with: "")))
         #expect(try loaded.object(atRef.id).props["markdown"] == "```txt file=src/a.txt#L1 anchor=KEEP_REF\n```\n```txt file=link.txt#L1 \n```\n")
@@ -150,7 +150,7 @@ final class BoardAnchorLoadTests {
         try FileManager.default.createSymbolicLink(atPath: board.root.appendingPathComponent("dangling.txt").path, withDestinationPath: "../gone.txt")
         let dangling = board.create(type: .code, props: .object(["path": "dangling.txt", "anchor": "DROP"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         try persist(board.snapshot, in: store)
-        let loaded = await store.load(root: board.root)
+        let loaded = try await store.load(root: board.root)
         #expect(try loaded.object(note.id).props["markdown"] == "a\rb\rc\n```txt file=../outside.txt#L1 \n```\n```txt file=inside.txt#L1 anchor=KEEP\n```\n")
         #expect(try loaded.object(malformed.id).props["markdown"] == "~~~txt file=../outside.txt#L1 \r\nAuthored body\r\n~~~\r\n")
         #expect(try loaded.object(dangling.id).props["anchor"] == nil)
@@ -161,7 +161,7 @@ final class BoardAnchorLoadTests {
         let board = try makeBoard()
         let note = board.create(type: .note, props: .object(["markdown": "1) ~~~txt file=../outside.txt#L1 anchor=DROP\n   authored body\n   ~~~\n"]))
         try persist(board.snapshot, in: store)
-        let loaded = await store.load(root: board.root)
+        let loaded = try await store.load(root: board.root)
         #expect(try loaded.object(note.id).props["markdown"] == "1) ~~~txt file=../outside.txt#L1 \n   authored body\n   ~~~\n")
     }
 
@@ -173,7 +173,7 @@ final class BoardAnchorLoadTests {
         let inside = board.create(type: .code, props: .object(["path": "inside.txt", "pinnedCommit": "-invalid", "anchor": "KEEP"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         let empty = board.create(type: .code, props: .object(["path": "", "anchor": "DROP"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         try persist(board.snapshot, in: store)
-        let loaded = await store.load(root: board.root)
+        let loaded = try await store.load(root: board.root)
         await loaded.waitForAnchorScrub()
         #expect(try loaded.object(note.id).props["markdown"] == "```txt file=../outside.txt commit=-invalid \n```\n```txt file=inside.txt commit=-invalid anchor=KEEP\n```\n")
         #expect(try loaded.object(outside.id).props["anchor"] == nil)
@@ -334,11 +334,11 @@ final class BoardAnchorLoadTests {
         defer { holds.release() }
         try await holds.occupy(in: directory)
         let registry = BoardRegistry(store: fixture.store)
-        let first = await registry.open(root: fixture.repo.root)
+        let first = try await registry.open(root: fixture.repo.root)
         #expect(first.isAnchorScrubPending(fixture.allowed.id))
         try registry.close(first.id)
         #expect(try saved(first.id, in: fixture.store).objects.first { $0.id == fixture.allowed.id }?.props["markdown"] == fixture.allowed.props["markdown"])
-        let replacement = await registry.open(root: fixture.repo.root)
+        let replacement = try await registry.open(root: fixture.repo.root)
         #expect(replacement !== first)
         #expect(replacement.isAnchorScrubPending(fixture.allowed.id))
         let authored = "Only the reopened board's edit survives."
@@ -389,7 +389,7 @@ final class BoardAnchorLoadTests {
             }
         }
         let registry = BoardRegistry(store: fixture.store)
-        let loaded = await registry.open(root: fixture.repo.root)
+        let loaded = try await registry.open(root: fixture.repo.root)
         await loaded.waitForAnchorScrub()
         let url = fixture.store.url(for: loaded.id)
         #expect(try Data(contentsOf: url) == BoardStore.encoder.encode(expected))
@@ -397,7 +397,7 @@ final class BoardAnchorLoadTests {
         #expect(!loaded.history.canUndo)
         let sentinel = Date(timeIntervalSince1970: 1234567890)
         try FileManager.default.setAttributes([.modificationDate: sentinel], ofItemAtPath: url.path)
-        let again = await fixture.store.load(root: fixture.repo.root)
+        let again = try await fixture.store.load(root: fixture.repo.root)
         await again.waitForAnchorScrub()
         #expect(try again.object(fixture.allowed.id).props["markdown"] == .string(fixture.accepted))
         #expect(try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate == sentinel)
@@ -418,7 +418,7 @@ final class BoardAnchorLoadTests {
         let registry = BoardRegistry(store: fixture.store)
         async let main = registry.open(root: fixture.repo.root)
         async let linked = registry.open(root: worktree)
-        let (fromMain, fromWorktree) = await (main, linked)
+        let (fromMain, fromWorktree) = try await (main, linked)
         #expect(fromMain === fromWorktree)
         #expect(registry.boards.count == 1)
         #expect(fromMain.id == fixture.board.id)
@@ -440,7 +440,7 @@ final class BoardAnchorLoadTests {
         let holds = GitLoadHolds()
         defer { holds.release() }
         try await holds.occupy(in: directory)
-        let loaded = await BoardRegistry(store: fixture.store).open(root: fixture.repo.root)
+        let loaded = try await BoardRegistry(store: fixture.store).open(root: fixture.repo.root)
         #expect(loaded.isAnchorScrubPending(note.id))
         let session = NoteEditSession(try loaded.object(note.id))
         let moved = try loaded.update(note.id, rev: loaded.object(note.id).rev, frame: Frame(x: 40, y: 50, w: 400, h: 300))
