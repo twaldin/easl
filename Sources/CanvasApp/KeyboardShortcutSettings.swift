@@ -151,6 +151,7 @@ final class KeyboardShortcutSettingsController: NSWindowController, NSWindowDele
             let label = NSTextField(labelWithString: action.title)
             label.lineBreakMode = .byTruncatingTail
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            label.setContentHuggingPriority(.defaultLow, for: .horizontal)
             let binding = NSTextField(labelWithString: "")
             binding.alignment = .right
             binding.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -159,6 +160,7 @@ final class KeyboardShortcutSettingsController: NSWindowController, NSWindowDele
             let clear = button("Clear", action: #selector(clearShortcut(_:)), id: action.id)
             let reset = button("Reset", action: #selector(resetShortcut(_:)), id: action.id)
             let row = NSStackView(views: [label, binding, record, clear, reset])
+            row.distribution = .fill
             row.spacing = 8
             stack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
