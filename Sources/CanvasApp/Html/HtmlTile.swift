@@ -476,7 +476,7 @@ final class HtmlTile: NSView, TileContent {
 
     /// The page `render(_:)` or `measure` loaded; the channel accepts its messages (read-only).
     private(set) var renderWebView: WKWebView?
-    /// The pooled page `renderWebView` is while it measures (`HtmlMeasurePool`).
+    /// The pooled page `renderWebView` borrows for a local render or measure (`HtmlMeasurePool`).
     private var measurePage: HtmlMeasurePage?
     /// The offscreen page reported `view.rendered` since this was last reset.
     private var offscreenSettled = false
@@ -489,12 +489,25 @@ final class HtmlTile: NSView, TileContent {
     func render(_ request: TileRenderRequest) async -> TileRender {
         guard await beginOffscreen() else { return .placeholder(request, "timed out waiting for another render of this tile") }
         let started = Metrics.now()
+        var admitted = false
+        var renderedFine = false
         defer {
-            endOffscreen()
+            endOffscreen(keepPage: renderedFine && !Task.isCancelled)
+            if admitted { Self.measuring -= 1 }
             Metrics.shared.record("html.render", ms: (Metrics.now() - started) * 1000)
         }
+        if !board.isRemote {
+            while Self.measuring + HtmlMeasurePool.cleaning >= Self.maxMeasuring {
+                guard !Task.isCancelled else { return .placeholder(request, "timed out") }
+                do { try await Task.sleep(for: .milliseconds(30)) }
+                catch { return .placeholder(request, "timed out") }
+            }
+            guard !Task.isCancelled else { return .placeholder(request, "timed out") }
+            Self.measuring += 1
+            admitted = true
+        }
         let content: CGSize
-        switch await loadOffscreen(size: request.size, appearance: request.appearance, priority: request.priority) {
+        switch await loadOffscreen(size: request.size, appearance: request.appearance, pooled: !board.isRemote, priority: request.priority) {
         case .success(let extent): content = CGSize(width: max(request.size.width, extent.width), height: extent.height)
         case .failure(.rules(let reason)): return TileRender(image: nil, contentSize: request.size, state: .failed, reason: reason)
         case .failure(.unsettled(let reason)): return .placeholder(request, reason)
@@ -517,11 +530,13 @@ final class HtmlTile: NSView, TileContent {
         guard let page = try? await web.takeSnapshot(configuration: shot) else {
             return TileRender(image: nil, contentSize: content, state: .failed, reason: "WebKit produced no snapshot")
         }
+        guard !Task.isCancelled else { return .placeholder(request, "timed out") }
         let image = request.image(size: web.bounds.size) { bounds in page.drawUpright(in: bounds) }
+        renderedFine = image != nil
         return TileRender(image: image, contentSize: content, state: image == nil ? .failed : .rendered)
     }
 
-    /// Pages measured at once (`measure`); more wait their turn.
+    /// Measures and local renders in flight; pages being emptied also occupy admission slots.
     private static var measuring = 0
     static let maxMeasuring = 3
     /// How long a measured page gets to report `view.rendered`.
@@ -566,10 +581,11 @@ final class HtmlTile: NSView, TileContent {
 
     private static func measure(_ page: CanvasObject, on board: Board, files: HostFiles?) async throws -> CGSize {
         let queued = Metrics.now()
-        while measuring >= maxMeasuring {
+        while measuring + HtmlMeasurePool.cleaning >= maxMeasuring {
             try Task.checkCancellation()
             try await Task.sleep(for: .milliseconds(30))
         }
+        try Task.checkCancellation()
         let started = Metrics.now()
         if started - queued > 0.001 { Metrics.shared.record("html.measure.wait", ms: (started - queued) * 1000) }
         measuring += 1
@@ -635,8 +651,8 @@ final class HtmlTile: NSView, TileContent {
         return true
     }
 
-    /// `keepPage`: a pooled measure page goes back to the pool (it measured fine); otherwise it
-    /// is discarded.
+    /// `keepPage`: a pooled page rendered or measured successfully and may be emptied for reuse.
+    /// Otherwise it is discarded.
     private func endOffscreen(keepPage: Bool = false) {
         renderBusy = false
         if let page = measurePage {
@@ -653,8 +669,8 @@ final class HtmlTile: NSView, TileContent {
     }
 
     /// Loads the page into `renderWebView`, `size` points, parked in the stage, and waits for the
-    /// kit's `view.rendered`; then the document's scroll width and height. `pooled` (a measure)
-    /// borrows a web view from `HtmlMeasurePool` instead of making one.
+    /// kit's `view.rendered`; then the document's scroll width and height. `pooled` borrows a
+    /// local web view from `HtmlMeasurePool` instead of making one. Remote pages are never pooled.
     private func loadOffscreen(size: CGSize, appearance: NSAppearance, limit: Duration = .seconds(60), pooled: Bool = false, priority: HostReadPriority = .interactive) async -> Result<CGSize, OffscreenFailure> {
         let rules: WKContentRuleList
         do {

@@ -2,8 +2,7 @@ import AppKit
 import CanvasCore
 import WebKit
 
-/// A web view `HtmlTile.measure` borrows (`HtmlMeasurePool`), with handlers that serve whichever
-/// scratch tile is being measured.
+/// A web view borrowed for a local render or measure, with handlers for the borrowing tile.
 @MainActor
 final class HtmlMeasurePage {
     let web: HtmlWebView
@@ -43,19 +42,18 @@ final class HtmlMeasurePage {
     }
 }
 
-/// Web views kept between measures. An agent measures page after page (`object.measure`, `size:
-/// "fit"`, `layout.check`), and a new web view per page costs a WebContent process launch and its
-/// setup each time; a measure borrows a waiting one instead, at most `HtmlTile.maxMeasuring` of
-/// them. Between measures a page is emptied (about:blank, its website data removed, so one
-/// measured page never sees another's storage) and serves no tile; after `idleRelease` without a
-/// measure they are all released. A page whose measure failed or was cancelled (a script that
-/// never yields, a timeout) is discarded at once, and one whose emptying doesn't finish within
-/// `cleanupLimit` too: what the page's process doesn't answer never holds a page.
+/// Web views kept between local renders and measures, at most `HtmlTile.maxMeasuring` in flight
+/// or being emptied. A new web view per page costs a WebContent process launch and its setup.
+/// Between uses a page is emptied (about:blank, its website data removed, so one page never sees
+/// another's storage) and serves no tile; after `idleRelease` without a use they are released.
+/// Failed or cancelled pages are discarded at once, as are pages whose emptying exceeds
+/// `cleanupLimit`: what the page's process doesn't answer never holds a page.
 @MainActor
 enum HtmlMeasurePool {
     static let idleRelease: TimeInterval = 30
     static let cleanupLimit: TimeInterval = 2
     private static var idle: [HtmlMeasurePage] = []
+    private(set) static var cleaning = 0
     private static var releaseTimer: Timer?
 
     /// A page serving `tile`, with `rules` as its only network rules.
@@ -75,9 +73,10 @@ enum HtmlMeasurePool {
         return page
     }
 
-    /// `page`'s measure succeeded: empty it, then keep it for the next, unless emptying takes
-    /// longer than `cleanupLimit`.
+    /// `page` rendered or measured successfully: empty it, then keep it for the next use,
+    /// unless emptying takes longer than `cleanupLimit`.
     static func give(_ page: HtmlMeasurePage) {
+        cleaning += 1
         page.detach()
         page.web.load(URLRequest(url: URL(string: "about:blank")!))
         @MainActor final class Cleanup { var done = false }
@@ -86,6 +85,7 @@ enum HtmlMeasurePool {
             MainActor.assumeIsolated {
                 guard !cleanup.done else { return }
                 cleanup.done = true
+                cleaning -= 1
                 guard idle.count < HtmlTile.maxMeasuring else { return page.release() }
                 idle.append(page)
                 scheduleRelease()
@@ -95,13 +95,14 @@ enum HtmlMeasurePool {
             MainActor.assumeIsolated {
                 guard !cleanup.done else { return }
                 cleanup.done = true
+                cleaning -= 1
                 Metrics.shared.record("html.measure.discard")
                 page.discard()
             }
         }
     }
 
-    /// `page`'s measure failed or was cancelled: it is never reused.
+    /// `page` failed or was cancelled: it is never reused.
     static func discard(_ page: HtmlMeasurePage) {
         Metrics.shared.record("html.measure.discard")
         page.discard()
