@@ -28,7 +28,7 @@ struct RefTileTests {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-ref-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        let board = await registry.open(root: repo.root)
+        let board = try await registry.open(root: repo.root)
         let router = ApiRouter(registry: registry)
         let server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
             await router.handle(request, connection: connection)

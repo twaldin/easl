@@ -31,8 +31,10 @@ do {
         let migration = LegacyMigration(home: account)
         if !migration.pending(defaults: UserDefaults.standard).isEmpty {
             let others = NSWorkspace.shared.runningApplications.filter { $0.processIdentifier != getpid() }.compactMap(\.bundleIdentifier)
-            for line in migration.refusal(running: others).map({ [$0] }) ?? migration.run(defaults: UserDefaults.standard) {
-                NSLog("easl: %@", line)
+            if let refusal = migration.refusal(running: others) {
+                NSLog("easl: %@", refusal)
+            } else {
+                migrateLegacyBoards(migration, defaults: UserDefaults.standard)
             }
         }
     } else if let fake = environment["HOME"].map({ URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }), fake != account.standardizedFileURL,
@@ -41,9 +43,22 @@ do {
         // An upgrade rehearsal on a throwaway home (docs/testing.md): HOME is that home, EASL_HOME
         // its default support directory. UserDefaults ignores HOME, so the migration reads and writes
         // that home's Library/Preferences plists itself, never the user's; no earlier app writes there.
-        for line in LegacyMigration(home: fake).run(defaults: PreferenceFiles(home: fake)) {
-            NSLog("easl (rehearsal on %@): %@", fake.path, line)
-        }
+        migrateLegacyBoards(LegacyMigration(home: fake), defaults: PreferenceFiles(home: fake))
+    }
+}
+
+@MainActor
+func migrateLegacyBoards(_ migration: LegacyMigration, defaults: some DefaultsDomains) {
+    let lines = migration.run(defaults: defaults)
+    for line in lines { NSLog("easl: %@", line) }
+    guard migration.pending(defaults: defaults).isEmpty else {
+        let app = CanvasApplication.shared
+        app.setActivationPolicy(.regular)
+        let alert = NSAlert()
+        alert.messageText = "Couldn't migrate saved boards"
+        alert.informativeText = lines.joined(separator: "\n")
+        alert.runModal()
+        exit(1)
     }
 }
 

@@ -20,7 +20,7 @@ final class ComposerSendTests {
     init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
-        board = await registry.open(root: dir.appendingPathComponent("root"))
+        board = try await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry)
         self.router = router
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
@@ -505,7 +505,7 @@ final class ComposerSendTests {
         #expect(returned["event"]?.string == "composer.returned")
         #expect(returned["data"]?["ids"]?.array == [.string(staged.id)])
         #expect(closed["event"]?.string == "board.closed")
-        let reopened = await registry.open(root: board.root)
+        let reopened = try await registry.open(root: board.root)
         let manifest = try await call("board.get", #"{"board":"\#(reopened.id)","viewer":"vw_viewer01"}"#)
         let receipt = try #require(manifest["result"]?["composerReceipts"]?.array?.first)
         #expect(receipt["receipt"] == returned["data"]?["receipt"])

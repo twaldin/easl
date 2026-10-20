@@ -10,7 +10,7 @@ public final class BoardRegistry {
     private var subscribers: [(connection: SocketServer.Connection, board: BoardID?, events: Set<String>?)] = []
     private var closedWindows: Set<BoardID> = []
     /// Boards loading for `open`: an open of one still loading waits for it.
-    private var loading: [BoardID: Task<Board, Never>] = [:]
+    private var loading: [BoardID: Task<Board, Error>] = [:]
     private var closedComposerReceipts: [BoardID: [ComposerNotice]] = [:]
     /// App-level observer for every board's events (UI reconciliation). Socket subscribers are fed separately.
     public var onEvent: ((Board, BoardEvent) -> Void)?
@@ -50,7 +50,7 @@ public final class BoardRegistry {
     /// (`Board.opened(from:)`), else the directory's own board. The directory's git files and
     /// the board's file are read off the main actor; opens of one board share one load.
     @discardableResult
-    public func open(root: URL) async -> Board {
+    public func open(root: URL) async throws -> Board {
         let found = await offPool { () -> (visit: WorktreeVisit?, root: URL, id: BoardID) in
             let worktree = GitWorktree.containing(root.standardizedFileURL.path)
             return (worktree.map(WorktreeVisit.init), worktree.map { URL(fileURLWithPath: $0.canonicalRoot) } ?? root,
@@ -61,12 +61,15 @@ public final class BoardRegistry {
             setWindowOpen(true, board: existing.id)
             board = existing
         } else if let load = loading[found.id] {
-            board = await load.value
+            board = try await load.value
             setWindowOpen(true, board: board.id)
         } else {
-            let load = Task { self.install(await self.store.load(root: found.root, id: found.id, repo: found.visit?.worktree.commonDir), as: found.id) }
+            let load = Task {
+                defer { self.loading[found.id] = nil }
+                return self.install(try await self.store.load(root: found.root, id: found.id, repo: found.visit?.worktree.commonDir), as: found.id)
+            }
             loading[found.id] = load
-            board = await load.value
+            board = try await load.value
         }
         if let visit = found.visit { board.opened(from: visit) }
         return board
@@ -74,7 +77,6 @@ public final class BoardRegistry {
 
     /// `board`, just loaded, becomes the open board `id` (one already open stays it).
     private func install(_ board: Board, as id: BoardID) -> Board {
-        loading[id] = nil
         if let existing = boards[id] { return existing }
         board.composerReceipts = closedComposerReceipts.removeValue(forKey: id) ?? []
         board.onEvent = { [weak self, weak board] event in
@@ -262,7 +264,7 @@ public final class ApiRouter {
     /// `DiagramRefresh.summary` once done. The router bounds the wait (`computeDiagram`).
     public var refreshDiagram: ((Board, ObjectID) async throws -> JSONValue)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
-    public var openBoard: ((URL, _ select: Bool) async -> Board)?
+    public var openBoard: ((URL, _ select: Bool) async throws -> Board)?
     /// Closes a local board or a remote viewer tab without showing the manual close sheet.
     /// Nil preserves sessions; a remote tab refuses any explicit sessions choice.
     public var closeBoard: ((BoardID, _ endSessions: Bool?) async throws -> BoardCloseResult)?
@@ -505,6 +507,8 @@ public final class ApiRouter {
         switch error {
         case let failure as Failure:
             return failure
+        case let unreadable as BoardFile.Unreadable:
+            return Failure("unavailable", unreadable.localizedDescription)
         case let error as BoardError:
             switch error {
             case .notFound(let message): return Failure("not_found", message)
@@ -1433,9 +1437,9 @@ public final class ApiRouter {
         }
         let board: Board
         if let openBoard {
-            board = await openBoard(root, p["select"]?.bool ?? false)
+            board = try await openBoard(root, p["select"]?.bool ?? false)
         } else {
-            board = await registry.open(root: root)
+            board = try await registry.open(root: root)
         }
         try available(board)
         var result: [String: JSONValue] = ["board": .string(board.id), "root": .string(board.root.path), "objects": .number(Double(board.objects.count))]

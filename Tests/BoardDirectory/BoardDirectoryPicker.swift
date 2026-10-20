@@ -147,7 +147,13 @@ private enum BoardDirectoryPicker {
         let expectedSheet: Bool
         switch context {
         case .local:
-            let board = await delegate.open(root: localRoot)
+            let board: Board
+            do {
+                board = try await delegate.open(root: localRoot)
+            } catch {
+                PickerProbe.require(false, "local board could not open: \(error)")
+                return
+            }
             guard let controller = NSApp.windows.compactMap({ $0.windowController as? CanvasWindowController })
                 .first(where: { $0.board.id == board.id && $0.isBoardOpen }) else {
                 PickerProbe.require(false, "local board window was not created")

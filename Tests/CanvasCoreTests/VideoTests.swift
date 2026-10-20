@@ -21,7 +21,7 @@ extension ApiRouterTests {
         _ = try await call(client, "object.update", ["id": .string(id), "props": .object(["startTime": .number(2.5), "title": "Edited"])])
         let store = BoardStore(directory: dir.appendingPathComponent("video-store"))
         try store.saveChecked(board)
-        let restored = await store.load(root: board.root)
+        let restored = try await store.load(root: board.root)
         let object = try restored.object(id)
         #expect(object.type == .video)
         #expect(object.props == .object(["path": "clip.mp4", "poster": "poster.png", "loop": .bool(true), "muted": .bool(false), "autoplay": .bool(false), "startTime": .number(2.5), "title": "Edited", "key": "demo"]))

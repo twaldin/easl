@@ -16,7 +16,7 @@ final class KeyTests {
         let root = dir.appendingPathComponent("root")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        board = await registry.open(root: root)
+        board = try await registry.open(root: root)
         let router = ApiRouter(registry: registry)
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
             await router.handle(request, connection: connection)
