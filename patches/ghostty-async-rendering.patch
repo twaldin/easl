@@ -1,0 +1,317 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+index 518af3ff2..8db19150d 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1180,2 +1180,14 @@ GHOSTTY_API void ghostty_surface_refresh(ghostty_surface_t);
+ GHOSTTY_API void ghostty_surface_draw(ghostty_surface_t);
++
++// Opt into worker-only rendering on macOS/Metal. Call on the main thread.
++// The callback runs on the main thread after a healthy GPU frame's contents
++// are accepted at the current layer size, including same-IOSurface assignment.
++// It receives the registration's userdata and generation. No callback is made
++// for a discarded frame, a replaced registration, or after surface teardown.
++// Pass NULL to unregister synchronously and restore default synchronous drawing.
++// The caller owns userdata until unregister/free returns. Returns false if
++// unsupported or called off the main thread. This does not report scanout.
++typedef void (*ghostty_surface_frame_cb)(void *userdata, uint64_t generation);
++GHOSTTY_API bool ghostty_surface_set_async_rendering(
++    ghostty_surface_t, ghostty_surface_frame_cb, void *userdata, uint64_t generation);
+ GHOSTTY_API void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index b90366ac7..de494c6bf 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -29,2 +29,4 @@ pub const resourcesDir = internal_os.resourcesDir;
+ 
++const FrameCallback = ?*const fn (?*anyopaque, u64) callconv(.c) void;
++
+ pub const App = struct {
+@@ -634,2 +636,3 @@ pub const Surface = struct {
+     pub fn deinit(self: *Surface) void {
++        _ = self.setAsyncRendering(null, null, 0);
+         // Shut down our inspector
+@@ -998,3 +1001,39 @@ pub const Surface = struct {
+ 
++    pub fn setAsyncRendering(
++        self: *Surface,
++        callback: FrameCallback,
++        userdata: ?*anyopaque,
++        generation: u64,
++    ) bool {
++        if (comptime builtin.os.tag == .macos and
++            @hasDecl(renderer.Renderer.API, "setAsyncRendering"))
++        {
++            const NSThread = objc.getClass("NSThread").?;
++            if (!NSThread.msgSend(bool, "isMainThread", .{})) return false;
++            self.core_surface.renderer.api.setAsyncRendering(
++                callback,
++                userdata,
++                generation,
++                &asyncRenderWakeup,
++                self,
++            );
++            return true;
++        }
++        return false;
++    }
++
++    fn asyncRenderWakeup(ctx: ?*anyopaque) void {
++        const self: *Surface = @ptrCast(@alignCast(ctx.?));
++        self.refresh();
++    }
++
+     pub fn draw(self: *Surface) void {
++        if (comptime builtin.os.tag == .macos and
++            @hasDecl(renderer.Renderer.API, "isAsyncRendering"))
++        {
++            if (self.core_surface.renderer.api.isAsyncRendering()) {
++                self.refresh();
++                return;
++            }
++        }
+         self.core_surface.draw() catch |err| {
+@@ -1953,2 +1992,11 @@ pub const CAPI = struct {
+ 
++    export fn ghostty_surface_set_async_rendering(
++        surface: *Surface,
++        callback: FrameCallback,
++        userdata: ?*anyopaque,
++        generation: u64,
++    ) bool {
++        return surface.setAsyncRendering(callback, userdata, generation);
++    }
++
+     /// Update the size of a surface. This will trigger resize notifications
+diff --git a/src/renderer/Metal.zig b/src/renderer/Metal.zig
+index 0458b2dc1..2f60b1640 100644
+--- a/src/renderer/Metal.zig
++++ b/src/renderer/Metal.zig
+@@ -69,4 +69,2 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
+ 
+-    _ = alloc;
+-
+     // Choose our MTLDevice and create a MTLCommandQueue for that device.
+@@ -110,3 +108,3 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
+     // the layer contents.
+-    var layer = try IOSurfaceLayer.init();
++    var layer = try IOSurfaceLayer.init(alloc);
+     errdefer layer.release();
+@@ -172,2 +170,4 @@ pub fn loopEnter(self: *Metal) void {
+ fn displayCallback(renderer: *Renderer) align(8) void {
++    // A pending display can survive disabling needsDisplayOnBoundsChange.
++    if (renderer.api.layer.requestAsyncRender()) return;
+     renderer.drawFrame(true) catch |err| {
+@@ -177,2 +177,21 @@ fn displayCallback(renderer: *Renderer) align(8) void {
+ 
++pub fn setAsyncRendering(
++    self: *Metal,
++    callback: IOSurfaceLayer.FrameCallback,
++    userdata: ?*anyopaque,
++    generation: u64,
++    wakeup: IOSurfaceLayer.WakeupCallback,
++    wakeup_ctx: ?*anyopaque,
++) void {
++    self.layer.setAsyncRendering(callback, userdata, generation, wakeup, wakeup_ctx);
++}
++
++pub fn isAsyncRendering(self: *const Metal) bool {
++    return self.layer.isAsyncRendering();
++}
++
++pub fn consumeDisplayInvalidation(self: *const Metal) bool {
++    return self.layer.consumeDisplayInvalidation();
++}
++
+ /// Actions taken before doing anything in `drawFrame`.
+@@ -260,2 +279,12 @@ pub inline fn present(self: *Metal, target: Target, sync: bool) !void {
+ 
++pub fn presentFrame(self: *Metal, target: Target, sync: bool, revision: u64) !void {
++    if (comptime builtin.os.tag == .macos) {
++        if (!sync) {
++            try self.layer.setSurfaceForRevision(target.surface, revision);
++            return;
++        }
++    }
++    try self.present(target, sync);
++}
++
+ /// Returns the options to use when constructing buffers.
+diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
+index f7464c7f6..39839074c 100644
+--- a/src/renderer/generic.zig
++++ b/src/renderer/generic.zig
+@@ -1728,2 +1728,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+                 self.size.screen.height != surface_size.height;
++            const display_invalidated = if (comptime @hasDecl(GraphicsAPI, "consumeDisplayInvalidation"))
++                self.api.consumeDisplayInvalidation()
++            else
++                false;
+ 
+@@ -1736,2 +1740,3 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+                 size_changed or
++                display_invalidated or
+                 swap_chain_rebuilt or
+diff --git a/src/renderer/metal/Frame.zig b/src/renderer/metal/Frame.zig
+index 388b4f9ed..7d0802b8d 100644
+--- a/src/renderer/metal/Frame.zig
++++ b/src/renderer/metal/Frame.zig
+@@ -50,2 +50,3 @@ pub fn begin(
+             .sync = false,
++            .presentation_revision = renderer.api.layer.presentationRevision(),
+         },
+@@ -62,2 +63,3 @@ const CompletionBlock = objc.Block(struct {
+     sync: bool,
++    presentation_revision: u64,
+ }, .{
+@@ -81,5 +83,6 @@ fn bufferCompleted(
+     if (health == .healthy) {
+-        block.renderer.api.present(
++        block.renderer.api.presentFrame(
+             block.target.*,
+             block.sync,
++            block.presentation_revision,
+         ) catch |err| {
+diff --git a/src/renderer/metal/IOSurfaceLayer.zig b/src/renderer/metal/IOSurfaceLayer.zig
+index cd97126a4..9315e87cd 100644
+--- a/src/renderer/metal/IOSurfaceLayer.zig
++++ b/src/renderer/metal/IOSurfaceLayer.zig
+@@ -17,6 +17,42 @@ var Subclass: ?objc.Class = null;
+ 
++pub const FrameCallback = ?*const fn (?*anyopaque, u64) callconv(.c) void;
++pub const WakeupCallback = *const fn (?*anyopaque) void;
++
++/// The renderer and queued main-thread publications share this lifetime.
++/// Registration is main-thread-only; atomic fields also reach the render thread.
++const AsyncRendering = struct {
++    alloc: Allocator,
++    references: std.atomic.Value(usize) = .init(1),
++    revision: std.atomic.Value(u64) = .init(0),
++    display_invalidated: std.atomic.Value(bool) = .init(false),
++    callback: FrameCallback = null,
++    userdata: ?*anyopaque = null,
++    generation: u64 = 0,
++    wakeup: ?WakeupCallback = null,
++    wakeup_ctx: ?*anyopaque = null,
++
++    fn retain(self: *AsyncRendering) void {
++        _ = self.references.fetchAdd(1, .monotonic);
++    }
++
++    fn release(self: *AsyncRendering) void {
++        if (self.references.fetchSub(1, .acq_rel) == 1)
++            self.alloc.destroy(self);
++    }
++
++    fn clear(self: *AsyncRendering) void {
++        self.callback = null;
++        self.userdata = null;
++        self.wakeup = null;
++        self.wakeup_ctx = null;
++        self.display_invalidated.store(false, .release);
++        _ = self.revision.fetchAdd(1, .release);
++    }
++};
++
+ /// The underlying CALayer
+ layer: objc.Object,
++async_rendering: ?*AsyncRendering,
+ 
+-pub fn init() !IOSurfaceLayer {
++pub fn init(alloc: Allocator) !IOSurfaceLayer {
+     // The layer returned by `[CALayer layer]` is autoreleased, which means
+@@ -38,3 +74,9 @@ pub fn init() !IOSurfaceLayer {
+ 
+-    return .{ .layer = layer };
++    const async_rendering: ?*AsyncRendering = if (@import("builtin").os.tag == .macos) state: {
++        const state = try alloc.create(AsyncRendering);
++        state.* = .{ .alloc = alloc };
++        break :state state;
++    } else null;
++
++    return .{ .layer = layer, .async_rendering = async_rendering };
+ }
+@@ -46,2 +88,6 @@ pub fn release(self: *IOSurfaceLayer) void {
+     self.setDisplayCallback(null, null);
++    if (self.async_rendering) |state| {
++        state.clear();
++        state.release();
++    }
+     self.layer.release();
+@@ -49,2 +95,44 @@ pub fn release(self: *IOSurfaceLayer) void {
+ 
++pub fn setAsyncRendering(
++    self: *IOSurfaceLayer,
++    callback: FrameCallback,
++    userdata: ?*anyopaque,
++    generation: u64,
++    wakeup: WakeupCallback,
++    wakeup_ctx: ?*anyopaque,
++) void {
++    const state = self.async_rendering.?;
++    // The first registration also observes frames started during surface creation.
++    // Later registrations must not inherit their predecessor's in-flight frames.
++    if (state.callback != null or state.revision.load(.monotonic) != 0)
++        state.clear();
++    state.callback = callback;
++    state.userdata = userdata;
++    state.generation = generation;
++    state.wakeup = if (callback != null) wakeup else null;
++    state.wakeup_ctx = if (callback != null) wakeup_ctx else null;
++    self.layer.setProperty("needsDisplayOnBoundsChange", callback == null);
++    if (callback != null) _ = self.requestAsyncRender();
++}
++
++pub fn isAsyncRendering(self: *const IOSurfaceLayer) bool {
++    return if (self.async_rendering) |state| state.callback != null else false;
++}
++
++pub fn requestAsyncRender(self: *const IOSurfaceLayer) bool {
++    const state = self.async_rendering orelse return false;
++    const wakeup = state.wakeup orelse return false;
++    state.display_invalidated.store(true, .release);
++    wakeup(state.wakeup_ctx);
++    return true;
++}
++
++pub fn presentationRevision(self: *const IOSurfaceLayer) u64 {
++    return if (self.async_rendering) |state| state.revision.load(.acquire) else 0;
++}
++
++pub fn consumeDisplayInvalidation(self: *const IOSurfaceLayer) bool {
++    return if (self.async_rendering) |state| state.display_invalidated.swap(false, .acquire) else false;
++}
++
+ /// Sets the layer's `contents` to the provided IOSurface.
+@@ -53,2 +141,6 @@ pub fn release(self: *IOSurfaceLayer) void {
+ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
++    try self.setSurfaceForRevision(surface, self.presentationRevision());
++}
++
++pub fn setSurfaceForRevision(self: *IOSurfaceLayer, surface: *IOSurface, revision: u64) !void {
+     // We retain the surface to make sure it's not GC'd
+@@ -58,2 +150,3 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
+     surface.retain();
++    if (self.async_rendering) |state| state.retain();
+     // NOTE: Since `self.layer` is passed as an `objc.c.id`, it's
+@@ -65,2 +158,4 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
+         .surface = surface,
++        .async_rendering = self.async_rendering,
++        .revision = revision,
+     }, &setSurfaceCallback);
+@@ -93,2 +188,4 @@ const SetSurfaceBlock = objc.Block(struct {
+     surface: *IOSurface,
++    async_rendering: ?*AsyncRendering,
++    revision: u64,
+ }, .{}, void);
+@@ -103,2 +200,3 @@ fn setSurfaceCallback(
+     defer surface.release();
++    defer if (block.async_rendering) |state| state.release();
+ 
+@@ -122,2 +220,7 @@ fn setSurfaceCallback(
+     layer.setProperty("contents", surface);
++    if (block.async_rendering) |state| {
++        if (block.revision == state.revision.load(.acquire)) {
++            if (state.callback) |callback| callback(state.userdata, state.generation);
++        }
++    }
+ }

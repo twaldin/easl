@@ -1,0 +1,40 @@
+name: Native Ghostty artifact
+
+on:
+  push:
+    branches: [lane/easl-terminal-draw-1]
+  pull_request:
+    paths:
+      - patches/ghostty-async-rendering.patch
+      - scripts/build-ghostty.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare Zig 0.16.0
+        shell: bash
+        run: |
+          case "$(uname -m)" in
+            arm64) architecture=aarch64; checksum=b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489 ;;
+            x86_64) architecture=x86_64; checksum=0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7 ;;
+            *) exit 1 ;;
+          esac
+          archive="$RUNNER_TEMP/zig.tar.xz"
+          curl --fail --location --retry 3 "https://ziglang.org/download/0.16.0/zig-$architecture-macos-0.16.0.tar.xz" -o "$archive"
+          printf '%s  %s\n' "$checksum" "$archive" | shasum -a 256 --check
+          tar -xf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-$architecture-macos-0.16.0" >> "$GITHUB_PATH"
+      - name: Build both macOS architectures
+        run: scripts/build-ghostty.sh "$RUNNER_TEMP/GhosttyKit.xcframework"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GhosttyKit-macos
+          path: ${{ runner.temp }}/GhosttyKit.xcframework
+          if-no-files-found: error
+          retention-days: 7
