@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Browser relay reuses acknowledged sharp references across motion and pipelines bounded refinement chunks; response measurements separate native first-visible input effects from settled sharp assignment.
+- Composer prompts reconcile lost replies without resending; uncertain delivery stays visible instead of becoming an unsent draft.
 - Undo and redo of deleted composer mentions no longer crash the app. Mentions whose tiles still exist keep their editor undo history.
 - Japanese and other input-method composition no longer draws the composer's placeholder over the text being composed.
 - Refuse unreadable or newer-format local boards instead of opening empty replacements; preserve recovery copies and keep their files unchanged through restore, migration, close, and quit.

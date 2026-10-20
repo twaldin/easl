@@ -102,7 +102,7 @@ func RunScenario(s Scenario, o Options) ([]Record, error) {
 
 	home, _ := os.UserHomeDir()
 	paths := []pathSubst{{root, "<root>"}, {run, "<run>"}}
-	vars := map[string]any{"root": root}
+	vars := map[string]any{"root": root, "now": time.Now().UTC().Format(time.RFC3339)}
 	if o.Schema != "" {
 		data, err := os.ReadFile(o.Schema)
 		if err != nil {

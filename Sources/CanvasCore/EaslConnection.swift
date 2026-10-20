@@ -52,14 +52,20 @@ public final class EaslConnection: @unchecked Sendable {
         public var code: String
         public var message: String
         public var data: JSONValue?
+        public var isHostResponse: Bool
 
-        public init(_ code: String, _ message: String, data: JSONValue? = nil) {
+        public init(_ code: String, _ message: String, data: JSONValue? = nil, isHostResponse: Bool = false) {
             self.code = code
             self.message = message
             self.data = data
+            self.isHostResponse = isHostResponse
         }
 
         public var description: String { "\(code): \(message)" }
+
+        public static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.code == rhs.code && lhs.message == rhs.message && lhs.data == rhs.data
+        }
     }
 
     /// A request the server sent on this link: one of `client.attach`'s delegated calls.
@@ -593,7 +599,7 @@ public final class EaslConnection: @unchecked Sendable {
         let failure = message["ok"]?.bool == true ? nil : Failure(
             message["error"]?["code"]?.string ?? "internal",
             message["error"]?["message"]?.string ?? "unknown error",
-            data: message["error"]?["data"])
+            data: message["error"]?["data"], isHostResponse: true)
         if id < 0 {
             guard handshake.remove(id) != nil else { return }
             // A server that refuses `system.ping` (or a subscription) isn't one to talk to.

@@ -31,6 +31,9 @@ final class ComposerController {
     /// the newest) and the draft as recalled, while it is unchanged.
     private var recall: (index: Int, shown: ComposerDraft)?
     private var saveWork: DispatchWorkItem?
+    private var promptDeliveries: [String: (terminal: ObjectID, delivery: BoardMirror.PromptDelivery)] = [:]
+    private var reconciledDelivery = false
+    private var recoveredUnknownOutgoing = false
 
     init(board: Board, bar: ComposerBar, file: URL?, state initial: ComposerState) {
         self.board = board
@@ -42,13 +45,15 @@ final class ComposerController {
         syncing = true
         _ = ComposerSync.trayChanged(&draft, caret: nil, on: board)
         state.draft = draft
-        // Sent as the app quit, before any terminal took it.
-        let recovering = !state.outgoing.isEmpty
-        state.recoverOutgoing(on: board)
+        recoveredUnknownOutgoing = !state.outgoing.isEmpty
         syncing = false
         bar.show(state.draft, board: board)
-        if recovering { scheduleSave() }
+        refreshDeliveryStatus()
         bar.onEdit = { [weak self] previous in self?.edited(previous: previous) }
+        bar.onDismissDeliveryStatus = { [weak self] in
+            self?.recoveredUnknownOutgoing = false
+            self?.refreshDeliveryStatus()
+        }
         // Prompts their agent never drained come back after a while (`Board.expireComposerPrompts`),
         // checked every minute while the window is open.
         Task { @MainActor [weak self] in
@@ -58,7 +63,7 @@ final class ComposerController {
                 self.board.expireComposerPrompts()
             }
         }
-        bar.onSend = { [weak self] in self?.sendDraft() }
+        bar.onSend = { [weak self] in _ = self?.sendDraft() }
         bar.onRecall = { [weak self] older in self?.recall(older: older) ?? false }
     }
 
@@ -174,30 +179,64 @@ final class ComposerController {
 
     // MARK: Sending
 
+    func promptDeliveryChanged(_ submission: String, terminal: ObjectID, delivery: BoardMirror.PromptDelivery) {
+        switch delivery {
+        case .checking, .unknown:
+            promptDeliveries[submission] = (terminal, delivery)
+        case .delivered:
+            promptDeliveries.removeValue(forKey: submission)
+            reconciledDelivery = true
+        case .notDelivered:
+            promptDeliveries.removeValue(forKey: submission)
+        }
+        refreshDeliveryStatus()
+    }
+
+    private func refreshDeliveryStatus() {
+        let unknown = promptDeliveries.values.filter { $0.delivery == .unknown }
+        let checking = promptDeliveries.values.filter { $0.delivery == .checking }
+        if !unknown.isEmpty {
+            let names = Set(unknown.map { name($0.terminal) }).sorted().joined(separator: ", ")
+            bar.showDeliveryStatus("Delivery unknown for \(names). Not safe to resend.", uncertain: true)
+        } else if !checking.isEmpty {
+            let names = Set(checking.map { name($0.terminal) }).sorted().joined(separator: ", ")
+            bar.showDeliveryStatus("Delivery unknown, checking… \(names)", uncertain: true)
+        } else if reconciledDelivery {
+            bar.showDeliveryStatus("Delivered", uncertain: false)
+        } else if recoveredUnknownOutgoing {
+            bar.showDeliveryStatus("Delivery unknown for a previous submission. Not safe to resend.", uncertain: true, dismissible: true)
+        } else {
+            bar.showDeliveryStatus(nil, uncertain: false)
+        }
+    }
+
     /// ⌘↩: the prompt to every target (`ComposerSend`). The submitted draft leaves the composer
     /// at once and its mentions leave the tray; each target that drains gets them queued with
     /// its own prompt, numbered from 1; a terminal without an integration gets their context
     /// pasted ahead of the text; a blocked target takes the text as its answer, alone. What the
     /// user types or stages while it goes in is the next draft. When no target took the text it
     /// comes back ahead of that, and when none took the mentions, the tokens do.
-    func sendDraft() {
-        guard let send else { return }
+    @discardableResult
+    func sendDraft() -> Task<Void, Never>? {
+        guard let send else { return nil }
         let targets = self.targets
         guard !targets.isEmpty else {
             if !bar.draft.isEmpty {
                 notice(board.objects.values.contains { $0.type == .terminal } ? "Pick a terminal to send to: click → at the right of the composer" : "No terminal to send to yet: ⌘T opens one")
             }
-            return
+            return nil
         }
         syncing = true
         guard let (outgoing, remaining) = ComposerSend.begin(bar.draft, targets: targets, on: board) else {
             syncing = false
-            return
+            return nil
         }
         bar.show(remaining, board: board)
         board.arrangeTray(remaining.tokens.map(\.id))
         syncing = false
         state.draft = remaining
+        reconciledDelivery = false
+        refreshDeliveryStatus()
         state.sending(outgoing.draft)
         recall = nil
         save()
@@ -205,23 +244,45 @@ final class ComposerController {
             notice("Mentions stay staged: a slash command or shell escape doesn't take them")
         }
         let board = self.board
-        Task { @MainActor [weak self] in
+        enum Result: Sendable {
+            case delivered(ObjectID)
+            case refused
+            case unknown
+        }
+        return Task { @MainActor [weak self] in
+            var recorded = false
             var failures: [String] = []
-            var reached: Set<ObjectID> = []
-            for delivery in outgoing.deliveries {
-                let text = await outgoing.text(for: delivery, on: board)
-                do {
-                    try await send(text, delivery.terminal, delivery.mentions, delivery.answer)
-                    if reached.isEmpty {
-                        self?.state.reached(outgoing.draft)
-                        self?.scheduleSave()
+            let deliveries = outgoing.deliveries.map { delivery in
+                Task { @MainActor [weak self] () -> Result in
+                    let text = await outgoing.text(for: delivery, on: board)
+                    do {
+                        try await send(text, delivery.terminal, delivery.mentions, delivery.answer)
+                        if !recorded {
+                            recorded = true
+                            self?.state.reached(outgoing.draft)
+                            self?.scheduleSave()
+                        }
+                        return .delivered(delivery.terminal)
+                    } catch is BoardMirror.PromptOutcomeUnknown {
+                        return .unknown
+                    } catch {
+                        let message = (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
+                        failures.append("\(self?.name(delivery.terminal) ?? delivery.terminal): \(message)")
+                        self?.notice("Not sent to " + failures.joined(separator: "; "))
+                        return .refused
                     }
-                    reached.insert(delivery.terminal)
-                } catch {
-                    let message = (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
-                    failures.append("\(self?.name(delivery.terminal) ?? delivery.terminal): \(message)")
                 }
             }
+            var reached: Set<ObjectID> = []
+            var unknown = false
+            for task in deliveries {
+                switch await task.value {
+                case .delivered(let terminal): reached.insert(terminal)
+                case .refused: break
+                case .unknown: unknown = true
+                }
+            }
+            guard !unknown else { return }
             self?.finished(outgoing, reached: reached, failures: failures)
         }
     }

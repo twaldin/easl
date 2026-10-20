@@ -1113,6 +1113,11 @@
       "params": { "type": "object", "properties": {}, "additionalProperties": false },
       "result": { "type": "object", "required": ["version"], "properties": { "version": { "type": "integer" }, "app": { "type": "string" } } }
     },
+    "agent.prompt_epoch": {
+      "description": "Discover safe prompt submission support and the current receipt registry incarnation before sending. The epoch changes whenever the host restarts; an older host refuses this method before a composer submits anything.",
+      "params": { "type": "object", "properties": {}, "additionalProperties": false },
+      "result": { "type": "object", "required": ["promptEpoch"], "properties": { "promptEpoch": { "type": "string" } }, "additionalProperties": false }
+    },
     "app.metrics": {
       "description": "What easl's own work costs, for finding what makes it slow: main-thread busy time and stretches (with the longest one's cause), per-method API requests (`api.<method>`: requests answered, time from arrival to the queued reply, waiting behind earlier requests on the connection included, and reply bytes; `api.in.<method>` requests arrived and their bytes; `api.main.<method>` the main-thread part of its dispatches), events sent, board writes and group refits (top writers), arrow routings (`route.board` the whole board, `route.arrow` one arrow following its ends; top triggering objects), saves, live tiles per kind, HTML page loads, reuses, measures and renders, and the process's CPU, wakeups, memory and energy with its WebKit helpers'. Counters cover three windows: since launch or the last reset, the last 60 s, the last 10 min. `easl metrics [--watch] [--reset]` prints them as text.",
       "params": {
@@ -1916,17 +1921,30 @@
           "message": { "$ref": "#/definitions/MessageId", "description": "out-of-band only: the id the message gets (`msg_` and 8 to 64 letters, digits, `_` or `-`), the same on every attempt to send it. A prompt whose `message` is already queued for the target answers with that message (`duplicate: true`) and queues nothing, also when the first attempt is still being sent, so a sender whose call timed out can send again without the target getting it twice (a terminal on another machine has its text read over ssh before the message is queued, which can outlast a short timeout). The receiving integration drops an id it already delivered. Typing ignores it" },
           "force": { "type": "boolean", "default": false, "description": "typing only: send even though the target is `blocked` or runs another foreground program than its agent (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" },
           "composer": { "type": "boolean", "default": false, "description": "The user's own prompt from a remote composer's window: typed into the terminal even when its integration takes peer messages. Full staged mentions wait for this prompt's matching submission drain, numbered from 1, never the tray or a hand-off. Takes no caller, from, when, force or mentions." },
+          "submission": {
+            "type": "object",
+            "required": ["id", "epoch", "createdAt"],
+            "properties": {
+              "id": { "type": "string", "minLength": 8, "maxLength": 80, "pattern": "^sub_[A-Za-z0-9_-]+$", "description": "Client-generated identity, unchanged across attempts at this exact prompt." },
+              "epoch": { "type": "string", "minLength": 1, "maxLength": 80, "description": "The host's agent.prompt_epoch promptEpoch before the first attempt." },
+              "createdAt": { "type": "string", "format": "date-time", "description": "Client creation time. Receipts live for 24 hours. More than five minutes in the future, an expired receipt, or a different epoch cannot authorize execution." }
+            },
+            "additionalProperties": false,
+            "description": "An idempotent prompt submission. The host reserves its identity before any asynchronous work and remembers its exact payload and outcome for 24 hours. Reuse with changed parameters is invalid_params. Up to 4096 live receipts are held without evicting an unfinished submission."
+          },
+          "reconcile": { "type": "boolean", "default": false, "description": "Requires submission. Read its receipt without submitting anything. An absent, unexpired identity in the same epoch is atomically cancelled and returns not-delivered, preventing a late original request from typing. A known outcome is replayed. pending means the first attempt is unfinished; unknown means the host cannot prove whether it reached the terminal. Neither permits restoring an unsent draft or sending again." },
           "answer": { "type": "boolean", "default": false, "description": "with `composer`: the text is the user's answer to the question or approval the target is blocked on, so it passes the blocked check (only the user answers; `force` is for agents and scripts). Takes no mentions" }
         },
         "additionalProperties": false
       },
       "result": {
         "type": "object",
-        "required": ["agent", "submittedAt", "waitable", "delivery"],
+        "required": ["delivery"],
         "properties": {
           "agent": { "$ref": "#/definitions/Agent", "description": "as it was when the prompt was submitted (its lifecycle is still the previous turn's)" },
           "submittedAt": { "type": "string", "format": "date-time", "description": "when it was typed, or queued as a message" },
-          "delivery": { "enum": ["message", "typed"], "description": "message: queued for the target's integration (`message` is its id); typed: pasted or typed into the terminal" },
+          "delivery": { "enum": ["message", "typed", "pending", "not-delivered", "unknown"], "description": "message: queued for the integration; typed: submitted to the terminal. These carry agent, submittedAt and waitable. Receipt states: pending is still in progress; not-delivered is definitively cancelled or refused before execution; unknown must never be retried or restored as an unsent draft." },
+          "error": { "type": "object", "required": ["code", "message"], "properties": { "code": { "type": "string" }, "message": { "type": "string" } }, "additionalProperties": false, "description": "With receipt delivery not-delivered: the original definite refusal. An API error to a receipt query is not proof of non-delivery." },
           "message": { "$ref": "#/definitions/MessageId", "description": "with delivery `message`: the queued message's id" },
           "waitable": { "type": "boolean", "description": "the agent reports a lifecycle (an integration, or by notification), so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: \"prompt\"`" },
           "mentions": { "type": "array", "items": { "$ref": "#/definitions/Mention" }, "description": "present with `mentions`: what waits for the target's prompt (an object already waiting there is not attached twice)" },

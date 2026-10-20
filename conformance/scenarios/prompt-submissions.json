@@ -1,0 +1,66 @@
+{
+  "description": "Both hosts retain prompt submission outcomes after the agent acknowledges the message. A receipt query never submits. Cancelling a missing composer identity prevents a late original from typing. Changed payloads, host restarts and expired identities cannot authorize another delivery.",
+  "ignore": {
+    "response.result.promptEpoch": "Each running host has its own receipt registry incarnation.",
+    "request.submission.epoch": "The request carries the current host's opaque registry incarnation."
+  },
+  "steps": [
+    { "call": "agent.prompt_epoch", "save": "host", "expect": { "response.ok": true } },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "receipt-worker" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } },
+      "save": "terminal"
+    },
+    { "call": "agent.report", "params": { "tile": "{{terminal.object.id}}", "kind": "omp", "state": "idle", "protocol": 1, "source": "canvas-omp", "seq": 1 } },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "{{terminal.object.id}}", "text": "receive this prompt once", "submission": { "id": "sub_delivered-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
+      "save": "sent",
+      "expect": { "response.ok": true, "response.result.delivery": "message" }
+    },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "{{terminal.object.id}}", "text": "receive this prompt once", "submission": { "id": "sub_delivered-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" }, "reconcile": true },
+      "expect": { "response.ok": true, "response.result.message": "{{sent.message}}", "response.result.submittedAt": "{{sent.submittedAt}}", "eventCount": 0 }
+    },
+    {
+      "call": "agent.inbox",
+      "params": { "tile": "{{terminal.object.id}}" },
+      "expect": { "response.result.messages.0.id": "{{sent.message}}", "response.result.messages.0.text": "receive this prompt once" }
+    },
+    { "call": "agent.inbox", "params": { "tile": "{{terminal.object.id}}", "ack": ["{{sent.message}}"] }, "expect": { "response.result.messages": [] } },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "{{terminal.object.id}}", "text": "receive this prompt once", "submission": { "id": "sub_delivered-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
+      "expect": { "response.ok": true, "response.result.message": "{{sent.message}}", "response.result.submittedAt": "{{sent.submittedAt}}", "eventCount": 0 }
+    },
+    { "call": "agent.inbox", "params": { "tile": "{{terminal.object.id}}" }, "expect": { "response.result.messages": [] } },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "{{terminal.object.id}}", "text": "never type the cancelled composer prompt", "composer": true, "submission": { "id": "sub_cancelled-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" }, "reconcile": true },
+      "expect": { "response.ok": true, "response.result.delivery": "not-delivered", "eventCount": 0 }
+    },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "{{terminal.object.id}}", "text": "never type the cancelled composer prompt", "composer": true, "submission": { "id": "sub_cancelled-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
+      "expect": { "response.ok": true, "response.result.delivery": "not-delivered", "eventCount": 0 }
+    },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "{{terminal.object.id}}", "text": "a different payload cannot reuse the receipt", "submission": { "id": "sub_delivered-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
+      "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 },
+      "ignore": { "response.error.message": "Both hosts reject changed payloads, with host-specific diagnostic wording." }
+    },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "{{terminal.object.id}}", "text": "do not retry across a host restart", "composer": true, "submission": { "id": "sub_old_host_epoch", "epoch": "a-previous-host-incarnation", "createdAt": "{{now}}" }, "reconcile": true },
+      "expect": { "response.ok": true, "response.result.delivery": "unknown", "eventCount": 0 }
+    },
+    {
+      "call": "agent.prompt",
+      "params": { "target": "{{terminal.object.id}}", "text": "do not retry an expired receipt", "composer": true, "submission": { "id": "sub_expired_receipt", "epoch": "{{host.promptEpoch}}", "createdAt": "2020-01-01T00:00:00Z" }, "reconcile": true },
+      "expect": { "response.ok": true, "response.result.delivery": "unknown", "eventCount": 0 }
+    },
+    { "call": "object.delete", "params": { "id": "{{terminal.object.id}}" } }
+  ]
+}

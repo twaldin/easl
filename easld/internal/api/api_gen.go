@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "19b4ce9cc3963701"
+const SchemaHash = "ee9f0a202321c49a"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -63,6 +63,10 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"stream"},
 	},
 	"system.ping": {
+		Accepted: nil,
+		Required: nil,
+	},
+	"agent.prompt_epoch": {
 		Accepted: nil,
 		Required: nil,
 	},
@@ -207,7 +211,7 @@ var Methods = map[string]ParamSpec{
 		Required: nil,
 	},
 	"agent.prompt": {
-		Accepted: []string{"target", "text", "mentions", "staged", "viewer", "caller", "from", "when", "message", "force", "composer", "answer"},
+		Accepted: []string{"target", "text", "mentions", "staged", "viewer", "caller", "from", "when", "message", "force", "composer", "submission", "reconcile", "answer"},
 		Required: []string{"target", "text"},
 	},
 	"agent.wait": {

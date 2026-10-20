@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 2
-    static let schemaHash = "19b4ce9cc3963701"
+    static let schemaHash = "ee9f0a202321c49a"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "surface.stream": (["id", "scale", "format"], ["id"]),
@@ -15,6 +15,7 @@ enum ApiParams {
         "surface.answer": (["stream", "dialog", "accept", "text", "user", "password", "choice", "files"], ["stream", "dialog", "accept"]),
         "surface.stop": (["stream"], ["stream"]),
         "system.ping": ([], []),
+        "agent.prompt_epoch": ([], []),
         "app.metrics": (["reset", "watch"], []),
         "app.update": (["mode"], ["mode"]),
         "board.get": (["board", "viewer", "since", "branch"], []),
@@ -50,7 +51,7 @@ enum ApiParams {
         "agent.report_session": (["tile", "kind", "sessionId", "sessionPath", "model", "thinking"], ["tile", "kind"]),
         "agent.release": (["tile", "kind", "source"], ["tile", "kind"]),
         "agent.list": ([], []),
-        "agent.prompt": (["target", "text", "mentions", "staged", "viewer", "caller", "from", "when", "message", "force", "composer", "answer"], ["target", "text"]),
+        "agent.prompt": (["target", "text", "mentions", "staged", "viewer", "caller", "from", "when", "message", "force", "composer", "submission", "reconcile", "answer"], ["target", "text"]),
         "agent.wait": (["target", "caller", "until", "timeoutMs"], ["target"]),
         "agent.read": (["target", "caller", "lines", "since", "block", "final"], ["target"]),
         "agent.inbox": (["tile", "ack", "started", "waitMs"], ["tile"]),

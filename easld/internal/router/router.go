@@ -60,6 +60,8 @@ type Router struct {
 	surfaces *surfaces.Registry
 
 	pendingPrompts map[string]time.Time
+	promptEpoch    string
+	promptReceipts map[string]*promptReceipt
 	waiters        []*waiter
 	// messageHolds: which connection holds each message agent.inbox handed out and its
 	// integration hasn't acked yet; offered again once that connection closes.
@@ -111,6 +113,8 @@ func New(reg *board.Registry) *Router {
 	r := &Router{reg: reg, clients: clients.New(), pendingPrompts: map[string]time.Time{}, messageHolds: map[messageHold]Conn{}, restarts: map[string]uint64{}, closing: map[string]*boardClose{}, typing: map[string]int{}, diagrams: map[string]*diagramJob{},
 		cmux: map[string]*cmuxSocket{}, adopted: map[string]int{},
 		FirstReportGrace: 15 * time.Second, PromptStartGrace: 60 * time.Second}
+	r.promptEpoch = newPromptEpoch()
+	r.promptReceipts = make(map[string]*promptReceipt)
 	r.surfaces = surfaces.New(r.clients, r.surfaceEnds)
 	reg.Hook = func(b *board.Board, e model.Event) {
 		r.observeDiagrams(b, e)
@@ -253,6 +257,10 @@ func (r *Router) call(id any, method string, raw any, c Conn) (any, error) {
 		// A newer client may send params this server doesn't know: they are ignored.
 		raw = known(method, raw)
 	}
+	if method == "agent.prompt" {
+		p, _ := raw.(map[string]any)
+		return r.prompt(p)
+	}
 	if err := checkParams(method, raw); err != nil {
 		return nil, err
 	}
@@ -290,8 +298,6 @@ func (r *Router) call(id any, method string, raw any, c Conn) (any, error) {
 		return r.inbox(id, p, c)
 	case "agent.read":
 		return r.read(p)
-	case "agent.prompt":
-		return r.prompt(p)
 	case "agent.restart":
 		return r.restart(p)
 	case "view.render":
