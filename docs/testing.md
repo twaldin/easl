@@ -348,6 +348,8 @@ python3 scripts/perf-loop.py --app base=/tmp/a.app --app fix=/tmp/b.app [--board
 
 `perf-board.py --objects N` generates exactly N objects with seed 7 by default. Use 50, 200, 500, and 1000 for the scale matrix. Every board contains notes, code, images, HTML, cached diagrams, shapes, arrows, groups, and eight terminals. Each terminal prints a 256-byte sequence line every 125 ms. Create `<root>/.perf-board-quiet` to pause output without ending sessions, and remove it to resume.
 
+Build both bundles from the same base revision in separate scratch source trees. For the before bundle, copy only `Sources/CanvasApp/DevPerf.swift` and `Sources/CanvasApp/DevInput.swift` from the candidate into the base tree. This adds the same frame log and real-time replay protocol without the product changes. Use the candidate's scripts and replay client for both bundles. Freeze each with `EASL_BUNDLE_APP=<unique-path> scripts/bundle.sh release`; the script builds with `-j 2`. Record the source revisions, per-file hashes, compiler version, build flags, and executable and helper hashes. An uninstrumented main bundle cannot supply this harness's frame or delivery records.
+
 Run `perf-scale.py` only inside a claimed GUI guest. Compile the window lookup helper once, keep both frozen release bundles for the session, and use the same `--fixtures` directory for both artifacts:
 
 ```sh
@@ -363,14 +365,27 @@ Rows record API readiness, a native startup capture and its elapsed-time upper b
 
 Idle CPU is a ten-second CPU-time delta before the gestures, with all eight streams paused. Rows distinguish the app, the app plus its observed helpers, and the scratch daemon. The helper aggregate is unavailable if the observed PID set changes during the window; the raw per-PID samples remain. Daemon CPU excludes backend workers. Memory snapshots cover the quiet phase and the end of the whole-board render.
 
+These are post-open quiet observations, not proof that every card on the board has settled. Gestures also use fixed two-second setup waits. Record remaining card activity in profiles, and retain slower or failed observations. Use at least five interleaved observations before attributing a timing difference; a single observation at another board size is diagnostic.
+
 The pan uses 40 × 20 point steps, reverses every 60 scheduled steps, and must traverse more than one viewport width. The pinch uses 0.01 steps and reverses every 120 steps. Both use `--repeat 601 --interval 16.666667 --realtime`: missed timer ticks coalesce into the corresponding trajectory displacement instead of stretching 601 deliveries beyond ten seconds. `DevInput.delivery` confirms real-time mode and records delivered/coalesced counts. `DevInput.motion` records the observed pan and magnification range; a gesture without sufficient movement fails the runner.
 
 `DevPerfFrames` reports callback-gap p50, p95, and p99, missed display timestamps, and `stalls50` for each phase. Quantiles are 0.01 ms histogram upper bounds below 100 ms. `overflow100` counts larger gaps, whose quantiles use the phase maximum. Zero samples means no valid frame distribution. These callbacks are not GPU presentation timestamps. The original `DevPerf` and `DevPerfWake` lines retain their formats.
 
 Rows retain render failures, placeholders, omitted objects, and gesture failures rather than treating fast failures as successful measurements. Output includes the original fixture, raw logs, stream replies, startup capture receipts, render object records, and PNGs. Compare the native bounds as well as fixture bytes before attributing a difference to the app.
 
-The proximity optimization leaves tile bodies in the canvas coordinate hierarchy and detaches only title controls outside the viewport margin. Distant cold tiles do not start card snapshots; they resume as they enter the margin. Outgoing live content still supplies its last snapshot. Explicit whole-board renders remain uncapped, and remote HTML keeps its existing host-bound file and network rules.
+The proximity optimization leaves tile bodies in the canvas coordinate hierarchy and detaches only title controls outside a 600-document-point viewport margin. A focused title control stays attached. Distant cold tiles defer card snapshots until near, and new cold admissions wait until a pinch ends. Live departure snapshots enter before cold admissions; completed cards survive far/near without being redrawn. Explicit whole-board renders remain uncapped, and remote HTML keeps its existing host-bound file and network rules.
 
+
+#### Native preview lifecycle regression
+
+Inside a claimed VirtualMac GUI guest with CuaDriver available, use the same compiled window helper and a frozen app:
+
+```sh
+python3 Tests/TileProximity/run.py --checkout "$PWD" --app "$G/fix.app" \
+  --window-helper "$G/perf-window" --out "$G/proximity"
+```
+
+The five cases check a saved browser card after far/near, cold HTML demand only when near, cancelled cold demand restarting on reentry, and a loaded browser's first Zoom to Fit on 500- and 1000-object fixtures. They inspect native body pixels and gated loopback HTTP requests, not `view.snapshot` or `view.render` refreshes. Large cases verify eight outputting terminal sessions. `--cases` selects named cases listed by `--help`. Both harnesses refuse app launch on a physical Mac; the helper's activation mode also checks the guest model. Each scale run uses a fresh capture-session label and ends its session before the next run.
 
 ### Remote boards
 
