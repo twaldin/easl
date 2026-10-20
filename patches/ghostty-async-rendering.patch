@@ -1,8 +1,8 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index 518af3ff2..8db19150d 100644
+index c3e5b28..a44286c 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
-@@ -1180,2 +1180,14 @@ GHOSTTY_API void ghostty_surface_refresh(ghostty_surface_t);
+@@ -1199,2 +1199,14 @@ GHOSTTY_API void ghostty_surface_refresh(ghostty_surface_t);
  GHOSTTY_API void ghostty_surface_draw(ghostty_surface_t);
 +
 +// Opt into worker-only rendering on macOS/Metal. Call on the main thread.
@@ -18,19 +18,19 @@ index 518af3ff2..8db19150d 100644
 +    ghostty_surface_t, ghostty_surface_frame_cb, void *userdata, uint64_t generation);
  GHOSTTY_API void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index b90366ac7..de494c6bf 100644
+index 6e7c066..2313616 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
-@@ -29,2 +29,4 @@ pub const resourcesDir = internal_os.resourcesDir;
+@@ -30,2 +30,4 @@ pub const resourcesDir = internal_os.resourcesDir;
  
 +const FrameCallback = ?*const fn (?*anyopaque, u64) callconv(.c) void;
 +
  pub const App = struct {
-@@ -634,2 +636,3 @@ pub const Surface = struct {
+@@ -668,2 +670,3 @@ pub const Surface = struct {
      pub fn deinit(self: *Surface) void {
 +        _ = self.setAsyncRendering(null, null, 0);
          // Shut down our inspector
-@@ -998,3 +1001,39 @@ pub const Surface = struct {
+@@ -1047,3 +1050,39 @@ pub const Surface = struct {
  
 +    pub fn setAsyncRendering(
 +        self: *Surface,
@@ -70,7 +70,7 @@ index b90366ac7..de494c6bf 100644
 +            }
 +        }
          self.core_surface.draw() catch |err| {
-@@ -1953,2 +1992,11 @@ pub const CAPI = struct {
+@@ -2043,2 +2082,11 @@ pub const CAPI = struct {
  
 +    export fn ghostty_surface_set_async_rendering(
 +        surface: *Surface,
@@ -83,25 +83,33 @@ index b90366ac7..de494c6bf 100644
 +
      /// Update the size of a surface. This will trigger resize notifications
 diff --git a/src/renderer/Metal.zig b/src/renderer/Metal.zig
-index 0458b2dc1..2f60b1640 100644
+index 0513f94..f6854a1 100644
 --- a/src/renderer/Metal.zig
 +++ b/src/renderer/Metal.zig
-@@ -69,4 +69,2 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
+@@ -41,2 +41,3 @@ const log = std.log.scoped(.metal);
+ layer: IOSurfaceLayer,
++alloc: Allocator,
+ 
+@@ -72,4 +73,2 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
  
 -    _ = alloc;
 -
      // Choose our MTLDevice and create a MTLCommandQueue for that device.
-@@ -110,3 +108,3 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
+@@ -127,3 +126,3 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
      // the layer contents.
 -    var layer = try IOSurfaceLayer.init();
 +    var layer = try IOSurfaceLayer.init(alloc);
      errdefer layer.release();
-@@ -172,2 +170,4 @@ pub fn loopEnter(self: *Metal) void {
+@@ -165,2 +164,3 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
+     return .{
++        .alloc = alloc,
+         .layer = layer,
+@@ -196,2 +196,4 @@ pub fn loopEnter(self: *Metal) void {
  fn displayCallback(renderer: *Renderer) align(8) void {
 +    // A pending display can survive disabling needsDisplayOnBoundsChange.
 +    if (renderer.api.layer.requestAsyncRender()) return;
      renderer.drawFrame(true) catch |err| {
-@@ -177,2 +177,21 @@ fn displayCallback(renderer: *Renderer) align(8) void {
+@@ -201,2 +203,21 @@ fn displayCallback(renderer: *Renderer) align(8) void {
  
 +pub fn setAsyncRendering(
 +    self: *Metal,
@@ -123,12 +131,22 @@ index 0458b2dc1..2f60b1640 100644
 +}
 +
  /// Actions taken before doing anything in `drawFrame`.
-@@ -260,2 +279,12 @@ pub inline fn present(self: *Metal, target: Target, sync: bool) !void {
+@@ -261,2 +282,3 @@ pub fn initTarget(self: *const Metal, width: usize, height: usize) !Target {
+     return Target.init(.{
++        .alloc = self.alloc,
+         .device = self.device,
+@@ -290,2 +312,18 @@ pub inline fn present(self: *Metal, target: Target, sync: bool) !void {
  
-+pub fn presentFrame(self: *Metal, target: Target, sync: bool, revision: u64) !void {
++pub fn presentFrame(
++    self: *Metal,
++    target: Target,
++    sync: bool,
++    revision: u64,
++    publication: ?Target.Publication.Frame,
++) !void {
 +    if (comptime builtin.os.tag == .macos) {
 +        if (!sync) {
-+            try self.layer.setSurfaceForRevision(target.surface, revision);
++            try self.layer.setSurfaceForRevision(target.surface, revision, publication);
 +            return;
 +        }
 +    }
@@ -136,46 +154,89 @@ index 0458b2dc1..2f60b1640 100644
 +}
 +
  /// Returns the options to use when constructing buffers.
+@@ -431,3 +469,17 @@ pub inline fn beginFrame(
+ ) !Frame {
+-    return try Frame.begin(.{ .queue = self.queue }, renderer, target);
++    const publication: ?Target.Publication.Frame = if (target.publication) |state|
++        state.begin() orelse replacement: {
++            // Only an active main lease needs new pixels. Queued generations
++            // are superseded in place, without allocating another IOSurface.
++            const fresh = try self.initTarget(target.width, target.height);
++            target.deinit();
++            target.* = fresh;
++            break :replacement target.publication.?.begin().?;
++        }
++    else
++        null;
++    return try Frame.begin(.{
++        .queue = self.queue,
++        .publication = publication,
++    }, renderer, target);
+ }
 diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
-index f7464c7f6..39839074c 100644
+index a5e027a..abaeac7 100644
 --- a/src/renderer/generic.zig
 +++ b/src/renderer/generic.zig
-@@ -1728,2 +1728,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -591,2 +591,4 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+                 var result: SwapChain = .{ .frames = undefined };
++                var initialized: usize = 0;
++                errdefer for (result.frames[0..initialized]) |*frame| frame.deinit();
+ 
+@@ -595,2 +597,3 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+                     frame.* = try FrameState.init(api, custom_shaders);
++                    initialized += 1;
+                 }
+@@ -2063,2 +2066,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                  self.size.screen.height != surface_size.height;
 +            const display_invalidated = if (comptime @hasDecl(GraphicsAPI, "consumeDisplayInvalidation"))
 +                self.api.consumeDisplayInvalidation()
 +            else
 +                false;
  
-@@ -1736,2 +1740,3 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -2071,2 +2078,3 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                  size_changed or
 +                display_invalidated or
                  swap_chain_rebuilt or
 diff --git a/src/renderer/metal/Frame.zig b/src/renderer/metal/Frame.zig
-index 388b4f9ed..7d0802b8d 100644
+index 388b4f9..73480c7 100644
 --- a/src/renderer/metal/Frame.zig
 +++ b/src/renderer/metal/Frame.zig
-@@ -50,2 +50,3 @@ pub fn begin(
+@@ -21,2 +21,3 @@ pub const Options = struct {
+     queue: objc.Object,
++    publication: ?Target.Publication.Frame,
+ };
+@@ -50,2 +51,4 @@ pub fn begin(
              .sync = false,
 +            .presentation_revision = renderer.api.layer.presentationRevision(),
++            .publication = opts.publication,
          },
-@@ -62,2 +63,3 @@ const CompletionBlock = objc.Block(struct {
+@@ -62,2 +65,4 @@ const CompletionBlock = objc.Block(struct {
      sync: bool,
 +    presentation_revision: u64,
++    publication: ?Target.Publication.Frame,
  }, .{
-@@ -81,5 +83,6 @@ fn bufferCompleted(
+@@ -79,7 +84,11 @@ fn bufferCompleted(
+ 
++    if (block.publication) |publication| publication.complete(health == .healthy);
++
+     // If the frame is healthy, present it.
      if (health == .healthy) {
 -        block.renderer.api.present(
 +        block.renderer.api.presentFrame(
              block.target.*,
              block.sync,
 +            block.presentation_revision,
++            block.publication,
          ) catch |err| {
 diff --git a/src/renderer/metal/IOSurfaceLayer.zig b/src/renderer/metal/IOSurfaceLayer.zig
-index cd97126a4..9315e87cd 100644
+index 6563c60..4027c52 100644
 --- a/src/renderer/metal/IOSurfaceLayer.zig
 +++ b/src/renderer/metal/IOSurfaceLayer.zig
-@@ -17,6 +17,42 @@ var Subclass: ?objc.Class = null;
+@@ -11,2 +11,3 @@ const macos = @import("macos");
+ const IOSurface = macos.iosurface.IOSurface;
++const Publication = @import("Publication.zig");
+ 
+@@ -16,6 +17,42 @@ var Subclass: ?objc.Class = null;
  
 +pub const FrameCallback = ?*const fn (?*anyopaque, u64) callconv(.c) void;
 +pub const WakeupCallback = *const fn (?*anyopaque) void;
@@ -219,7 +280,7 @@ index cd97126a4..9315e87cd 100644
 -pub fn init() !IOSurfaceLayer {
 +pub fn init(alloc: Allocator) !IOSurfaceLayer {
      // The layer returned by `[CALayer layer]` is autoreleased, which means
-@@ -38,3 +74,9 @@ pub fn init() !IOSurfaceLayer {
+@@ -38,3 +75,9 @@ pub fn init() !IOSurfaceLayer {
  
 -    return .{ .layer = layer };
 +    const async_rendering: ?*AsyncRendering = if (@import("builtin").os.tag == .macos) state: {
@@ -230,14 +291,14 @@ index cd97126a4..9315e87cd 100644
 +
 +    return .{ .layer = layer, .async_rendering = async_rendering };
  }
-@@ -46,2 +88,6 @@ pub fn release(self: *IOSurfaceLayer) void {
+@@ -46,2 +89,6 @@ pub fn release(self: *IOSurfaceLayer) void {
      self.setDisplayCallback(null, null);
 +    if (self.async_rendering) |state| {
 +        state.clear();
 +        state.release();
 +    }
      self.layer.release();
-@@ -49,2 +95,44 @@ pub fn release(self: *IOSurfaceLayer) void {
+@@ -49,2 +96,44 @@ pub fn release(self: *IOSurfaceLayer) void {
  
 +pub fn setAsyncRendering(
 +    self: *IOSurfaceLayer,
@@ -282,36 +343,202 @@ index cd97126a4..9315e87cd 100644
 +}
 +
  /// Sets the layer's `contents` to the provided IOSurface.
-@@ -53,2 +141,6 @@ pub fn release(self: *IOSurfaceLayer) void {
+@@ -53,2 +142,11 @@ pub fn release(self: *IOSurfaceLayer) void {
  pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
-+    try self.setSurfaceForRevision(surface, self.presentationRevision());
++    try self.setSurfaceForRevision(surface, self.presentationRevision(), null);
 +}
 +
-+pub fn setSurfaceForRevision(self: *IOSurfaceLayer, surface: *IOSurface, revision: u64) !void {
++pub fn setSurfaceForRevision(
++    self: *IOSurfaceLayer,
++    surface: *IOSurface,
++    revision: u64,
++    publication: ?Publication.Frame,
++) !void {
      // We retain the surface to make sure it's not GC'd
-@@ -58,2 +150,3 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
+@@ -58,2 +156,4 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
      surface.retain();
 +    if (self.async_rendering) |state| state.retain();
++    if (publication) |frame| frame.state.retain();
      // NOTE: Since `self.layer` is passed as an `objc.c.id`, it's
-@@ -65,2 +158,4 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
+@@ -65,7 +165,13 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
          .surface = surface,
 +        .async_rendering = self.async_rendering,
 +        .revision = revision,
++        .publication = publication,
      }, &setSurfaceCallback);
-@@ -93,2 +188,4 @@ const SetSurfaceBlock = objc.Block(struct {
+ 
+-    // We check if we're on the main thread and run the block directly if so.
+     const NSThread = objc.getClass("NSThread").?;
+-    if (NSThread.msgSend(bool, "isMainThread", .{})) {
++    // Frame notifications must never run inside GPU completion while it still
++    // owns a swapchain permit: the callback may synchronously free the surface.
++    const run_inline = NSThread.msgSend(bool, "isMainThread", .{}) and
++        (if (self.async_rendering) |state| state.callback == null else true);
++    if (run_inline) {
+         setSurfaceCallback(&block);
+@@ -93,2 +199,5 @@ const SetSurfaceBlock = objc.Block(struct {
      surface: *IOSurface,
 +    async_rendering: ?*AsyncRendering,
 +    revision: u64,
++    publication: ?Publication.Frame,
  }, .{}, void);
-@@ -103,2 +200,3 @@ fn setSurfaceCallback(
+@@ -103,2 +212,13 @@ fn setSurfaceCallback(
      defer surface.release();
 +    defer if (block.async_rendering) |state| state.release();
++    defer if (block.publication) |frame| frame.state.release();
++
++    const lease: ?Publication.Frame = if (block.async_rendering) |state| claim: {
++        if (block.revision != state.revision.load(.acquire)) return;
++        if (state.callback == null) break :claim null;
++        const frame = block.publication orelse return;
++        if (!frame.claim()) return;
++        break :claim frame;
++    } else null;
++    defer if (lease) |frame| frame.finish();
  
-@@ -122,2 +220,7 @@ fn setSurfaceCallback(
+@@ -122,2 +242,10 @@ fn setSurfaceCallback(
      layer.setProperty("contents", surface);
-+    if (block.async_rendering) |state| {
++    if (lease != null) {
++        // Setting contents can retire or replace the registration through KVO.
++        // Only retained publication state may be touched after client code.
++        const state = block.async_rendering.?;
 +        if (block.revision == state.revision.load(.acquire)) {
 +            if (state.callback) |callback| callback(state.userdata, state.generation);
 +        }
 +    }
  }
+diff --git a/src/renderer/metal/Publication.zig b/src/renderer/metal/Publication.zig
+new file mode 100644
+index 0000000..99ea21b
+--- /dev/null
++++ b/src/renderer/metal/Publication.zig
+@@ -0,0 +1,83 @@
++const Publication = @This();
++
++const std = @import("std");
++const Allocator = std.mem.Allocator;
++
++alloc: Allocator,
++references: std.atomic.Value(usize) = .init(1),
++word: std.atomic.Value(u64) = .init(0),
++
++const Phase = enum(u2) { idle, rendering, ready, publishing };
++const phase_mask: u64 = 3;
++const generation_step: u64 = phase_mask + 1;
++
++pub const Frame = struct {
++    state: *Publication,
++    generation: u64,
++
++    pub fn complete(self: Frame, healthy: bool) void {
++        const next: Phase = if (healthy) .ready else .idle;
++        self.state.word.store(self.generation | @intFromEnum(next), .release);
++    }
++
++    pub fn claim(self: Frame) bool {
++        return self.state.word.cmpxchgStrong(
++            self.generation | @intFromEnum(Phase.ready),
++            self.generation | @intFromEnum(Phase.publishing),
++            .acq_rel,
++            .acquire,
++        ) == null;
++    }
++
++    pub fn finish(self: Frame) void {
++        self.state.word.store(self.generation | @intFromEnum(Phase.idle), .release);
++    }
++};
++
++pub fn create(alloc: Allocator) !*Publication {
++    const state = try alloc.create(Publication);
++    state.* = .{ .alloc = alloc };
++    return state;
++}
++
++pub fn retain(self: *Publication) void {
++    _ = self.references.fetchAdd(1, .monotonic);
++}
++
++pub fn release(self: *Publication) void {
++    if (self.references.fetchSub(1, .acq_rel) == 1)
++        self.alloc.destroy(self);
++}
++
++pub fn begin(self: *Publication) ?Frame {
++    var current = self.word.load(.acquire);
++    while (true) {
++        switch (@as(Phase, @enumFromInt(current & phase_mask))) {
++            .publishing => return null,
++            .rendering => unreachable,
++            .idle, .ready => {},
++        }
++        const generation = (current & ~phase_mask) +% generation_step;
++        if (self.word.cmpxchgWeak(
++            current,
++            generation | @intFromEnum(Phase.rendering),
++            .acq_rel,
++            .acquire,
++        )) |changed| {
++            current = changed;
++        } else return .{ .state = self, .generation = generation };
++    }
++}
++
++pub fn retire(self: *Publication) void {
++    var current = self.word.load(.acquire);
++    while (true) {
++        // An active main callback owns its phase until it returns, even if
++        // that callback tears down the target or the entire renderer.
++        if (@as(Phase, @enumFromInt(current & phase_mask)) == .publishing) return;
++        const generation = (current & ~phase_mask) +% generation_step;
++        if (self.word.cmpxchgWeak(current, generation, .acq_rel, .acquire)) |changed| {
++            current = changed;
++        } else return;
++    }
++}
+diff --git a/src/renderer/metal/Target.zig b/src/renderer/metal/Target.zig
+index f20bb0b..7a3114d 100644
+--- a/src/renderer/metal/Target.zig
++++ b/src/renderer/metal/Target.zig
+@@ -6,2 +6,3 @@ const Self = @This();
+ const std = @import("std");
++const builtin = @import("builtin");
+ const Allocator = std.mem.Allocator;
+@@ -13,2 +14,3 @@ const IOSurface = macos.iosurface.IOSurface;
+ const mtl = @import("api.zig");
++pub const Publication = @import("Publication.zig");
+ 
+@@ -18,2 +20,4 @@ const log = std.log.scoped(.metal);
+ pub const Options = struct {
++    alloc: Allocator,
++
+     /// MTLDevice
+@@ -38,2 +42,4 @@ texture: objc.Object,
+ 
++publication: ?*Publication,
++
+ /// Current width of this target.
+@@ -60,2 +66,3 @@ pub fn init(opts: Options) !Self {
+     });
++    errdefer surface.deinit();
+ 
+@@ -95,2 +102,8 @@ pub fn init(opts: Options) !Self {
+     const texture = objc.Object.fromId(id);
++    errdefer texture.release();
++
++    const publication = if (comptime builtin.os.tag == .macos)
++        try Publication.create(opts.alloc)
++    else
++        null;
+ 
+@@ -99,2 +112,3 @@ pub fn init(opts: Options) !Self {
+         .texture = texture,
++        .publication = publication,
+         .width = opts.width,
+@@ -105,2 +119,6 @@ pub fn init(opts: Options) !Self {
+ pub fn deinit(self: *Self) void {
++    if (self.publication) |state| {
++        state.retire();
++        state.release();
++    }
+     self.surface.deinit();
