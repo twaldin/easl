@@ -247,7 +247,7 @@ final class DelegatedCallsTests {
         #expect(code(await answer(calls, "surface.ack", .object(["stream": "str_1"]))) == "invalid_params")
         _ = try await answer(calls, "surface.ack", .object(["stream": "str_1", "frame": 0])).get()
         _ = try await answer(calls, "surface.progress", .object(["stream": "str_1", "frame": 1, "offset": 16384])).get()
-        #expect(streamed.map { $0.request } == [.stream(tile: "obj_page", scale: 2, format: .jpeg), .ack(stream: "str_1", frame: 0),
+        #expect(streamed.map { $0.request } == [.stream(tile: "obj_page", scale: 2, format: .jpeg, refinement: .independent), .ack(stream: "str_1", frame: 0),
                                                .progress(stream: "str_1", frame: 1, offset: 16384)])
         #expect(streamed.map { $0.heard } == [["surface.frame", "surface.dialog"], [], []])
         #expect(streamed.allSatisfy { !$0.open }, "a call that came on no link can push nothing")

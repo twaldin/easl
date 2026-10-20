@@ -388,6 +388,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                     "id": .string(id),
                     "scale": .number(scale),
                     "format": .string(SurfaceFormat.h264.rawValue),
+                    "refinement": .string(SurfaceRefinement.retained.rawValue),
                 ]), timeout: .seconds(15))
                 guard let self else {
                     if let stream = result["stream"]?.string {

@@ -78,6 +78,43 @@ struct SurfaceRefreshTransferTests {
         #expect(completed == original)
     }
 
+    @Test(arguments: [1, 16384, 16385, 589823, 589824])
+    func independentReceiptsNeverQueueMoreThanOne16KiBChunk(bytes: Int) throws {
+        let original = refresh(bytes: bytes)
+        var transmission = try SurfaceRefreshTransmission(frame: original, refinement: .independent)
+        var assembly = SurfaceRefreshAssembly()
+        #expect(throws: SurfaceRefreshTransferError.invalidOffset) { try transmission.progress(offset: 0) }
+        var pending = transmission.start()
+        var sentBytes = pending.reduce(0) { $0 + $1.data.count }
+        var acknowledgedBytes = 0
+        var completed: SurfaceEvent.Frame?
+        while !pending.isEmpty {
+            #expect(pending.count == 1)
+            let next = try #require(pending.first)
+            let offset = try #require(next.offset)
+            #expect(offset == acknowledgedBytes)
+            #expect(next.data.count == min(16384, bytes - offset))
+            #expect(sentBytes - acknowledgedBytes == next.data.count)
+            #expect(sentBytes - acknowledgedBytes <= 16384)
+            #expect(transmission.start().isEmpty)
+            #expect(throws: SurfaceRefreshTransferError.invalidOffset) {
+                try transmission.progress(offset: offset + 16384)
+            }
+            if offset > 0 { #expect(try transmission.progress(offset: offset - 16384).isEmpty) }
+            completed = try assembly.append(frame: next)
+            acknowledgedBytes += next.data.count
+            if acknowledgedBytes < bytes { #expect(completed == nil) }
+            pending = try transmission.progress(offset: offset)
+            #expect(pending.count <= 1)
+            #expect(try transmission.progress(offset: offset).isEmpty)
+            #expect(try transmission.progress(offset: 0).isEmpty)
+            sentBytes += pending.reduce(0) { $0 + $1.data.count }
+        }
+        #expect(sentBytes == bytes && acknowledgedBytes == bytes)
+        #expect(completed == original)
+        #expect(transmission.start().isEmpty)
+    }
+
     @Test func aShortFinalPartCompletesAfterTheInitialWindow() throws {
         let original = refresh(bytes: 131073)
         var transmission = try SurfaceRefreshTransmission(frame: original)

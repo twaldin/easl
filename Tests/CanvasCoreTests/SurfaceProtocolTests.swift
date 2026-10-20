@@ -37,7 +37,22 @@ struct SurfaceProtocolTests {
             try SurfaceRequest(method: "surface.stream", params: .object(["id": "obj_page", "format": "patch"]))
         }
         #expect(try SurfaceRequest(method: "surface.stream", params: .object(["id": "obj_page", "format": "h264"])) ==
-            .stream(tile: "obj_page", scale: 1, format: .h264))
+            .stream(tile: "obj_page", scale: 1, format: .h264, refinement: .independent))
+    }
+
+    @Test func streamRefinementDefaultsIndependentAndRequiresAnExplicitValidProfile() throws {
+        #expect(try SurfaceRequest(method: "surface.stream", params: .object(["id": "obj_page"])) ==
+            .stream(tile: "obj_page", scale: 1, format: .jpeg, refinement: .independent))
+        for refinement in [SurfaceRefinement.independent, .retained] {
+            #expect(try SurfaceRequest(method: "surface.stream", params: .object([
+                "id": "obj_page", "format": "h264", "refinement": .string(refinement.rawValue),
+            ])) == .stream(tile: "obj_page", scale: 1, format: .h264, refinement: refinement))
+        }
+        for refinement in [JSONValue.null, .bool(true), .number(1), .array([]), .object([:]), .string(""), .string("Retained"), .string("other")] {
+            #expect(throws: ApiRouter.Failure.self) {
+                try SurfaceRequest(method: "surface.stream", params: .object(["id": "obj_page", "refinement": refinement]))
+            }
+        }
     }
 
 }

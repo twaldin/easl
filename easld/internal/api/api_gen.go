@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "ee9f0a202321c49a"
+const SchemaHash = "8504985f4444e8fd"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -39,7 +39,7 @@ type ParamSpec struct {
 // Methods is each method's ParamSpec: what the server checks every request against, and names in its `invalid_params` errors.
 var Methods = map[string]ParamSpec{
 	"surface.stream": {
-		Accepted: []string{"id", "scale", "format"},
+		Accepted: []string{"id", "scale", "format", "refinement"},
 		Required: []string{"id"},
 	},
 	"surface.ack": {

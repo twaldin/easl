@@ -132,8 +132,8 @@ private struct RetiredVideoCompressionSession: @unchecked Sendable {
     }
 }
 
-/// Callers decode every returned frame in order with one SurfaceVideoDecoder and discard the encoder after dropping one.
-/// The cached session is then the decoder's cached configuration: whichever was active before the current one.
+/// Callers publish every returned frame in order and discard the encoder after dropping one.
+/// Retained refinement requires a consumer that caches the previous configuration's references.
 public final class SurfaceVideoEncoder: @unchecked Sendable {
     private enum Profile {
         case motion, sharp
@@ -157,11 +157,12 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
     }
 
     private let maximumMotionBytes = 48 * 1024
+    private let refinement: SurfaceRefinement
     private let lock = NSLock()
     private var active: Session?
     private var cached: Session?
 
-    public init() {}
+    public init(refinement: SurfaceRefinement = .retained) { self.refinement = refinement }
     deinit { clear() }
 
     public static func fittedVideoPixels(width: Int, height: Int) -> (width: Int, height: Int) {
@@ -178,7 +179,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         cached = nil
     }
 
-    /// A restored motion session restarts with a fast IDR; a restored sharp session predicts from its last frame.
+    /// Restored motion starts with an IDR; sharp refresh independence is decided at encode time.
     private func restore(_ profile: Profile, width: Int, height: Int) throws {
         guard active?.serves(profile, width: width, height: height) != true,
               let restored = cached, restored.serves(profile, width: width, height: height) else { return }
@@ -193,7 +194,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         }
     }
 
-    /// Refresh requests a native-pixel refinement, predicted from a sharp session that is still the decoder's.
+    /// Refresh requests native-pixel refinement, independently decodable when required by the consumer.
     public func encode(_ image: CGImage, width: Int, height: Int, refresh: Bool = false, motion: Bool = false,
                        isCancelled: () -> Bool = { false }) throws -> SurfaceVideoFrame? {
         guard !isCancelled() else { return nil }
@@ -221,8 +222,9 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
                 }
                 guard let current = active else { throw SurfaceVideoError.missingOutput }
                 guard !isCancelled() else { clear(); return nil }
-                let independent = current.sequence == 0
-                guard let sample = try encodeSample(image, on: current, isCancelled: isCancelled) else {
+                let independent = current.sequence == 0 || (refresh && self.refinement == .independent)
+                guard let sample = try encodeSample(image, on: current, independent: independent,
+                                                    isCancelled: isCancelled) else {
                     clear()
                     return nil
                 }
@@ -267,7 +269,8 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         }
     }
 
-    private func encodeSample(_ image: CGImage, on current: Session, isCancelled: () -> Bool) throws -> CMSampleBuffer? {
+    private func encodeSample(_ image: CGImage, on current: Session, independent: Bool,
+                              isCancelled: () -> Bool) throws -> CMSampleBuffer? {
         let session = current.session, width = current.width, height = current.height
         if current.profile == .motion, current.sequence > 0, current.minimumQP != 35 {
             try videoCheck(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MinAllowedFrameQP,
@@ -299,7 +302,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         try videoCheck(VTCompressionSessionEncodeFrame(session, imageBuffer: buffer,
             presentationTimeStamp: CMTime(seconds: ProcessInfo.processInfo.systemUptime - current.epoch, preferredTimescale: 1_000_000),
             duration: .invalid,
-            frameProperties: current.sequence == 0 ?
+            frameProperties: independent ?
                 [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil,
             infoFlagsOut: nil, outputHandler: { status, flags, sample in
                 output.finish(status: status, dropped: flags.contains(.frameDropped), value: sample)

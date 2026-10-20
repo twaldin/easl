@@ -107,6 +107,38 @@ struct SurfaceVideoTests {
         #expect(red[0] > 220 && red[1] < 30 && red[2] < 30)
     }
 
+    @Test func independentSharpRefreshesRecoverWithoutAnyPreviousSharpConfiguration() throws {
+        let encoder = SurfaceVideoEncoder(refinement: .independent)
+        let paired = SurfaceVideoDecoder()
+        for red in [false, true, false] {
+            let motion = try #require(try encoder.encode(image(red: !red), width: 64, height: 64, motion: true))
+            let singleConfiguration = SurfaceVideoDecoder()
+            for consumer in [paired, singleConfiguration] {
+                let pixel = try center(consumer.decode(motion.data, width: motion.width, height: motion.height))
+                if !red { #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30) }
+                else { #expect(pixel.allSatisfy { $0 < 30 }) }
+            }
+            let sharp = try #require(try encoder.encode(image(red: red), width: 64, height: 64, refresh: true))
+            for consumer in [paired, singleConfiguration, SurfaceVideoDecoder()] {
+                let pixel = try center(consumer.decode(sharp.data, width: sharp.width, height: sharp.height))
+                if red { #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30) }
+                else { #expect(pixel.allSatisfy { $0 < 30 }) }
+            }
+            let following = try #require(try encoder.encode(image(red: !red), width: 64, height: 64))
+            for consumer in [paired, singleConfiguration] {
+                let pixel = try center(consumer.decode(following.data, width: following.width, height: following.height))
+                if !red { #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30) }
+                else { #expect(pixel.allSatisfy { $0 < 30 }) }
+            }
+        }
+        for red in [true, false] {
+            let sharp = try #require(try encoder.encode(image(red: red), width: 64, height: 64, refresh: true))
+            let pixel = try center(SurfaceVideoDecoder().decode(sharp.data, width: sharp.width, height: sharp.height))
+            if red { #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30) }
+            else { #expect(pixel.allSatisfy { $0 < 30 }) }
+        }
+    }
+
 
     @Test func budgetCappedCaptureRastersProduceVisibleSharpReferences() throws {
         for (width, height, expectedWidth, expectedHeight) in [

@@ -203,6 +203,79 @@ struct SurfaceImageEncoderTests {
         #expect(visible[0] > visible[1] && visible[0] > visible[2])
     }
 
+    @Test(arguments: [SurfaceRefinement.independent, .retained])
+    func refinementWaitsForItsNegotiatedQuietPeriod(refinement: SurfaceRefinement) throws {
+        let work = RefreshQueue()
+        let encoder = SurfaceImageEncoder(refreshQueue: work.queue, refinement: refinement)
+        let revision = SurfaceInputRevision()
+        let source = try fixture()
+        let motion = try #require(try capture(encoder, source, at: 0, revision: revision))
+        _ = try decode(motion)
+        encoder.acknowledgeFrame()
+        let settle: TimeInterval = refinement == .independent ? 1 : 0.3
+        #expect(try capture(encoder, source, at: settle - 0.01, revision: revision) == nil)
+        work.finish()
+        #expect(try capture(encoder, source, at: settle, revision: revision) == nil)
+        work.finish()
+        let sharp = try #require(try capture(encoder, source, at: settle + 0.01, revision: revision))
+        #expect(sharp.refresh)
+        let visible = try pixels(decode(sharp))
+        #expect(visible[0] < 30 && visible[1] < 30 && visible[2] < 30)
+    }
+
+    private enum CodecReplacement: CaseIterable, Sendable {
+        case jpeg, pendingRefresh, unacknowledgedFrame
+    }
+
+    @Test(arguments: CodecReplacement.allCases)
+    private func independentRecoverySurvivesCodecReplacement(replacement: CodecReplacement) throws {
+        let work = RefreshQueue()
+        let encoder = SurfaceImageEncoder(refreshQueue: work.queue, refinement: .independent)
+        let revision = SurfaceInputRevision()
+        let original = try fixture()
+        let first = try #require(try capture(encoder, original, at: 0, revision: revision))
+        _ = try decode(first)
+        switch replacement {
+        case .jpeg:
+            encoder.acknowledgeFrame()
+            let jpeg = try #require(try capture(encoder, original, at: 1, revision: revision, mode: .jpeg))
+            #expect(jpeg.format == .jpeg && !jpeg.refresh)
+            #expect(try decode(jpeg).width == original.image.width)
+        case .pendingRefresh:
+            encoder.acknowledgeFrame()
+            work.pause()
+            #expect(try capture(encoder, original, at: 1, revision: revision) == nil)
+        case .unacknowledgedFrame:
+            revision.advance()
+        }
+        for (time, source) in [(2.0, try fixture(redLeftHalf: true)), (4.0, try fixture(shift: 2))] {
+            let motion = try #require(try capture(encoder, source, at: time, revision: revision,
+                                                 input: true, lastInput: time))
+            #expect(!motion.refresh)
+            let singleConfiguration = SurfaceVideoDecoder()
+            _ = try decode(motion, video: singleConfiguration)
+            encoder.acknowledgeFrame()
+            work.finish()
+            for quiet in [0.3, 0.99] {
+                #expect(try capture(encoder, source, at: time + quiet, revision: revision, lastInput: time) == nil)
+                work.finish()
+            }
+            #expect(try capture(encoder, source, at: time + 1, revision: revision, lastInput: time) == nil)
+            work.finish()
+            let sharp = try #require(try capture(encoder, source, at: time + 1.01, revision: revision, lastInput: time))
+            #expect(sharp.refresh)
+            for consumer in [singleConfiguration, SurfaceVideoDecoder()] {
+                let visible = try pixels(decode(sharp, video: consumer))
+                for channel in 0..<3 {
+                    if source.pixels[channel] == 255 { #expect(visible[channel] > 220) }
+                    else { #expect(visible[channel] < 30) }
+                }
+            }
+            encoder.acknowledgeFrame()
+            revision.advance()
+        }
+    }
+
     @Test func negotiatedPerStreamSizingDefinesTheNativeSharpCanvas() throws {
         let source = try fixture(width: 258, height: 194, redLeftHalf: true)
         let context = try #require(CGContext(data: nil, width: 129, height: 97, bitsPerComponent: 8,

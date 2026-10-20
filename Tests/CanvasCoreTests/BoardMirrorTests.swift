@@ -2161,7 +2161,7 @@ final class BoardMirrorTests {
             return .object(["id": .string(id), "loaded": .bool(true)])
         }
         viewer.surface = { request, _, _ in
-            if case .stream(let id, _, _) = request { dispatched.append(id) }
+            if case .stream(let id, _, _, _) = request { dispatched.append(id) }
             return .object(["stream": "str_1", "size": .object(["w": 640, "h": 480]), "scale": 1])
         }
         mirror.serve(viewer, as: identity)
