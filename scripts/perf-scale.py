@@ -177,7 +177,7 @@ class Run:
         terminals = [obj['id'] for obj in board['objects'] if obj['type'] == 'terminal']
         streams = {}
         for oid in terminals:
-            result = self.call('agent.read', {'target': oid, 'lines': 10})
+            result = rpc(self.home / 'easl.sock', 'agent.read', {'target': oid, 'lines': 10})
             assert 'sequence=' in json.dumps(result), 'Terminal did not produce the fixture stream: ' + oid
             streams[oid] = result
         (self.output / 'streams.json').write_text(json.dumps(streams, indent=2))
