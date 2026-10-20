@@ -1,0 +1,557 @@
+{
+  "scenario": "prompt-submissions",
+  "description": "Both hosts retain prompt submission outcomes after the agent acknowledges the message. A receipt query never submits. Cancelling a missing composer identity prevents a late original from typing. Changed payloads, host restarts and expired identities cannot authorize another delivery.",
+  "recordedOn": "Swift 6.4 Mac host 2fdebcf8, agent-gui-2",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.prompt_epoch",
+      "method": "agent.prompt_epoch",
+      "request": {},
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 400,
+          "w": 600,
+          "x": 50000,
+          "y": 50000
+        },
+        "props": {
+          "command": [
+            "/bin/cat"
+          ],
+          "cwd": "<root>",
+          "name": "receipt-worker"
+        },
+        "type": "terminal"
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "receipt-worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "name": "receipt-worker"
+            },
+            "rev": "<rev:1>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "kind": "omp",
+        "protocol": 1,
+        "seq": 1,
+        "source": "canvas-omp",
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp",
+                "protocol": 1
+              },
+              "command": [
+                "/bin/cat"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "receipt-worker"
+            },
+            "rev": "<rev:2>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ],
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "submission": {
+          "createdAt": "<time:iso>",
+          "id": "sub_delivered-<obj:1>"
+        },
+        "target": "<obj:1>",
+        "text": "receive this prompt once"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "agent": {
+            "address": "receipt-worker@prompt-submissions",
+            "board": "<board>",
+            "focused": false,
+            "kind": "omp",
+            "lifecycle": {
+              "seen": false,
+              "state": "idle"
+            },
+            "name": "receipt-worker",
+            "open": true,
+            "protocol": 1,
+            "root": "<root>",
+            "tile": "<obj:1>"
+          },
+          "delivery": "message",
+          "message": "<msg:1>",
+          "submittedAt": "<time:iso>",
+          "waitable": true
+        }
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "reconcile": true,
+        "submission": {
+          "createdAt": "<time:iso>",
+          "id": "sub_delivered-<obj:1>"
+        },
+        "target": "<obj:1>",
+        "text": "receive this prompt once"
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "agent": {
+            "address": "receipt-worker@prompt-submissions",
+            "board": "<board>",
+            "focused": false,
+            "kind": "omp",
+            "lifecycle": {
+              "seen": false,
+              "state": "idle"
+            },
+            "name": "receipt-worker",
+            "open": true,
+            "protocol": 1,
+            "root": "<root>",
+            "tile": "<obj:1>"
+          },
+          "delivery": "message",
+          "message": "<msg:1>",
+          "submittedAt": "<time:iso>",
+          "waitable": true
+        }
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.inbox",
+      "method": "agent.inbox",
+      "request": {
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "messages": [
+            {
+              "attribution": "user",
+              "from": {
+                "name": "script"
+              },
+              "id": "<msg:1>",
+              "queuedAt": "<time:iso>",
+              "text": "receive this prompt once",
+              "when": "now"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.inbox",
+      "method": "agent.inbox",
+      "request": {
+        "ack": [
+          "<msg:1>"
+        ],
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "messages": []
+        }
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "submission": {
+          "createdAt": "<time:iso>",
+          "id": "sub_delivered-<obj:1>"
+        },
+        "target": "<obj:1>",
+        "text": "receive this prompt once"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "agent": {
+            "address": "receipt-worker@prompt-submissions",
+            "board": "<board>",
+            "focused": false,
+            "kind": "omp",
+            "lifecycle": {
+              "seen": false,
+              "state": "idle"
+            },
+            "name": "receipt-worker",
+            "open": true,
+            "protocol": 1,
+            "root": "<root>",
+            "tile": "<obj:1>"
+          },
+          "delivery": "message",
+          "message": "<msg:1>",
+          "submittedAt": "<time:iso>",
+          "waitable": true
+        }
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.inbox",
+      "method": "agent.inbox",
+      "request": {
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "messages": []
+        }
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "reconcile": true,
+        "submission": {
+          "createdAt": "<time:iso>",
+          "id": "sub_cancelled-<obj:1>"
+        },
+        "target": "<obj:1>",
+        "text": "never type the cancelled composer prompt"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "delivery": "not-delivered"
+        }
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "submission": {
+          "createdAt": "<time:iso>",
+          "id": "sub_cancelled-<obj:1>"
+        },
+        "target": "<obj:1>",
+        "text": "never type the cancelled composer prompt"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "delivery": "not-delivered"
+        }
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "submission": {
+          "createdAt": "<time:iso>",
+          "id": "sub_delivered-<obj:1>"
+        },
+        "target": "<obj:1>",
+        "text": "a different payload cannot reuse the receipt"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r13",
+        "ok": false
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.error.message": "Both hosts reject changed payloads, with host-specific diagnostic wording.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "reconcile": true,
+        "submission": {
+          "createdAt": "<time:iso>",
+          "id": "sub_old_host_epoch"
+        },
+        "target": "<obj:1>",
+        "text": "do not retry across a host restart"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "delivery": "unknown"
+        }
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "agent.prompt",
+      "method": "agent.prompt",
+      "request": {
+        "composer": true,
+        "reconcile": true,
+        "submission": {
+          "createdAt": "<time:iso>",
+          "id": "sub_expired_receipt"
+        },
+        "target": "<obj:1>",
+        "text": "do not retry an expired receipt"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "delivery": "unknown"
+        }
+      },
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    },
+    {
+      "step": "object.delete",
+      "method": "object.delete",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r16",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:1>"
+          },
+          "event": "object.deleted"
+        }
+      ],
+      "ignored": {
+        "request.submission.epoch": "The request carries the current host's opaque registry incarnation.",
+        "response.result.promptEpoch": "Each running host has its own receipt registry incarnation."
+      }
+    }
+  ]
+}
