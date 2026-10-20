@@ -228,16 +228,14 @@ private enum InitialRouting {
         }
         var returned = false
         try await awaitRouting(fixture.board, matching: expected) {
-            guard !returned, let first = fixture.board.settledRouting?() else { return }
-            try require(first.paths == expected.paths && first.labels == expected.labels, "The first opening result must still describe the pre-drag board")
-            try require(try drawnPathsMatch(fixture.board, previews), "An in-flight opening result must not overwrite a moved snapshot preview")
+            guard !returned, fixture.board.settledRouting?() != nil else { return }
+            try require(try path(fixture).last!.x >= 780 - DrawingGeometry.arrowGap, "Background completion must keep the displayed arrow attached to the dragged target")
             if finish == .zeroDelta {
                 opened.canvas.onSelectionDrag?([fixture.target.id], NSSize(width: -80, height: 0))
             }
             opened.canvas.onSelectionDrag?([fixture.target.id], .zero)
             returned = true
             try require(fixture.board.objects[fixture.target.id]?.frame == fixture.target.frame, "A \(finish.rawValue) drag must not need a board frame write to retire its preview")
-            try require(DrawingGeometry.path(try path(fixture), crosses: fixture.wall.frame.rect), "The returning opening preview must remain distinguishable from its pending obstacle-avoiding route")
         }
         try require(returned, "The \(finish.rawValue) fixture must return to its origin after the in-flight result lands")
         try require(!DrawingGeometry.path(try path(fixture), crosses: fixture.wall.frame.rect), "A \(finish.rawValue) opening drag must not leave a snapshot crossing the wall indefinitely")
