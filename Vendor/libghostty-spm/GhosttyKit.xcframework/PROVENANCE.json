@@ -4,11 +4,11 @@
   "zigVersion": "0.16.0",
   "optimize": "ReleaseFast",
   "buildJobs": 2,
-  "patchSHA256": "f0fa327f927bdfec43ac7336fce78546e5f84a8f79ef2c593593a80e76afd787",
+  "patchSHA256": "98c2df3bfcf9a75aa02dd1bcfdf0e2624eb1be297de9aa9dfa44e9a49483300c",
   "files": {
     "Info.plist": "cd33db2824bb2b1a1f1aff4fea3458f11885ad936bdb93b1b0a27142ff342fa0",
     "macos-arm64_x86_64/Headers/libghostty/ghostty.h": "ba6ca66bea294a0d3614c8a0934cf091ad5db61e980f7958eae4398fd39d980f",
     "macos-arm64_x86_64/Headers/libghostty/module.modulemap": "826de8f8a9f6636f13cff938fac2257304f1632d3d9e0fbef9ef232013a9f133",
-    "macos-arm64_x86_64/libghostty.a": "7a90d58b8da4c7d09fa6229db494b4dfd976f88775f67343fabf2f745a61fa58"
+    "macos-arm64_x86_64/libghostty.a": "ee9099fa75a70d339c4c412e9b3bfe3ca6f8ed33ed38f62d7851074f9dee6ddb"
   }
 }

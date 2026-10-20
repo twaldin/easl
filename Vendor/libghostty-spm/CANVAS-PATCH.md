@@ -66,10 +66,12 @@ cannot provide that guarantee because it suppresses same-pointer assignments.
 
 Each render target has a refcounted publication generation. Main claims the exact completed
 generation before assigning contents and holds it through the callback. The worker supersedes
-queued generations, but replaces a target if its pixels are actively leased by main. Holding
-this lease does not extend the GPU swap-chain permit lifetime, including when a callback frees
-the surface. Late completions cannot overwrite a newer generation. The lease ends with the callback; scanout and
-an immutable surface after callback return are not promised.
+queued generations, but replaces a target if its pixels are actively leased by main. Every GPU
+completion context retains the record independently, so target retirement cannot free it while
+an older Metal handler is pending. Holding the publication lease does not extend the GPU
+swap-chain permit lifetime, including when a callback frees the surface. Late completions cannot
+overwrite a newer generation. The lease ends with the callback; scanout and an immutable surface
+after callback return are not promised.
 
 The wrapper patch, `patches/libghostty-spm-async-rendering.patch`, installs a registration for
 the exact surface, layer, and generation. Replacement and free unregister before releasing the
