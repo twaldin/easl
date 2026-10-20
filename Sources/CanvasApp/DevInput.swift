@@ -236,8 +236,8 @@ enum DevInput {
             return performMenu(NSApp.mainMenu, path: fields["path"] ?? "")
         }
         let targetWindow: NSWindow?
-        if let number = Int(fields["window"] ?? "") {
-            targetWindow = NSApp.window(withWindowNumber: number)
+        if let number = fields["window"] {
+            targetWindow = Int(number).flatMap { NSApp.window(withWindowNumber: $0) }
         } else {
             targetWindow = CanvasWindowController.frontmost?.window
         }
