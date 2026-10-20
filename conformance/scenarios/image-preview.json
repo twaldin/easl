@@ -1,0 +1,19 @@
+{
+  "ignore": { "response.error.message": "Host-specific diagnostics are not the error-code contract." },
+  "description": "Image preview uses explicit original selection and preserves request and board-file authorization errors.",
+  "files": { "original.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"400\" height=\"200\"></svg>" },
+  "steps": [
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "image", "props": { "path": "original.svg" }, "frame": { "x": 0, "y": 0, "w": 400, "h": 200 } }, "save": "image", "expect": { "response.ok": true } },
+    { "call": "image.preview", "params": { "id": "{{image.object.id}}", "maxPixels": 128 }, "expect": { "response.ok": true, "response.result.kind": "original", "eventCount": 0 }, "expectShape": { "response.result": "ImagePreview" } },
+    { "call": "image.preview", "params": { "id": "{{image.object.id}}", "maxPixels": 128.5 }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "image.preview", "params": { "id": "{{image.object.id}}", "maxPixels": 63 }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "image.preview", "params": { "id": "{{image.object.id}}", "maxPixels": 2049 }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "image.preview", "params": { "id": "{{image.object.id}}", "maxPixels": "128" }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "object.update", "params": { "id": "{{image.object.id}}", "props": { "path": "missing.png" } }, "expect": { "response.ok": true } },
+    { "call": "image.preview", "params": { "id": "{{image.object.id}}", "maxPixels": 128 }, "expect": { "response.error.code": "not_found", "eventCount": 0 } },
+    { "call": "object.update", "params": { "id": "{{image.object.id}}", "props": { "path": "../outside.png" } }, "expect": { "response.ok": true } },
+    { "call": "image.preview", "params": { "id": "{{image.object.id}}", "maxPixels": 128 }, "expect": { "response.error.code": "refused", "eventCount": 0 } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "note", "props": { "text": "not an image" }, "frame": { "x": 500, "y": 0, "w": 200, "h": 100 } }, "save": "note", "expect": { "response.ok": true } },
+    { "call": "image.preview", "params": { "id": "{{note.object.id}}", "maxPixels": 128 }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } }
+  ]
+}

@@ -180,19 +180,23 @@ func jpegHeader(d []byte) (w, h, orientation int, ok bool) {
 			break
 		}
 		length := int(binary.BigEndian.Uint16(d[at+2 : at+4]))
+		if length < 2 || at+2+length > len(d) {
+			return 0, 0, 0, false
+		}
 		segment := d[at+4 : min(len(d), at+2+length)]
 		switch {
 		case marker == 0xE1 && len(segment) >= 6 && string(segment[:6]) == "Exif\x00\x00":
 			orientation = exifOrientation(segment[6:])
 		case marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC:
-			if len(segment) >= 5 {
-				return int(binary.BigEndian.Uint16(segment[3:5])), int(binary.BigEndian.Uint16(segment[1:3])), orientation, true
+			if len(segment) < 5 {
+				return 0, 0, 0, false
 			}
-			return 0, 0, 0, false
+			w, h = int(binary.BigEndian.Uint16(segment[3:5])), int(binary.BigEndian.Uint16(segment[1:3]))
+			ok = true
 		}
 		at += 2 + length
 	}
-	return 0, 0, 0, false
+	return w, h, orientation, ok
 }
 
 func webpHeader(d []byte) (w, h, orientation int, ok bool) {

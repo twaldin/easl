@@ -16,6 +16,18 @@ final class ImageTile: NSView, TileContent {
         case local(root: URL)
         case host(HostFiles, root: String)
     }
+    private enum Resolution {
+        case preview(Int)
+        case original
+
+        func covers(_ other: Resolution) -> Bool {
+            switch (self, other) {
+            case (.original, _): true
+            case (.preview(let have), .preview(let need)): have >= need
+            case (.preview, .original): false
+            }
+        }
+    }
 
     private var object: CanvasObject
     private let source: FileSource
@@ -51,9 +63,12 @@ final class ImageTile: NSView, TileContent {
     private var loaded = false
     private var loadTask: Task<Void, Never>?
     private var loadGeneration = 0
+    private var resolution: Resolution?
+    private var loadingResolution: Resolution?
     private var events: FileEvents?
     private var hostWatch: HostFileWatch?
     private var pendingReload: DispatchWorkItem?
+    private var pendingResolutionUpgrade: DispatchWorkItem?
     /// Reload after a period without a watcher, including a detached window.
     private var stale = false
 
@@ -67,7 +82,7 @@ final class ImageTile: NSView, TileContent {
         super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
-        reload()
+        if case .local = source { reload() }
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -85,22 +100,46 @@ final class ImageTile: NSView, TileContent {
 
     // MARK: Loading
 
+    private func requestedResolution(scale: CGFloat? = nil) -> Resolution {
+        guard case .host = source else { return .original }
+        let pixels: CGFloat
+        if let scale {
+            pixels = max(bounds.width, bounds.height) * scale
+        } else if let window {
+            let displayed = convert(bounds, to: nil).size
+            pixels = max(displayed.width, displayed.height) * window.backingScaleFactor
+        } else {
+            pixels = max(bounds.width, bounds.height) * TileFrameView.cardPixelsPerPoint
+        }
+        guard pixels.isFinite, pixels <= 2048 else { return .original }
+        var limit = 64
+        while CGFloat(limit) < pixels { limit *= 2 }
+        return .preview(limit)
+    }
+
     /// Reads the file off the main thread; the newest read wins.
-    private func reload(priority: HostReadPriority? = nil) {
+    private func reload(priority: HostReadPriority? = nil, resolution requested: Resolution? = nil) {
         stopAnimation()
         loadTask?.cancel()
         hostWatch?.cancel()
         hostWatch = nil
         pendingReload?.cancel()
         pendingReload = nil
+        pendingResolutionUpgrade?.cancel()
+        pendingResolutionUpgrade = nil
         loadGeneration += 1
         stale = false
         let generation = loadGeneration
         let source = source
         let path = path
         let priority = priority ?? (live && window != nil ? .visible : .background)
+        let requested = requested ?? requestedResolution()
+        loadingResolution = requested
+        let id = object.id
         loadTask = Task { [weak self] in
             var read: (data: Data, size: CGSize)?
+            var previewImage: CGImage?
+            var readResolution: Resolution = .original
             var failure: String?
             var readFailure: HostFileError?
             var baseline: HostFileObservation?
@@ -116,19 +155,51 @@ final class ImageTile: NSView, TileContent {
                     }
                 case .host(let files, let root):
                     do {
-                        let file = try await files.read(HostFileRequest(source: .directory(root), policy: .boardImage(path)), priority: priority)
-                        baseline = .version(file.version)
-                        if let size = await offPool({ LocalImage.naturalSize(of: file.data) }) {
-                            read = (file.data, size)
+                        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+                        let raster = ext == "png" || ext == "jpg" || ext == "jpeg"
+                        var preview: HostImagePreview?
+                        if case .preview(let pixels) = requested, raster {
+                            do {
+                                preview = try await files.imagePreview(object: id, maxPixels: pixels, priority: priority)
+                            } catch is CancellationError {
+                                return
+                            } catch {
+                                try Task.checkCancellation()
+                                if let failure = error as? EaslConnection.Failure,
+                                   !failure.isHostResponse || failure.code == "unavailable" || failure.code == "timeout" {
+                                    throw failure
+                                }
+                                let metadata = HostFileRequest(source: .directory(root), policy: .boardImage(path), bytes: false)
+                                do {
+                                    baseline = .version(try await files.read(metadata, priority: priority).version)
+                                } catch is CancellationError {
+                                    return
+                                } catch {
+                                    baseline = .failure(error as? HostFileError ?? .unavailable(String(describing: error)))
+                                }
+                                throw error
+                            }
+                        }
+                        if let preview, case .preview(let pixels) = requested {
+                            read = (preview.data, CGSize(width: CGFloat(preview.naturalWidth), height: CGFloat(preview.naturalHeight)))
+                            previewImage = preview.image
+                            readResolution = .preview(pixels)
+                            baseline = .version(preview.version)
                         } else {
-                            failure = "not a readable image on host: \(path)"
+                            let file = try await files.read(HostFileRequest(source: .directory(root), policy: .boardImage(path)), priority: priority)
+                            baseline = .version(file.version)
+                            if let size = await offPool({ LocalImage.naturalSize(of: file.data) }) {
+                                read = (file.data, size)
+                            } else {
+                                failure = "not a readable image on host: \(path)"
+                            }
                         }
                     } catch is CancellationError {
                         return
                     } catch {
                         let error = error as? HostFileError ?? .unavailable(String(describing: error))
                         readFailure = error
-                        baseline = .failure(error)
+                        baseline = baseline ?? .failure(error)
                         failure = Self.hostFailure(error, path: path)
                     }
                 }
@@ -137,7 +208,9 @@ final class ImageTile: NSView, TileContent {
             var image: NSImage?
             var animation: Animation?
             if let read {
-                if let frames = GIFFrames(data: read.data), let first = await frames.frame(0) {
+                if let previewImage {
+                    image = NSImage(cgImage: previewImage, size: read.size)
+                } else if let frames = GIFFrames(data: read.data), let first = await frames.frame(0) {
                     let firstImage = NSImage(cgImage: first.image, size: read.size)
                     image = firstImage
                     animation = Animation(frames: frames, image: firstImage, delay: first.delay)
@@ -147,15 +220,18 @@ final class ImageTile: NSView, TileContent {
             }
             guard let self, !Task.isCancelled, self.loadGeneration == generation, self.path == path else { return }
             self.loaded = true
+            self.loadingResolution = nil
             if let read, let image {
                 image.size = read.size
                 self.picture = (image, read.size, path)
+                self.resolution = readResolution
                 self.animation = animation
                 self.failure = nil
             } else {
                 let unavailable = if case .unavailable? = readFailure { true } else { false }
                 if !unavailable || self.picture?.path != path {
                     self.picture = nil
+                    self.resolution = nil
                     self.animation = nil
                 }
                 self.failure = failure ?? "not a readable image: \(path)"
@@ -282,6 +358,8 @@ final class ImageTile: NSView, TileContent {
         hostWatch = nil
         pendingReload?.cancel()
         pendingReload = nil
+        pendingResolutionUpgrade?.cancel()
+        pendingResolutionUpgrade = nil
     }
 
     private func suspend() {
@@ -289,6 +367,7 @@ final class ImageTile: NSView, TileContent {
         stopAnimation()
         loadTask?.cancel()
         loadTask = nil
+        loadingResolution = nil
         loadGeneration += 1
         stale = true
     }
@@ -365,6 +444,25 @@ final class ImageTile: NSView, TileContent {
     }
 
     // MARK: TileContent
+    func alignToPixels() {
+        pendingResolutionUpgrade?.cancel()
+        pendingResolutionUpgrade = nil
+        guard live, window != nil, loaded, !stale, picture?.path == path else { return }
+        let requested = requestedResolution()
+        guard resolution?.covers(requested) != true, loadingResolution?.covers(requested) != true else { return }
+        let generation = loadGeneration
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.live, self.window != nil, self.loadGeneration == generation else { return }
+                let requested = self.requestedResolution()
+                guard self.resolution?.covers(requested) != true, self.loadingResolution?.covers(requested) != true else { return }
+                self.reload(resolution: requested)
+            }
+        }
+        pendingResolutionUpgrade = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounce, execute: work)
+    }
+
 
     func setLive(_ live: Bool) {
         guard live != self.live else { return }
@@ -377,11 +475,15 @@ final class ImageTile: NSView, TileContent {
     }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
-        if !loaded || stale {
-            reload(priority: request.priority)
+        let requested = requestedResolution(scale: request.scale)
+        if !loaded || stale || (picture != nil && resolution?.covers(requested) != true) {
+            if loadingResolution?.covers(requested) != true { reload(priority: request.priority, resolution: requested) }
             await loadTask?.value
         }
         guard loaded, !stale else { return .placeholder(request, "image read was cancelled") }
+        if picture != nil, resolution?.covers(requested) != true {
+            return TileRender(image: nil, contentSize: request.size, state: .failed, reason: failure ?? "image resolution unavailable")
+        }
         let image = request.image { bounds in paint(in: bounds) }
         guard let image else { return TileRender(image: nil, contentSize: request.size, state: .failed, reason: "bitmap allocation failed") }
         return TileRender(image: image, contentSize: request.size, state: .rendered)
@@ -407,7 +509,11 @@ final class ImageTile: NSView, TileContent {
         self.object = object
         if previous.props["path"] != object.props["path"] {
             stopWatching()
-            reload()
+            if case .host = source, !live || window == nil {
+                suspend()
+            } else {
+                reload()
+            }
         } else if previous.props["caption"] != object.props["caption"] {
             needsDisplay = true
         }

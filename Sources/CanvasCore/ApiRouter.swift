@@ -416,6 +416,7 @@ public final class ApiRouter {
             if method == "view.render" { return Self.ok(id, try await render(params)) }
             if method == "view.snapshot" { return Self.ok(id, try await snapshot(params)) }
             if method == "tray.drain" { return Self.ok(id, try await drain(params)) }
+            if method == "image.preview" { return Self.ok(id, try await imagePreview(params)) }
             if method == "object.get" { return Self.ok(id, try await get(params)) }
             if method == "object.find" { return Self.ok(id, try await find(params)) }
             switch method {
@@ -466,6 +467,29 @@ public final class ApiRouter {
             return Self.ok(id, try dispatch(method, params))
         } catch {
             return Self.error(id, Self.failure(for: error))
+        }
+    }
+
+    private func imagePreview(_ params: JSONValue) async throws -> JSONValue {
+        guard params.object != nil, let id = params["id"]?.string, !id.isEmpty,
+              let maxPixels = HostImagePreview.integer(params["maxPixels"]), HostImagePreview.pixelRange.contains(maxPixels) else {
+            throw Failure("invalid_params", "image.preview requires id and integer maxPixels from 64 through 2048")
+        }
+        let board = try board(forObject: id)
+        let object = try board.object(id)
+        guard object.type == .image else { throw Failure("invalid_params", "\(id) is not an image tile") }
+        guard let path = object.props["path"]?.string else { throw Failure("invalid_params", "image path is required") }
+        do {
+            let preview = try await LocalImagePreview.read(root: board.root.path, path: path, maxPixels: maxPixels)
+            return preview?.json ?? .object(["kind": .string("original")])
+        } catch let error as HostFileError {
+            switch error {
+            case .refused: throw Failure("refused", "image path is outside the board")
+            case .notFound: throw Failure("not_found", "image file was not found")
+            case .tooLarge(let limit): throw Failure("too_large", "image exceeds \(limit) bytes")
+            case .unreadable: throw Failure("unreadable", "image file is unreadable or changed during the read")
+            case .ref(let message), .unavailable(let message): throw Failure("unavailable", message)
+            }
         }
     }
 

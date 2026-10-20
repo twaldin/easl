@@ -2,6 +2,28 @@
 
 export const SCHEMA_VERSION = 2;
 
+export type HostFileVersion = {
+  /** Lexically normalized request board root, matching HostFiles metadata. */
+  root: string;
+  /** Canonical absolute file path. */
+  path: string;
+  /** dev:ino:size:mtime_ns:ctime_ns from the stable descriptor used to read the bytes. */
+  stamp: string;
+};
+
+export type ImagePreview = {
+  kind: "original";
+} | {
+  kind: "preview";
+  naturalWidth: number;
+  naturalHeight: number;
+  width: number;
+  height: number;
+  /** Alpha-preserving PNG bytes, smaller than the original file. */
+  data: string;
+  version: HostFileVersion;
+};
+
 /** A remote window's in-memory identity, retained across reconnects and scoped to that window's edits and composer returns. */
 export type ViewerId = string;
 
@@ -1046,6 +1068,12 @@ export type MetricsCounter = {
   last60s: MetricsTally;
   last10m: MetricsTally;
 };
+
+export type ImagePreviewParams = {
+  id: Id;
+  maxPixels: number;
+};
+export type ImagePreviewResult = ImagePreview;
 
 export type SurfaceStreamParams = {
   id: string;
@@ -2284,6 +2312,10 @@ export type TextMeasureResult = {
 
 /** Every API method, grouped by namespace (`api.board.get(...)`). */
 export interface CanvasApi {
+  image: {
+    /** Read an image object's file under HostFiles.boardImage authorization and its 4194304-byte limit. Return original for unsupported formats, animated PNG (acTL before IDAT), EXIF orientation other than 1, natural long edge no larger than maxPixels, more than 16000000 natural pixels, or PNG output no smaller than the source. Invalid PNG/JPEG raster data is unreadable. Preview preserves alpha and aspect ratio without upscaling: long edge maxPixels, short edge max(1, round(naturalShort * maxPixels / naturalLong)). Version uses the stable read descriptor's exact nanosecond metadata. File errors are refused, not_found, too_large, unreadable or unavailable; request/type errors are invalid_params. Original explicitly selects original-file transport, not an error fallback. */
+    preview(params: ImagePreviewParams): Promise<ImagePreviewResult>;
+  };
   surface: {
     /** Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0. No frame event precedes surface.ack frame 0. At most one logical frame is outstanding and credits never accumulate. Acknowledge only after complete decoding and presentation. JPEG is the default. Explicit PNG remains lossless. Explicit h264 negotiates adaptive JPEG or predicted ESV1 motion with a bounded sharp H264 reference. Refresh uses ordered 16 KiB chunks with one outstanding chunk, and surface.progress never grants decode credit. Input may supersede only refresh. The next frame declares its canceled range and independently resets prediction. New video sessions, resizes, and motion resumption after sharp prediction require a keyframe. Reopen after an undeclared sequence gap or decoding failure. Easld pins the stream to the exact drawingMachine attachment and forwards image bytes unchanged to the owning viewer. Private-event hearing is captured at open. Reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay. */
     stream(params: SurfaceStreamParams): Promise<SurfaceStreamResult>;
@@ -2458,6 +2490,9 @@ export const ENV_DEFAULTS: Record<string, string> = {"caller":"EASL_TILE_ID","bo
 /** `call` receives the method's auto-filled param names (keys of ENV_DEFAULTS it accepts). */
 export function bindMethods(call: (method: string, params: object, envKeys: string[]) => Promise<unknown>): CanvasApi {
   return {
+    image: {
+      preview: (params: ImagePreviewParams) => call("image.preview", params ?? {}, []) as Promise<ImagePreviewResult>,
+    },
     surface: {
       stream: (params: SurfaceStreamParams) => call("surface.stream", params ?? {}, []) as Promise<SurfaceStreamResult>,
       ack: (params: SurfaceAckParams) => call("surface.ack", params ?? {}, []) as Promise<SurfaceAckResult>,
@@ -2561,7 +2596,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","agent.prompt_epoch","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.stale","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
+export const METHODS = ["image.preview","surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","agent.prompt_epoch","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.stale","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

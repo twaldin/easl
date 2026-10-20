@@ -11,7 +11,10 @@
   },
   "errors": {
     "invalid_params": "params failed schema validation",
-    "not_found": "referenced object, mention, or agent does not exist",
+    "not_found": "referenced object, mention, agent, or authorized host file does not exist",
+    "refused": "host file request is outside its board-image authorization policy",
+    "too_large": "host image file exceeds the 4194304-byte board-image limit",
+    "unreadable": "authorized host file cannot be read, changed during its descriptor read, or contains invalid PNG/JPEG raster data",
     "conflict": "rev mismatch on update; re-read and retry",
     "unsupported": "method known but not implemented by this build",
     "unavailable": "target exists but cannot act right now (e.g. a terminal tile without an attached surface), or the app is not running: no attached client (client.attach) serves the call, it didn't answer in time, or it disconnected before answering",
@@ -21,6 +24,37 @@
     "ambiguous": "an address (a terminal's name, `name@board`, a board's name, `board.open_remote`'s host name) matches more than one terminal, open board or host; the message lists each candidate (a terminal as `name@board (tile id)`, a host by its ssh target), so the caller can name one"
   },
   "definitions": {
+    "HostFileVersion": {
+      "type": "object", "required": ["root", "path", "stamp"],
+      "properties": {
+        "root": { "type": "string", "minLength": 1, "description": "Lexically normalized request board root, matching HostFiles metadata." },
+        "path": { "type": "string", "minLength": 1, "description": "Canonical absolute file path." },
+        "stamp": { "type": "string", "pattern": "^[0-9]+:[0-9]+:[0-9]+:-?[0-9]+:-?[0-9]+$", "description": "dev:ino:size:mtime_ns:ctime_ns from the stable descriptor used to read the bytes." }
+      },
+      "additionalProperties": false
+    },
+    "ImagePreview": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["kind"],
+          "properties": { "kind": { "const": "original" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["kind", "naturalWidth", "naturalHeight", "width", "height", "data", "version"],
+          "properties": {
+            "kind": { "const": "preview" },
+            "naturalWidth": { "type": "integer", "minimum": 1 },
+            "naturalHeight": { "type": "integer", "minimum": 1 },
+            "width": { "type": "integer", "minimum": 1, "maximum": 2048 },
+            "height": { "type": "integer", "minimum": 1, "maximum": 2048 },
+            "data": { "type": "string", "contentEncoding": "base64", "description": "Alpha-preserving PNG bytes, smaller than the original file." },
+            "version": { "$ref": "#/definitions/HostFileVersion" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "ViewerId": { "type": "string", "pattern": "^vw_[A-Za-z0-9_-]{8,64}$", "description": "A remote window's in-memory identity, retained across reconnects and scoped to that window's edits and composer returns." },
     "RemoteUpdateSession": {
       "type": "object",
@@ -1068,6 +1102,18 @@
     }
   },
   "methods": {
+    "image.preview": {
+      "description": "Read an image object's file under HostFiles.boardImage authorization and its 4194304-byte limit. Return original for unsupported formats, animated PNG (acTL before IDAT), EXIF orientation other than 1, natural long edge no larger than maxPixels, more than 16000000 natural pixels, or PNG output no smaller than the source. Invalid PNG/JPEG raster data is unreadable. Preview preserves alpha and aspect ratio without upscaling: long edge maxPixels, short edge max(1, round(naturalShort * maxPixels / naturalLong)). Version uses the stable read descriptor's exact nanosecond metadata. File errors are refused, not_found, too_large, unreadable or unavailable; request/type errors are invalid_params. Original explicitly selects original-file transport, not an error fallback.",
+      "params": {
+        "type": "object", "required": ["id", "maxPixels"],
+        "properties": {
+          "id": { "$ref": "#/definitions/Id" },
+          "maxPixels": { "type": "integer", "minimum": 64, "maximum": 2048 }
+        },
+        "additionalProperties": false
+      },
+      "result": { "$ref": "#/definitions/ImagePreview" }
+    },
     "surface.stream": {
       "description": "Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0. No frame event precedes surface.ack frame 0. At most one logical frame is outstanding and credits never accumulate. Acknowledge only after complete decoding and presentation. JPEG is the default. Explicit PNG remains lossless. Explicit h264 negotiates adaptive JPEG or predicted ESV1 motion with a bounded sharp H264 reference. Refresh uses ordered 16 KiB chunks with one outstanding chunk, and surface.progress never grants decode credit. Input may supersede only refresh. The next frame declares its canceled range and independently resets prediction. New video sessions, resizes, and motion resumption after sharp prediction require a keyframe. Reopen after an undeclared sequence gap or decoding failure. Easld pins the stream to the exact drawingMachine attachment and forwards image bytes unchanged to the owning viewer. Private-event hearing is captured at open. Reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay.",
       "params": {

@@ -165,6 +165,13 @@ func (r *Router) HandleConn(req any, c Conn) any {
 	if wait, ok := reply.(diagramWait); ok {
 		return r.awaitDiagram(wait)
 	}
+	if read, ok := reply.(imagePreviewRead); ok {
+		result, err := read.run()
+		if err != nil {
+			return errorReply(read.requestID, asFailure(err))
+		}
+		return okReply(read.requestID, result)
+	}
 	return reply
 }
 
@@ -197,6 +204,10 @@ func (r *Router) handle(req any, c Conn) any {
 	}
 	if wait, ok := result.(diagramWait); ok {
 		return wait
+	}
+	if read, ok := result.(imagePreviewRead); ok {
+		read.requestID = id
+		return read
 	}
 	// Swift encodes every result with JSONEncoder (JSONValue.encode), which throws on NaN and
 	// infinities; the change is made, the reply is that error.

@@ -229,7 +229,7 @@ public enum HostedTerminal {
     /// `controlPath` when the app's connection is up, never asking for a password (a key the agent
     /// holds), and a dead link noticed within 30 s.
     public static func sshOptions(controlPath: String) -> [String] {
-        ["-S", controlPath, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"]
+        ["-S", controlPath, "-o", "Compression=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"]
     }
 
     /// `session.spawn`'s params for terminal `tile` on board `board`: `argv` in the login shell
