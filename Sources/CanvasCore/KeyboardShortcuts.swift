@@ -141,6 +141,7 @@ public struct ShortcutAction: Equatable, Sendable {
         .init("clearMentions", "Clear Mentions", "Edit"),
         .init("focusComposer", "Write Prompt", "Edit", "i"),
         .init("selectTool", "Select", "Drawing", "v", []),
+        .init("moveTool", "Move", "Drawing", "m", []),
         .init("rectangleTool", "Rectangle", "Drawing", "r", []),
         .init("ellipseTool", "Ellipse", "Drawing", "o", []),
         .init("arrowTool", "Arrow", "Drawing", "a", []),

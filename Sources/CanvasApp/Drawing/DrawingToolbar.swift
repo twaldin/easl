@@ -2,7 +2,6 @@ import AppKit
 import CanvasCore
 
 /// Window-space drawing toolbar: tools (with their single-key shortcuts), palette, and fill.
-/// Its buttons never take keyboard focus, so picking a tool leaves the prompt terminal focused.
 @MainActor
 final class DrawingToolbar: NSVisualEffectView {
     private unowned let shapeLayer: ShapeLayer

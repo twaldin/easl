@@ -148,8 +148,7 @@ final class CanvasView: NSScrollView {
     private var magnifying = false
     private var move: MoveGesture?
     private var marquee: MarqueeGesture?
-    /// A press on a drawn object is tracked here (the event never reaches a view).
-    private var shapePress = false
+    private var monitoredMove = false
     private var mouseMonitor: Any?
     /// Terminals seen since their agent last started working (mirrors Board's seen set).
     private var seenLocally: Set<ObjectID> = []
@@ -202,6 +201,7 @@ final class CanvasView: NSScrollView {
     /// True where the drawing layer handles the mouse itself (active tool, shape handles);
     /// scene selection, marquee, and moves stand down there.
     var drawingOwnsPoint: (NSPoint) -> Bool = { _ in false }
+    var movesTiles: () -> Bool = { false }
     /// Extra props to merge into a drawn object's move (e.g. translated free arrow endpoints).
     var moveProps: ((CanvasObject, _ dx: Double, _ dy: Double) -> JSONValue?)?
     /// Live offset (document points) of drawn objects being dragged; `.zero` right before commit.
@@ -742,6 +742,10 @@ final class CanvasView: NSScrollView {
     /// A plain press on a tile's title bar also turns the keyboard to that tile (a terminal) or
     /// the canvas, away from whatever had it (`KeyboardFocus.afterTitleBarPress`).
     private func press(_ id: ObjectID, extend: Bool) -> ObjectID? {
+        if movesTiles() {
+            hand(.canvas)
+            CanvasTerminalView.forgetRefocus()
+        }
         if extend {
             setSelection(selection.symmetricDifference([id]))
             return nil
@@ -750,11 +754,13 @@ final class CanvasView: NSScrollView {
         defer {
             if let tile = tiles[id] {
                 lastClickedTile = id
-                hand(KeyboardFocus.afterTitleBarPress(on: id, isTerminal: tile.content is TerminalTile, holder: holder))
+                if !movesTiles() {
+                    hand(KeyboardFocus.afterTitleBarPress(on: id, isTerminal: tile.content is TerminalTile, holder: holder))
+                }
             }
         }
         if selection.contains(id) { return selection.count > 1 ? id : nil }
-        select(id, extend: false)
+        setSelection([id])
         return nil
     }
 
@@ -828,12 +834,17 @@ final class CanvasView: NSScrollView {
             if drawingOwnsPoint(point) { return event }
             if let shape = shapeHitTest?(point) {
                 if event.clickCount >= 2 { return event }
-                shapePress = true
+                monitoredMove = true
                 beginMove(event, pressing: shape)
                 return nil
             }
             var view: NSView? = hit
             while let current = view, !(current is TileFrameView) { view = current.superview }
+            if movesTiles(), let tile = view as? TileFrameView, hit.isDescendant(of: tile.content) {
+                monitoredMove = true
+                beginMove(event, pressing: tile.objectID)
+                return nil
+            }
             if let tile = view as? TileFrameView, tile.isLive, hit.isDescendant(of: tile.content) {
                 // ⇧-click inside a tile is the tile's own (extending a text or line selection):
                 // it selects just that tile, as a plain click does; title bars ⇧-click to add.
@@ -845,11 +856,11 @@ final class CanvasView: NSScrollView {
                 _ = press(tile.objectID, extend: false)
             }
             return event
-        case .leftMouseDragged where shapePress:
+        case .leftMouseDragged where monitoredMove:
             dragMove(event)
             return nil
-        case .leftMouseUp where shapePress:
-            shapePress = false
+        case .leftMouseUp where monitoredMove:
+            monitoredMove = false
             endMove(event)
             return nil
         default:
@@ -960,6 +971,14 @@ final class CanvasView: NSScrollView {
                 _ = try? board.update(id, frame: frame, props: tiles[id] == nil ? moveProps?(object, dx, dy) : nil)
             }
         }
+    }
+
+    func cancelMove() {
+        guard let gesture = move else { return }
+        move = nil
+        for (id, origin) in gesture.tileOrigins { tiles[id]?.setFrameOrigin(origin) }
+        if !gesture.drawn.isEmpty { onSelectionDrag?(Set(gesture.drawn.keys), .zero) }
+        objectsMoved()
     }
 
     // MARK: Groups

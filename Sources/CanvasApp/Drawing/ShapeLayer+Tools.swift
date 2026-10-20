@@ -50,7 +50,7 @@ extension ShapeLayer {
             return
         }
         switch tool {
-        case .select:
+        case .select, .move:
             // Single clicks select and move through the scene; it passes double-clicks on drawn
             // objects through to here for editing.
             guard event.clickCount >= 2, let item = item(at: point) else { return }

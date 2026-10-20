@@ -6,6 +6,8 @@ Each version's section is its GitHub release's notes.
 
 - Defer distant card previews until they approach the viewport, while preserving snapshots of live tiles as they leave it.
 - Development: add exact-size board fixtures with mixed static and scripted HTML, native preview checks, and bounded scale measurements that verify all eight terminal streams before the first capture.
+- Development browser measurements separate native first-visible response, decoded assignment, and settled sharp assignment. Correct the 0.3.0 click-latency interpretation and retain codec quality 1 without changing production codec or refresh behavior.
+- Add a Move tool (M) to the drawing toolbar: drag tiles from their bodies without clicking or focusing their content. Scroll pans the board. V or Escape returns to Select, and Escape during a drag cancels it.
 - Composer prompts reconcile lost replies without resending; uncertain delivery stays visible instead of becoming an unsent draft.
 - Undo and redo of deleted composer mentions no longer crash the app. Mentions whose tiles still exist keep their editor undo history.
 - Japanese and other input-method composition no longer draws the composer's placeholder over the text being composed.
@@ -49,13 +51,15 @@ Candidate `18ed11b` was measured in two headless macOS guests on home's network,
 | Typing | 119 / 149 | 252 / 491 |
 | Scroll | 107 / 141 | 244 / 621 |
 
-All 180 browser observations completed. These are native-capture-observed completion times, not intrinsic input-to-pixel latency. The capture pipeline alone measured 104 / 132 ms; intrinsic local latency is not resolved. The relay uses the candidate's H.264-negotiating path with adaptive fallback. Network, codec and scheduling contributions were not isolated. Relay-click outliers remain in the distribution; this is not a controlled attribution to an app change.
+All 180 browser observations completed. These are strict RGB8 image-completion observations, not first-visible response or intrinsic input-to-pixel latency. The original 30-action mixed observer cannot be relabeled as pure settled-sharp assignment. The capture pipeline alone measured 104 / 132 ms; intrinsic local latency is not resolved. The relay uses the candidate's H.264-negotiating path with adaptive fallback. Network, codec and scheduling contributions were not isolated. Relay-click outliers remain in the distribution; this is not a controlled attribution to an app change.
+
+A separate matched 60-per-arm baseline series for 0.3.0 measured first input-covering decoded-and-assigned images at 142.104 / 364.735 ms and settled sharp assignment at 3,206.593 / 5,554.611 ms. Neither assignment endpoint proves native presentation. In particular, the historical 243 / 2,901 ms click row is not first-visible latency.
 
 Thirty opens of the 50-image board all drew every image, with zero open/offline errors: median first full draw **2.045 s**, p95 **4.509 s**, maximum **5.301 s**. HTML first-paint proxy, measured after host JSON rendered and two WebKit animation frames: **447 / 729 ms**. This proxy is not a physical presentation timestamp. Host-language-server ⌘-click navigation, including observed native code pixels: **1.457 / 3.460 s**, after three labelled warmups; this measurement includes a 150 ms input-helper wait, polling and capture overhead.
 
 On 2026-10-19 at 22:17–22:19 UTC, application round trips over the approved guest→home→deckbox route measured **34.97 / 49.91 ms**. Five hash-verified fresh-SSH 8 MiB transfers per direction measured median **8.78 Mbit/s** deckbox→guest and **9.11 Mbit/s** guest→deckbox. Home→deckbox ICMP measured **33.33 / 121.15 ms**, with 30/30 replies. Direct guest→deckbox ICMP received 0/30 replies. Application RPC is not ICMP RTT. These measurements describe this route and session, not promised capacity or latency.
 
-The relayed-browser click tail (p95 2.9 s) is being investigated for 0.3.1.
+Browser qualification distinguishes native response, decoded assignment, and settled sharp assignment as described in `docs/testing.md`.
 
 ### Changes
 
