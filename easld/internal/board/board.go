@@ -1130,7 +1130,6 @@ func (b *Board) detachArrows(id string, actor Actor, caller string) {
 			unhidden[o.ID] = o
 		}
 	}
-	// Hidden ends have no drawn path, but deleting them still frees their bindings.
 	if unhidden != nil {
 		labels, _ := b.LabelSizes()
 		drawn := route.Geometry{Objects: unhidden, LabelSizes: labels}.DrawnRouting(nil)

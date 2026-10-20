@@ -236,9 +236,6 @@ func ScopeOfRect(geometry route.Geometry, rect model.Frame) map[string]bool {
 	r := route.RectOf(rect)
 	scope := map[string]bool{}
 	for id, o := range geometry.Objects {
-		if o.Hidden() || (o.Type == model.Group && (o.Frame.W <= 0 || o.Frame.H <= 0)) {
-			continue
-		}
 		if path, ok := routes[id]; ok {
 			hit := route.PathCrosses(path, r)
 			for _, p := range path {
@@ -252,7 +249,7 @@ func ScopeOfRect(geometry route.Geometry, rect model.Frame) map[string]bool {
 			}
 			continue
 		}
-		if o.Type != model.Arrow && o.Frame.Intersects(rect) {
+		if o.Frame.Intersects(rect) {
 			scope[id] = true
 		}
 	}

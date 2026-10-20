@@ -187,7 +187,7 @@ func (c slotCost) less(o slotCost) bool {
 }
 
 // freeSlot is Board.freeSlot: beside anchor (nearest by gap, then side in order) or replacing it
-// (nearest by origin), clear of visible tiles and nonempty groups by PlacementGap.
+// (nearest by origin), clear of visible tiles and positive-area groups by PlacementGap.
 func (b *Board) freeSlot(w, h float64, anchor model.Frame, beside bool, minimum *Size, order []side, ignoring map[string]bool, within *float64) (model.Frame, bool) {
 	gap := PlacementGap
 	var blocked []model.Frame

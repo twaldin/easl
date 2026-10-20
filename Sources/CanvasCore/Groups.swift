@@ -41,8 +41,8 @@ public struct GroupSpec: Equatable, Sendable {
 }
 
 extension Board {
-    /// The frame around visible geometric members. Archiving the last one collapses the group;
-    /// genuinely empty groups retain their existing frame behavior.
+    /// The frame around visible geometric members. Archiving the last one collapses the group.
+    /// Groups with no extant non-arrow members keep their stored frame.
     func fittedFrame(ofGroup group: CanvasObject) -> Frame? {
         guard group.type == .group, let spec = GroupSpec(group.props) else { return nil }
         let members = spec.members.compactMap { objects[$0] }.filter { $0.type != .arrow && $0.id != group.id }

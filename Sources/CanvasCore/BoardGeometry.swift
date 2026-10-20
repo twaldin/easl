@@ -121,7 +121,7 @@ public struct BoardGeometry: Sendable {
     }
 
     /// What a binding attaches to: a point, an object's frame (an ellipse's curve), the row of
-    /// the first of `lines` on a code tile, or a diagram node's box. Nil when the object is gone.
+    /// the first of `lines` on a code tile, or a diagram node's box. Nil when the object is gone or hidden.
     func arrowEnd(_ binding: ArrowBinding, rows: [ObjectID: CodeRows]) -> DrawingGeometry.ArrowEnd? {
         switch binding {
         case .point(let point): return .point(point)

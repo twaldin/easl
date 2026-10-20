@@ -11,7 +11,7 @@ import (
 // GroupRefitCause is the activity log's cause of a group's re-fit.
 const GroupRefitCause = "fit to its members"
 
-// fittedFrame fits a group to its visible members, excluding arrows and empty groups.
+// fittedFrame fits a group to its visible members, excluding arrows and zero-area groups.
 // An all-hidden group keeps its origin but occupies no area.
 func (b *Board) fittedFrame(group model.Object) (model.Frame, bool) {
 	if group.Type != model.Group {
