@@ -57,9 +57,9 @@ def frame_text(helper, image):
     return native_json(helper, image.with_suffix('.ocr'), '--drawn', image)
 
 
-def rpc(path, method, params=None):
+def rpc(path, method, params=None, timeout=120):
     with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(120)
+        connection.settimeout(timeout)
         connection.connect(str(path))
         connection.sendall((json.dumps({'id': 1, 'method': method, 'params': params or {}}) + '\n').encode())
         with connection.makefile('rb') as stream:
@@ -174,6 +174,29 @@ class Run:
         self.api_ready_ms = (time.monotonic() - started) * 1000
         assert len(board['objects']) == self.count, 'Fixture object count changed'
         wait_for(lambda: (self.read_ready('view.get') or {}).get('visible'))
+        self.terminals = [obj['id'] for obj in board['objects'] if obj['type'] == 'terminal']
+        assert len(self.terminals) == 8, 'Fixture must contain eight outputting terminals'
+        streams = {}
+        pending = set(self.terminals)
+        stream_deadline = time.monotonic() + 90
+        stream_path = self.output / 'streams.json'
+        stream_path.write_text(json.dumps(streams, indent=2))
+        while pending:
+            for oid in self.terminals:
+                if oid not in pending:
+                    continue
+                remaining = stream_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError('Fixture stream readiness expired: ' + ', '.join(sorted(pending)))
+                result = rpc(self.socket, 'agent.read', {'target': oid, 'lines': 10}, timeout=remaining)
+                streams[oid] = result
+                stream_path.write_text(json.dumps(streams, indent=2))
+                if time.monotonic() >= stream_deadline:
+                    raise TimeoutError('Fixture stream readiness expired: ' + ', '.join(sorted(pending)))
+                if re.search(r'\bworker=[0-7] sequence=[0-9]{20} status=running\b', result['text']):
+                    pending.remove(oid)
+            if pending:
+                time.sleep(min(0.05, max(0, stream_deadline - time.monotonic())))
         windows = wait_for(lambda: json.loads(command(self.args.window_helper, self.pid)))
         window = max(windows, key=lambda item: item['kCGWindowBounds']['Width'] * item['kCGWindowBounds']['Height'])
         self.native_bounds = window['kCGWindowBounds']
@@ -238,13 +261,6 @@ class Run:
 
     def measure(self):
         board = self.start()
-        terminals = [obj['id'] for obj in board['objects'] if obj['type'] == 'terminal']
-        streams = {}
-        for oid in terminals:
-            result = rpc(self.socket, 'agent.read', {'target': oid, 'lines': 10})
-            assert 'sequence=' in json.dumps(result), 'Terminal did not produce the fixture stream: ' + oid
-            streams[oid] = result
-        (self.output / 'streams.json').write_text(json.dumps(streams, indent=2))
         quiet = self.root / '.perf-board-quiet'
         quiet.touch()
         time.sleep(5)
@@ -291,7 +307,7 @@ class Run:
                 'idle_cpu_samples': {'before': c0, 'after': c1},
                 'process_memory_after_render': rpc(self.home / 'easl.sock', 'app.metrics').get('process', {}),
                 'render_ms': render_ms, 'render_states': states, 'render_missing': missing,
-                'terminals': len(terminals), 'pid': self.pid, 'scratch': str(self.scratch)}
+                'terminals': len(self.terminals), 'pid': self.pid, 'scratch': str(self.scratch)}
 
     def owned_processes(self):
         scopes = {str(path) for path in (self.root, self.root.resolve(), self.scratch, self.scratch.resolve())}
