@@ -84,7 +84,7 @@ class Run:
         self.args, self.app, self.count, self.mode, self.output = args, app, count, mode, output
         self.scratch = Path(tempfile.mkdtemp(prefix='eps-', dir='/tmp')).resolve()
         self.home = self.scratch / 'v'
-        self.root = args.fixtures.resolve() / str(count)
+        self.root = Path(os.path.abspath(args.fixtures)) / str(count)
         self.host = self.scratch / 'h'
         self.server = None
         self.pid = None
