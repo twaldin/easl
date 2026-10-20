@@ -47,6 +47,7 @@ do {
     }
 }
 
+@MainActor
 func migrateLegacyBoards(_ migration: LegacyMigration, defaults: some DefaultsDomains) {
     let lines = migration.run(defaults: defaults)
     for line in lines { NSLog("easl: %@", line) }
