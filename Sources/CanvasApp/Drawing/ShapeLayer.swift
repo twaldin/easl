@@ -890,6 +890,7 @@ final class ShapeLayer: NSView {
         let before = dragPreview
         for id in before.ids { if let item = items[id] { invalidate(item) } }
         dragPreview = (drawn, offset)
+        if before.offset != offset, !before.ids.isEmpty || !drawn.isEmpty { routeAfterPause() }
         for id in drawn { if let item = items[id] { invalidate(item) } }
         // Arrows follow the shapes they are bound to; tiles report their own frame changes.
         for id in before.ids.union(drawn) where items[id]?.shape != nil { reroute(boundTo: id) }
