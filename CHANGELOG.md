@@ -5,6 +5,9 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Terminal rendering completes on Ghostty's renderer worker; post-render hooks run after completed pixels reach the attached layer.
+- Remote PNG and JPEG tiles request display-sized previews from the host and load more detail on zoom. Update the Mac app and easld together for `image.preview`.
+- Remote board and terminal SSH connections compress text, code, and metadata.
+- Development observers can retain the first complete native window frame without sending input or changing the canvas.
 - Archived questions no longer occupy space in layout checks, placement, fit avoidance, graphs, groups, arrow routing, navigation, or board-wide renders on either host; their answers remain readable.
 - Defer distant card previews until they approach the viewport, while preserving snapshots of live tiles as they leave it.
 - Development: add exact-size board fixtures with mixed static and scripted HTML, native preview checks, and bounded scale measurements that verify all eight terminal streams before the first capture.

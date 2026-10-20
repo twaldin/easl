@@ -29,7 +29,7 @@ final class RemoteSource {
         if let pooled = Self.languagePool.first(where: { $0.route == master.route }) {
             languages = pooled.service
         } else {
-            let service = LanguageService(host: files)
+            let service = LanguageService(host: files.withoutImagePreviews)
             Self.languagePool.append((master.route, service))
             languages = service
         }
