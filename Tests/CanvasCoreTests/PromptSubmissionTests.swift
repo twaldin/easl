@@ -295,6 +295,8 @@ final class PromptSubmissionTests {
         reconcile["reconcile"] = .bool(true)
         #expect(try await call("agent.prompt", reconcile)["result"] == .object(["delivery": .string("unknown")]))
         #expect(submitted.isEmpty)
+        try await router.composerPrompt("in-process after receipt capacity", to: tile, on: board, mentions: [], answer: false)
+        #expect(submitted == ["in-process after receipt capacity"])
     }
 
     @Test func legacyCallsAndLocalComposerKeepTheirExistingSignaturesAndBehavior() async throws {
