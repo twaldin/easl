@@ -212,6 +212,64 @@ def endpoints(events, stream, started, deadline_ms):
     return watermark, last_input, covering, refresh
 
 
+def sharp_gate(covering, refresh, last_input, started):
+    if covering and covering.get("format") in ("jpeg", "png"):
+        return {"status": "not_applicable", "reason": "no_idle_refresh", "format": covering["format"]}
+    if refresh is None:
+        return {"status": "deadline_failure"}
+    return {"status": "complete", "latency_ms": refresh["ts_ms"] - last_input,
+            "native_start_latency_ms": refresh["ts_ms"] - started,
+            "last_input_ms": last_input, "assigned_ms": refresh["ts_ms"]}
+
+
+def visible_gate(marker, started, mode, covering=None, refresh=None):
+    if marker is None:
+        return {"status": "deadline_failure", "reason": "no_marker16_observation"}
+    result = {"status": "complete", "latency_ms": marker["ended_ms"] - started,
+              "observed_ms": marker["ended_ms"], "observation": marker["png"]}
+    if mode == "direct":
+        result["phase"] = "native_direct"
+    elif covering and marker["ended_ms"] < covering["ts_ms"]:
+        result["phase"] = "before_covering_assignment"
+    elif covering and covering.get("refresh") is True:
+        result["phase"] = "first_covering_sharp"
+    elif refresh and marker["ended_ms"] >= refresh["ts_ms"]:
+        result["phase"] = ("after_sharp_assignment" if marker["started_ms"] >= refresh["ts_ms"]
+                           else "overlaps_sharp_assignment")
+        result["status"] = "late_marker"
+        result["observed_latency_ms"] = result.pop("latency_ms")
+    else:
+        result["phase"] = covering.get("format", "unknown") if covering else "unknown"
+    return result
+
+
+def input_batch_shape(events, stream, started, deadline_ms):
+    relevant = [e for e in events if e["stream"] == stream and started <= e["ts_ms"] <= deadline_ms]
+    queued = [e for e in relevant if e["stage"] == "input.queued"]
+    sequences = sorted({e["seq"] for e in queued})
+    batches = [e for e in relevant if e["stage"] == "input.sent" and "first_seq" in e
+               and any(e["first_seq"] <= seq <= e["seq"] for seq in sequences)]
+    covered = {seq for seq in sequences if any(e["first_seq"] <= seq <= e["seq"] for e in batches)}
+    return {"status": "complete" if sequences and covered == set(sequences) else "missing",
+            "queued_sequences": sequences, "request_count": len(batches),
+            "queue_span_ms": max(e["ts_ms"] for e in queued) - min(e["ts_ms"] for e in queued) if queued else None,
+            "requests": batches}
+
+
+def diagnostics(rows):
+    batches, phases, formats = {}, {}, {}
+    for row in rows:
+        shape = row.get("input_batch_shape", {})
+        batch = str(shape["request_count"]) if shape.get("status") == "complete" else shape.get("status", "missing")
+        batches[batch] = batches.get(batch, 0) + 1
+        phase = row["gate_a"].get("phase", "unknown")
+        phases[phase] = phases.get(phase, 0) + 1
+        covering = row.get("internal_covering_assignment") or {}
+        format = covering.get("format", "direct" if row["mode"] == "direct" else "unknown")
+        formats[format] = formats.get(format, 0) + 1
+    return {"input_request_counts": batches, "response_phases": phases, "assigned_formats": formats}
+
+
 def summarize(rows, gate):
     complete = [r[gate]["latency_ms"] for r in rows if r[gate]["status"] == "complete"]
     statuses = {}
@@ -297,39 +355,33 @@ def run(config, args):
                 row["deadline_ms"] = deadline_ms
                 deadline = time.monotonic() + max(0, (deadline_ms - epoch_ms()) / 1000)
                 first_marker = None
-                refresh = None
+                covering = refresh = None
                 while time.monotonic() < deadline:
                     if first_marker is None:
                         observation = observer.capture(f"{sample:03d}-obs")
                         row["observations"].append(observation)
                         if observation["ended_ms"] <= deadline_ms and distance(observation["pixel"], color) <= 16:
                             first_marker = observation
-                            row["gate_a"] = {"status": "complete", "latency_ms": observation["ended_ms"] - started,
-                                             "observed_ms": observation["ended_ms"], "observation": observation["png"]}
                     if trace:
                         row["trace"].extend(trace.poll())
                         watermark, last_input, covering, refresh = endpoints(row["trace"], config["stream"], started, deadline_ms)
                         row.update(input_watermark=watermark, internal_covering_assignment=covering, internal_refresh_assignment=refresh)
-                        if refresh:
-                            row["gate_b"] = {"status": "complete", "latency_ms": refresh["ts_ms"] - last_input,
-                                             "native_start_latency_ms": refresh["ts_ms"] - started,
-                                             "last_input_ms": last_input, "assigned_ms": refresh["ts_ms"]}
+                        row["gate_b"] = sharp_gate(covering, refresh, last_input, started)
                     if first_marker is not None:
-                        if not trace or refresh:
+                        if not trace or row["gate_b"]["status"] in ("complete", "not_applicable"):
                             break
                         time.sleep(0.005)
                 if trace:
                     row["trace"].extend(trace.poll())
                     watermark, last_input, covering, refresh = endpoints(row["trace"], config["stream"], started, deadline_ms)
                     row.update(input_watermark=watermark, internal_covering_assignment=covering, internal_refresh_assignment=refresh)
-                    if refresh:
-                        row["gate_b"] = {"status": "complete", "latency_ms": refresh["ts_ms"] - last_input,
-                                         "native_start_latency_ms": refresh["ts_ms"] - started,
-                                         "last_input_ms": last_input, "assigned_ms": refresh["ts_ms"]}
-                    elif watermark is None:
+                    row["gate_b"] = sharp_gate(covering, refresh, last_input, started)
+                    row["input_batch_shape"] = input_batch_shape(row["trace"], config["stream"], started, deadline_ms)
+                    if watermark is None:
                         row["gate_b"]["reason"] = "missing_input_watermark"
-                if first_marker is None:
-                    row["gate_a"] = {"status": "deadline_failure", "reason": "no_marker16_observation"}
+                else:
+                    row["input_batch_shape"] = {"status": "not_applicable"}
+                row["gate_a"] = visible_gate(first_marker, started, config["mode"], covering, refresh)
                 row["settled_capture"] = observer.capture(f"{sample:03d}-settled")
                 row["source_after"] = page(config.get("count_script", "Number(clicks)"))
                 row["source_increment_once"] = row["source_after"] == row["source_before"] + 1
@@ -359,12 +411,12 @@ def run(config, args):
                         row["gate_b"] = {"status": "error"}
             save(directory / f"row-{sample:03d}.json", row)
             save(directory / "results.json", {"metadata": metadata, "rows": rows,
-                 "gate_a": summarize(rows, "gate_a"), "gate_b": summarize(rows, "gate_b")})
+                 "gate_a": summarize(rows, "gate_a"), "gate_b": summarize(rows, "gate_b"), "diagnostics": diagnostics(rows)})
             print(json.dumps({"sample": sample, "gate_a": row["gate_a"], "gate_b": row["gate_b"], "directory": str(directory)}), flush=True)
             if "error" in row:
                 break
         summary = {"directory": str(directory), "requested": count, "attempted": len(rows),
-                   "unattempted": count - len(rows), "gate_a": summarize(rows, "gate_a"), "gate_b": summarize(rows, "gate_b")}
+                   "unattempted": count - len(rows), "gate_a": summarize(rows, "gate_a"), "gate_b": summarize(rows, "gate_b"), "diagnostics": diagnostics(rows)}
         save(directory / "summary.json", summary)
         print(json.dumps(summary), flush=True)
         return 0 if len(rows) == count and all(r["gate_a"]["status"] == "complete" and r["gate_b"]["status"] in ("complete", "not_applicable") for r in rows) else 1

@@ -20,7 +20,7 @@ enum DevInput {
     static let enabled = ProcessInfo.processInfo.environment["EASL_DEV_INPUT"] == "1"
     static let surfaceTrace = enabled && ProcessInfo.processInfo.environment["EASL_DEV_SURFACE_TRACE"] == "1"
 
-    static func traceSurface(stage: String, stream: String, seq: Int, input: Int? = nil, refresh: Bool? = nil, firstSeq: Int? = nil) {
+    static func traceSurface(stage: String, stream: String, seq: Int, input: Int? = nil, refresh: Bool? = nil, firstSeq: Int? = nil, format: String? = nil, offset: Int? = nil) {
         guard surfaceTrace else { return }
         var fields: [String: Any] = [
             "stage": stage, "ts_ms": Date().timeIntervalSince1970 * 1000,
@@ -29,6 +29,8 @@ enum DevInput {
         if let input { fields["input"] = input }
         if let refresh { fields["refresh"] = refresh }
         if let firstSeq { fields["first_seq"] = firstSeq }
+        if let format { fields["format"] = format }
+        if let offset { fields["offset"] = offset }
         guard let data = try? JSONSerialization.data(withJSONObject: fields),
               let json = String(data: data, encoding: .utf8) else { return }
         print("DevInput.surface \(json)")

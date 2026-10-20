@@ -34,6 +34,39 @@ class BrowserGateTests(unittest.TestCase):
         self.assertEqual(summary["outcomes"], {"complete": 2, "source_count_failure": 1, "deadline_failure": 1})
         self.assertEqual(summary["completed_subset"], {"n": 2, "median_ms": 200, "p95_ms": 300, "max_ms": 300})
 
+    def test_sharp_only_or_ambiguous_marker_is_not_an_early_motion_response(self):
+        motion = {"ts_ms": 120, "refresh": False, "format": "h264"}
+        sharp = {"ts_ms": 200, "refresh": True, "format": "h264"}
+        for captured in ((210, 230), (180, 220)):
+            marker = {"started_ms": captured[0], "ended_ms": captured[1], "png": "native.png"}
+            result = gates.visible_gate(marker, 100, "relay", motion, sharp)
+            self.assertEqual(result["status"], "late_marker")
+            self.assertNotIn("latency_ms", result)
+        first_sharp_event = {"ts_ms": 120, "refresh": True, "format": "h264"}
+        first_sharp = gates.visible_gate({"started_ms": 100, "ended_ms": 150, "png": "native.png"},
+                                        90, "relay", first_sharp_event, first_sharp_event)
+        self.assertEqual(first_sharp["status"], "complete")
+        self.assertEqual(first_sharp["phase"], "first_covering_sharp")
+
+    def test_jpeg_has_no_sharp_refinement_deadline(self):
+        result = gates.sharp_gate({"format": "jpeg", "ts_ms": 150}, None, 110, 100)
+        self.assertEqual(result["status"], "not_applicable")
+        self.assertNotIn("latency_ms", result)
+
+    def test_batch_shape_distinguishes_merged_clicks_from_split_or_missing_sends(self):
+        queued = [{"stage": "input.queued", "stream": "page", "seq": 5, "ts_ms": 110},
+                  {"stage": "input.queued", "stream": "page", "seq": 6, "ts_ms": 111}]
+        merged = gates.input_batch_shape(queued + [
+            {"stage": "input.sent", "stream": "page", "first_seq": 5, "seq": 6, "ts_ms": 112}], "page", 100, 200)
+        self.assertEqual((merged["status"], merged["request_count"], merged["queue_span_ms"]), ("complete", 1, 1))
+        split = queued + [
+            {"stage": "input.sent", "stream": "page", "first_seq": 5, "seq": 5, "ts_ms": 112},
+            {"stage": "input.sent", "stream": "other", "first_seq": 5, "seq": 6, "ts_ms": 113},
+            {"stage": "input.sent", "stream": "page", "first_seq": 6, "seq": 6, "ts_ms": 180}]
+        self.assertEqual(gates.input_batch_shape(split, "page", 100, 150)["status"], "missing")
+        complete = gates.input_batch_shape(split, "page", 100, 200)
+        self.assertEqual((complete["status"], complete["request_count"]), ("complete", 2))
+
 
 if __name__ == "__main__":
     unittest.main()

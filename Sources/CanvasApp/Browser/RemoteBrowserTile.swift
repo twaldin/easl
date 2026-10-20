@@ -43,6 +43,8 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private let decoding = DispatchQueue(label: "easl.surface.decode", qos: .userInitiated)
     private var refreshAssembly = SurfaceRefreshAssembly()
     private var assemblingRefinement: Int?
+    private var pendingProgress: (frame: Int, offset: Int)?
+    private var sendingProgress = false
     private var abandonedRefinement = 0
     private var decodingRefinement: Int?
     private var pageSize: CGSize?
@@ -292,6 +294,8 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         video = SurfaceVideoDecoder()
         refreshAssembly.reset()
         assemblingRefinement = nil
+        pendingProgress = nil
+        sendingProgress = false
         abandonedRefinement = 0
         decodingRefinement = nil
         nextSeq = 0
@@ -519,6 +523,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         guard let offset = frame.offset else {
             refreshAssembly.reset()
             assemblingRefinement = nil
+            pendingProgress = nil
             beginDecode(frame)
             return
         }
@@ -529,28 +534,51 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         do {
             let completed = try refreshAssembly.append(frame: frame)
             assemblingRefinement = completed == nil ? frame.seq : nil
-            if let connection = owned.current() {
+            if DevInput.surfaceTrace {
+                DevInput.traceSurface(stage: "refresh.part", stream: frame.stream, seq: frame.seq, input: frame.input, offset: offset)
+            }
+            if let completed {
+                pendingProgress = nil
+                beginDecode(completed)
+            } else if let connection = owned.current() {
                 sendProgress(frame.seq, offset: offset, stream: frame.stream, connection: connection, generation: streamEpoch)
             }
-            if let completed { beginDecode(completed) }
         } catch {
             restartStream(reason: "Couldn't assemble a frame from \(remote.host.name)")
         }
     }
 
     private func sendProgress(_ frame: Int, offset: Int, stream: String, connection: EaslConnection, generation: Int) {
+        pendingProgress = (frame, offset)
+        guard !sendingProgress else { return }
+        sendingProgress = true
         runStreamTask { [weak self] in
-            do {
-                _ = try await connection.request("surface.progress", .object([
-                    "stream": .string(stream), "frame": .number(Double(frame)), "offset": .number(Double(offset)),
-                ]), timeout: .seconds(8))
-            } catch is CancellationError {
-                return
-            } catch {
-                guard let self, generation == self.streamEpoch, self.streamID == stream else { return }
-                self.endLink()
-                self.setLinkStatus("Refresh transfer failed")
-                self.startLink()
+            guard let self else { return }
+            defer {
+                if generation == self.streamEpoch { self.sendingProgress = false }
+            }
+            while generation == self.streamEpoch, self.streamID == stream, let progress = self.pendingProgress {
+                self.pendingProgress = nil
+                guard self.assemblingRefinement == progress.frame else { continue }
+                if DevInput.surfaceTrace {
+                    DevInput.traceSurface(stage: "refresh.progress.sent", stream: stream, seq: progress.frame, offset: progress.offset)
+                }
+                do {
+                    _ = try await connection.request("surface.progress", .object([
+                        "stream": .string(stream), "frame": .number(Double(progress.frame)), "offset": .number(Double(progress.offset)),
+                    ]), timeout: .seconds(8))
+                    if DevInput.surfaceTrace {
+                        DevInput.traceSurface(stage: "refresh.progress.completed", stream: stream, seq: progress.frame, offset: progress.offset)
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard generation == self.streamEpoch, self.streamID == stream else { return }
+                    self.endLink()
+                    self.setLinkStatus("Refresh transfer failed")
+                    self.startLink()
+                    return
+                }
             }
         }
     }
@@ -591,7 +619,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         retryDelay = 1
         picture.image = shown
         if DevInput.surfaceTrace {
-            DevInput.traceSurface(stage: "image.assigned", stream: frame.stream, seq: frame.seq, input: frame.input, refresh: frame.refresh)
+            DevInput.traceSurface(stage: "image.assigned", stream: frame.stream, seq: frame.seq, input: frame.input, refresh: frame.refresh, format: frame.format.rawValue)
         }
         if sizeChanged { layoutParts() }
         Metrics.shared.record("surface.frameAccepted", bytes: decoded.bytes)
@@ -624,8 +652,12 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     @discardableResult
     private func enqueue(_ event: SurfaceInput) -> Int? {
         guard streamID != nil else { return nil }
-        if decodingRefinement != nil || assemblingRefinement != nil {
+        pendingProgress = nil
+        if let refinement = decodingRefinement ?? assemblingRefinement {
             video = SurfaceVideoDecoder()
+            if DevInput.surfaceTrace, let stream = streamID {
+                DevInput.traceSurface(stage: "refresh.abandoned", stream: stream, seq: refinement)
+            }
         }
         if let decodingRefinement {
             abandonedRefinement = max(abandonedRefinement, decodingRefinement)
