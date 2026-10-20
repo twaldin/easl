@@ -18,6 +18,22 @@ enum DevInput {
     private static var panelChoices: [ObjectIdentifier: [URL]] = [:]
 
     static let enabled = ProcessInfo.processInfo.environment["EASL_DEV_INPUT"] == "1"
+    static let surfaceTrace = enabled && ProcessInfo.processInfo.environment["EASL_DEV_SURFACE_TRACE"] == "1"
+
+    static func traceSurface(stage: String, stream: String, seq: Int, input: Int? = nil, refresh: Bool? = nil, firstSeq: Int? = nil) {
+        guard surfaceTrace else { return }
+        var fields: [String: Any] = [
+            "stage": stage, "ts_ms": Date().timeIntervalSince1970 * 1000,
+            "stream": stream, "seq": seq,
+        ]
+        if let input { fields["input"] = input }
+        if let refresh { fields["refresh"] = refresh }
+        if let firstSeq { fields["first_seq"] = firstSeq }
+        guard let data = try? JSONSerialization.data(withJSONObject: fields),
+              let json = String(data: data, encoding: .utf8) else { return }
+        print("DevInput.surface \(json)")
+        fflush(stdout)
+    }
 
     /// Where a board window opens (`EASL_DEV_FRAME="x y w h"`, AppKit screen coordinates;
     /// `DevFrame.parse`): a new window opens on the current Space of the display holding its

@@ -590,6 +590,9 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         image = shown
         retryDelay = 1
         picture.image = shown
+        if DevInput.surfaceTrace {
+            DevInput.traceSurface(stage: "image.assigned", stream: frame.stream, seq: frame.seq, input: frame.input, refresh: frame.refresh)
+        }
         if sizeChanged { layoutParts() }
         Metrics.shared.record("surface.frameAccepted", bytes: decoded.bytes)
         recordClicks(coveredBy: frame.input)
@@ -643,6 +646,9 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         }
         nextSeq += 1
         outbound.append(Queued(seq: nextSeq, event: event))
+        if DevInput.surfaceTrace, let stream = streamID {
+            DevInput.traceSurface(stage: "input.queued", stream: stream, seq: nextSeq)
+        }
         if case .focus(let focused) = event { focusSent = focused }
         switch event {
         case .mouse(.move, _, _, _, _), .focus: break
@@ -681,8 +687,11 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     private func wakeInput() {
-        inputWait?.resume()
+        guard let waiting = inputWait else { return }
         inputWait = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(1)) {
+            waiting.resume()
+        }
     }
 
     private func waitInput() async {
@@ -704,6 +713,9 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             let batch = Array(outbound.prefix(128))
             outbound.removeFirst(batch.count)
             let wantsText = batch.contains { $0.event.readsSelection }
+            if DevInput.surfaceTrace {
+                DevInput.traceSurface(stage: "input.sent", stream: stream, seq: batch.last!.seq, firstSeq: batch[0].seq)
+            }
             do {
                 let result = try await connection.request("surface.input", .object([
                     "stream": .string(stream),

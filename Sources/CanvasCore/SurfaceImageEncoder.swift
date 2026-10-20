@@ -230,7 +230,7 @@ private final class SurfaceImageRefresh: @unchecked Sendable {
 public final class SurfaceImageEncoder: @unchecked Sendable {
     public static let motionBytes = 16 << 20
     public static let refinementBytes = 576 * 1024
-    public static let settle: TimeInterval = 1
+    public static let settle: TimeInterval = 0.4
     public private(set) var captureDelay: TimeInterval = 0.1
 
     private var video = SurfaceVideoEncoder()

@@ -10,9 +10,10 @@ public struct SurfaceRefreshTransmission: Sendable {
     public static let chunkBytes = 16 * 1024
     public static let maximumBytes = 576 * 1024
 
+    private static let windowBytes = 4 * chunkBytes
     private let frame: SurfaceEvent.Frame
-    private var nextOffset = 0
-    private var receivedOffset = -1
+    private var sentBytes = 0
+    private var acknowledgedBytes = 0
 
     public init(frame: SurfaceEvent.Frame) throws {
         try validateRefresh(frame)
@@ -24,29 +25,35 @@ public struct SurfaceRefreshTransmission: Sendable {
     }
 
     public mutating func start() -> [SurfaceEvent.Frame] {
-        guard nextOffset == 0 else { return [] }
-        return nextPart().map { [$0] } ?? []
+        guard sentBytes == 0 else { return [] }
+        return fillWindow()
     }
 
     public mutating func progress(offset: Int) throws -> [SurfaceEvent.Frame] {
-        guard offset >= 0, offset.isMultiple(of: Self.chunkBytes), offset < nextOffset else {
+        guard offset >= 0, offset.isMultiple(of: Self.chunkBytes), offset < sentBytes else {
             throw SurfaceRefreshTransferError.invalidOffset
         }
-        guard offset > receivedOffset else { return [] }
-        receivedOffset = offset
-        guard let part = nextPart() else { return [] }
-        return [part]
+        let boundary = min(offset + Self.chunkBytes, frame.data.count)
+        guard boundary > acknowledgedBytes else { return [] }
+        acknowledgedBytes = boundary
+        return fillWindow()
     }
 
-    private mutating func nextPart() -> SurfaceEvent.Frame? {
-        guard nextOffset < frame.data.count else { return nil }
-        let end = min(nextOffset + Self.chunkBytes, frame.data.count)
-        var part = frame
-        part.offset = nextOffset
-        part.total = frame.data.count
-        part.data = frame.data.subdata(in: (frame.data.startIndex + nextOffset)..<(frame.data.startIndex + end))
-        nextOffset = end
-        return part
+    private mutating func fillWindow() -> [SurfaceEvent.Frame] {
+        let limit = min(acknowledgedBytes + Self.windowBytes, frame.data.count)
+        guard sentBytes < limit else { return [] }
+        var parts: [SurfaceEvent.Frame] = []
+        parts.reserveCapacity((limit - sentBytes + Self.chunkBytes - 1) / Self.chunkBytes)
+        while sentBytes < limit {
+            let end = min(sentBytes + Self.chunkBytes, limit)
+            var part = frame
+            part.offset = sentBytes
+            part.total = frame.data.count
+            part.data = frame.data.subdata(in: (frame.data.startIndex + sentBytes)..<(frame.data.startIndex + end))
+            sentBytes = end
+            parts.append(part)
+        }
+        return parts
     }
 }
 
