@@ -5,7 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Open saved boards with attached arrow previews while obstacle routing finishes in the background; edits and explicit exports still settle their final routes.
-- Reduce native view and backing-store work during large-board pan and pinch while preserving tile previews, terminal sessions, and native controls.
+- Reduce native view and backing-store work during large-board pan and pinch while preserving tile previews, terminal and browser sessions, accessibility, and native controls.
 - Remote PNG and JPEG tiles request display-sized previews from the host and load more detail on zoom. Update the Mac app and easld together for `image.preview`.
 - Remote board and terminal SSH connections compress text, code, and metadata.
 - Development observers can retain the first complete native window frame without sending input or changing the canvas.

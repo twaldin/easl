@@ -146,6 +146,11 @@ final class CanvasView: NSScrollView {
     private var livenessScheduled = false
     private var geometryDirty = false
     private var magnifying = false
+    private var voiceOverObservation: NSKeyValueObservation?
+    private var fullKeyboardAccessEnabled = NSApplication.shared.isFullKeyboardAccessEnabled
+    private var needsNativeAccessibility: Bool {
+        NSWorkspace.shared.isVoiceOverEnabled || NSApp.isFullKeyboardAccessEnabled
+    }
     private var move: MoveGesture?
     private var marquee: MarqueeGesture?
     private var monitoredMove = false
@@ -254,6 +259,12 @@ final class CanvasView: NSScrollView {
         center.addObserver(self, selector: #selector(magnifyEnded), name: NSScrollView.didEndLiveMagnifyNotification, object: self)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didBecomeActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didResignActiveNotification, object: nil)
+        // Full Keyboard Access is not KVO-observable; read it after AppKit processes an event.
+        center.addObserver(self, selector: #selector(keyboardAccessChanged), name: NSApplication.didUpdateNotification, object: NSApp)
+        center.addObserver(self, selector: #selector(keyboardAccessChanged), name: NSApplication.didBecomeActiveNotification, object: nil)
+        voiceOverObservation = NSWorkspace.shared.observe(\.isVoiceOverEnabled, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.scheduleLiveness() }
+        }
         // Placement aims at what the user can see: the viewport clear of the toolbar and tray.
         board.viewport = { [weak self] in
             guard let self, self.viewPlaced else { return nil }
@@ -299,6 +310,8 @@ final class CanvasView: NSScrollView {
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
         mouseMonitor = nil
         NotificationCenter.default.removeObserver(self)
+        voiceOverObservation?.invalidate()
+        voiceOverObservation = nil
         for tile in tiles.values {
             (tile.content as? TerminalTile)?.discard()
             tile.removeFromSuperview()
@@ -2493,8 +2506,16 @@ final class CanvasView: NSScrollView {
         DispatchQueue.main.asyncAfter(deadline: .now() + ActivityLog.settleInterval + 0.05, execute: work)
     }
 
+    @objc private func keyboardAccessChanged() {
+        let enabled = NSApp.isFullKeyboardAccessEnabled
+        guard enabled != fullKeyboardAccessEnabled else { return }
+        fullKeyboardAccessEnabled = enabled
+        scheduleLiveness()
+    }
+
     @objc private func magnifyStarted() {
         magnifying = true
+        guard !needsNativeAccessibility else { return }
         let scale = window?.backingScaleFactor ?? 1
         for tile in tiles.values where tile.superview != nil && tile.isNearViewport {
             tile.beginPinching(at: scale)
@@ -2505,6 +2526,20 @@ final class CanvasView: NSScrollView {
         magnifying = false
         for tile in tiles.values { tile.endPinching() }
         scheduleLiveness()
+    }
+
+    func withNativeHeaders(_ render: () -> Void) {
+        let visible = documentVisibleRect
+        for tile in tiles.values where tile.superview != nil && tile.frame.intersects(visible) {
+            tile.endPinching()
+            tile.syncTitle()
+        }
+        render()
+        guard magnifying, !needsNativeAccessibility else { return }
+        let scale = window?.backingScaleFactor ?? 1
+        for tile in tiles.values where tile.superview != nil && tile.isNearViewport {
+            tile.beginPinching(at: scale)
+        }
     }
 
     /// Coalesces every trigger in one run-loop turn into a single pass.
@@ -2532,15 +2567,16 @@ final class CanvasView: NSScrollView {
             geometryDirty = false
             objectsMoved()
         }
-        if magnifying, NSWorkspace.shared.isVoiceOverEnabled {
+        let nativeAccessibility = needsNativeAccessibility
+        if magnifying, nativeAccessibility {
             for tile in tiles.values { tile.endPinching() }
         }
         let nearViewport = documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin)
         var attached = false
         for tile in tiles.values where tile.superview == nil {
-            if tile.frame.intersects(nearViewport) || tile.contentLive || tile.content is TerminalTile || selection.contains(tile.objectID) {
+            if nativeAccessibility || tile.frame.intersects(nearViewport) || tile.contentLive
+                || tile.content is TerminalTile || tile.content is BrowserTile || selection.contains(tile.objectID) {
                 document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay)
-                if magnifying { tile.beginPinching(at: window?.backingScaleFactor ?? 1) }
                 attached = true
             }
         }
@@ -2563,7 +2599,8 @@ final class CanvasView: NSScrollView {
         let responder = window?.firstResponder as? NSView
         for tile in tiles.values {
             tile.updateProximity(to: nearViewport, admitColdCards: !magnifying)
-            if tile.superview != nil, !tile.isNearViewport, !tile.contentLive, !(tile.content is TerminalTile),
+            if !nativeAccessibility, tile.superview != nil, !tile.isNearViewport, !tile.contentLive,
+               !(tile.content is TerminalTile || tile.content is BrowserTile),
                !selection.contains(tile.objectID), responder?.isDescendant(of: tile) != true {
                 tile.removeFromSuperview()
             }

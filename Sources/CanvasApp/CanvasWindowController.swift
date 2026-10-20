@@ -741,10 +741,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let preparing = live.map { content in Task { await content.prepareSnapshot() } }
         for task in refreshes + preparing { await task.value }
         guard let window, let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
-        canvas.tiles.values.forEach { $0.syncTitle() }
-        live.forEach { $0.showSnapshot(true) }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        live.forEach { $0.showSnapshot(false) }
+        canvas.withNativeHeaders {
+            live.forEach { $0.showSnapshot(true) }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            live.forEach { $0.showSnapshot(false) }
+        }
         let encoded = format == .png ? rep.representation(using: .png, properties: [:]) : rep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
         guard let encoded else { return nil }
         let backing = Double(rep.pixelsWide) / max(view.bounds.width, 1)

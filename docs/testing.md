@@ -436,7 +436,7 @@ The pan uses 40 × 20 point steps, reverses every 60 scheduled steps, and must t
 
 Rows retain render failures, placeholders, omitted objects, and gesture failures rather than treating fast failures as successful measurements. Output includes the original fixture, raw logs, stream replies, startup capture receipts, render object records, and PNGs. Compare the native bounds as well as fixture bytes before attributing a difference to the app.
 
-Cold-preview proximity defers distant snapshots until near, and new cold admissions wait until a pinch ends. Distant nonterminal roots leave the native hierarchy after live departure capture; selected and focused roots stay attached. Completed cards survive far/near without being redrawn. Nearby zoomed-out headers can use cached images during pinch, then restore native controls. Explicit whole-board renders remain uncapped, and remote HTML keeps its existing host-bound file and network rules.
+Cold-preview proximity defers distant snapshots until near, and new cold admissions wait until a pinch ends. Distant roots leave the native hierarchy after live departure capture; terminal, browser, selected and focused roots stay attached. VoiceOver and Full Keyboard Access retain all roots. Completed cards survive far/near without being redrawn. Nearby zoomed-out headers can use cached images during pinch after their body card settles, then restore native controls. Explicit whole-board renders remain uncapped, and remote HTML keeps its existing host-bound file and network rules.
 
 #### Native preview lifecycle regression
 
@@ -458,7 +458,16 @@ python3 Tests/TileParking/run.py --checkout "$PWD" --app "$G/fix.app" \
   --window-helper "$G/perf-window" --out "$G/parking"
 ```
 
-This checks native title pixels during pinch, title and body return, offscreen content updates, fresh offscreen export pixels without viewport changes, all 50 objects in whole-board export, and a fresh native Close action. It runs eight outputting terminal sessions. Native pan return allows one backing pixel of coordinate rounding.
+This checks native title pixels and a viewport snapshot during pinch, title and body return, offscreen content updates, fresh offscreen export pixels without viewport changes, all 50 objects in whole-board export, and a fresh native Close action. It runs eight outputting terminal sessions. Native pan return allows one backing pixel of coordinate rounding.
+
+The browser-state companion uses the same arguments:
+
+```sh
+python3 Tests/BrowserParking/run.py --checkout "$PWD" --app "$G/fix.app" \
+  --window-helper "$G/perf-window" --out "$G/browser-parking"
+```
+
+It serves a guest-loopback page, stores unique heap-only JavaScript state, pans beyond the 600-point margin, reads the page while offscreen, and returns before the two-minute release deadline. It requires unchanged document identity and one document request, then checks fresh native body/title pixels after a DOM update. Saved preview pixels alone cannot pass.
 
 #### Native initial routing regression
 

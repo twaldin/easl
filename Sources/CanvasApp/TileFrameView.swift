@@ -259,10 +259,6 @@ final class TileFrameView: NSView {
     private func layoutParts() {
         let width = bounds.width
         titleBar.frame = NSRect(x: 0, y: 0, width: width, height: Self.titleHeight)
-        if titleBar.superview == nil, let view = pinchHeader.view {
-            view.frame = titleBar.frame
-            view.layer?.frame = view.bounds
-        }
         badge.frame = NSRect(x: 10, y: (Self.titleHeight - 10) / 2, width: 10, height: 10)
         closeButton.frame = TileTitleBar.closeFrame(width: width)
         layoutTitle()
@@ -317,6 +313,7 @@ final class TileFrameView: NSView {
     func setTitle(_ title: String) {
         guard title != self.title else { return }
         self.title = title
+        invalidatePinchHeader()
         if window?.occlusionState.contains(.visible) == true { syncTitle() }
     }
 
@@ -361,23 +358,27 @@ final class TileFrameView: NSView {
     }
 
     private func invalidatePinchHeader() {
-        if case .ready(let view, _, _) = pinchHeader { pinchHeader = .stale(view) }
+        pinchHeader = .stale(pinchHeader.view)
+        endPinching()
+    }
+
+    private var canPreparePinchHeader: Bool {
+        guard !isLive, !contentLive, cardTask == nil, !cardWanted,
+              zoomedOut, !isSelected, !hovered, canStartColdCard,
+              !(content is TerminalTile), titleBar.superview === self, let window,
+              window.isVisible, window.occlusionState.contains(.visible),
+              !titleBar.bounds.isEmpty, titleBar.bounds.width <= window.frame.width,
+              !NSWorkspace.shared.isVoiceOverEnabled, !NSApp.isFullKeyboardAccessEnabled,
+              (window.firstResponder as? NSView)?.isDescendant(of: titleBar) != true else { return false }
+        return true
     }
 
     private func preparePinchHeader() {
-        guard case .stale(let view) = pinchHeader, !isLive, zoomedOut, !isSelected, !hovered, canStartColdCard,
-              !(content is TerminalTile), titleBar.superview === self, let window,
-              !titleBar.bounds.isEmpty, titleBar.bounds.width <= window.frame.width,
-              !NSWorkspace.shared.isVoiceOverEnabled,
-              (window.firstResponder as? NSView)?.isDescendant(of: titleBar) != true else { return }
+        guard case .stale(let view) = pinchHeader, canPreparePinchHeader else { return }
         pinchHeader = .queued(view)
         MainTurns.onWake { [weak self] in
             guard let self, case .queued(let cachedView) = self.pinchHeader else { return }
-            guard !self.isLive, self.zoomedOut, !self.isSelected, !self.hovered, self.canStartColdCard,
-                  self.titleBar.superview === self, let window = self.window,
-                  !self.titleBar.bounds.isEmpty, self.titleBar.bounds.width <= window.frame.width,
-                  !NSWorkspace.shared.isVoiceOverEnabled,
-                  (window.firstResponder as? NSView)?.isDescendant(of: self.titleBar) != true else {
+            guard self.canPreparePinchHeader, let window = self.window else {
                 self.pinchHeader = .stale(cachedView)
                 return
             }
@@ -386,12 +387,28 @@ final class TileFrameView: NSView {
             guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
                 pixelsWide: Int((rect.width * scale).rounded(.up)), pixelsHigh: Int((rect.height * scale).rounded(.up)),
                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+                  let context = NSGraphicsContext(bitmapImageRep: bitmap),
+                  let titleLayer = self.titleBar.layer else {
                 self.pinchHeader = .stale(cachedView)
                 return
             }
             bitmap.size = rect.size
-            self.titleBar.cacheDisplay(in: rect, to: bitmap)
+            self.titleBar.displayIfNeeded()
+            titleLayer.displayIfNeeded()
+            guard case .queued = self.pinchHeader, self.canPreparePinchHeader else {
+                self.pinchHeader = .stale(cachedView)
+                return
+            }
+            let cg = context.cgContext
+            if self.titleBar.isFlipped {
+                cg.translateBy(x: 0, y: CGFloat(bitmap.pixelsHigh))
+                cg.scaleBy(x: CGFloat(bitmap.pixelsWide) / rect.width, y: -CGFloat(bitmap.pixelsHigh) / rect.height)
+            } else {
+                cg.scaleBy(x: CGFloat(bitmap.pixelsWide) / rect.width, y: CGFloat(bitmap.pixelsHigh) / rect.height)
+            }
+            cg.translateBy(x: -rect.minX, y: -rect.minY)
+            titleLayer.render(in: cg)
             guard let image = bitmap.cgImage else {
                 self.pinchHeader = .stale(cachedView)
                 return
@@ -413,9 +430,10 @@ final class TileFrameView: NSView {
     }
 
     func beginPinching(at scale: CGFloat) {
-        guard !isLive, !isSelected, !hovered, titleBar.superview === self, let window,
+        guard !isLive, zoomedOut, !isSelected, !hovered, titleBar.superview === self, let window,
+              window.isVisible, window.occlusionState.contains(.visible),
               (window.firstResponder as? NSView)?.isDescendant(of: titleBar) != true,
-              !NSWorkspace.shared.isVoiceOverEnabled,
+              !NSWorkspace.shared.isVoiceOverEnabled, !NSApp.isFullKeyboardAccessEnabled,
               case .ready(let view, let image, let capturedScale) = pinchHeader else { return }
         guard capturedScale == scale else {
             pinchHeader = .stale(view)
@@ -427,11 +445,13 @@ final class TileFrameView: NSView {
     }
 
     func endPinching() {
-        if window == nil, case .ready(let view, _, _) = pinchHeader { pinchHeader = .stale(view) }
-        guard titleBar.superview == nil else { return }
+        guard titleBar.superview == nil, pinchHeader.view?.superview === self else { return }
         pinchHeader.view?.removeFromSuperview()
         pinchHeader.view?.layer?.contents = nil
         addSubview(titleBar, positioned: .below, relativeTo: zoomView)
+        if window == nil || window?.isVisible != true || window?.occlusionState.contains(.visible) != true {
+            pinchHeader = .stale(nil)
+        }
         if window?.occlusionState.contains(.visible) == true { syncTitle() }
     }
 
@@ -722,13 +742,12 @@ final class TileFrameView: NSView {
         occlusionObserver = window.map { window in
             NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, self.window?.occlusionState.contains(.visible) == true else { return }
-                    self.syncTitle()
+                    self?.syncHeaderWindowVisibility()
                 }
             }
         }
-        guard let window else {
-            if titleBar.superview != nil { pinchHeader = .stale(pinchHeader.view) }
+        guard window != nil else {
+            if titleBar.superview != nil { pinchHeader = .stale(nil) }
             if hovered {
                 hovered = false
                 updateZoomControl()
@@ -736,8 +755,18 @@ final class TileFrameView: NSView {
             invalidateCard()
             return
         }
-        if window.occlusionState.contains(.visible) { syncTitle() }
+        syncHeaderWindowVisibility()
         if cardWanted, !isLive { requestCard() }
+    }
+
+    private func syncHeaderWindowVisibility() {
+        guard let window, window.isVisible, window.occlusionState.contains(.visible) else {
+            endPinching()
+            pinchHeader = .stale(nil)
+            return
+        }
+        syncTitle()
+        preparePinchHeader()
     }
 
     private func requestCard() {
@@ -757,6 +786,7 @@ final class TileFrameView: NSView {
             }
             cardWanted = false
             showContent(false)
+            preparePinchHeader()
             return
         }
         let request = cardRequest
@@ -778,6 +808,7 @@ final class TileFrameView: NSView {
                         self.cardTitle.isHidden = self.card.image != nil
                         self.showContent(false)
                     }
+                    self.preparePinchHeader()
                 }
             }
         }
@@ -787,6 +818,7 @@ final class TileFrameView: NSView {
             guard let self, !self.isLive, self.cardRequest == request, self.contentLive else { return }
             self.cardTitle.isHidden = false
             self.showContent(false)
+            self.preparePinchHeader()
         }
     }
 
@@ -804,6 +836,7 @@ final class TileFrameView: NSView {
             guard !Task.isCancelled, let self, self.cardRequest == request else { return }
             self.cardTask = nil
             self.cardWanted = false
+            defer { self.preparePinchHeader() }
             guard !self.hostBoardClosed, !self.isLive, let image else { return }
             self.card.image = self.cardImage(image)
             self.card.isHidden = false
@@ -817,13 +850,18 @@ final class TileFrameView: NSView {
         }
         if cardRequest == request, task.isCancelled, cardTask != nil {
             cardTask = nil
+            preparePinchHeader()
         }
     }
 
     /// Below the readable zoom: the tile is one handle (click selects, drag moves) and shows its
     /// agent's lifecycle wash, whether it shows a card or lives zoomed out.
     var zoomedOut = false {
-        didSet { if zoomedOut != oldValue { updateTint() } }
+        didSet {
+            guard zoomedOut != oldValue else { return }
+            if !zoomedOut { endPinching() }
+            updateTint()
+        }
     }
 
     private var cardRequest = 0

@@ -70,11 +70,16 @@ def main():
         assert contains(result['before'], 'Parked title') and contains(result['before'], 'VISIBLEBODYALPHA')
         scale.rpc(run.socket, 'object.update', {'id': note['id'], 'props': {'zoom': .25}})
         time.sleep(2)
+        result['before_cached_pinch'] = capture('001-before-cached-pinch')
         offset = len(run.log())
         run.dev('input', 'magnify', 600, 300, .001, '--repeat', 2, '--interval', 2000, '--realtime')
         time.sleep(.3)
         result['during_pinch'] = capture('001-during-pinch')
         assert contains(result['during_pinch'], 'Parked title'), 'Pinching must retain the native title pixels'
+        snapshot_path = (args.out / '001-pinch-snapshot.png').resolve()
+        result['pinch_snapshot'] = run.call('view.snapshot', {'out': str(snapshot_path)})
+        snapshot_text = scale.frame_text(args.window_helper, snapshot_path)
+        assert 'PARKEDTITLE' in ''.join(''.join(snapshot_text['lines']).upper().split()), 'Viewport snapshots during a pinch must retain the title'
         scale.wait_for(lambda: 'DevInput.delivery: scheduled 2 ' in run.log()[offset:])
         scale.rpc(run.socket, 'object.update', {'id': note['id'], 'props': {'zoom': 1}})
         restore(before)
