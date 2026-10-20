@@ -65,7 +65,7 @@ index b90366ac7..de494c6bf 100644
 +            @hasDecl(renderer.Renderer.API, "isAsyncRendering"))
 +        {
 +            if (self.core_surface.renderer.api.isAsyncRendering()) {
-+                self.refresh();
++                _ = self.core_surface.renderer.api.layer.requestAsyncRender();
 +                return;
 +            }
 +        }
