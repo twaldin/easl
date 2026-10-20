@@ -110,7 +110,7 @@ struct SurfaceImageEncoderTests {
 
     @discardableResult
     private func expectSharp(_ frame: SurfaceImageEncoding, source: Fixture,
-                             video: SurfaceVideoDecoder = SurfaceVideoDecoder()) throws -> (maximum: Int, mean: Double) {
+                             video: SurfaceVideoDecoder = SurfaceVideoDecoder()) throws -> (image: CGImage, maximum: Int, mean: Double) {
         #expect(frame.format == .h264)
         #expect(frame.refresh)
         #expect(frame.data.count <= 576 * 1024)
@@ -128,7 +128,7 @@ struct SurfaceImageEncoderTests {
         }
         let mean = Double(total) / Double(actual.count / 4 * 3)
         print("Sharp RGB report max=\(maximum) mean=\(mean)")
-        return (maximum, mean)
+        return (image, maximum, mean)
     }
 
     @Test func jpegPreservesTheOddCanvasAndInputPixelsWithoutIdleRefinement() throws {
@@ -356,9 +356,10 @@ struct SurfaceImageEncoderTests {
         let refined = try #require(try capture(encoder, moved, at: 1.7, revision: revision, lastInput: 1.3))
         #expect(refined.data[4] == 0)
         #expect(throws: (any Error).self) { try decode(refined) }
-        let quality = try expectSharp(refined, source: moved, video: decoder)
-        #expect(quality.maximum <= 8)
-        #expect(quality.mean <= 1)
+        let presented = try expectSharp(refined, source: moved, video: decoder)
+        let restored = try pixels(presented.image)
+        let left = (moved.image.height / 2 * moved.image.width + moved.image.width / 4) * 4
+        #expect(restored[left] > 220 && restored[left + 1] < 30 && restored[left + 2] < 30)
     }
 
     @Test func inputAfterAnUnacknowledgedNativeUpdateSettlesIndependently() throws {

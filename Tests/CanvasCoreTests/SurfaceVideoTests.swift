@@ -82,10 +82,12 @@ struct SurfaceVideoTests {
     @Test func cachedSharpPredictionAfterMotionShowsTheCurrentImage() throws {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
+        var motionFrame: SurfaceVideoFrame?
         for (red, sharp, motion, keyframe) in [(false, false, false, true), (true, true, false, true),
                                                (true, false, true, true), (false, true, false, false)] {
             let frame = try #require(try encoder.encode(image(red: red), width: 64, height: 64,
                                                        refresh: sharp, motion: motion))
+            if motion { motionFrame = frame }
             #expect((frame.data[4] == 1) == keyframe)
             let pixel = try center(decoder.decode(frame.data, width: frame.width, height: frame.height))
             if red { #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30) }
@@ -93,29 +95,18 @@ struct SurfaceVideoTests {
         }
         let following = try #require(try encoder.encode(image(red: true), width: 64, height: 64))
         #expect(following.data[4] == 0)
-        let red = try center(decoder.decode(following.data, width: following.width, height: following.height))
-        #expect(red[0] > 220 && red[1] < 30 && red[2] < 30)
-    }
-
-    @Test func cachedSharpPredictionRequiresThePriorSharpReference() throws {
-        let encoder = SurfaceVideoEncoder()
-        let published = SurfaceVideoDecoder()
-        let sharp = try #require(try encoder.encode(image(), width: 64, height: 64, refresh: true))
-        _ = try published.decode(sharp.data, width: sharp.width, height: sharp.height)
-        let motion = try #require(try encoder.encode(image(red: true), width: 64, height: 64, motion: true))
-        _ = try published.decode(motion.data, width: motion.width, height: motion.height)
-        let predicted = try #require(try encoder.encode(image(red: true), width: 64, height: 64, refresh: true))
-        #expect(predicted.data[4] == 0)
+        let motion = try #require(motionFrame)
         let missingSharp = SurfaceVideoDecoder()
         _ = try missingSharp.decode(motion.data, width: motion.width, height: motion.height)
         for consumer in [missingSharp, SurfaceVideoDecoder()] {
             #expect(throws: (any Error).self) {
-                try consumer.decode(predicted.data, width: predicted.width, height: predicted.height)
+                try consumer.decode(following.data, width: following.width, height: following.height)
             }
         }
-        let pixel = try center(published.decode(predicted.data, width: predicted.width, height: predicted.height))
-        #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30)
+        let red = try center(decoder.decode(following.data, width: following.width, height: following.height))
+        #expect(red[0] > 220 && red[1] < 30 && red[2] < 30)
     }
+
 
     @Test func budgetCappedCaptureRastersProduceVisibleSharpReferences() throws {
         for (width, height, expectedWidth, expectedHeight) in [

@@ -235,7 +235,7 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
 
     private var video = SurfaceVideoEncoder()
     private let refresh: SurfaceImageRefresh
-    /// The input revision of returned video frames the viewer has not yet presented.
+    /// Fences codec work through presentation, including jobs discarded before returning a frame.
     private var unacknowledgedRevision: UInt64?
     private var observed: SurfaceImageIdentity?
     private var sharp: SurfaceImageIdentity?
@@ -337,7 +337,10 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
             let pending = refresh.start(image: source, identity: identity, imageVersion: imageVersion,
                                         key: key, revision: revision, encoder: video)
             captureDelay = pending ? 1.0 / 30 : 1
-            if pending { return nil }
+            if pending {
+                unacknowledgedRevision = inputRevision
+                return nil
+            }
         }
         if motionVersion != imageVersion || forceState {
             guard let encoded = try video.encode(source, width: width, height: height, motion: resumeMotion) else { return nil }

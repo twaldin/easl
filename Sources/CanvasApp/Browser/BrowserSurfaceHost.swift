@@ -348,7 +348,10 @@ final class BrowserSurface {
                         forceState: stream.pageStateChanged(frame), at: ProcessInfo.processInfo.systemUptime)
                     nextDelay = min(nextDelay, delay)
                     guard let encoded else { continue }
-                    guard !encoded.refresh || stream.accepted == accepted else { continue }
+                    if encoded.refresh, stream.accepted != accepted {
+                        stream.inputRevision.advance()
+                        continue
+                    }
                     frame.format = encoded.format
                     frame.data = encoded.data
                     frame.width = encoded.width
