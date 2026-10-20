@@ -26,8 +26,7 @@ extension ShapeLayer {
     private func handleKey(_ event: NSEvent) -> Bool {
         guard event.type == .keyDown, canvasHasKeyboard, editor == nil else { return false }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
-        guard modifiers.isEmpty else { return false }
-        if event.keyCode == 53 {  // Escape: ends a drawing gesture or tool; otherwise the canvas's (deselect, exit group)
+        if event.keyCode == 53, modifiers.isEmpty {  // Escape ends the active gesture or tool.
             guard gesture != nil || tool != .select else { return false }
             cancelGesture()
             tool = .select
@@ -35,7 +34,7 @@ extension ShapeLayer {
         }
         // A selected changes tile's keys are its own (r discards there, never the rectangle tool).
         if canvas.selectedChangesTile != nil, ChangesTile.isOwnKey(event) { return false }
-        guard let key = event.charactersIgnoringModifiers?.lowercased(), let match = Tool.allCases.first(where: { $0.key == key }) else { return false }
+        guard let action = AppShortcuts.action(for: event), let match = Tool.allCases.first(where: { $0.actionID == action.id }) else { return false }
         tool = match
         return true
     }

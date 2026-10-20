@@ -235,7 +235,13 @@ enum DevInput {
         if fields["kind"] == "mainmenu" {
             return performMenu(NSApp.mainMenu, path: fields["path"] ?? "")
         }
-        guard let window = CanvasWindowController.frontmost?.window, let content = window.contentView else { return }
+        let targetWindow: NSWindow?
+        if let number = Int(fields["window"] ?? "") {
+            targetWindow = NSApp.window(withWindowNumber: number)
+        } else {
+            targetWindow = CanvasWindowController.frontmost?.window
+        }
+        guard let window = targetWindow, let content = window.contentView else { return }
         let flags = modifiers(fields["mods"])
         func number(_ key: String) -> CGFloat { CGFloat(Double(fields[key] ?? "") ?? 0) }
         /// Window content points with a top-left origin → window coordinates.

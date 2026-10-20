@@ -28,6 +28,8 @@ final class CanvasApplication: NSApplication {
         // didn't handle comes back here from WebKit; it is the viewer's, and would otherwise
         // reach this Mac's canvas (Delete deletes tiles) or its menus (⌘W, ⌘Q).
         if SurfaceEventQueue.consumes(event) { return }
+        if let window = (event.window ?? keyWindow) as? ShortcutSettingsWindow,
+           window.captureKeyEvent(event) { return }
         if DevInput.enabled, keyWindow == nil, event.type == .keyDown || event.type == .keyUp,
            let window = event.window, window.windowController is CanvasWindowController {
             if event.type == .keyDown, window.performKeyEquivalent(with: event) || mainMenu?.performKeyEquivalent(with: event) == true { return }

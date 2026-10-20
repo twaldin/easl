@@ -93,6 +93,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         for view in [question, placeholder, scroll, target] as [NSView] { addSubview(view) }
         setContentCompressionResistancePriority(NSLayoutConstraint.Priority(490), for: .horizontal)
         showTarget(title: nil, extra: [], hasTerminal: false)
+        NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: AppShortcuts.didChange, object: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -241,15 +242,17 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         onFocusChange?()
     }
 
-    private func refresh() {
+    @objc private func refresh() {
         let empty = text.string.isEmpty
         placeholder.isHidden = !empty
+        let mention = AppShortcuts.current.binding(for: "mentionCurrent").map { ", or \($0.display)," } ?? ""
+        let write = AppShortcuts.current.binding(for: "focusComposer").map { " · \($0.display) writes a prompt" } ?? ""
         placeholder.stringValue = if let answering {
             "Answer \(answering) · ⌘↩ sends"
         } else if hasKeyboard {
             "Write a prompt; Hyper-click things to mention them here · ⌘↩ sends · Esc leaves"
         } else {
-            "Hyper-click (⌃⌥⇧⌘-click) anything, or ⇧⌘M, to point your agent at it · ⌘I writes a prompt"
+            "Hyper-click (⌃⌥⇧⌘-click) anything\(mention) to point your agent at it\(write)"
         }
         invalidateIntrinsicContentSize()
         needsLayout = true

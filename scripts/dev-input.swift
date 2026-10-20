@@ -41,6 +41,7 @@ func option(_ name: String) -> String? {
     return value
 }
 let mods = option("--mods")
+let window = option("--window")
 let clicks = option("--clicks")
 let repeatCount = option("--repeat")
 let interval = option("--interval")
@@ -108,6 +109,7 @@ default:
 }
 if let mods { info["mods"] = mods }
 if let clicks { info["clicks"] = clicks }
+if let window { info["window"] = window }
 if hold { info["hold"] = "1" }
 if middle { info["middle"] = "1" }
 if let repeatCount { info["repeat"] = repeatCount }

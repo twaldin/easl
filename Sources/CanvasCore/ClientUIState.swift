@@ -109,14 +109,16 @@ public struct UISettings: Equatable, Sendable {
     /// Seconds a closed question that was created naming no `archiveAfter` stays in view on the
     /// boards this Mac hosts (`BoardRegistry.defaultQuestionArchiveAfter`), read at launch.
     public var questionArchiveAfter: TimeInterval
+    public var keyboardShortcuts: KeyboardShortcuts
 
     public init(chromeTextScale: Double = ChromeTextScale.normal, backgroundAttach: Bool = true,
                 questionArchiveAfter: TimeInterval = QuestionSpec.defaultArchiveAfter,
-                installUpdatesAutomatically: Bool = false) {
+                installUpdatesAutomatically: Bool = false, keyboardShortcuts: KeyboardShortcuts = .init()) {
         self.chromeTextScale = chromeTextScale
         self.backgroundAttach = backgroundAttach
         self.questionArchiveAfter = questionArchiveAfter
         self.installUpdatesAutomatically = installUpdatesAutomatically
+        self.keyboardShortcuts = keyboardShortcuts
     }
 
     /// On disk: a missing or damaged field is that setting's default, whatever the others hold.
@@ -125,12 +127,14 @@ public struct UISettings: Equatable, Sendable {
         var backgroundAttach: Bool?
         var questionArchiveAfter: Double?
         var installUpdatesAutomatically: Bool?
+        var keyboardShortcuts: KeyboardShortcuts?
 
         init(_ settings: UISettings) {
             scale = settings.chromeTextScale
             backgroundAttach = settings.backgroundAttach
             questionArchiveAfter = settings.questionArchiveAfter
             installUpdatesAutomatically = settings.installUpdatesAutomatically
+            keyboardShortcuts = settings.keyboardShortcuts
         }
 
         init(from decoder: Decoder) throws {
@@ -139,6 +143,7 @@ public struct UISettings: Equatable, Sendable {
             backgroundAttach = try? fields.decodeIfPresent(Bool.self, forKey: .backgroundAttach)
             questionArchiveAfter = try? fields.decodeIfPresent(Double.self, forKey: .questionArchiveAfter)
             installUpdatesAutomatically = try? fields.decodeIfPresent(Bool.self, forKey: .installUpdatesAutomatically)
+            keyboardShortcuts = try? fields.decodeIfPresent(KeyboardShortcuts.self, forKey: .keyboardShortcuts)
         }
     }
 
@@ -158,7 +163,8 @@ public struct UISettings: Equatable, Sendable {
                 return UISettings(chromeTextScale: file.scale.map(ChromeTextScale.level(nearest:)) ?? ChromeTextScale.normal,
                                   backgroundAttach: file.backgroundAttach ?? true,
                                   questionArchiveAfter: file.questionArchiveAfter.flatMap { QuestionSpec.archiveDelay(.number($0)) } ?? QuestionSpec.defaultArchiveAfter,
-                                  installUpdatesAutomatically: file.installUpdatesAutomatically ?? false)
+                                  installUpdatesAutomatically: file.installUpdatesAutomatically ?? false,
+                                  keyboardShortcuts: file.keyboardShortcuts ?? .init())
             } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
                 return UISettings()
             }
