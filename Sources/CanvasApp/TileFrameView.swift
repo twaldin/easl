@@ -294,16 +294,17 @@ final class TileFrameView: NSView {
         if window?.occlusionState.contains(.visible) == true { syncTitle() }
     }
 
-    func updateProximity(to viewport: NSRect) {
+    func updateProximity(to viewport: NSRect, admitColdCards: Bool) {
         let near = frame.intersects(viewport)
         let wasNear = isNearViewport
         isNearViewport = near
+        canStartColdCard = near && admitColdCards
         if near {
             if titleBar.superview == nil {
                 addSubview(titleBar, positioned: .below, relativeTo: zoomView)
                 if window?.occlusionState.contains(.visible) == true { syncTitle() }
             }
-            if !wasNear, window != nil, !isLive, cardWanted, cardTask == nil { requestCard() }
+            if canStartColdCard, window != nil, !isLive, cardWanted, cardTask == nil { requestCard() }
         } else {
             if titleBar.superview != nil,
                (window?.firstResponder as? NSView)?.isDescendant(of: titleBar) != true {
@@ -614,6 +615,7 @@ final class TileFrameView: NSView {
 
     private var cardWanted = false
     private var isNearViewport = false
+    private var canStartColdCard = false
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -637,7 +639,7 @@ final class TileFrameView: NSView {
     private func requestCard() {
         invalidateCard()
         cardWanted = true
-        guard contentLive || isNearViewport else { return }
+        guard contentLive || canStartColdCard else { return }
         syncTitle()
         if hostBoardClosed {
             if contentLive {
@@ -697,8 +699,8 @@ final class TileFrameView: NSView {
             let image = await content.cardSnapshot()
             guard !Task.isCancelled, let self, self.cardRequest == request else { return }
             self.cardTask = nil
-            guard !self.hostBoardClosed, !self.isLive, let image else { return }
             self.cardWanted = false
+            guard !self.hostBoardClosed, !self.isLive, let image else { return }
             self.card.image = self.cardImage(image)
             self.card.isHidden = false
             self.cardTitle.isHidden = true
