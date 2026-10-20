@@ -294,6 +294,16 @@ final class TileFrameView: NSView {
         if window?.occlusionState.contains(.visible) == true { syncTitle() }
     }
 
+    func updateTitleBar(near viewport: NSRect) {
+        if frame.intersects(viewport) {
+            guard titleBar.superview == nil else { return }
+            addSubview(titleBar, positioned: .below, relativeTo: zoomView)
+            if window?.occlusionState.contains(.visible) == true { syncTitle() }
+        } else if titleBar.superview != nil {
+            titleBar.removeFromSuperview()
+        }
+    }
+
     /// A terminal's last-command status (`TerminalCommand.status`), nil to hide it: quiet
     /// secondary text, red only for a failure; `detail` is its tooltip.
     func setStatus(_ status: String?, failed: Bool, detail: String?) {

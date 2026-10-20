@@ -606,6 +606,7 @@ final class CanvasView: NSScrollView {
         // the liveness pass to swap out. Terminals and browsers start live: they run a session
         // or a page an agent may be driving.
         if !(content is TerminalTile), !(content is BrowserTile), !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
+        tile.updateTitleBar(near: documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin))
         if tile.superview == nil { document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay) }
         tiles[id] = tile
         tile.zoomedOut = RenderMath.isZoomedOut(magnification: magnification, zoom: tile.zoom)
@@ -2499,6 +2500,8 @@ final class CanvasView: NSScrollView {
             geometryDirty = false
             objectsMoved()
         }
+        let titleViewport = documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin)
+        for tile in tiles.values { tile.updateTitleBar(near: titleViewport) }
         // Mid-pinch, LOD flips wait for the gesture to end.
         if !magnifying {
             let closed = remote?.mirror.availability == .closed
