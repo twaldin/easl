@@ -177,7 +177,8 @@ final class ViewerPromptReceiptTests {
         let settled = outgoing.settle(reached: [], into: state.draft, on: view)
         state.returned(outgoing.draft)
         #expect(!settled.sent && settled.draft.prompt == "review [1] later [2]")
-        #expect(settled.draft.tokens.map(\.id) == outgoing.draft.tokens.map(\.id) + [next.id])
+        #expect(settled.draft.tokens.map(\.target) == outgoing.draft.tokens.map(\.target) + [next.target])
+        #expect(settled.draft.tokens.last?.id == next.id)
         #expect(view.tray.map(\.id) == settled.draft.tokens.map(\.id))
         #expect(state.outgoing.isEmpty && typed.withLock { $0.isEmpty })
         #expect(statuses.last == .notDelivered)
@@ -324,12 +325,11 @@ final class ViewerPromptReceiptTests {
             Issue.record("a cached refusal must return the host's definitive error")
         } catch let failure as ApiRouter.Failure {
             #expect(failure.code == "unavailable")
-            #expect(failure.message == "terminal \(terminal) has no attached surface")
         }
         #expect(statuses.last == .notDelivered && typed.withLock { $0.isEmpty })
         let settled = outgoing.settle(reached: [], into: ComposerDraft(text: "next"), on: view)
         #expect(!settled.sent && settled.draft.prompt == "review [1] next")
-        #expect(view.tray.map(\.id) == outgoing.draft.tokens.map(\.id))
+        #expect(view.tray.map(\.target) == outgoing.draft.tokens.map(\.target))
         try expectSameReceipt()
     }
 

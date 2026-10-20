@@ -261,6 +261,7 @@ final class PromptSubmissionTests {
 
     @Test func messageDeliveryReplaysTheOriginalWithoutQueueingADuplicate() async throws {
         let tile = try terminal(agent: true)
+        _ = try await call("agent.report", ["tile": .string(tile), "kind": .string("omp"), "state": .string("idle"), "protocol": .number(1), "source": .string("canvas-omp"), "seq": .number(2)])
         var request = try await params(tile)
         request.removeValue(forKey: "composer")
         let first = try await call("agent.prompt", request)
