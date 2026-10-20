@@ -294,8 +294,8 @@ select and delete the token, then undo, redo, and undo again. The token and its 
 must return together without changing the words around them or losing redo.
 
 Repeat after deleting the token's tile before undo. The missing mention must stay absent,
-and undo or redo must not crash. A new draft typed before deferred normalization runs must
-survive it. Normalizing a missing reference can expire native editor history.
+and undo must not crash. Normalizing a missing reference expires obsolete native redo.
+The native regression also checks that a draft typed before deferred normalization survives it.
 
 ### Performance probes
 

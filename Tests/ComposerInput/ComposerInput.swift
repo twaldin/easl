@@ -76,10 +76,8 @@ private enum ComposerInput {
         undo.undo()
         try await Task.sleep(for: .milliseconds(50))
         require(bar.draft.isEmpty && board.tray.isEmpty, "undo cannot restore a mention of a deleted tile")
-        if undo.canRedo { undo.redo() }
-        try await Task.sleep(for: .milliseconds(50))
-        require(bar.draft.isEmpty && board.tray.isEmpty, "redo keeps the missing-tile mention absent")
-        print("PASS undo and redo after the referenced tile is deleted")
+        require(!undo.canRedo, "normalizing a missing reference expires obsolete native redo")
+        print("PASS missing-tile undo removes the token and expires obsolete redo")
         let removed = board.create(type: .code, props: .object(["path": .string("removed.swift")]))
         try board.stage(.code(object: removed.id, path: "removed.swift", lines: LineRange(start: 1, end: 1)))
         bar.text.selectAll(nil)
