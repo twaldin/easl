@@ -179,14 +179,15 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         cached = nil
     }
 
-    /// Restored motion starts with an IDR; sharp refresh independence is decided at encode time.
+    /// Restored configurations restart unless retained sharp prediction was negotiated.
     private func restore(_ profile: Profile, width: Int, height: Int) throws {
         guard active?.serves(profile, width: width, height: height) != true,
               let restored = cached, restored.serves(profile, width: width, height: height) else { return }
         cached = active
         active = restored
-        guard profile == .motion else { return }
+        guard profile == .motion || refinement == .independent else { return }
         active?.sequence = 0
+        guard profile == .motion else { return }
         if restored.minimumQP != 42 {
             try videoCheck(VTSessionSetProperty(restored.session, key: kVTCompressionPropertyKey_MinAllowedFrameQP,
                                                 value: NSNumber(value: 42)))

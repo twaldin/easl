@@ -139,6 +139,23 @@ struct SurfaceVideoTests {
         }
     }
 
+    @Test func independentIdleRasterChangesDecodeWithoutCachedConfigurations() throws {
+        let encoder = SurfaceVideoEncoder(refinement: .independent)
+        let original = try image(width: 900, height: 668)
+        let first = try #require(try encoder.encode(original, width: 900, height: 668, refresh: true))
+        let active = SurfaceVideoDecoder()
+        let firstImage = try active.decode(first.data, width: first.width, height: first.height)
+        #expect(try center(firstImage).allSatisfy { $0 < 30 })
+        let warm = try #require(try encoder.encode(original, width: 900, height: 668))
+        _ = try active.decode(warm.data, width: warm.width, height: warm.height)
+        for height in [670, 668] {
+            let frame = try #require(try encoder.encode(image(width: 900, height: height), width: 900, height: height))
+            let decoded = try SurfaceVideoDecoder().decode(frame.data, width: frame.width, height: frame.height)
+            #expect(decoded.width == 900 && decoded.height == height)
+            #expect(try center(decoded).allSatisfy { $0 < 30 })
+        }
+    }
+
 
     @Test func budgetCappedCaptureRastersProduceVisibleSharpReferences() throws {
         for (width, height, expectedWidth, expectedHeight) in [
