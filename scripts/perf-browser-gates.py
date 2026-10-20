@@ -587,7 +587,7 @@ def run(config, args):
                 if trace:
                     row["pre_input_trace"] = trace.poll()
                 x, y = observer.point(*config.get("click", [29, 195]), native=False)
-                fields = {"pid": str(config["pid"]), "kind": "click", "x": str(x), "y": str(y)}
+                fields = {"pid": str(config["pid"]), "window": str(config["window"]), "kind": "click", "x": str(x), "y": str(y)}
                 launched_ms = monotonic_ms()
                 child = subprocess.Popen([config["input_helper"], json.dumps(fields)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 if not select.select([child.stdout], [], [], config.get("rpc_timeout_s", 30))[0]:
