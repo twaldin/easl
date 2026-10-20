@@ -26,24 +26,23 @@ struct SurfaceRefreshTransferTests {
         var transmission = try SurfaceRefreshTransmission(frame: refresh(bytes: 200000))
         #expect(throws: SurfaceRefreshTransferError.invalidOffset) { try transmission.progress(offset: 0) }
         let first = transmission.start()
-        #expect(first.map(\.offset) == [0, 16384, 32768, 49152])
-        #expect(first.map(\.data.count) == [16384, 16384, 16384, 16384])
-        #expect(first.map(\.total) == [200000, 200000, 200000, 200000])
+        #expect(first.map(\.offset) == Array(stride(from: 0, to: 131072, by: 16384)))
+        #expect(first.allSatisfy { $0.data.count == 16384 && $0.total == 200000 })
         #expect(transmission.start().isEmpty)
-        for offset in [-16384, -1, 1, 65536, 81920, Int.max] {
+        for offset in [-16384, -1, 1, 131072, 147456, Int.max] {
             #expect(throws: SurfaceRefreshTransferError.invalidOffset) { try transmission.progress(offset: offset) }
         }
-        #expect(try transmission.progress(offset: 16384).map(\.offset) == [65536, 81920])
+        #expect(try transmission.progress(offset: 16384).map(\.offset) == [131072, 147456])
         #expect(try transmission.progress(offset: 16384).isEmpty)
         #expect(try transmission.progress(offset: 0).isEmpty)
-        #expect(throws: SurfaceRefreshTransferError.invalidOffset) { try transmission.progress(offset: 98304) }
-        #expect(try transmission.progress(offset: 81920).map(\.offset) == [98304, 114688, 131072, 147456])
+        #expect(throws: SurfaceRefreshTransferError.invalidOffset) { try transmission.progress(offset: 163840) }
+        #expect(try transmission.progress(offset: 147456).map(\.offset) == [163840, 180224, 196608])
         #expect(try transmission.progress(offset: 49152).isEmpty)
-        #expect(try transmission.progress(offset: 81920).isEmpty)
+        #expect(try transmission.progress(offset: 147456).isEmpty)
     }
 
-    @Test(arguments: [589824, 589823, 65537])
-    func batchedReceiptsAssembleEveryByteWithAtMost64KiBOutstanding(bytes: Int) throws {
+    @Test(arguments: [589824, 589823, 131073])
+    func batchedReceiptsAssembleEveryByteWithAtMost128KiBOutstanding(bytes: Int) throws {
         let original = refresh(bytes: bytes)
         var transmission = try SurfaceRefreshTransmission(frame: original)
         var assembly = SurfaceRefreshAssembly()
@@ -54,9 +53,9 @@ struct SurfaceRefreshTransferTests {
         var offsets: [Int] = []
         var batch = 0
         while !pending.isEmpty {
-            #expect(sentBytes - receivedBytes <= 65536)
-            #expect(pending.count <= 4)
-            let count = min([1, 3, 2, 4][batch % 4], pending.count)
+            #expect(sentBytes - receivedBytes <= 131072)
+            #expect(pending.count <= 8)
+            let count = min([1, 7, 2, 8][batch % 4], pending.count)
             let received = Array(pending.prefix(count))
             pending.removeFirst(count)
             for next in received {
@@ -80,18 +79,18 @@ struct SurfaceRefreshTransferTests {
     }
 
     @Test func aShortFinalPartCompletesAfterTheInitialWindow() throws {
-        let original = refresh(bytes: 65537)
+        let original = refresh(bytes: 131073)
         var transmission = try SurfaceRefreshTransmission(frame: original)
         var assembly = SurfaceRefreshAssembly()
         for frame in transmission.start() {
             #expect(try assembly.append(frame: frame) == nil)
         }
-        let final = try transmission.progress(offset: 49152)
-        #expect(final.map(\.offset) == [65536])
-        #expect(final.map(\.data) == [Data([25])])
+        let final = try transmission.progress(offset: 114688)
+        #expect(final.map(\.offset) == [131072])
+        #expect(final.map(\.data) == [Data([50])])
         #expect(try assembly.append(frame: #require(final.first)) == original)
-        #expect(try transmission.progress(offset: 65536).isEmpty)
-        #expect(try transmission.progress(offset: 49152).isEmpty)
+        #expect(try transmission.progress(offset: 131072).isEmpty)
+        #expect(try transmission.progress(offset: 114688).isEmpty)
         #expect(transmission.start().isEmpty)
     }
 

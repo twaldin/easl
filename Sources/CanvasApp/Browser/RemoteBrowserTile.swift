@@ -721,9 +721,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private func wakeInput() {
         guard let waiting = inputWait else { return }
         inputWait = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(1)) {
-            waiting.resume()
-        }
+        waiting.resume()
     }
 
     private func waitInput() async {

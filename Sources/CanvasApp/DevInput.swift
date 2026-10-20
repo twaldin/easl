@@ -112,6 +112,9 @@ enum DevInput {
 
     static func replay(_ fields: [String: String]) {
         guard fields["pid"] == String(getpid()) else { return }
+        if fields["kind"] == "surface-probe" {
+            return DevSurfaceObservation.control(fields)
+        }
         // `--repeat N --interval ms`: a burst like a trackpad's event stream. The log line reports
         // the longest gap between consecutive steps (the longest stall a person sees as frozen
         // frames) and the mean lateness against the schedule. Steps come from one strict repeating

@@ -10,7 +10,7 @@ public struct SurfaceRefreshTransmission: Sendable {
     public static let chunkBytes = 16 * 1024
     public static let maximumBytes = 576 * 1024
 
-    private static let windowBytes = 4 * chunkBytes
+    private static let windowBytes = 8 * chunkBytes
     private let frame: SurfaceEvent.Frame
     private var sentBytes = 0
     private var acknowledgedBytes = 0

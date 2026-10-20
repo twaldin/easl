@@ -18,15 +18,16 @@ Example config (all paths are on the macOS viewer):
 Direct mode measures local WebKit input without a streamed image. Its source RPC
 still addresses easld through socket or SSH, never the app's unsupported browser.call.
 Optional keys: count=60, deadline_s=15, rpc_timeout_s=30, click=[29,195], marker=[525,88],
-content_top=68, pause_s=0, app_log=<dev_home>/app.log, cua_driver=<standard app path>,
-count_script="Number(clicks)", arm_script=<JS using __COLOR__ JSON substitution>.
-Coordinates use the retained observer's board/viewport mapping.
+content_top=68 (supplemental Cua crops only), pause_s=0, app_log=<dev_home>/app.log,
+cua_driver=<standard app path>, count_script="Number(clicks)",
+arm_script=<JS using __COLOR__ JSON substitution>. Board coordinates map to DevInput
+content points through viewport. The native observer converts these to window pixels.
 count_region is [x,y,width,height] in those same coordinates; calibrate it on the
 actual fixture. The existing fixture must already expose #click, #rcMark and
 rcCapture, rcExpectedType, rcNextColor. No fixture is installed or reset here.
 
-Gate A requires the calibrated native RGB marker transition and exactly one
-independently checked DOM increment. Retained count crops allow visual audit.
+Gate A requires an own-NSWindow SCStream RGB transition and exactly one independently
+checked DOM increment. Cua screenshots and count crops are supplemental audit only.
 
 The supplied timed-input executable accepts one JSON string of string-valued pid,
 kind,x,y, prints viewer-local epoch milliseconds taken immediately before posting
@@ -35,11 +36,11 @@ viewer with EASL_DEV_INPUT=1 EASL_DEV_SURFACE_TRACE=1. Gate B is the first match
 same-stream refresh assignment at the click's last queued sequence, not native
 presentation or a quality score. JPEG and PNG have no idle refresh: B is not
 applicable. No next input is sent before B completes, is inapplicable or fails
-its deadline. Every screenshot and full receipt has a unique path, including
-before, intermediate and settled captures. Summary percentiles describe only the
-completed subset; failed/missing/censored rows remain in the denominator. Clock
-values are viewer-local epoch milliseconds; capture completion is a sampled
-observation, not compositor presentation. No cross-machine clocks are subtracted.
+its deadline. Native frame PNGs and original timing receipts have unique immutable paths.
+Summary percentiles describe only the completed subset; failed/missing/censored rows
+remain in the denominator. SCStream displayTime uses mach ticks, correlated to viewer
+epoch by bracketed clock reads. Gate A uses the conservative display epoch upper bound,
+not PNG completion. Direct and relay require macOS 14.4+, with no screenshot fallback.
 """
 
 import argparse
@@ -141,7 +142,7 @@ class Trace:
 
 
 def distance(a, b):
-    return max(abs(x - y) for x, y in zip(a, b))
+    return max(abs(x - y) for x, y in zip(a, b)) if len(a) == len(b) and len(a) else math.inf
 
 
 class Observer:
@@ -153,6 +154,104 @@ class Observer:
         self.session = "browser-gates-" + uuid.uuid4().hex
         self.index = 0
         self.driver = config.get("cua_driver", "/Applications/CuaDriver.app/Contents/MacOS/cua-driver")
+        self.native_directory = directory / "own-window"
+        self.native_directory.mkdir()
+        self.native_events = []
+        self.sample = None
+        self.target = None
+        self.pixel = None
+        self.started = False
+        self.stopped = False
+
+    def _receipt(self, name):
+        path = self.native_directory / name
+        if not path.exists():
+            return None
+        value = json.loads(path.read_text())
+        if (value.get("pid"), value.get("window"), value.get("session")) != (
+                self.config["pid"], self.config["window"], self.session):
+            raise RuntimeError(f"Own-window receipt identity mismatch: {path}")
+        if not any(event.get("receipt") == str(path) for event in self.native_events):
+            self.native_events.append({**value, "receipt": str(path)})
+        return value
+
+    def check(self):
+        error = self._receipt("error.json")
+        if error:
+            raise RuntimeError(f"Own-window observer: {error.get('error')}")
+
+    def _control(self, action, **fields):
+        fields = {"pid": str(self.config["pid"]), "kind": "surface-probe", "action": action,
+                  "window": str(self.config["window"]), "session": self.session,
+                  "directory": str(self.native_directory), **{key: str(value) for key, value in fields.items()}}
+        result = subprocess.run([self.config["input_helper"], json.dumps(fields)],
+                                capture_output=True, text=True, timeout=self.config.get("rpc_timeout_s", 30))
+        save(self.native_directory / f"control-{action}-{fields.get('sample', 'session')}-{uuid.uuid4().hex}.json",
+             {"fields": fields, "stdout": result.stdout, "stderr": result.stderr, "returncode": result.returncode})
+        result.check_returncode()
+
+    def _wait(self, name):
+        deadline = time.monotonic() + self.config.get("rpc_timeout_s", 30)
+        while time.monotonic() < deadline:
+            self.check()
+            receipt = self._receipt(name)
+            if receipt:
+                return receipt
+            time.sleep(.005)
+        raise TimeoutError(f"Missing own-window receipt: {name}")
+
+    def start(self):
+        x, y = self.point(*self.config.get("marker", [525, 88]), native=False)
+        self.started = True
+        self._control("start", x=x, y=y)
+        ready = self._wait("ready.json")
+        self._receipt("starting.json")
+        native_timing(ready)
+        self.pixel = ready["pixel"]
+        return ready
+
+    def arm(self, label, target):
+        self.check()
+        self.sample, self.target = label, list(target)
+        self._control("arm", sample=label, r=target[0], g=target[1], b=target[2])
+        receipt = self._wait(f"{label}-armed.json")
+        if (receipt.get("sample") != label or receipt.get("target") != list(target)
+                or distance(receipt["before_pixel"], target) <= 32):
+            raise RuntimeError("Invalid native pre-input arm receipt")
+        return receipt
+
+    def poll(self):
+        self.check()
+        if self.sample is None:
+            return None
+        value = self._receipt(f"{self.sample}-observed.json")
+        if value is None:
+            return None
+        if (value.get("stage") != "screen.observed" or value.get("sample") != self.sample
+                or value.get("target") != self.target or distance(value["pixel"], self.target) > 16
+                or int(value["display_ticks"]) <= int(value["arm_ticks"])):
+            raise RuntimeError("Invalid native marker receipt")
+        native_timing(value)
+        png = Path(value["png"])
+        if png != self.native_directory / f"{self.sample}-native.png":
+            raise RuntimeError("Native evidence path mismatch")
+        with self.Image.open(png) as image:
+            if image.size != (value["width"], value["height"]):
+                raise RuntimeError("Native evidence dimensions mismatch")
+            if distance(image.convert("RGB").getpixel(tuple(value["marker_pixel"])), value["pixel"]) != 0:
+                raise RuntimeError("Native evidence pixel mismatch")
+        self.pixel = value["pixel"]
+        return {**value, "receipt": str(self.native_directory / f"{self.sample}-observed.json"),
+                "png_sha256": digest(png)}
+
+    def stop(self):
+        if self.stopped:
+            return
+        if self.started and not self.stopped:
+            self._control("stop")
+            self.stopped = True
+            self._wait("stopped.json")
+        self.check()
 
     def point(self, x, y, scale=1, native=True):
         viewport = self.config["viewport"]
@@ -197,8 +296,11 @@ class Observer:
         return observation
 
     def close(self):
-        subprocess.run([self.driver, "call", "end_session", json.dumps({"session": self.session})],
-                       capture_output=True, timeout=30)
+        try:
+            self.stop()
+        finally:
+            subprocess.run([self.driver, "call", "end_session", json.dumps({"session": self.session})],
+                           capture_output=True, timeout=30)
 
 
 def endpoints(events, stream, started, deadline_ms):
@@ -233,31 +335,68 @@ def sharp_gate(covering, refresh, last_input, started, watermark, image_format=N
             "last_input_ms": last_input, "assigned_ms": refresh["ts_ms"]}
 
 
-def visible_gate(marker, started, mode, covering=None, refresh=None):
+def native_timing(marker):
+    def bridge(value):
+        a, b = int(value["a_ticks"]), int(value["b_ticks"])
+        numer, denom = int(value["timebase_numer"]), int(value["timebase_denom"])
+        epoch = value["epoch_ms"]
+        if a < 0 or b < a or numer <= 0 or denom <= 0 or not math.isfinite(epoch):
+            raise ValueError("Invalid mach/epoch bridge")
+        factor = numer / denom / 1e6
+        if (b - a) * factor > 2:
+            raise ValueError("Excessive bridge uncertainty")
+        return a, b, epoch, factor
+
+    a, b, epoch, factor = bridge(marker["bridge"])
+    oa, ob, oe, old_factor = bridge(marker["origin_bridge"])
+    display, receipt = int(marker["display_ticks"]), int(marker["receipt_ticks"])
+    lower, upper = epoch + (display - b) * factor, epoch + (display - a) * factor
+    if (marker.get("clock_valid") is not True or marker.get("frame_status") != 0
+            or display <= 0 or display > receipt or receipt > a or factor != old_factor
+            or not (oe + (a - ob) * factor - 2 <= epoch <= oe + (b - oa) * factor + 2)
+            or not all(math.isfinite(marker[key]) for key in ("display_epoch_lower_ms", "display_epoch_upper_ms"))
+            or abs(marker["display_epoch_lower_ms"] - lower) > .001
+            or abs(marker["display_epoch_upper_ms"] - upper) > .001):
+        raise ValueError("Invalid native display time or clock correlation")
+    return lower, upper
+
+
+def visible_gate(marker, started, mode, covering=None, refresh=None, deadline_ms=math.inf):
     if marker is None:
-        return {"status": "deadline_failure", "reason": "no_marker16_observation"}
-    result = {"status": "complete", "latency_ms": marker["ended_ms"] - started,
-              "observed_ms": marker["ended_ms"], "observation": marker["png"]}
-    if mode == "direct":
+        return {"status": "deadline_failure", "reason": "no_native_marker16_observation"}
+    try:
+        lower, upper = native_timing(marker)
+        if not marker.get("png") or not marker.get("receipt") or not math.isfinite(started):
+            raise ValueError("Missing immutable native evidence or invalid input timestamp")
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        return {"status": "invalid_observation", "reason": str(error)}
+    result = {"status": "complete", "latency_ms": upper - started,
+              "observed_lower_ms": lower, "observed_upper_ms": upper,
+              "observation": marker["png"], "receipt": marker["receipt"]}
+    if lower < started:
+        result.update(status="invalid_observation", phase="overlaps_or_precedes_input")
+    elif upper > deadline_ms:
+        result.update(status="deadline_failure", phase="after_deadline")
+    elif mode == "direct":
         result["phase"] = "native_direct"
-    elif covering and covering.get("refresh") is True:
-        result["phase"] = "first_covering_sharp"
-        result["status"] = "first_covering_sharp"
-    elif covering and marker["ended_ms"] < covering["ts_ms"]:
-        result["phase"] = "before_covering_assignment"
-    elif refresh and marker["ended_ms"] >= refresh["ts_ms"]:
-        result["phase"] = ("after_sharp_assignment" if marker["started_ms"] >= refresh["ts_ms"]
-                           else "overlaps_sharp_assignment")
+    elif covering is None:
+        result.update(status="missing_assignment", phase="unknown")
+    elif covering.get("refresh") is True:
+        result.update(status="first_covering_sharp", phase="first_covering_sharp")
+    elif lower < covering["ts_ms"]:
+        result.update(status="ambiguous_marker", phase="before_or_overlaps_covering_assignment")
+    elif refresh and upper >= refresh["ts_ms"]:
+        result["phase"] = "after_sharp_assignment" if lower >= refresh["ts_ms"] else "overlaps_sharp_assignment"
         result["status"] = "late_marker"
     else:
-        result["phase"] = covering.get("format", "unknown") if covering else "unknown"
+        result["phase"] = covering.get("format", "unknown")
     if result["status"] != "complete":
         result["observed_latency_ms"] = result.pop("latency_ms")
     return result
 
 
 def input_batch_shape(events, stream, started, deadline_ms):
-    relevant = [e for e in events if e["stream"] == stream and started <= e["ts_ms"] <= deadline_ms]
+    relevant = [e for e in events if e.get("stream") == stream and started <= e["ts_ms"] <= deadline_ms]
     queued = [e for e in relevant if e["stage"] == "input.queued"]
     sequences = sorted({e["seq"] for e in queued})
     batches = [e for e in relevant if e["stage"] == "input.sent" and "first_seq" in e
@@ -297,6 +436,20 @@ def summarize(rows, gate, requested):
         "max_ms": max(ordered, default=None)}}
 
 
+def finish_observation(observer, rows, directory):
+    if observer is None:
+        save(directory / "native-events.json", [])
+        return
+    try:
+        observer.stop()
+    except Exception as error:
+        for row in rows:
+            row["native_session_error"] = f"{type(error).__name__}: {error}"
+            row["gate_a"] = {"status": "invalid_observation", "reason": "native_session_failed"}
+            save(directory / f"row-{row['sample']:03d}.json", row)
+    save(directory / "native-events.json", observer.native_events)
+
+
 def run(config, args):
     count = args.count if args.count is not None else config.get("count", 60)
     if count < 1 or config.get("deadline_s", 15) <= 0:
@@ -315,11 +468,10 @@ def run(config, args):
                 "requested": count, "input_helper": config["input_helper"], "input_helper_sha256": digest(config["input_helper"]),
                 "observer_sha256": digest(__file__),
                 "input_method": "supplied helper epoch timestamp immediately before canvas.dev.input notification",
-                "clock": "viewer-local epoch milliseconds", "marker_tolerance": 16, "started_ms": epoch_ms()}
+                "clock": "own-window mach display ticks bracketed to viewer epoch; conservative upper bound",
+                "clock_drift_tolerance_ms": 2, "marker_tolerance": 16, "started_ms": epoch_ms()}
     save(directory / "metadata.json", metadata)
-    source = Source(config)
-    observer = Observer(config, directory)
-    trace = Trace(config.get("app_log", str(Path(config["dev_home"]) / "app.log"))) if config["mode"] == "relay" else None
+    source = observer = trace = None
     rows = []
     previous_target = None
 
@@ -327,16 +479,22 @@ def run(config, args):
         return source.call("browser.call", {"id": config["tile"], "method": "browser.eval", "params": {"script": script}}).get("value")
 
     try:
-        if page("Boolean(document.querySelector('#click') && document.querySelector('#rcMark'))") is not True:
-            raise RuntimeError("Existing #click/#rcMark fixture is required")
         for sample in range(1, count + 1):
             row = {"sample": sample, "label": args.label, "block": args.block, "action": args.action,
                    "mode": config["mode"], "board": config["board"], "tile": config["tile"],
                    "gate_a": {"status": "deadline_failure"},
-                   "gate_b": {"status": "deadline_failure" if trace else "not_applicable"}, "observations": [], "trace": []}
+                   "gate_b": {"status": "deadline_failure" if config["mode"] == "relay" else "not_applicable"}, "observations": [], "trace": []}
             rows.append(row)
             child = None
             try:
+                if sample == 1:
+                    source = Source(config)
+                    observer = Observer(config, directory)
+                    if config["mode"] == "relay":
+                        trace = Trace(config.get("app_log", str(Path(config["dev_home"]) / "app.log")))
+                    row["native_ready"] = observer.start()
+                    if page("Boolean(document.querySelector('#click') && document.querySelector('#rcMark'))") is not True:
+                        raise RuntimeError("Existing #click/#rcMark fixture is required")
                 if config.get("pause_s", 0):
                     row["pause_started_ms"] = epoch_ms()
                     time.sleep(config["pause_s"])
@@ -344,17 +502,18 @@ def run(config, args):
                 before = observer.capture(f"{sample:03d}-before")
                 row["before"] = before
                 candidates = [(50, 50, 75), (210, 180, 195)]
-                color = next(c for c in candidates if distance(c, before["pixel"]) > 32
+                color = next(c for c in candidates if distance(c, observer.pixel) > 32
                              and (previous_target is None or distance(c, previous_target) > 32))
                 row["target"] = color
-                if distance(before["pixel"], color) <= 16:
-                    raise RuntimeError("Pre-click native marker already passes target16")
+                if distance(observer.pixel, color) <= 16:
+                    raise RuntimeError("Pre-click own-window marker already passes target16")
                 previous_target = color
                 row["source_before"] = page(config.get("count_script", "Number(clicks)"))
                 if type(row["source_before"]) not in (int, float):
                     raise RuntimeError("Source count_script must return a number")
                 arm = config.get("arm_script", "if(typeof rcCapture!=='function')throw Error('existing rcCapture required');rcExpectedType='click';rcNextColor=__COLOR__;true")
                 page(arm.replace("__COLOR__", json.dumps("rgb(" + ",".join(map(str, color)) + ")")))
+                row["native_arm"] = observer.arm(f"{sample:03d}", color)
                 if trace:
                     row["pre_input_trace"] = trace.poll()
                 x, y = observer.point(*config.get("click", [29, 195]), native=False)
@@ -365,6 +524,8 @@ def run(config, args):
                 stamp = child.stdout.readline()
                 row["input_receipt"] = {"fields": fields, "stdout": stamp}
                 started = float(stamp.strip())
+                if not math.isfinite(started):
+                    raise RuntimeError("Timed input helper printed a non-finite timestamp")
                 row["started_ms"] = started
                 deadline_ms = started + config.get("deadline_s", 15) * 1000
                 row["deadline_ms"] = deadline_ms
@@ -373,9 +534,9 @@ def run(config, args):
                 covering = refresh = None
                 while time.monotonic() < deadline:
                     if first_marker is None:
-                        observation = observer.capture(f"{sample:03d}-obs")
-                        row["observations"].append(observation)
-                        if observation["ended_ms"] <= deadline_ms and distance(observation["pixel"], color) <= 16:
+                        observation = observer.poll()
+                        if observation is not None:
+                            row["observations"].append(observation)
                             first_marker = observation
                     if trace:
                         row["trace"].extend(trace.poll())
@@ -383,10 +544,10 @@ def run(config, args):
                         row.update(input_watermark=watermark, internal_covering_assignment=covering, internal_refresh_assignment=refresh)
                         image_format = last_assigned_format(row["trace"], config["stream"], watermark, started, deadline_ms)
                         row["gate_b"] = sharp_gate(covering, refresh, last_input, started, watermark, image_format)
-                    if first_marker is not None:
-                        if not trace or row["gate_b"]["status"] in ("complete", "not_applicable"):
-                            break
-                        time.sleep(0.005)
+                    observer.check()
+                    if first_marker is not None and (not trace or row["gate_b"]["status"] in ("complete", "not_applicable")):
+                        break
+                    time.sleep(0.005)
                 if trace:
                     row["trace"].extend(trace.poll())
                     watermark, last_input, covering, refresh = endpoints(row["trace"], config["stream"], started, deadline_ms)
@@ -398,7 +559,7 @@ def run(config, args):
                         row["gate_b"]["reason"] = "missing_input_watermark"
                 else:
                     row["input_batch_shape"] = {"status": "not_applicable"}
-                row["gate_a"] = visible_gate(first_marker, started, config["mode"], covering, refresh)
+                row["gate_a"] = visible_gate(first_marker, started, config["mode"], covering, refresh, deadline_ms)
                 row["settled_capture"] = observer.capture(f"{sample:03d}-settled")
                 row["source_after"] = page(config.get("count_script", "Number(clicks)"))
                 row["source_increment_once"] = row["source_after"] == row["source_before"] + 1
@@ -432,6 +593,9 @@ def run(config, args):
             print(json.dumps({"sample": sample, "gate_a": row["gate_a"], "gate_b": row["gate_b"], "directory": str(directory)}), flush=True)
             if "error" in row:
                 break
+        finish_observation(observer, rows, directory)
+        save(directory / "results.json", {"metadata": metadata, "rows": rows,
+             "gate_a": summarize(rows, "gate_a", count), "gate_b": summarize(rows, "gate_b", count), "diagnostics": diagnostics(rows)})
         summary = {"directory": str(directory), "requested": count, "attempted": len(rows),
                    "unattempted": count - len(rows), "gate_a": summarize(rows, "gate_a", count), "gate_b": summarize(rows, "gate_b", count), "diagnostics": diagnostics(rows)}
         save(directory / "summary.json", summary)
@@ -439,16 +603,20 @@ def run(config, args):
         return 0 if len(rows) == count and all(r["gate_a"]["status"] == "complete" and r["gate_b"]["status"] in ("complete", "not_applicable") for r in rows) else 1
     finally:
         try:
-            if trace:
-                try:
-                    shutil.copyfile(config.get("app_log", str(Path(config["dev_home"]) / "app.log")), directory / "app.log")
-                finally:
+            try:
+                app_log = Path(config.get("app_log", str(Path(config["dev_home"]) / "app.log")))
+                if app_log.exists():
+                    shutil.copyfile(app_log, directory / "app.log")
+            finally:
+                if trace:
                     trace.file.close()
         finally:
             try:
-                source.close()
+                if source:
+                    source.close()
             finally:
-                observer.close()
+                if observer:
+                    observer.close()
 
 
 def main():
