@@ -421,10 +421,10 @@ index 6563c60..f450b2e 100644
  }
 diff --git a/src/renderer/metal/Publication.zig b/src/renderer/metal/Publication.zig
 new file mode 100644
-index 0000000..99ea21b
+index 0000000..1452710
 --- /dev/null
 +++ b/src/renderer/metal/Publication.zig
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,87 @@
 +const Publication = @This();
 +
 +const std = @import("std");
@@ -444,7 +444,12 @@ index 0000000..99ea21b
 +
 +    pub fn complete(self: Frame, healthy: bool) void {
 +        const next: Phase = if (healthy) .ready else .idle;
-+        self.state.word.store(self.generation | @intFromEnum(next), .release);
++        _ = self.state.word.cmpxchgStrong(
++            self.generation | @intFromEnum(Phase.rendering),
++            self.generation | @intFromEnum(next),
++            .release,
++            .monotonic,
++        );
 +    }
 +
 +    pub fn claim(self: Frame) bool {
@@ -481,8 +486,7 @@ index 0000000..99ea21b
 +    while (true) {
 +        switch (@as(Phase, @enumFromInt(current & phase_mask))) {
 +            .publishing => return null,
-+            .rendering => unreachable,
-+            .idle, .ready => {},
++            .idle, .rendering, .ready => {},
 +        }
 +        const generation = (current & ~phase_mask) +% generation_step;
 +        if (self.word.cmpxchgWeak(
