@@ -373,8 +373,7 @@ The pan uses 40 × 20 point steps, reverses every 60 scheduled steps, and must t
 
 Rows retain render failures, placeholders, omitted objects, and gesture failures rather than treating fast failures as successful measurements. Output includes the original fixture, raw logs, stream replies, startup capture receipts, render object records, and PNGs. Compare the native bounds as well as fixture bytes before attributing a difference to the app.
 
-The proximity optimization leaves tile bodies in the canvas coordinate hierarchy and detaches only title controls outside a 600-document-point viewport margin. A focused title control stays attached. Distant cold tiles defer card snapshots until near, and new cold admissions wait until a pinch ends. Live departure snapshots enter before cold admissions; completed cards survive far/near without being redrawn. Explicit whole-board renders remain uncapped, and remote HTML keeps its existing host-bound file and network rules.
-
+The proximity optimization leaves tile bodies in the canvas coordinate hierarchy and detaches only title controls outside a 600-document-point viewport margin. A focused title control stays attached. Distant cold tiles defer card snapshots until near, and new cold admissions wait until a pinch ends. Within a scene pass, live departure snapshots enter before cold admissions; work queued by earlier passes is not preempted. Completed cards survive far/near without being redrawn. Explicit whole-board renders remain uncapped, and remote HTML keeps its existing host-bound file and network rules.
 
 #### Native preview lifecycle regression
 
