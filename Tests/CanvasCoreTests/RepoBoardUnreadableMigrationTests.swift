@@ -146,6 +146,45 @@ struct RepoBoardUnreadableMigrationTests {
         }
     }
 
+    @Test(arguments: ["unknown", "newer"], [false, true])
+    func unreadableFolderAdoptionRefusesOnlyItsRepository(kind: String, storedTarget: Bool) async throws {
+        let fixture = RepoBoardTests()
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        let (folder, source) = try await fixture.folderBoard()
+        let common = try await fixture.makeRepository(folder)
+        let store = BoardStore(directory: fixture.boards)
+        let sourceURL = store.url(for: source.id)
+        let bad = try corrupted(source.snapshot, kind: kind)
+        try bad.write(to: sourceURL)
+        let targetID = BoardStore.repoID(commonDir: common)
+        let targetURL = store.url(for: targetID)
+        if storedTarget {
+            let target = Board(id: targetID, root: folder)
+            target.repo = RepoRecord(commonDir: common)
+            target.create(type: .note, props: .object(["markdown": "existing repository board"]))
+            try store.saveChecked(target)
+        }
+        let targetBytes = try? Data(contentsOf: targetURL)
+        let unrelatedURL = fixture.boards.appendingPathComponent("brd_unrelated.json")
+        let unrelated = Data("unrelated corrupt board".utf8)
+        try unrelated.write(to: unrelatedURL)
+        let registry = BoardRegistry(store: store)
+        do {
+            _ = try await registry.open(root: folder)
+            Issue.record("Unreadable folder source opened an incomplete repository board")
+        } catch let error as BoardFile.Unreadable {
+            #expect(error.filename == sourceURL.path)
+        }
+        #expect(registry.board(id: targetID) == nil)
+        #expect(try Data(contentsOf: sourceURL) == bad)
+        #expect((try? Data(contentsOf: targetURL)) == targetBytes)
+        try BoardStore.encoder.encode(source.snapshot).write(to: sourceURL)
+        let recovered = try await registry.open(root: folder)
+        #expect(Set(recovered.objects.keys).isSuperset(of: source.objects.keys))
+        #expect(recovered.repo?.merged?.contains(source.id) == true)
+        #expect(try Data(contentsOf: unrelatedURL) == unrelated)
+    }
+
     @Test(arguments: ["unknown", "newer", "truncated"])
     func closedTerminalInspectionSkipsEntireUnsafeBoard(kind: String) async throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("easl-closed-unreadable-\(UUID().uuidString)")
