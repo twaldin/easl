@@ -113,10 +113,18 @@ final class ComposerController {
         scheduleSave()
     }
 
-    /// Keeps native undo intact when restaging a token changes only its mention identity.
     private func show(_ draft: ComposerDraft, caret: Int?, replacing before: ComposerDraft) {
-        if draft.text != before.text || draft.tokens.count != before.tokens.count {
-            bar.show(draft, caret: caret, board: board)
+        if draft.text != before.text {
+            let undo = bar.text.undoManager
+            if undo?.isUndoing == true || undo?.isRedoing == true {
+                // NSTextView must finish applying its undo before its storage can be replaced.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.bar.draft == before else { return }
+                    self.bar.show(draft, caret: caret, board: self.board)
+                }
+            } else {
+                bar.show(draft, caret: caret, board: board)
+            }
         } else {
             bar.rebind(draft, board: board)
         }

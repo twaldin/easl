@@ -80,5 +80,16 @@ private enum ComposerInput {
         try await Task.sleep(for: .milliseconds(50))
         require(bar.draft.isEmpty && board.tray.isEmpty, "redo keeps the missing-tile mention absent")
         print("PASS undo and redo after the referenced tile is deleted")
+        let removed = board.create(type: .code, props: .object(["path": .string("removed.swift")]))
+        try board.stage(.code(object: removed.id, path: "removed.swift", lines: LineRange(start: 1, end: 1)))
+        bar.text.selectAll(nil)
+        bar.text.deleteBackward(nil)
+        bar.text.breakUndoCoalescing()
+        try board.delete(removed.id)
+        undo.undo()
+        bar.text.insertText("new draft", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try await Task.sleep(for: .milliseconds(50))
+        require(bar.draft.text == "new draft" && board.tray.isEmpty, "deferred normalization must not overwrite a later edit")
+        print("PASS typing after missing-tile undo keeps the new draft")
     }
 }

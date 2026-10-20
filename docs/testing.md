@@ -293,6 +293,10 @@ For a window-level check, stage a mention on a local or remote board, focus the 
 select and delete the token, then undo, redo, and undo again. The token and its staged mention
 must return together without changing the words around them or losing redo.
 
+Repeat after deleting the token's tile before undo. The missing mention must stay absent,
+and undo or redo must not crash. A new draft typed before deferred normalization runs must
+survive it. Normalizing a missing reference can expire native editor history.
+
 ### Performance probes
 
 `EASL_DEV_PERF=1` (set by `dev.sh` and `perf-replica.sh`) turns on `DevPerf` (`Sources/CanvasApp/DevPerf.swift`). Every input burst becomes a span with a `gesture` phase and a 1.5 s `settle` phase (the liveness pass, card and live flips, and the redraws they cause). `input perf [ms]` is an idle span (default 5000 ms), which also works while the window is minimized. `input idle on|off|auto` controls both terminal redraw throttling and the automatic-update idle gate. `on` supplies 600 idle seconds, enough for the ten-minute update threshold and the one-minute redraw threshold. `off` supplies zero, and `auto` resumes sampling input across the Mac's login session. The pinned value remains until `idle off` or `idle auto`; replayed keys do not clear it. Do not use `idle on` on an instance with automatic installation enabled unless you intend to allow installation. A span's `counts` carry `terminal.draw`, the redraws. At the end of a span `app.log` gets one line per phase:
