@@ -1,0 +1,154 @@
+diff --git a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift
+index 9b56c155..a5ff3a3e 100644
+--- a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift
++++ b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift
+@@ -7,13 +7,56 @@
+ 
+ #if !canImport(UIKit) && canImport(AppKit)
+     import AppKit
++    import GhosttyKit
+ 
+     /// SwiftUI focus-bridge hooks; behavior lives in +Lifecycle.
+     struct FocusBridgeState {
+         var onFocusChange: ((Bool) -> Void)?
+     }
+ 
++    struct CompletedFrameRegistration {
++        let surface: TerminalSurface
++        let layer: CALayer
++        let generation: UInt64
++    }
++
++    private func appTerminalFramePublished(_ userdata: UnsafeMutableRawPointer?, _ generation: UInt64) {
++        guard let userdata else { return }
++        let view = Unmanaged<AppTerminalView>.fromOpaque(userdata).takeUnretainedValue()
++        MainActor.assumeIsolated {
++            guard let frame = view.completedFrame,
++                  frame.generation == generation,
++                  view.surface === frame.surface,
++                  view.layer === frame.layer,
++                  frame.layer.contents != nil
++            else { return }
++            view.core.onPostRender?()
++        }
++    }
++
+     extension AppTerminalView {
++        func updateCompletedFrameRegistration(_ surface: TerminalSurface?) {
++            let previous = completedFrame
++            completedFrame = nil
++            if let rawSurface = previous?.surface.rawValue {
++                _ = ghostty_surface_set_async_rendering(rawSurface, nil, nil, 0)
++            }
++            guard let surface, let rawSurface = surface.rawValue, let layer else { return }
++            completedFrameGeneration &+= 1
++            completedFrame = CompletedFrameRegistration(
++                surface: surface,
++                layer: layer,
++                generation: completedFrameGeneration
++            )
++            let registered = ghostty_surface_set_async_rendering(
++                rawSurface,
++                appTerminalFramePublished,
++                Unmanaged.passUnretained(self).toOpaque(),
++                completedFrameGeneration
++            )
++            precondition(registered, "AppKit terminals require native asynchronous Metal rendering")
++        }
++
+         func setupTrackingArea() {
+             let options: NSTrackingArea.Options = [
+                 .mouseEnteredAndExited,
+diff --git a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
+index 5e7ba3a5..0c73af0b 100644
+--- a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
++++ b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
+@@ -22,6 +22,8 @@
+         var keyEcho: KeyEchoState = .init()
+         var pointer: PointerSelectionState = .init()
+         var focusBridge: FocusBridgeState = .init()
++        var completedFrame: CompletedFrameRegistration?
++        var completedFrameGeneration: UInt64 = 0
+ 
+         open weak var delegate: (any TerminalSurfaceViewDelegate)? {
+             get { core.delegate }
+@@ -42,7 +44,7 @@
+             core.setDisplayVisible(visible)
+         }
+ 
+-        /// A frame was drawn (`TerminalSurfaceCoordinator.tick`): a host counts redraws here.
++        /// A healthy GPU frame's contents were published to this view's current layer.
+         open func surfaceDidDraw() {}
+ 
+         /// Adjusts this surface's resize coalescing window without rebuilding
+@@ -109,6 +111,9 @@
+                     )
+                 )
+             }
++            core.onSurfaceChange = { [weak self] surface in
++                self?.updateCompletedFrameRegistration(surface)
++            }
+             core.onMetricsUpdate = { [weak self] in
+                 self?.updateMetalLayerMetrics()
+             }
+@@ -169,6 +174,9 @@
+         }
+ 
+         deinit {
++            MainActor.assumeIsolated {
++                updateCompletedFrameRegistration(nil)
++            }
+             NotificationCenter.default.removeObserver(self)
+         }
+     }
+diff --git a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
+index 4e0d7975..441693c3 100644
+--- a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
++++ b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
+@@ -62,8 +62,12 @@ final class TerminalSurfaceCoordinator {
+     var onMetricsUpdate: (() -> Void)?
+     var onCellSizeDidChange: (() -> Void)?
+     var onMouseShape: ((ghostty_action_mouse_shape_e) -> Void)?
++    #if !canImport(UIKit) && canImport(AppKit)
++        /// Runs before the new surface can publish on main, and before the old one is freed.
++        var onSurfaceChange: ((TerminalSurface?) -> Void)?
++    #endif
+ 
+-    /// Called after every display-link render (`tick`).
++    /// Called after a synchronous UIKit draw or an accepted AppKit frame publication.
+     ///
+     /// When `synchronizeMetrics` sends a new pixel size to ghostty via
+     /// `setSize`, the underlying IOSurface is not rebuilt synchronously.
+@@ -218,6 +222,9 @@ final class TerminalSurfaceCoordinator {
+         bridge.rawSurface = rawSurface
+         let newSurface = TerminalSurface(rawSurface)
+         surface = newSurface
++        #if !canImport(UIKit) && canImport(AppKit)
++            onSurfaceChange?(newSurface)
++        #endif
+         surfaceSession = configuration.inMemorySession
+         newSurface.setOcclusion(effectiveSurfaceVisible)
+         // Wakeups must keep draining while the surface is merely occluded:
+@@ -500,8 +507,10 @@ final class TerminalSurfaceCoordinator {
+         TerminalDebugLog.log(.render, "tick")
+         controller?.tick()
+         surface?.refresh()
+-        surface?.draw()
+-        onPostRender?()
++        #if canImport(UIKit)
++            surface?.draw()
++            onPostRender?()
++        #endif
+     }
+ 
+     // MARK: - Focus
+@@ -550,6 +559,9 @@ final class TerminalSurfaceCoordinator {
+     private func tearDownSurface(removingBridgeFrom controller: TerminalController?) {
+         TerminalDebugLog.log(.lifecycle, "tear down surface")
+         releaseDisplayLink()
++        #if !canImport(UIKit) && canImport(AppKit)
++            onSurfaceChange?(nil)
++        #endif
+         surfaceSession?.clearSurface(ifMatches: surface?.rawValue)
+         surfaceSession = nil
+         controller?.removeWakeupObserver(ObjectIdentifier(self))

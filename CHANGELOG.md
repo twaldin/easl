@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Terminal rendering completes on Ghostty's renderer worker; post-render hooks run after completed pixels reach the attached layer.
 - Defer distant card previews until they approach the viewport, while preserving snapshots of live tiles as they leave it.
 - Development: add exact-size board fixtures with mixed static and scripted HTML, native preview checks, and bounded scale measurements that verify all eight terminal streams before the first capture.
 - Development browser measurements separate native first-visible response, decoded assignment, and settled sharp assignment. Correct the 0.3.0 click-latency interpretation and retain codec quality 1 without changing production codec or refresh behavior.

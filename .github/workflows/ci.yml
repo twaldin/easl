@@ -17,6 +17,20 @@ jobs:
         run: |
           sudo xcode-select -s /Library/Developer/CommandLineTools
           swift --version
+      - name: Verify native Ghostty provenance
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          root = Path("Vendor/libghostty-spm/GhosttyKit.xcframework")
+          provenance = json.loads((root / "PROVENANCE.json").read_text())
+          sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+          assert sha(Path("patches/ghostty-async-rendering.patch")) == provenance["patchSHA256"]
+          actual = {str(path.relative_to(root)): sha(path) for path in root.rglob("*")
+                    if path.is_file() and path.name != "PROVENANCE.json"}
+          assert actual == provenance["files"], "native archive or headers differ from their provenance"
+          PY
       - name: Build
         run: swift build -j 2
       - name: Test
@@ -29,6 +43,8 @@ jobs:
           python3 Tests/ComposerInput/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native composer delivery regression
         run: python3 Tests/ComposerDelivery/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+      - name: Completed terminal frame regression
+        run: python3 Tests/TerminalFrames/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Generated clients are current
         run: bun scripts/gen-clients.ts --check
       - name: Python client tests

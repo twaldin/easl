@@ -62,8 +62,12 @@ final class TerminalSurfaceCoordinator {
     var onMetricsUpdate: (() -> Void)?
     var onCellSizeDidChange: (() -> Void)?
     var onMouseShape: ((ghostty_action_mouse_shape_e) -> Void)?
+    #if !canImport(UIKit) && canImport(AppKit)
+        /// Runs before the new surface can publish on main, and before the old one is freed.
+        var onSurfaceChange: ((TerminalSurface?) -> Void)?
+    #endif
 
-    /// Called after every display-link render (`tick`).
+    /// Called after a synchronous UIKit draw or an accepted AppKit frame publication.
     ///
     /// When `synchronizeMetrics` sends a new pixel size to ghostty via
     /// `setSize`, the underlying IOSurface is not rebuilt synchronously.
@@ -218,6 +222,9 @@ final class TerminalSurfaceCoordinator {
         bridge.rawSurface = rawSurface
         let newSurface = TerminalSurface(rawSurface)
         surface = newSurface
+        #if !canImport(UIKit) && canImport(AppKit)
+            onSurfaceChange?(newSurface)
+        #endif
         surfaceSession = configuration.inMemorySession
         newSurface.setOcclusion(effectiveSurfaceVisible)
         // Wakeups must keep draining while the surface is merely occluded:
@@ -500,8 +507,10 @@ final class TerminalSurfaceCoordinator {
         TerminalDebugLog.log(.render, "tick")
         controller?.tick()
         surface?.refresh()
-        surface?.draw()
-        onPostRender?()
+        #if canImport(UIKit)
+            surface?.draw()
+            onPostRender?()
+        #endif
     }
 
     // MARK: - Focus
@@ -550,6 +559,9 @@ final class TerminalSurfaceCoordinator {
     private func tearDownSurface(removingBridgeFrom controller: TerminalController?) {
         TerminalDebugLog.log(.lifecycle, "tear down surface")
         releaseDisplayLink()
+        #if !canImport(UIKit) && canImport(AppKit)
+            onSurfaceChange?(nil)
+        #endif
         surfaceSession?.clearSurface(ifMatches: surface?.rawValue)
         surfaceSession = nil
         controller?.removeWakeupObserver(ObjectIdentifier(self))

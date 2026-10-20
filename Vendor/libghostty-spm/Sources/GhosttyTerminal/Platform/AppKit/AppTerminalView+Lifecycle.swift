@@ -7,13 +7,56 @@
 
 #if !canImport(UIKit) && canImport(AppKit)
     import AppKit
+    import GhosttyKit
 
     /// SwiftUI focus-bridge hooks; behavior lives in +Lifecycle.
     struct FocusBridgeState {
         var onFocusChange: ((Bool) -> Void)?
     }
 
+    struct CompletedFrameRegistration {
+        let surface: TerminalSurface
+        let layer: CALayer
+        let generation: UInt64
+    }
+
+    private func appTerminalFramePublished(_ userdata: UnsafeMutableRawPointer?, _ generation: UInt64) {
+        guard let userdata else { return }
+        let view = Unmanaged<AppTerminalView>.fromOpaque(userdata).takeUnretainedValue()
+        MainActor.assumeIsolated {
+            guard let frame = view.completedFrame,
+                  frame.generation == generation,
+                  view.surface === frame.surface,
+                  view.layer === frame.layer,
+                  frame.layer.contents != nil
+            else { return }
+            view.core.onPostRender?()
+        }
+    }
+
     extension AppTerminalView {
+        func updateCompletedFrameRegistration(_ surface: TerminalSurface?) {
+            let previous = completedFrame
+            completedFrame = nil
+            if let rawSurface = previous?.surface.rawValue {
+                _ = ghostty_surface_set_async_rendering(rawSurface, nil, nil, 0)
+            }
+            guard let surface, let rawSurface = surface.rawValue, let layer else { return }
+            completedFrameGeneration &+= 1
+            completedFrame = CompletedFrameRegistration(
+                surface: surface,
+                layer: layer,
+                generation: completedFrameGeneration
+            )
+            let registered = ghostty_surface_set_async_rendering(
+                rawSurface,
+                appTerminalFramePublished,
+                Unmanaged.passUnretained(self).toOpaque(),
+                completedFrameGeneration
+            )
+            precondition(registered, "AppKit terminals require native asynchronous Metal rendering")
+        }
+
         func setupTrackingArea() {
             let options: NSTrackingArea.Options = [
                 .mouseEnteredAndExited,

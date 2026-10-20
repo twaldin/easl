@@ -22,6 +22,8 @@
         var keyEcho: KeyEchoState = .init()
         var pointer: PointerSelectionState = .init()
         var focusBridge: FocusBridgeState = .init()
+        var completedFrame: CompletedFrameRegistration?
+        var completedFrameGeneration: UInt64 = 0
 
         open weak var delegate: (any TerminalSurfaceViewDelegate)? {
             get { core.delegate }
@@ -42,7 +44,7 @@
             core.setDisplayVisible(visible)
         }
 
-        /// A frame was drawn (`TerminalSurfaceCoordinator.tick`): a host counts redraws here.
+        /// A healthy GPU frame's contents were published to this view's current layer.
         open func surfaceDidDraw() {}
 
         /// Adjusts this surface's resize coalescing window without rebuilding
@@ -109,6 +111,9 @@
                     )
                 )
             }
+            core.onSurfaceChange = { [weak self] surface in
+                self?.updateCompletedFrameRegistration(surface)
+            }
             core.onMetricsUpdate = { [weak self] in
                 self?.updateMetalLayerMetrics()
             }
@@ -169,6 +174,9 @@
         }
 
         deinit {
+            MainActor.assumeIsolated {
+                updateCompletedFrameRegistration(nil)
+            }
             NotificationCenter.default.removeObserver(self)
         }
     }

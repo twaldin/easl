@@ -1,11 +1,11 @@
 # Third-party notices
 
-Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`; libghostty-spm is vendored under `Vendor/libghostty-spm` with two patches (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`).
+Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`; libghostty-spm and its patched native archive are vendored under `Vendor/libghostty-spm` (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`).
 
 | Package | Version | License | Copyright |
 | --- | --- | --- | --- |
 | [libghostty-spm](https://github.com/Lakr233/libghostty-spm) | 1.6.20260922 | MIT | (c) 2026 @Lakr233 |
-| [Ghostty](https://github.com/ghostty-org/ghostty) (the `libghostty` binary libghostty-spm downloads) | commit 3c47ca159368 | MIT | (c) 2024 Mitchell Hashimoto, Ghostty contributors |
+| [Ghostty](https://github.com/ghostty-org/ghostty) (the vendored `libghostty` archive, with the async-render patch) | commit 3c47ca159368 | MIT | (c) 2024 Mitchell Hashimoto, Ghostty contributors |
 | [MSDisplayLink](https://github.com/Lakr233/MSDisplayLink) | 2.2.0 | MIT | (c) 2024 Lakr Aream |
 | [swift-markdown](https://github.com/swiftlang/swift-markdown) | 0.9.0 | Apache-2.0 | (c) 2021 Apple Inc. and the Swift project authors |
 | [swift-cmark](https://github.com/swiftlang/swift-cmark) (cmark-gfm) | 0.9.0 | BSD-2-Clause, with parts under MIT (see its COPYING below) | (c) 2014 John MacFarlane |
@@ -28,7 +28,7 @@ Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`;
 
 ### Inside the libghostty binary
 
-`libghostty.a`, the xcframework libghostty-spm downloads and easl links statically, is Ghostty built by Zig 0.16 together with these libraries, Zig packages and fonts. Versions are the ones Ghostty pins at commit 3c47ca159368 (its `build.zig.zon` and those under `pkg/` and `src/stb/`); the archive's object files, symbols and embedded font names match them.
+`libghostty.a`, the vendored xcframework archive easl links statically, is Ghostty built by Zig 0.16.0 together with these libraries, Zig packages and fonts. Versions are the ones Ghostty pins at commit 3c47ca159368 (its `build.zig.zon` and those under `pkg/` and `src/stb/`). `scripts/build-ghostty.sh` reproduces the native source patch stack; the artifact's `PROVENANCE.json` records source revisions and hashes.
 
 | Library | Version | License | Copyright |
 | --- | --- | --- | --- |
@@ -59,10 +59,10 @@ Portions of this software are copyright © 2023 The FreeType Project (https://fr
 easl contains GNU libintl, the runtime library of GNU gettext 0.24, statically linked: it is part of `libghostty.a`, where Ghostty uses it to register its translation directory and to turn macOS language names (`en-US`) into POSIX locale names (`en_US`). libintl is covered by the GNU Lesser General Public License 2.1 or later, whose text is below. That license, not easl's, governs libintl, and it gives you these rights:
 
 - **Source.** libintl is unmodified gettext 0.24, directory `gettext-runtime/intl` of `gettext-0.24.tar.gz`. Every easl release on GitHub (https://github.com/twaldin/easl/releases) has that file attached, next to the app's zip. It is also at https://ftp.gnu.org/gnu/gettext/gettext-0.24.tar.gz, and is the identical file Ghostty builds from (https://deps.files.ghostty.org/gettext-0.24.tar.gz), SHA-256 `c918503d593d70daf4844d175a13d816afacb667c06fba1ec9dcd5002c1518b7`. Ghostty's build script, `config.h` and headers for it are `pkg/libintl` at https://github.com/ghostty-org/ghostty/tree/3c47ca159368eb4a860ffe5333abdf4a85b2767b/pkg/libintl.
-- **Relinking.** Everything else in the easl executable is available to relink with a modified libintl: easl's complete source is https://github.com/twaldin/easl (the release's tag), and the rest of `libghostty.a` is the object code in libghostty-spm's xcframework, `Vendor/libghostty-spm/Package.swift` names its URL and checksum. To replace libintl:
+- **Relinking.** Everything else in the easl executable is available to relink with a modified libintl: easl's complete source is https://github.com/twaldin/easl (the release's tag), and the rest of `libghostty.a` is the object code in `Vendor/libghostty-spm/GhosttyKit.xcframework`. To replace libintl:
   1. Build the 30 C files Ghostty's `pkg/libintl/build.zig` lists from `gettext-runtime/intl` with your changes, using its `config.h` (`clang -c -DHAVE_CONFIG_H '-DLOCALEDIR=""' -I<ghostty>/pkg/libintl -Igettext-runtime/intl -Igettext-runtime/intl/gnulib-lib`, once per architecture).
   2. Replace those members of the xcframework's `macos-arm64_x86_64/libghostty.a`: `lipo -thin` each architecture, `ar -r` your objects into it, `ranlib`, then `lipo -replace` the slice back.
-  3. Put your xcframework in `Vendor/libghostty-spm/`, replace the `libghostty` binary target's `url:` and `checksum:` in its `Package.swift` with `path: "GhosttyKit.xcframework"`, and run `scripts/bundle.sh release`, which builds, assembles and (ad hoc) signs `easl.app` (docs/releasing.md).
+  3. Replace the archive in `Vendor/libghostty-spm/GhosttyKit.xcframework` and run `scripts/bundle.sh release`, which builds, assembles and (ad hoc) signs `easl.app` (docs/releasing.md).
 - **Written offer.** For at least three years after each easl release, Timothy Waldin (timothy@waldin.net) will give anyone who asks a copy of libintl's complete corresponding source above, for no more than the cost of sending it.
 - easl's own license (MIT) permits modifying easl for your own use and reverse engineering to debug such modifications.
 

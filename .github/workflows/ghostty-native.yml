@@ -1,12 +1,11 @@
 name: Native Ghostty artifact
 
 on:
-  push:
-    branches: [lane/easl-terminal-draw-1]
   pull_request:
     paths:
       - patches/ghostty-async-rendering.patch
       - scripts/build-ghostty.sh
+      - Vendor/libghostty-spm/GhosttyKit.xcframework/**
   workflow_dispatch:
 
 permissions:

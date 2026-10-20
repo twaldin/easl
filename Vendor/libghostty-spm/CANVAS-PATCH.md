@@ -2,9 +2,8 @@
 
 - Upstream: https://github.com/Lakr233/libghostty-spm (MIT, see `LICENSE`)
 - Tag: `1.6.20260922` (commit `b7f888e3baf8585ea9d590ab1a45b49475e00d1c`)
-- Kept: `Package.swift`, `LICENSE`, `Sources/**`, unchanged except the test target and the
-  patches below. The `libghostty` xcframework stays a remote `binaryTarget` with upstream's URL and
-  checksum.
+- Kept: `Package.swift`, `LICENSE`, `Sources/**`, with the patches below and the upstream test target removed.
+- Easl's vendored package is macOS-only. `GhosttyKit.xcframework` contains the rebuilt arm64 and x86_64 archive and its matching header. `PROVENANCE.json` records source revisions, the native patch hash, and every artifact file hash.
 - Dropped: `Example/`, `Tests/`, `docs/`, `Script/`, `Patches/`, `build.sh`, `Ghostty.build`,
   `Ghostty.ref`, `Package.local.swift`, `Package.swift.template`, `.github/`, `.gitattributes`,
   `.gitignore`, `.root`, `README.md`, `AGENTS.md`, `CLAUDE.md`, and the `GhosttyKitTest` test
@@ -38,18 +37,51 @@ frame is owed, never recreated. UIKit, and macOS 13, keep MSDisplayLink. `AppTer
 is called after each drawn frame for the host to count (easl's `terminal.draw` metric). Diff:
 `patches/libghostty-spm-frame-link.patch`.
 
-What this doesn't remove: libghostty's own renderer (the prebuilt xcframework) runs a
+What this doesn't remove: libghostty's renderer still runs a
 `CVDisplayLink` of its own per surface, and upstream's `syncDisplayLink` (`src/renderer/generic.zig`)
 starts it when a frame has cell changes and stops it after the next draw that has none. Every
 `CVDisplayLinkStart` spawns a new CoreVideo thread, so a visible shell printing every 400 ms still
 shows about 20 display-link threads in a 5 s `sample` (30 before this patch). A standalone probe
 (no window, one link started for 250 ms every 400 ms) measured one new thread per start, 22 µs to
 start and 15 µs to stop, on the renderer's thread, none on the main thread; a paused
-`CADisplayLink` made none. We keep upstream's binary: `window-vsync = false` would remove the link
-but upstream warns of kernel panics on macOS 14.4+ with out-of-sync rendering, and patching it means
-building libghostty ourselves. The upstream fix is an idle grace period in `syncDisplayLink`: stop
+`CADisplayLink` made none. The native async-render patch preserves this behavior and `window-vsync`:
+upstream warns of kernel panics on macOS 14.4+ with out-of-sync rendering.
+The separate upstream fix is an idle grace period in `syncDisplayLink`: stop
 the link only after it has fired some frames (or ~0.5 s) without cell changes, instead of after the
 first idle draw.
+
+### Completed worker frames
+
+`patches/ghostty-async-rendering.patch` applies to Ghostty
+`3c47ca159368eb4a860ffe5333abdf4a85b2767b` after the pinned wrapper's native patch stack.
+It adds `ghostty_surface_set_async_rendering(surface, callback, userdata, generation)`.
+A main-thread registration opts into worker rendering. Direct draw requests and native layer
+display invalidations wake the worker instead of calling `drawFrame(true)`. An invalidation
+also forces a frame when terminal cells have not changed.
+
+The callback runs on main only after healthy GPU completion, layer-size acceptance, and
+assignment of the completed IOSurface to `layer.contents`. It reports publication, not scanout.
+Every accepted assignment notifies, including repeated use of the same IOSurface. CALayer KVO
+cannot provide that guarantee because it suppresses same-pointer assignments.
+
+The wrapper patch, `patches/libghostty-spm-async-rendering.patch`, installs a registration for
+the exact surface, layer, and generation. Replacement and free unregister before releasing the
+surface. Queued native publications retain their registration and reject retired callback
+revisions without retaining the host view. `onPostRender` therefore enforces the attached layer's
+scale before `surfaceDidDraw` counts the completed frame. UIKit's source draw path is unchanged.
+Terminal renders and preview captures still use the existing session-text renderer.
+
+App builds need Command Line Tools only. Rebuilding the native artifact needs Zig 0.16.0 and
+Xcode's `metal` and `metallib` tools. From the easl root, build a new output directory:
+
+```sh
+scripts/build-ghostty.sh /tmp/GhosttyKit.xcframework
+```
+
+The script fetches exact source revisions, applies both patch stacks, builds with two jobs, and
+packages the universal macOS archive with its header and provenance. The `Native Ghostty artifact`
+workflow runs the same command. `Tests/TerminalFrames/run.py` checks completed pixels through
+first paint, resize, surface replacement, and teardown.
 
 ### Private clipboard writes
 
@@ -76,4 +108,8 @@ The existing AppKit `TerminalPasteboardContent.text(from:)` reader is public so 
 queued text pastes at the keypress. It retains the same URL precedence and shell escaping as
 Ghostty's clipboard callback without changing the pasteboard.
 
-To update, copy the new tag's files as above, reapply the patches, and drop the test target again.
+To update, copy the new tag's wrapper files, reapply the local wrapper patches, and remove the
+upstream test target. Update the pinned source revisions in `scripts/build-ghostty.sh`, port the
+native patch after the wrapper's patch stack, and rebuild the whole xcframework. Replace the
+archive, header, and provenance together. Never combine a new header with an old archive.
+Run the native frame regression and guest terminal checks before accepting the update.
