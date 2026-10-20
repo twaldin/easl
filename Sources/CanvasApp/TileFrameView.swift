@@ -419,11 +419,16 @@ final class TileFrameView: NSView {
     }
 
     func endPinching() {
-        guard titleBar.superview == nil else { return }
-        pinchHeader.view?.removeFromSuperview()
-        pinchHeader.view?.layer?.contents = nil
-        addSubview(titleBar, positioned: .below, relativeTo: zoomView)
-        if window?.occlusionState.contains(.visible) == true { syncTitle() }
+        if titleBar.superview == nil {
+            pinchHeader.view?.removeFromSuperview()
+            pinchHeader.view?.layer?.contents = nil
+            addSubview(titleBar, positioned: .below, relativeTo: zoomView)
+        }
+        if window == nil {
+            pinchHeader = .stale(pinchHeader.view)
+        } else if window?.occlusionState.contains(.visible) == true {
+            syncTitle()
+        }
     }
 
     // MARK: Author mark
@@ -719,8 +724,7 @@ final class TileFrameView: NSView {
             }
         }
         guard let window else {
-            endPinching()
-            pinchHeader = .stale(pinchHeader.view)
+            if titleBar.superview != nil { pinchHeader = .stale(pinchHeader.view) }
             if hovered {
                 hovered = false
                 updateZoomControl()
