@@ -1,7 +1,6 @@
 import Foundation
 import Darwin
 
-/// Missing files are new boards. Existing files must decode completely before any board can load.
 enum BoardFile {
     struct Unreadable: LocalizedError {
         let filename: String
@@ -55,7 +54,6 @@ enum BoardFile {
         for sibling in siblings where sibling.lastPathComponent.hasPrefix(prefix) {
             if let saved = try? Data(contentsOf: sibling), saved == bytes { return }
         }
-        // A stable timestamp makes competing readers claim the same name. Never replace a copy.
         let modified = try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? Date()
         let timestamp = String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), modified.timeIntervalSince1970)
         let temporary = directory.appendingPathComponent(".\(UUID().uuidString).unreadable-copy")
@@ -65,7 +63,6 @@ enum BoardFile {
         while true {
             let suffix = collision == 0 ? "" : "-\(collision)"
             let copy = directory.appendingPathComponent(prefix + timestamp + suffix)
-            // Publish only complete bytes, atomically and without overwriting another reader's copy.
             if Darwin.link(temporary.path, copy.path) == 0 { return }
             let code = errno
             guard code == EEXIST else { throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO) }

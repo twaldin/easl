@@ -336,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if backgroundAttach { await attachInBackground() }
             guard !terminating else { return }
-            if !suppressLaunchActivation, !CanvasApplication.neverActivate, controllers[initial.id]?.window?.isOnActiveSpace == true {
+            if let initial, !suppressLaunchActivation, !CanvasApplication.neverActivate, controllers[initial.id]?.window?.isOnActiveSpace == true {
                 NSApp.activate(ignoringOtherApps: true)
             }
         }

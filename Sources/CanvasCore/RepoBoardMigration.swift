@@ -155,8 +155,6 @@ public enum RepoBoardMigration {
                     existing = repoBoards[commonDir]
                 }
             } catch {
-                // A target with no decodable header still owns this path. Leave its sources
-                // in place so repairing the target can resume the migration.
                 unresolved += byRepo[commonDir]!.map {
                     Unresolved(board: $0.snapshot.id, root: $0.snapshot.root, objects: $0.snapshot.objects.count)
                 }
