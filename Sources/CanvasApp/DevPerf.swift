@@ -18,9 +18,7 @@ enum DevPerf {
     /// live flips, and the redraws they cause.
     static let settle: TimeInterval = 1.5
 
-    private struct FrameIntervals {
-        // Full-phase callback-delivery gaps, not display timestamps or presented pixels.
-        // Quantiles are 0.01 ms bucket upper bounds; overflow100 gaps use the phase maximum.
+    private struct CallbackGaps {
         private var buckets = [Int](repeating: 0, count: 10001)
         private(set) var count = 0
         private var maximum = 0.0
@@ -33,7 +31,7 @@ enum DevPerf {
             maximum = max(maximum, ms)
         }
 
-        func quantile(_ fraction: Double) -> Double {
+        func quantileUpperBound(_ fraction: Double) -> Double {
             guard count > 0 else { return 0 }
             let rank = Int((Double(count) * fraction).rounded(.up))
             var cumulative = 0
@@ -54,7 +52,7 @@ enum DevPerf {
         var frames = 0, missed = 0
         var longestFrame = 0.0
         var lastFrame: CFTimeInterval?
-        var frameIntervals = FrameIntervals()
+        var callbackGaps = CallbackGaps()
         var stalls50 = 0
         var busy = 0.0, hitches = 0, longestBusy = 0.0
         /// The main thread's CPU time over its busy stretches, and the most one stretch took:
@@ -177,10 +175,10 @@ enum DevPerf {
                   phase.busy, phase.hitches, phase.longestBusy, phase.cpu, phase.longestCpu,
                   phase.longestBusyStart, phase.longestBusyCpu, counts, timings)
             NSLog("DevPerfFrames: %@ %@ %.0f ms: samples %d p50 %.2f ms p95 %.2f ms p99 %.2f ms missed %d stalls50 %d overflow100 %d",
-                  span.label, phase.name, ms, phase.frameIntervals.count,
-                  phase.frameIntervals.quantile(0.50), phase.frameIntervals.quantile(0.95),
-                  phase.frameIntervals.quantile(0.99), phase.missed, phase.stalls50,
-                  phase.frameIntervals.overflow100)
+                  span.label, phase.name, ms, phase.callbackGaps.count,
+                  phase.callbackGaps.quantileUpperBound(0.50), phase.callbackGaps.quantileUpperBound(0.95),
+                  phase.callbackGaps.quantileUpperBound(0.99), phase.missed, phase.stalls50,
+                  phase.callbackGaps.overflow100)
         }
     }
 
@@ -195,7 +193,7 @@ enum DevPerf {
         let index = span.phases.count - 1
         let deliveredAt = CACurrentMediaTime()
         if let last = span.lastFrameDelivery {
-            span.phases[index].frameIntervals.record(ms: (deliveredAt - last) * 1000)
+            span.phases[index].callbackGaps.record(ms: (deliveredAt - last) * 1000)
         }
         span.lastFrameDelivery = deliveredAt
         let period = link.duration > 0 ? link.duration : span.period

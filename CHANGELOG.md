@@ -2,6 +2,11 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Detach distant tile title controls to reduce AppKit work while panning and zooming large local and remote boards.
+- Reuse a bounded pool of local HTML pages for tile snapshots and whole-board renders, clearing each page between tiles.
+
 ## 0.3.0
 
 Deckbox-hosted boards on easld now work fully from a Mac. Browser relay, host-backed HTML and video, shared stacking, and whole-board rendering complete the remote-board work deferred from 0.2.8.

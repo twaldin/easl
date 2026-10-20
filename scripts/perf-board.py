@@ -47,7 +47,6 @@ WORDS = ("status review deploy queue build ticket owner metric latency retry bud
 
 
 def board_id(root):
-    """Match `BoardStore.pathID`, including Foundation's macOS path normalization."""
     path = os.path.normpath(root)
     if sys.platform == "darwin":
         path = subprocess.check_output(
@@ -244,7 +243,6 @@ def encode(record):
 
 
 def scaled(root, seed, count):
-    """Exact-size format-2 objects, with ordered allocation and a local seeded RNG."""
     if count < 50:
         raise ValueError("--objects must be at least 50")
     g = Gen(seed)

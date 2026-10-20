@@ -1,4 +1,3 @@
-"""Exact-size fixture tests: python3 -m unittest discover -s scripts -p test_perf_board.py."""
 import collections
 import json
 import os
