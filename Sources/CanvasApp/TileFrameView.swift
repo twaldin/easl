@@ -300,16 +300,8 @@ final class TileFrameView: NSView {
         isNearViewport = near
         canStartColdCard = near && admitColdCards
         if near {
-            if titleBar.superview == nil {
-                addSubview(titleBar, positioned: .below, relativeTo: zoomView)
-                if window?.occlusionState.contains(.visible) == true { syncTitle() }
-            }
             if canStartColdCard, window != nil, !isLive, cardWanted, cardTask == nil { requestCard() }
         } else {
-            if titleBar.superview != nil,
-               (window?.firstResponder as? NSView)?.isDescendant(of: titleBar) != true {
-                titleBar.removeFromSuperview()
-            }
             if wasNear, !isLive, !contentLive, cardTask != nil {
                 invalidateCard()
             }
