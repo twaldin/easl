@@ -130,7 +130,7 @@ class Run:
         if self.mode == 'remote':
             self.dev('input', 'remote', 'easl-guest', self.bid, self.host)
         else:
-            rpc(self.socket, 'board.open', {'root': str(self.root)})
+            rpc(self.socket, 'board.open', {'root': str(self.root), 'select': True})
         try:
             board = wait_for(lambda: self.read_ready('board.get'))
         except TimeoutError as error:
