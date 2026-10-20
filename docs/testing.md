@@ -436,7 +436,7 @@ The pan uses 40 × 20 point steps, reverses every 60 scheduled steps, and must t
 
 Rows retain render failures, placeholders, omitted objects, and gesture failures rather than treating fast failures as successful measurements. Output includes the original fixture, raw logs, stream replies, startup capture receipts, render object records, and PNGs. Compare the native bounds as well as fixture bytes before attributing a difference to the app.
 
-Cold-preview proximity leaves tile bodies and title controls in their original canvas hierarchy. Distant cold tiles defer card snapshots until near, and new cold admissions wait until a pinch ends. Within a scene pass, live departure snapshots enter before cold admissions; work queued by earlier passes is not preempted. Completed cards survive far/near without being redrawn. Explicit whole-board renders remain uncapped, and remote HTML keeps its existing host-bound file and network rules.
+Cold-preview proximity defers distant snapshots until near, and new cold admissions wait until a pinch ends. Distant nonterminal roots leave the native hierarchy after live departure capture; selected and focused roots stay attached. Completed cards survive far/near without being redrawn. Nearby zoomed-out headers can use cached images during pinch, then restore native controls. Explicit whole-board renders remain uncapped, and remote HTML keeps its existing host-bound file and network rules.
 
 #### Native preview lifecycle regression
 
@@ -448,6 +448,17 @@ python3 Tests/TileProximity/run.py --checkout "$PWD" --app "$G/fix.app" \
 ```
 
 The five cases check a saved browser card after far/near, cold HTML demand only when near, cancelled cold demand restarting on reentry, and a loaded browser's first Zoom to Fit on 500- and 1000-object fixtures. They inspect native body pixels and gated loopback HTTP requests, not `view.snapshot` or `view.render` refreshes. Large cases verify eight outputting terminal sessions. `--cases` selects named cases listed by `--help`. Both harnesses refuse app launch on a physical Mac; the helper's activation mode also checks the guest model. Each scale run uses a fresh capture-session label and ends its session before the next run.
+
+#### Native parked-tile regression
+
+Use the same claimed guest, frozen app and compiled window helper:
+
+```sh
+python3 Tests/TileParking/run.py --checkout "$PWD" --app "$G/fix.app" \
+  --window-helper "$G/perf-window" --out "$G/parking"
+```
+
+This checks native title pixels during pinch, title and body return, offscreen content updates, fresh offscreen export pixels without viewport changes, all 50 objects in whole-board export, and a fresh native Close action. It runs eight outputting terminal sessions. Native pan return allows one backing pixel of coordinate rounding.
 
 #### Native initial routing regression
 
