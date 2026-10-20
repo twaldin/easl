@@ -64,6 +64,13 @@ assignment of the completed IOSurface to `layer.contents`. It reports publicatio
 Every accepted assignment notifies, including repeated use of the same IOSurface. CALayer KVO
 cannot provide that guarantee because it suppresses same-pointer assignments.
 
+Each render target has a refcounted publication generation. Main claims the exact completed
+generation before assigning contents and holds it through the callback. The worker supersedes
+queued generations, but replaces a target if its pixels are actively leased by main. No GPU
+swap-chain permit waits for main, including when a callback frees the surface. Late GPU
+completions cannot overwrite a newer generation. The lease ends with the callback; scanout and
+an immutable surface after callback return are not promised.
+
 The wrapper patch, `patches/libghostty-spm-async-rendering.patch`, installs a registration for
 the exact surface, layer, and generation. Replacement and free unregister before releasing the
 surface. Queued native publications retain their registration and reject retired callback
@@ -81,7 +88,8 @@ scripts/build-ghostty.sh /tmp/GhosttyKit.xcframework
 The script fetches exact source revisions, applies both patch stacks, builds with two jobs, and
 packages the universal macOS archive with its header and provenance. The `Native Ghostty artifact`
 workflow runs the same command. `Tests/TerminalFrames/run.py` checks completed pixels through
-first paint, unchanged-cell redraws, resize, surface replacement, and teardown.
+first paint, unchanged-cell redraws, resize, surface replacement, a callback held while new
+output is parsed, and teardown from inside a callback.
 
 Provenance checks detect changes to the checked-in files; they are not independent source-to-binary
 attestation. The native workflow rebuilds the pinned inputs, but byte-for-byte reproducibility is

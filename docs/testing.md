@@ -483,7 +483,10 @@ Fractional body sizes can still stretch Ghostty's drawable. An in-process render
 Run in a claimed macOS GUI guest with Metal available. The harness reads actual IOSurface pixels
 inside the completed-frame callback. It checks first paint, explicit redraw and layer invalidation
 without changed cells, resize dimensions and backing scale, surface replacement, and queued work
-at teardown. Run at both 1x and 2x; this does not replace WindowServer capture proof.
+at teardown. It holds a red IOSurface while a background producer parses blue updates, then
+requires the same pixels to remain unchanged until callback return. A second held callback frees
+the controller and requires preserved pixels and no later notification. Run at both 1x and 2x;
+the fixture prints the actual window backing scale. This does not replace WindowServer capture proof.
 
 ```sh
 swift build --build-system native -j 2 --product Easl
