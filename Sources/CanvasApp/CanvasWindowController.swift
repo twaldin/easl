@@ -328,6 +328,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         mirror.onNotice = { [weak self] text in self?.canvas.showNotice(text) }
         mirror.onRedraw = { [weak self] in self?.canvas.redrawRemoteTiles() }
         mirror.onDrawingMachines = { [weak self] in self?.canvas.drawingMachinesChanged() }
+        mirror.onPromptDelivery = { [weak self] submission, terminal, delivery in
+            self?.composer.promptDeliveryChanged(submission, terminal: terminal, delivery: delivery)
+        }
         sendPrompt = { text, terminal, mentions, answer in
             try await mirror.prompt(text, to: terminal, mentions: mentions, answer: answer)
         }

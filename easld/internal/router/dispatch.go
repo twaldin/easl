@@ -20,6 +20,8 @@ func (r *Router) dispatch(method string, p map[string]any, from Conn) (any, erro
 	switch method {
 	case "system.ping":
 		return map[string]any{"version": float64(api.SchemaVersion), "app": "easl"}, nil
+	case "agent.prompt_epoch":
+		return map[string]any{"promptEpoch": r.promptEpoch}, nil
 	case "app.metrics":
 		if boolParam(p, "watch") {
 			metrics.Shared.Watching()

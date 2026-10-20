@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -203,7 +204,7 @@ func (r *Router) await(c *clients.Client, board, method string, params map[strin
 	}
 	m, ok := result.(map[string]any)
 	if !ok {
-		return nil, fail(api.CodeInternal, "%s answered %s with %s, not an object", c.Name(), method, describe(result))
+		return nil, &clients.Failure{Code: api.CodeInternal, Message: fmt.Sprintf("%s answered %s with %s, not an object", c.Name(), method, describe(result)), Transport: true}
 	}
 	return m, nil
 }

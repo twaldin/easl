@@ -98,6 +98,11 @@ public final class BoardMirror: BoardHost {
     public var onState: ((EaslConnection.State) -> Void)?
     /// Something to tell the user (a write the host refused, a create that failed).
     public var onNotice: ((String) -> Void)?
+    public enum PromptDelivery: Equatable, Sendable {
+        case checking, unknown, delivered, notDelivered
+    }
+    public struct PromptOutcomeUnknown: Error {}
+    public var onPromptDelivery: ((String, ObjectID, PromptDelivery) -> Void)?
     /// Refresh diagram graphs after reconnect, including objects unchanged by the board read.
     public var onRedraw: (() -> Void)?
     /// This viewer as the board's easld's client (docs/design/next.md "The client protocol");
@@ -319,7 +324,7 @@ public final class BoardMirror: BoardHost {
         calls = nil
         attachment = nil
         identity = nil
-        composerOrigins = RemoteComposerOrigins()
+        replays.stopPromptReconciliation()
         connection.serve(nil)
         connection.close()
         diagrams.close()
@@ -345,6 +350,7 @@ public final class BoardMirror: BoardHost {
         linkState = state
         if state != .online { refreshFailure = nil }
         if state == .online { activitySupported = true }
+        replays.promptConnectionChanged(state)
         guard board != nil else { return }
         if state != .online {
             cancelActivity()
@@ -1253,8 +1259,26 @@ public final class BoardMirror: BoardHost {
         guard connection.state == .online, connection.schemaVersion != nil else {
             throw ApiRouter.Failure("unavailable", "\(hostName) is offline (agent.prompt was not sent)")
         }
-        userInput(terminal: terminal)
-        var params: [String: JSONValue] = ["target": .string(terminal), "text": .string(text), "composer": .bool(true)]
+        let ping: JSONValue
+        do {
+            ping = try await connection.request("agent.prompt_epoch", .object([:]), timeout: .seconds(10))
+        } catch let failure as EaslConnection.Failure where failure.isHostResponse && failure.code == "invalid_params" {
+            throw ApiRouter.Failure("unavailable", "Update easl on \(hostName) before sending prompts safely (agent.prompt was not sent)")
+        } catch {
+            throw ApiRouter.Failure("unavailable", "\(hostName) could not confirm safe prompt delivery (agent.prompt was not sent)")
+        }
+        try requireCurrent(generation)
+        guard let epoch = ping["promptEpoch"]?.string, !epoch.isEmpty, epoch.utf8.count <= 80 else {
+            throw ApiRouter.Failure("unavailable", "Update easl on \(hostName) before sending prompts safely (agent.prompt was not sent)")
+        }
+        let submission = "sub_\(UUID().uuidString)"
+        var params: [String: JSONValue] = [
+            "target": .string(terminal), "text": .string(text), "composer": .bool(true),
+            "submission": .object([
+                "id": .string(submission), "epoch": .string(epoch),
+                "createdAt": .string(ISO8601DateFormatter().string(from: Date())),
+            ]),
+        ]
         if answer { params["answer"] = .bool(true) }
         let staged = !answer && !mentions.isEmpty
         var wireMentions: [Mention] = []
@@ -1267,14 +1291,42 @@ public final class BoardMirror: BoardHost {
         }
         do {
             if staged { params["staged"] = try JSONValue.encode(wireMentions) }
-            _ = try await connection.request("agent.prompt", .object(params), timeout: .seconds(30))
-            try requireCurrent(generation)
         } catch {
             composerOrigins.release(wireMentions.map(\.id), for: terminal)
-            if let failure = error as? EaslConnection.Failure {
+            throw error
+        }
+        userInput(terminal: terminal)
+        do {
+            let result: JSONValue
+            do {
+                result = try await connection.request("agent.prompt", .object(params), timeout: .seconds(30))
+            } catch let failure as EaslConnection.Failure where failure.isHostResponse {
                 throw ApiRouter.Failure(failure.code, failure.message)
+            } catch {
+                try await reconcilePrompt(params, submission: submission, terminal: terminal)
+                return
+            }
+            switch result["delivery"]?.string {
+            case "typed", "message":
+                break
+            case "not-delivered":
+                throw ApiRouter.Failure(
+                    result["error"]?["code"]?.string ?? "not_delivered",
+                    result["error"]?["message"]?.string ?? "The host confirmed this prompt was not delivered.")
+            default:
+                try await reconcilePrompt(params, submission: submission, terminal: terminal)
+            }
+        } catch {
+            if !(error is PromptOutcomeUnknown) {
+                composerOrigins.release(wireMentions.map(\.id), for: terminal)
             }
             throw error
+        }
+    }
+
+    private func reconcilePrompt(_ params: [String: JSONValue], submission: String, terminal: ObjectID) async throws {
+        try await replays.reconcilePrompt(params, connection: connection) { [weak self] delivery in
+            self?.onPromptDelivery?(submission, terminal, delivery)
         }
     }
 
