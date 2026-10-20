@@ -45,8 +45,9 @@ class BrowserGateTests(unittest.TestCase):
         first_sharp_event = {"ts_ms": 120, "refresh": True, "format": "h264"}
         first_sharp = gates.visible_gate({"started_ms": 100, "ended_ms": 150, "png": "native.png"},
                                         90, "relay", first_sharp_event, first_sharp_event)
-        self.assertEqual(first_sharp["status"], "complete")
+        self.assertNotEqual(first_sharp["status"], "complete")
         self.assertEqual(first_sharp["phase"], "first_covering_sharp")
+        self.assertNotIn("latency_ms", first_sharp)
 
     def test_jpeg_has_no_sharp_refinement_deadline(self):
         probe = {"stage": "image.assigned", "stream": "page", "format": "h264", "ts_ms": 150}

@@ -50,6 +50,7 @@ import os
 from pathlib import Path
 import select
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -135,8 +136,7 @@ class Trace:
                 event = json.loads(text.split(prefix, 1)[1])
             except ValueError as error:
                 raise RuntimeError(f"Malformed surface trace: {text}") from error
-            if event.get("stage") in ("input.queued", "input.sent", "image.assigned"):
-                events.append({**event, "raw": text})
+            events.append({**event, "raw": text})
         return events
 
 
@@ -242,13 +242,15 @@ def visible_gate(marker, started, mode, covering=None, refresh=None):
         result["phase"] = "before_covering_assignment"
     elif covering and covering.get("refresh") is True:
         result["phase"] = "first_covering_sharp"
+        result["status"] = "first_covering_sharp"
     elif refresh and marker["ended_ms"] >= refresh["ts_ms"]:
         result["phase"] = ("after_sharp_assignment" if marker["started_ms"] >= refresh["ts_ms"]
                            else "overlaps_sharp_assignment")
         result["status"] = "late_marker"
-        result["observed_latency_ms"] = result.pop("latency_ms")
     else:
         result["phase"] = covering.get("format", "unknown") if covering else "unknown"
+    if result["status"] != "complete":
+        result["observed_latency_ms"] = result.pop("latency_ms")
     return result
 
 
@@ -432,10 +434,17 @@ def run(config, args):
         print(json.dumps(summary), flush=True)
         return 0 if len(rows) == count and all(r["gate_a"]["status"] == "complete" and r["gate_b"]["status"] in ("complete", "not_applicable") for r in rows) else 1
     finally:
-        if trace:
-            trace.file.close()
-        source.close()
-        observer.close()
+        try:
+            if trace:
+                try:
+                    shutil.copyfile(config.get("app_log", str(Path(config["dev_home"]) / "app.log")), directory / "app.log")
+                finally:
+                    trace.file.close()
+        finally:
+            try:
+                source.close()
+            finally:
+                observer.close()
 
 
 def main():
