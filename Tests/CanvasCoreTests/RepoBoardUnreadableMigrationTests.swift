@@ -146,19 +146,23 @@ struct RepoBoardUnreadableMigrationTests {
         }
     }
 
-    @Test(arguments: ["unknown", "newer"], [false, true])
-    func unreadableFolderAdoptionRefusesOnlyItsRepository(kind: String, storedTarget: Bool) async throws {
+    @Test(arguments: ["unknown", "newer"], [
+        (storedTarget: false, renamed: false), (storedTarget: true, renamed: false),
+        (storedTarget: false, renamed: true), (storedTarget: true, renamed: true),
+    ])
+    func unreadableFolderAdoptionRefusesOnlyItsRepository(kind: String, scenario: (storedTarget: Bool, renamed: Bool)) async throws {
         let fixture = RepoBoardTests()
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
         let (folder, source) = try await fixture.folderBoard()
         let common = try await fixture.makeRepository(folder)
         let store = BoardStore(directory: fixture.boards)
-        let sourceURL = store.url(for: source.id)
+        let sourceURL = scenario.renamed ? fixture.boards.appendingPathComponent("imported-folder.json") : store.url(for: source.id)
+        if scenario.renamed { try FileManager.default.moveItem(at: store.url(for: source.id), to: sourceURL) }
         let bad = try corrupted(source.snapshot, kind: kind)
         try bad.write(to: sourceURL)
         let targetID = BoardStore.repoID(commonDir: common)
         let targetURL = store.url(for: targetID)
-        if storedTarget {
+        if scenario.storedTarget {
             let target = Board(id: targetID, root: folder)
             target.repo = RepoRecord(commonDir: common)
             target.create(type: .note, props: .object(["markdown": "existing repository board"]))
