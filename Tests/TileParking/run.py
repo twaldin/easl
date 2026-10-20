@@ -99,7 +99,7 @@ def main():
         run.dev('input', 'scroll', 600, 300, -2000, 0, '--mods', 'cmd')
         time.sleep(.5)
         viewport = run.call('view.get')['viewport']
-        note_render = run.call('view.render', {'target': note['id'], 'scale': 1, 'inline': True, 'timeoutMs': 60000})
+        note_render = run.call('view.render', {'target': note['id'], 'scale': 2, 'inline': True, 'timeoutMs': 60000})
         note_image = args.out / 'offscreen-note.png'
         note_image.write_bytes(base64.b64decode(note_render.pop('data'), validate=True))
         note_pixels = scale.frame_text(args.window_helper, note_image)
