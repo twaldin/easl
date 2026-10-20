@@ -9,6 +9,106 @@ final class RemoteReplayQueue {
         case interrupted
     }
 
+    private final class PromptReceipt {
+        let params: [String: JSONValue]
+        let connection: EaslConnection
+        let continuation: CheckedContinuation<Void, Error>
+        let changed: (BoardMirror.PromptDelivery) -> Void
+        var task: Task<Void, Never>?
+
+        init(params: [String: JSONValue], connection: EaslConnection,
+             continuation: CheckedContinuation<Void, Error>,
+             changed: @escaping (BoardMirror.PromptDelivery) -> Void) {
+            self.params = params
+            self.connection = connection
+            self.continuation = continuation
+            self.changed = changed
+        }
+    }
+
+    private var promptReceipts: [String: PromptReceipt] = [:]
+    private var promptReconciliationStopped = false
+
+    func reconcilePrompt(_ params: [String: JSONValue], connection: EaslConnection,
+                         changed: @escaping (BoardMirror.PromptDelivery) -> Void) async throws {
+        let id = params["submission"]?["id"]?.string ?? ""
+        try await withCheckedThrowingContinuation { continuation in
+            guard !promptReconciliationStopped else {
+                changed(.unknown)
+                continuation.resume(throwing: BoardMirror.PromptOutcomeUnknown())
+                return
+            }
+            let receipt = PromptReceipt(params: params, connection: connection,
+                                        continuation: continuation, changed: changed)
+            promptReceipts[id] = receipt
+            changed(promptReconciliationStopped ? .unknown : .checking)
+            checkPrompt(id, receipt)
+        }
+    }
+
+    func promptConnectionChanged(_ state: EaslConnection.State) {
+        guard state == .online else { return }
+        for (id, receipt) in promptReceipts { checkPrompt(id, receipt) }
+    }
+
+    func stopPromptReconciliation() {
+        promptReconciliationStopped = true
+        for receipt in promptReceipts.values {
+            receipt.task?.cancel()
+            receipt.changed(.unknown)
+            receipt.continuation.resume(throwing: BoardMirror.PromptOutcomeUnknown())
+        }
+        promptReceipts.removeAll()
+    }
+
+    private func checkPrompt(_ id: String, _ receipt: PromptReceipt) {
+        guard !promptReconciliationStopped, receipt.task == nil, receipt.connection.state == .online else { return }
+        receipt.task = Task {
+            defer { receipt.task = nil }
+            var params = receipt.params
+            params["reconcile"] = .bool(true)
+            while !Task.isCancelled {
+                let result: JSONValue
+                do {
+                    result = try await receipt.connection.request("agent.prompt", .object(params), timeout: .seconds(30))
+                } catch let failure as EaslConnection.Failure where failure.isHostResponse {
+                    receipt.changed(.unknown)
+                    return
+                } catch {
+                    guard !promptReconciliationStopped else { return }
+                    receipt.changed(.checking)
+                    guard receipt.connection.state == .online else { return }
+                    do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                    continue
+                }
+                guard !promptReconciliationStopped else { return }
+                switch result["delivery"]?.string {
+                case "pending":
+                    receipt.changed(.checking)
+                    do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                case "unknown":
+                    receipt.changed(.unknown)
+                    return
+                case "not-delivered":
+                    promptReceipts.removeValue(forKey: id)
+                    receipt.changed(.notDelivered)
+                    receipt.continuation.resume(throwing: ApiRouter.Failure(
+                        result["error"]?["code"]?.string ?? "not_delivered",
+                        result["error"]?["message"]?.string ?? "The host confirmed this prompt was not delivered."))
+                    return
+                case "typed", "message":
+                    promptReceipts.removeValue(forKey: id)
+                    receipt.changed(.delivered)
+                    receipt.continuation.resume()
+                    return
+                default:
+                    receipt.changed(.unknown)
+                    return
+                }
+            }
+        }
+    }
+
     private struct Redo {
         var made: Int
         var steps: [UndoHistory.Step]

@@ -202,6 +202,7 @@ public final class ApiRouter {
 
     public let registry: BoardRegistry
     private let remoteActivity: RemoteUpdateActivity
+    private let promptSubmissions = PromptSubmissionRegistry()
     /// Types text into a terminal tile (bracketed paste) and presses Enter once the paste landed;
     /// false when the surface isn't attached.
     public var submitToTerminal: ((Board, ObjectID, String) async -> Bool)?
@@ -398,6 +399,7 @@ public final class ApiRouter {
         defer { ApiActivity.shared.ended(method) }
         let params = request["params"] ?? .object([:])
         do {
+            if method == "agent.prompt" { return Self.ok(id, try await prompt(params)) }
             try Self.checkParams(method, params)
             if method == "events.subscribe" {
                 registry.subscribe(connection, board: params["board"]?.string.map { registry.board(id: $0)?.id ?? $0 }, events: params["events"]?.array?.compactMap(\.string))
@@ -409,7 +411,6 @@ public final class ApiRouter {
             if method == "agent.wait" { return try wait(id, params, connection) }
             if method == "agent.inbox" { return try await inbox(id, params, connection) }
             if method == "agent.read" { return Self.ok(id, try await read(params)) }
-            if method == "agent.prompt" { return Self.ok(id, try await prompt(params)) }
             if method == "agent.list" { return Self.ok(id, await agentList()) }
             if method == "agent.restart" { return Self.ok(id, try await restart(params)) }
             if method == "view.render" { return Self.ok(id, try await render(params)) }
@@ -920,6 +921,32 @@ public final class ApiRouter {
     /// `force`: its screen holds a dialog or selector, which would take the text. A terminal whose
     /// message integration died (`Board.agentExited`) takes neither: `unavailable`.
     private func prompt(_ p: JSONValue) async throws -> JSONValue {
+        try await receiptPrompt(p) {
+            try Self.checkParams("agent.prompt", p)
+            return try await self.executePrompt(p)
+        }
+    }
+
+    private func receiptPrompt(_ params: JSONValue, execute: () async throws -> JSONValue) async throws -> JSONValue {
+        switch try promptSubmissions.begin(params) {
+        case .legacy:
+            return try await execute()
+        case .reply(let result):
+            return result
+        case .execute(let id):
+            do {
+                let result = try await execute()
+                promptSubmissions.succeeded(id, result: result)
+                return result
+            } catch {
+                let failure = Self.failure(for: error)
+                promptSubmissions.refused(id, failure: failure)
+                throw failure
+            }
+        }
+    }
+
+    private func executePrompt(_ p: JSONValue) async throws -> JSONValue {
         try Self.checkComposer(p)
         let caller = p["caller"]?.string
         let (board, resolved) = try agentTile(try string(p, "target"), caller: caller)
@@ -1186,8 +1213,18 @@ public final class ApiRouter {
     /// blocked check alone, unlike `force`, carries no mentions, and is queued as an answer only
     /// where the integration submits answers as prompts (`PromptTarget.answersAsPrompt`).
     public func composerPrompt(_ text: String, to terminal: ObjectID, on board: Board, mentions: [Mention], answer: Bool) async throws {
-        guard let tile = board.objects[terminal], tile.type == .terminal else { throw Failure("not_found", "terminal \(terminal) was closed") }
-        _ = try await submitPrompt(text, to: tile, on: board, attached: .composer(answer ? [] : mentions, answer: answer, viewer: nil), caller: nil, force: false)
+        let params: JSONValue = .object([
+            "target": .string(terminal), "text": .string(text), "composer": .bool(true),
+            "answer": .bool(answer), "staged": try JSONValue.encode(answer ? [] : mentions),
+            "submission": .object([
+                "id": .string("sub_" + UUID().uuidString), "epoch": .string(promptSubmissions.epoch),
+                "createdAt": .string(Date().formatted(.iso8601)),
+            ]),
+        ])
+        _ = try await receiptPrompt(params) {
+            guard let tile = board.objects[terminal], tile.type == .terminal else { throw Failure("not_found", "terminal \(terminal) was closed") }
+            return try await self.submitPrompt(text, to: tile, on: board, attached: .composer(answer ? [] : mentions, answer: answer, viewer: nil), caller: nil, force: false)
+        }
     }
 
     private func submitPrompt(_ text: String, to terminal: CanvasObject, on board: Board, attached: Attached, caller sender: ObjectID?, force: Bool) async throws -> JSONValue {
@@ -1539,6 +1576,8 @@ public final class ApiRouter {
         switch method {
         case "system.ping":
             return .object(["version": .number(Double(Self.schemaVersion)), "app": .string("easl")])
+        case "agent.prompt_epoch":
+            return .object(["promptEpoch": .string(promptSubmissions.epoch)])
 
         case "app.metrics":
             if p["watch"]?.bool == true { Metrics.shared.watching() }

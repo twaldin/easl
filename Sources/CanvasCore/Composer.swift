@@ -115,8 +115,7 @@ public struct ComposerState: Codable, Equatable, Sendable {
     public var history: [ComposerDraft]
     /// Terminals picked in the target menu besides the tray's target (`PromptTarget`), each once.
     public var alsoTo: [ObjectID]
-    /// Drafts sent with ⌘↩ that no terminal has taken yet (`sending`, `reached`): kept so
-    /// quitting meanwhile loses nothing (`recoverOutgoing`).
+    /// Submitted drafts whose complete delivery outcome is not yet known.
     public var outgoing: [ComposerDraft]
 
     public static let historyLimit = 100
@@ -172,8 +171,7 @@ public struct ComposerState: Codable, Equatable, Sendable {
         if let index = outgoing.firstIndex(of: sent) { outgoing.remove(at: index) }
     }
 
-    /// Drafts still on their way when the app last quit never reached a terminal: they come
-    /// back ahead of the draft, their tokens staged again.
+    /// Restore drafts the caller has established never reached any terminal.
     @MainActor
     public mutating func recoverOutgoing(on board: Board) {
         guard !outgoing.isEmpty else { return }

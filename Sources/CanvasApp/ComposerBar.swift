@@ -13,6 +13,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     private let scroll = OverlayScrollView()
     private let placeholder = NSTextField(labelWithString: "")
     private let question = NSTextField(labelWithString: "")
+    private let deliveryStatus = NSTextField(labelWithString: "")
     /// "→ name ▾": a click opens `targetMenu` (the board's terminals, several can be checked).
     private let target = NSButton(title: "", target: nil, action: nil)
     /// The draft as last shown or synced, to tell what an edit changed.
@@ -83,6 +84,10 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         question.font = Self.labelFont
         question.lineBreakMode = .byTruncatingTail
         question.isHidden = true
+        deliveryStatus.font = Self.labelFont
+        deliveryStatus.lineBreakMode = .byTruncatingTail
+        deliveryStatus.isHidden = true
+        deliveryStatus.setAccessibilityLabel("Prompt delivery")
         target.isBordered = false
         target.setButtonType(.momentaryChange)
         target.alignment = .right
@@ -91,7 +96,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         target.target = self
         target.action = #selector(targetClicked(_:))
         target.setContentCompressionResistancePriority(.required, for: .horizontal)
-        for view in [question, placeholder, scroll, target] as [NSView] { addSubview(view) }
+        for view in [question, deliveryStatus, placeholder, scroll, target] as [NSView] { addSubview(view) }
         setContentCompressionResistancePriority(NSLayoutConstraint.Priority(490), for: .horizontal)
         showTarget(title: nil, extra: [], hasTerminal: false)
     }
@@ -201,6 +206,14 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         refresh()
     }
 
+    func showDeliveryStatus(_ text: String?, uncertain: Bool) {
+        deliveryStatus.stringValue = text ?? ""
+        deliveryStatus.toolTip = text
+        deliveryStatus.textColor = uncertain ? .systemOrange : .secondaryLabelColor
+        deliveryStatus.isHidden = text == nil
+        refresh()
+    }
+
     /// `title`: the tray's target (nil: none yet); `extra`: the other terminals picked in the
     /// menu, which get the prompt too.
     func showTarget(title: String?, extra: [String], hasTerminal: Bool) {
@@ -222,6 +235,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     func chromeTextChanged() {
         placeholder.font = Self.font
         question.font = Self.labelFont
+        deliveryStatus.font = Self.labelFont
         if let storage = text.textStorage {
             storage.addAttribute(.font, value: Self.font, range: NSRange(location: 0, length: storage.length))
             text.layoutManager?.invalidateLayout(forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil)
@@ -270,7 +284,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     }
 
     override var intrinsicContentSize: NSSize {
-        let questionRow = question.isHidden ? 0 : Self.questionHeight
+        let questionRow = (question.isHidden ? 0 : Self.questionHeight) + (deliveryStatus.isHidden ? 0 : Self.questionHeight)
         guard hasKeyboard else { return NSSize(width: NSView.noIntrinsicMetric, height: Self.unfocusedHeight + questionRow) }
         let desired = max(Self.unfocusedHeight, max(textHeight, lineHeight * 2) + Self.insets.vertical * 2) + questionRow
         let cap = max(Self.unfocusedHeight + questionRow, (window?.contentView?.bounds.height ?? 0) / 2)
@@ -284,6 +298,10 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         if !question.isHidden {
             question.frame = NSRect(x: insets.left, y: 6, width: bounds.width - insets.left - insets.right, height: Self.questionHeight - 2)
             top = Self.questionHeight
+        }
+        if !deliveryStatus.isHidden {
+            deliveryStatus.frame = NSRect(x: insets.left, y: top + 6, width: bounds.width - insets.left - insets.right, height: Self.questionHeight - 2)
+            top += Self.questionHeight
         }
         let targetSize = target.intrinsicContentSize
         let targetWidth = min(ceil(targetSize.width), bounds.width * 0.45)

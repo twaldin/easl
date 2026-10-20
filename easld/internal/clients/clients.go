@@ -54,7 +54,11 @@ type Conn interface {
 }
 
 // Failure is an API error for the caller.
-type Failure struct{ Code, Message string }
+type Failure struct {
+	Code, Message string
+	// Transport means the call ended without a definite answer from the delegate.
+	Transport bool
+}
 
 func (f *Failure) Error() string { return f.Message }
 
@@ -168,10 +172,10 @@ func (r *Registry) Attach(conn Conn, a Attachment) (*Client, []string, error) {
 		if a.Host != "" {
 			who += " on " + a.Host
 		}
-		return nil, nil, &Failure{api.CodeUnavailable, fmt.Sprintf("%s is older than this board's server (schema version %d, the server's %d); update it", who, a.Version, api.SchemaVersion)}
+		return nil, nil, &Failure{Code: api.CodeUnavailable, Message: fmt.Sprintf("%s is older than this board's server (schema version %d, the server's %d); update it", who, a.Version, api.SchemaVersion)}
 	}
 	if a.Focused != "" && !slices.Contains(a.Boards, a.Focused) {
-		return nil, nil, &Failure{api.CodeInvalidParams, "focused names " + a.Focused + ", which isn't one of boards"}
+		return nil, nil, &Failure{Code: api.CodeInvalidParams, Message: "focused names " + a.Focused + ", which isn't one of boards"}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -266,7 +270,7 @@ func (r *Registry) RemoveBoard(board string) []string {
 	for id, pending := range r.pending {
 		if pending.board == board {
 			delete(r.pending, id)
-			pending.done <- answer{failure: &Failure{api.CodeNotFound, "board " + board + " was closed"}}
+			pending.done <- answer{failure: &Failure{Code: api.CodeNotFound, Message: "board " + board + " was closed", Transport: true}}
 		}
 	}
 	return boardIDs(changed)
@@ -472,19 +476,19 @@ const untilClosed time.Duration = -1
 
 func (r *Registry) call(ctx context.Context, c *Client, board, method string, params map[string]any, deadline time.Duration, open *opening) (any, *Failure) {
 	if ctx.Err() != nil {
-		return nil, &Failure{api.CodeUnavailable, method + " was cancelled"}
+		return nil, &Failure{Code: api.CodeUnavailable, Message: method + " was cancelled"}
 	}
 	r.mu.Lock()
 	if board != "" && !c.boards[board] {
 		r.mu.Unlock()
-		return nil, &Failure{api.CodeNotFound, "board " + board + " was closed"}
+		return nil, &Failure{Code: api.CodeNotFound, Message: "board " + board + " was closed"}
 	}
 	request := map[string]any{"method": method, "params": params}
 	if open != nil {
 		if r.exact(open.identity, open.board, method) != c {
 			name := c.Name()
 			r.mu.Unlock()
-			return nil, &Failure{api.CodeUnavailable, name + " no longer draws " + open.identity + "'s pages on board " + open.board}
+			return nil, &Failure{Code: api.CodeUnavailable, Message: name + " no longer draws " + open.identity + "'s pages on board " + open.board}
 		}
 		request["surfaceEvents"] = open.events
 	}
@@ -504,9 +508,9 @@ func (r *Registry) call(ctx context.Context, c *Client, board, method string, pa
 		}
 		r.mu.Unlock()
 	}()
-	disconnected := &Failure{api.CodeUnavailable, name + " disconnected before answering " + method}
+	disconnected := &Failure{Code: api.CodeUnavailable, Message: name + " disconnected before answering " + method, Transport: true}
 	if !sent {
-		return nil, disconnected
+		return nil, &Failure{Code: disconnected.Code, Message: disconnected.Message}
 	}
 	var expired <-chan time.Time
 	if deadline != untilClosed {
@@ -518,9 +522,9 @@ func (r *Registry) call(ctx context.Context, c *Client, board, method string, pa
 	case a := <-pending.done:
 		return a.result, a.failure
 	case <-ctx.Done():
-		return nil, &Failure{api.CodeUnavailable, name + "'s " + method + " was cancelled"}
+		return nil, &Failure{Code: api.CodeUnavailable, Message: name + "'s " + method + " was cancelled", Transport: true}
 	case <-expired:
-		timedOut := &Failure{api.CodeUnavailable, name + " didn't answer " + method + " within " + seconds(deadline) + " s"}
+		timedOut := &Failure{Code: api.CodeUnavailable, Message: name + " didn't answer " + method + " within " + seconds(deadline) + " s", Transport: true}
 		if open == nil {
 			return nil, timedOut
 		}
@@ -599,7 +603,7 @@ func (r *Registry) Answer(conn Conn, line map[string]any) bool {
 	if code == "" {
 		code = api.CodeInternal
 	}
-	pending.done <- answer{failure: &Failure{code, message}}
+	pending.done <- answer{failure: &Failure{Code: code, Message: message}}
 	return true
 }
 

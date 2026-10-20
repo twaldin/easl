@@ -666,10 +666,10 @@ func (r *Router) finalAnswer(terminal model.Object, b *board.Board, p map[string
 	return result, nil
 }
 
-// prompt is agent.prompt: to a terminal whose integration takes messages it queues one
-// (queueMessage); into any other, and a composer's prompt into any terminal, a client types it,
+// executePrompt queues agent.prompt for an integration that takes messages; otherwise, and
+// for a composer's prompt into any terminal, a client types it,
 // after the board's refusals, with the mentions the board hands over.
-func (r *Router) prompt(p map[string]any) (any, error) {
+func (r *Router) executePrompt(p map[string]any) (any, error) {
 	if err := checkComposer(p); err != nil {
 		return nil, err
 	}
@@ -785,6 +785,9 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 	}
 	current, ok := b.Objects()[terminal.ID]
 	if !ok {
+		if p["submission"] != nil {
+			return result, nil
+		}
 		b.Commit(ids)
 		return nil, fail(api.CodeNotFound, "terminal %s was closed", terminal.ID)
 	}
@@ -883,6 +886,9 @@ func (r *Router) forwardComposer(p map[string]any, b *board.Board, terminal mode
 	}
 	current, ok := b.Objects()[terminal.ID]
 	if !ok {
+		if p["submission"] != nil {
+			return result, nil
+		}
 		if queued != "" {
 			b.WithdrawComposerPrompt(queued)
 		}

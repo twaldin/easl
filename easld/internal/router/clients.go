@@ -199,10 +199,16 @@ func (r *Router) await(c *clients.Client, board, method string, params map[strin
 	result, failure := r.clients.Call(context.Background(), c, board, method, params, deadline)
 	r.reg.Mu.Lock()
 	if failure != nil {
+		if method == "agent.prompt" && params["submission"] != nil && failure.Transport {
+			return promptDelivery("unknown"), nil
+		}
 		return nil, failure
 	}
 	m, ok := result.(map[string]any)
 	if !ok {
+		if method == "agent.prompt" && params["submission"] != nil {
+			return promptDelivery("unknown"), nil
+		}
 		return nil, fail(api.CodeInternal, "%s answered %s with %s, not an object", c.Name(), method, describe(result))
 	}
 	return m, nil
