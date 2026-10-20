@@ -123,6 +123,18 @@ private enum ComposerDelivery {
                     "a slow second target must not repeat or reorder the first prompt in recall history")
     }
 
+    static func ordinarySendKeepsIdleComposerHeight() async throws {
+        let f = Fixture(draft: "ordinary prompt")
+        defer { f.window.close() }
+        let height = f.bar.intrinsicContentSize.height
+        f.controller.send = { _, _, _, _ in }
+        await f.controller.sendDraft()!.value
+        try require(f.controller.state.history.map(\.text) == ["ordinary prompt"] && f.bar.draft.isEmpty,
+                    "the ordinary prompt must reach its target")
+        try require(f.status.isHidden && f.bar.intrinsicContentSize.height == height,
+                    "a send without reconciliation must not add a status row or move the composer")
+    }
+
     static func main() {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
@@ -132,6 +144,7 @@ private enum ComposerDelivery {
 
     static func runCases() async {
         let cases: [(String, @MainActor () async throws -> Void)] = [
+            ("ordinary sends preserve composer height", ordinarySendKeepsIdleComposerHeight),
             ("current receipt overrides old warning", currentReceiptOverridesPreviousWarning),
             ("dismissal retains unknown outgoing", dismissPreviousWarningWithoutResending),
             ("refusal precedes another target's unknown outcome", refusalAppearsWhileAnotherTargetIsUnknown),

@@ -3,6 +3,7 @@ package router
 import (
 	"fmt"
 	"maps"
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -233,7 +234,7 @@ func TestPromptReceiptsMetadataValidationAndReconcileRequirement(t *testing.T) {
 }
 
 func TestPromptReceiptsDelegateUncertaintyRetainsMentionsAndDefiniteRefusalWithdraws(t *testing.T) {
-	for _, outcome := range []string{"disconnect", "malformed", "refused"} {
+	for _, outcome := range []string{"disconnect", "malformed", "nonfinite", "refused"} {
 		t.Run(outcome, func(t *testing.T) {
 			uncertain := outcome != "refused"
 			f := newFixture(t)
@@ -251,6 +252,8 @@ func TestPromptReceiptsDelegateUncertaintyRetainsMentionsAndDefiniteRefusalWithd
 				app.close()
 			} else if outcome == "malformed" {
 				f.router.clients.Answer(app, map[string]any{"id": forwarded["id"], "ok": true, "result": "not a receipt"})
+			} else if outcome == "nonfinite" {
+				f.router.clients.Answer(app, map[string]any{"id": forwarded["id"], "ok": true, "result": map[string]any{"delivery": "typed", "value": math.NaN()}})
 			} else {
 				f.router.clients.Answer(app, map[string]any{"id": forwarded["id"], "ok": false, "error": map[string]any{"code": api.CodeUnavailable, "message": "no terminal surface"}})
 			}
