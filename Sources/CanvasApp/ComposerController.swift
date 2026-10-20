@@ -113,11 +113,18 @@ final class ComposerController {
         scheduleSave()
     }
 
-    /// The bar shows `draft`: rebuilt when its text or tokens changed, else its tokens rebound
-    /// (numbers, labels), keeping the text and its undo.
     private func show(_ draft: ComposerDraft, caret: Int?, replacing before: ComposerDraft) {
-        if draft.text != before.text || draft.tokens.map(\.id) != before.tokens.map(\.id) {
-            bar.show(draft, caret: caret, board: board)
+        if draft.text != before.text {
+            let undo = bar.text.undoManager
+            if undo?.isUndoing == true || undo?.isRedoing == true {
+                // NSTextView must finish applying its undo before its storage can be replaced.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.bar.draft == before else { return }
+                    self.bar.show(draft, caret: caret, board: self.board)
+                }
+            } else {
+                bar.show(draft, caret: caret, board: board)
+            }
         } else {
             bar.rebind(draft, board: board)
         }

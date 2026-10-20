@@ -69,6 +69,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         text.setAccessibilityLabel("Prompt")
         text.onSend = { [weak self] in self?.onSend?() }
         text.onRecall = { [weak self] older in self?.onRecall?(older) ?? false }
+        text.onCompositionChange = { [weak self] in self?.refresh() }
         text.onFocusChange = { [weak self] in self?.focusChanged() }
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -355,8 +356,14 @@ final class ComposerTextView: NSTextView {
     var onSend: (() -> Void)?
     var onRecall: ((Bool) -> Bool)?
     var onFocusChange: (() -> Void)?
+    var onCompositionChange: (() -> Void)?
     /// What had the keyboard before the composer took it, to give it back on Esc.
     weak var previous: NSResponder?
+
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        onCompositionChange?()
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         // The window offers key equivalents to every view; only the focused composer sends.
