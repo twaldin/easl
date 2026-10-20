@@ -263,10 +263,10 @@ class Observer:
             time.sleep(.005)
         raise TimeoutError(f"Missing own-window receipt: {name}")
 
-    def start(self):
+    def start(self, capture_ready=False):
         x, y = self.point(*self.config.get("marker", [525, 88]), native=False)
         self.started = True
-        self._control("start", x=x, y=y)
+        self._control("start", x=x, y=y, **({"captureReady": 1} if capture_ready else {}))
         ready = self._wait("ready.json")
         self._receipt("starting.json")
         native_timing(ready)

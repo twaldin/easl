@@ -1,0 +1,475 @@
+{
+  "scenario": "image-preview",
+  "description": "Image preview uses explicit original selection and preserves request and board-file authorization errors.",
+  "recordedOn": "Swift 6.4 native image.preview, guest-local scratch",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      },
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 400,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "path": "original.svg"
+        },
+        "type": "image"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 400,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "path": "original.svg"
+            },
+            "rev": "<rev:1>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 400,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "path": "original.svg"
+            },
+            "rev": "<rev:1>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "image.preview",
+      "method": "image.preview",
+      "request": {
+        "id": "<obj:1>",
+        "maxPixels": 128
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "kind": "original"
+        }
+      },
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "image.preview",
+      "method": "image.preview",
+      "request": {
+        "id": "<obj:1>",
+        "maxPixels": 128.5
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r4",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "image.preview",
+      "method": "image.preview",
+      "request": {
+        "id": "<obj:1>",
+        "maxPixels": 63
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r5",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "image.preview",
+      "method": "image.preview",
+      "request": {
+        "id": "<obj:1>",
+        "maxPixels": 2049
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r6",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "image.preview",
+      "method": "image.preview",
+      "request": {
+        "id": "<obj:1>",
+        "maxPixels": "128"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r7",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "path": "missing.png"
+        }
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 400,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "path": "missing.png"
+            },
+            "rev": "<rev:2>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 400,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "path": "missing.png"
+            },
+            "rev": "<rev:2>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "image.preview",
+      "method": "image.preview",
+      "request": {
+        "id": "<obj:1>",
+        "maxPixels": 128
+      },
+      "response": {
+        "error": {
+          "code": "not_found"
+        },
+        "id": "r9",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "path": "../outside.png"
+        }
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 400,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "path": "../outside.png"
+            },
+            "rev": "<rev:3>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 400,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "path": "../outside.png"
+            },
+            "rev": "<rev:3>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "image.preview",
+      "method": "image.preview",
+      "request": {
+        "id": "<obj:1>",
+        "maxPixels": 128
+      },
+      "response": {
+        "error": {
+          "code": "refused"
+        },
+        "id": "r11",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 200,
+          "x": 500,
+          "y": 0
+        },
+        "props": {
+          "text": "not an image"
+        },
+        "type": "note"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 200,
+              "x": 500,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "text": "not an image"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "warnings": [
+            "unknown prop \"text\" for note (kept, but nothing reads it; note props: key, markdown, ref, refSha, root, title, zoom)"
+          ]
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 200,
+              "x": 500,
+              "y": 0
+            },
+            "id": "<obj:2>",
+            "props": {
+              "text": "not an image"
+            },
+            "rev": "<rev:1>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "z": 2
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "image.preview",
+      "method": "image.preview",
+      "request": {
+        "id": "<obj:2>",
+        "maxPixels": 128
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r13",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Host-specific diagnostics are not the error-code contract."
+      }
+    }
+  ]
+}

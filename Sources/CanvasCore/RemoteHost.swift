@@ -58,7 +58,7 @@ public struct RemoteHost: Codable, Hashable, Sendable {
 
     /// Never prompt (there's no terminal to answer in), give up on an unreachable host in 10 s,
     /// and notice a dead link in 30 s instead of waiting for TCP.
-    static let batchOptions = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"]
+    static let batchOptions = ["-o", "Compression=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"]
 
     /// The host's API: its socket relayed over ssh's stdio.
     public func connection(backoff: EaslConnection.Backoff = .standard) -> EaslConnection {

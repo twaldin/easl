@@ -74,7 +74,8 @@ enum DevSurfaceObservation {
                                        y: (window.frame.maxY - screen.y) / window.frame.height)
                 let output = try OwnWindowCapture(session: session, directory: URL(fileURLWithPath: directory),
                                                  window: number, fraction: fraction, size: window.frame.size,
-                                                 contentPoint: CGPoint(x: x, y: y), backingScale: window.backingScaleFactor)
+                                                 contentPoint: CGPoint(x: x, y: y), backingScale: window.backingScaleFactor,
+                                                 captureReady: fields["captureReady"] == "1")
                 capture = output
                 closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
                     Task { @MainActor in
@@ -166,6 +167,7 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
     private let size: CGSize
     private let contentPoint: CGPoint
     private let backingScale: CGFloat
+    private let captureReady: Bool
     private let queue = DispatchQueue(label: "canvas.dev.own-window-observation")
     private let origin: ProbeClock
     private var previous: ProbeClock?
@@ -182,7 +184,7 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
     private var armed: Arm?
     private var usedLabels: Set<String> = []
 
-    init(session: String, directory: URL, window: Int, fraction: CGPoint, size: CGSize, contentPoint: CGPoint, backingScale: CGFloat) throws {
+    init(session: String, directory: URL, window: Int, fraction: CGPoint, size: CGSize, contentPoint: CGPoint, backingScale: CGFloat, captureReady: Bool) throws {
         self.session = session
         self.directory = directory
         self.window = window
@@ -190,6 +192,7 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
         self.size = size
         self.contentPoint = contentPoint
         self.backingScale = backingScale
+        self.captureReady = captureReady
         let clock = ProbeClock()
         origin = clock
         super.init()
@@ -356,21 +359,14 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
                 (String(describing: $0.key), ["value": String(describing: $0.value), "type": String(describing: Swift.type(of: $0.value))])
             })
             if !ready {
+                if captureReady {
+                    fields["png"] = try saveFrame(base, width: width, height: height, stride: stride, file: "ready-frame.png").path
+                }
                 ready = true
                 try emit("screen.ready", file: "ready.json", fields: fields)
             }
             if matches, let arm = armed {
-                let png = directory.appendingPathComponent("\(arm.label)-native.png")
-                let bytes = Data(bytes: base, count: stride * height)
-                guard let provider = CGDataProvider(data: bytes as CFData),
-                      let cg = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: stride,
-                                       space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: [.byteOrder32Little, CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)],
-                                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { throw ProbeError("cannot retain native evidence") }
-                let data = NSMutableData()
-                guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { throw ProbeError("cannot create native PNG") }
-                CGImageDestinationAddImage(destination, cg, nil)
-                guard CGImageDestinationFinalize(destination) else { throw ProbeError("cannot encode native PNG") }
-                try writeProbeArtifact(data as Data, to: png)
+                let png = try saveFrame(base, width: width, height: height, stride: stride, file: "\(arm.label)-native.png")
                 fields["sample"] = arm.label
                 fields["target"] = arm.target
                 fields["arm_ticks"] = String(arm.ticks)
@@ -379,6 +375,21 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
                 armed = nil
             }
         } catch { fail(error) }
+    }
+
+    private func saveFrame(_ base: UnsafeRawPointer, width: Int, height: Int, stride: Int, file: String) throws -> URL {
+        let png = directory.appendingPathComponent(file)
+        let bytes = Data(bytes: base, count: stride * height)
+        guard let provider = CGDataProvider(data: bytes as CFData),
+              let cg = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: stride,
+                               space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: [.byteOrder32Little, CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)],
+                               provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { throw ProbeError("cannot retain native evidence") }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { throw ProbeError("cannot create native PNG") }
+        CGImageDestinationAddImage(destination, cg, nil)
+        guard CGImageDestinationFinalize(destination) else { throw ProbeError("cannot encode native PNG") }
+        try writeProbeArtifact(data as Data, to: png)
+        return png
     }
 
     private func check(_ clock: ProbeClock) throws {

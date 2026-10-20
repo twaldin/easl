@@ -1,6 +1,6 @@
 module github.com/twaldin/easl/easld
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/clipperhouse/uax29/v2 v2.7.0
@@ -12,5 +12,7 @@ require (
 	golang.org/x/sys v0.45.0
 	golang.org/x/text v0.37.0
 )
+
+require golang.org/x/image v0.41.0
 
 replace github.com/twaldin/easl/conformance => ../conformance

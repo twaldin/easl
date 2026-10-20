@@ -6,14 +6,20 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "08ac190683a695c3"
+const SchemaHash = "837470a7f4063015"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
 	// params failed schema validation.
 	CodeInvalidParams = "invalid_params"
-	// referenced object, mention, or agent does not exist.
+	// referenced object, mention, agent, or authorized host file does not exist.
 	CodeNotFound = "not_found"
+	// host file request is outside its board-image authorization policy.
+	CodeRefused = "refused"
+	// host image file exceeds the 4194304-byte board-image limit.
+	CodeTooLarge = "too_large"
+	// authorized host file cannot be read, changed during its descriptor read, or contains invalid PNG/JPEG raster data.
+	CodeUnreadable = "unreadable"
 	// rev mismatch on update; re-read and retry.
 	CodeConflict = "conflict"
 	// method known but not implemented by this build.
@@ -38,6 +44,10 @@ type ParamSpec struct {
 
 // Methods is each method's ParamSpec: what the server checks every request against, and names in its `invalid_params` errors.
 var Methods = map[string]ParamSpec{
+	"image.preview": {
+		Accepted: []string{"id", "maxPixels"},
+		Required: []string{"id", "maxPixels"},
+	},
 	"surface.stream": {
 		Accepted: []string{"id", "scale", "format"},
 		Required: []string{"id"},
@@ -303,6 +313,18 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"items"},
 	},
 }
+
+type HostFileVersion struct {
+	// Lexically normalized request board root, matching HostFiles metadata.
+	Root string `json:"root"`
+	// Canonical absolute file path.
+	Path string `json:"path"`
+	// dev:ino:size:mtime_ns:ctime_ns from the stable descriptor used to read the bytes.
+	Stamp string `json:"stamp"`
+}
+
+// ImagePreview is a union of JSON objects (variants: "original", "preview"); decode it as a generic map.
+type ImagePreview = map[string]any
 
 // ViewerId: A remote window's in-memory identity, retained across reconnects and scoped to that window's edits and composer returns.
 type ViewerId = string
