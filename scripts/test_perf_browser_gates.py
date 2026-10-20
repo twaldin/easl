@@ -29,9 +29,9 @@ class BrowserGateTests(unittest.TestCase):
                 {"gate_a": {"status": "source_count_failure"}},
                 {"gate_a": {"status": "deadline_failure"}},
                 {"gate_a": {"status": "complete", "latency_ms": 300}}]
-        summary = gates.summarize(rows, "gate_a")
-        self.assertEqual(summary["denominator"], 4)
-        self.assertEqual(summary["outcomes"], {"complete": 2, "source_count_failure": 1, "deadline_failure": 1})
+        summary = gates.summarize(rows, "gate_a", 5)
+        self.assertEqual(summary["denominator"], 5)
+        self.assertEqual(summary["outcomes"], {"complete": 2, "source_count_failure": 1, "deadline_failure": 1, "not_attempted": 1})
         self.assertEqual(summary["completed_subset"], {"n": 2, "median_ms": 200, "p95_ms": 300, "max_ms": 300})
 
     def test_sharp_only_or_ambiguous_marker_is_not_an_early_motion_response(self):
@@ -43,20 +43,29 @@ class BrowserGateTests(unittest.TestCase):
             self.assertEqual(result["status"], "late_marker")
             self.assertNotIn("latency_ms", result)
         first_sharp_event = {"ts_ms": 120, "refresh": True, "format": "h264"}
-        first_sharp = gates.visible_gate({"started_ms": 100, "ended_ms": 150, "png": "native.png"},
-                                        90, "relay", first_sharp_event, first_sharp_event)
-        self.assertNotEqual(first_sharp["status"], "complete")
-        self.assertEqual(first_sharp["phase"], "first_covering_sharp")
-        self.assertNotIn("latency_ms", first_sharp)
+        for captured in ((100, 110), (100, 150)):
+            first_sharp = gates.visible_gate({"started_ms": captured[0], "ended_ms": captured[1], "png": "native.png"},
+                                            90, "relay", first_sharp_event, first_sharp_event)
+            self.assertEqual(first_sharp["status"], "first_covering_sharp")
+            self.assertEqual(first_sharp["phase"], "first_covering_sharp")
+            self.assertNotIn("latency_ms", first_sharp)
 
     def test_jpeg_has_no_sharp_refinement_deadline(self):
-        probe = {"stage": "image.assigned", "stream": "page", "format": "h264", "ts_ms": 150}
-        events = [probe, {"stage": "image.assigned", "stream": "page", "format": "jpeg", "ts_ms": 170},
-                  {"stage": "image.assigned", "stream": "other", "format": "h264", "ts_ms": 180}]
-        image_format = gates.last_assigned_format(events, "page", 100, 200)
-        result = gates.sharp_gate(probe, None, 110, 100, image_format)
+        probe = {"stage": "image.assigned", "stream": "page", "input": 6, "format": "h264", "ts_ms": 150}
+        events = [probe, {"stage": "image.assigned", "stream": "page", "input": 6, "format": "jpeg", "ts_ms": 170},
+                  {"stage": "image.assigned", "stream": "other", "input": 6, "format": "h264", "ts_ms": 180}]
+        image_format = gates.last_assigned_format(events, "page", 6, 100, 200)
+        result = gates.sharp_gate(probe, None, 110, 100, 6, image_format)
         self.assertEqual(result["status"], "not_applicable")
         self.assertNotIn("latency_ms", result)
+
+    def test_later_watermark_jpeg_cannot_hide_missing_refinement(self):
+        motion = {"stage": "image.assigned", "stream": "page", "input": 6, "format": "h264", "ts_ms": 150}
+        later = {"stage": "image.assigned", "stream": "page", "input": 7, "format": "jpeg", "ts_ms": 170}
+        for assignments in ([motion, later], [later]):
+            image_format = gates.last_assigned_format(assignments, "page", 6, 100, 200)
+            result = gates.sharp_gate(assignments[0], None, 110, 100, 6, image_format)
+            self.assertEqual(result["status"], "deadline_failure")
 
     def test_batch_shape_distinguishes_merged_clicks_from_split_or_missing_sends(self):
         queued = [{"stage": "input.queued", "stream": "page", "seq": 5, "ts_ms": 110},

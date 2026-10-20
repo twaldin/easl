@@ -213,15 +213,17 @@ def endpoints(events, stream, started, deadline_ms):
     return watermark, last_input, covering, refresh
 
 
-def last_assigned_format(events, stream, started, deadline_ms):
+def last_assigned_format(events, stream, watermark, started, deadline_ms):
     assigned = [e for e in events if e["stage"] == "image.assigned" and e["stream"] == stream
+                and watermark is not None and e.get("input") == watermark
                 and started <= e["ts_ms"] <= deadline_ms and e.get("format")]
     latest = max(assigned, key=lambda e: e["ts_ms"], default={})
     return latest.get("format")
 
 
-def sharp_gate(covering, refresh, last_input, started, image_format=None):
-    image_format = image_format or (covering or {}).get("format")
+def sharp_gate(covering, refresh, last_input, started, watermark, image_format=None):
+    if image_format is None and watermark is not None and (covering or {}).get("input") == watermark:
+        image_format = covering.get("format")
     if image_format in ("jpeg", "png"):
         return {"status": "not_applicable", "reason": "no_idle_refresh", "format": image_format}
     if refresh is None:
@@ -238,11 +240,11 @@ def visible_gate(marker, started, mode, covering=None, refresh=None):
               "observed_ms": marker["ended_ms"], "observation": marker["png"]}
     if mode == "direct":
         result["phase"] = "native_direct"
-    elif covering and marker["ended_ms"] < covering["ts_ms"]:
-        result["phase"] = "before_covering_assignment"
     elif covering and covering.get("refresh") is True:
         result["phase"] = "first_covering_sharp"
         result["status"] = "first_covering_sharp"
+    elif covering and marker["ended_ms"] < covering["ts_ms"]:
+        result["phase"] = "before_covering_assignment"
     elif refresh and marker["ended_ms"] >= refresh["ts_ms"]:
         result["phase"] = ("after_sharp_assignment" if marker["started_ms"] >= refresh["ts_ms"]
                            else "overlaps_sharp_assignment")
@@ -280,14 +282,16 @@ def diagnostics(rows):
     return {"input_request_counts": batches, "response_phases": phases, "assigned_formats": formats}
 
 
-def summarize(rows, gate):
+def summarize(rows, gate, requested):
     complete = [r[gate]["latency_ms"] for r in rows if r[gate]["status"] == "complete"]
     statuses = {}
     for row in rows:
         status = row[gate]["status"]
         statuses[status] = statuses.get(status, 0) + 1
+    if requested > len(rows):
+        statuses["not_attempted"] = requested - len(rows)
     ordered = sorted(complete)
-    return {"denominator": len(rows), "outcomes": statuses, "completed_subset": {
+    return {"denominator": requested, "outcomes": statuses, "completed_subset": {
         "n": len(ordered), "median_ms": (ordered[len(ordered)//2] + ordered[(len(ordered)-1)//2]) / 2 if ordered else None,
         "p95_ms": ordered[math.ceil(.95 * len(ordered))-1] if ordered else None,
         "max_ms": max(ordered, default=None)}}
@@ -377,8 +381,8 @@ def run(config, args):
                         row["trace"].extend(trace.poll())
                         watermark, last_input, covering, refresh = endpoints(row["trace"], config["stream"], started, deadline_ms)
                         row.update(input_watermark=watermark, internal_covering_assignment=covering, internal_refresh_assignment=refresh)
-                        image_format = last_assigned_format(row["trace"], config["stream"], started, deadline_ms)
-                        row["gate_b"] = sharp_gate(covering, refresh, last_input, started, image_format)
+                        image_format = last_assigned_format(row["trace"], config["stream"], watermark, started, deadline_ms)
+                        row["gate_b"] = sharp_gate(covering, refresh, last_input, started, watermark, image_format)
                     if first_marker is not None:
                         if not trace or row["gate_b"]["status"] in ("complete", "not_applicable"):
                             break
@@ -387,8 +391,8 @@ def run(config, args):
                     row["trace"].extend(trace.poll())
                     watermark, last_input, covering, refresh = endpoints(row["trace"], config["stream"], started, deadline_ms)
                     row.update(input_watermark=watermark, internal_covering_assignment=covering, internal_refresh_assignment=refresh)
-                    row["assigned_format"] = last_assigned_format(row["trace"], config["stream"], started, deadline_ms)
-                    row["gate_b"] = sharp_gate(covering, refresh, last_input, started, row["assigned_format"])
+                    row["assigned_format"] = last_assigned_format(row["trace"], config["stream"], watermark, started, deadline_ms)
+                    row["gate_b"] = sharp_gate(covering, refresh, last_input, started, watermark, row["assigned_format"])
                     row["input_batch_shape"] = input_batch_shape(row["trace"], config["stream"], started, deadline_ms)
                     if watermark is None:
                         row["gate_b"]["reason"] = "missing_input_watermark"
@@ -424,12 +428,12 @@ def run(config, args):
                         row["gate_b"] = {"status": "error"}
             save(directory / f"row-{sample:03d}.json", row)
             save(directory / "results.json", {"metadata": metadata, "rows": rows,
-                 "gate_a": summarize(rows, "gate_a"), "gate_b": summarize(rows, "gate_b"), "diagnostics": diagnostics(rows)})
+                 "gate_a": summarize(rows, "gate_a", count), "gate_b": summarize(rows, "gate_b", count), "diagnostics": diagnostics(rows)})
             print(json.dumps({"sample": sample, "gate_a": row["gate_a"], "gate_b": row["gate_b"], "directory": str(directory)}), flush=True)
             if "error" in row:
                 break
         summary = {"directory": str(directory), "requested": count, "attempted": len(rows),
-                   "unattempted": count - len(rows), "gate_a": summarize(rows, "gate_a"), "gate_b": summarize(rows, "gate_b"), "diagnostics": diagnostics(rows)}
+                   "unattempted": count - len(rows), "gate_a": summarize(rows, "gate_a", count), "gate_b": summarize(rows, "gate_b", count), "diagnostics": diagnostics(rows)}
         save(directory / "summary.json", summary)
         print(json.dumps(summary), flush=True)
         return 0 if len(rows) == count and all(r["gate_a"]["status"] == "complete" and r["gate_b"]["status"] in ("complete", "not_applicable") for r in rows) else 1
