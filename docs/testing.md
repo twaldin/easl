@@ -232,6 +232,17 @@ python3 Tests/SceneStacking/run.py --bin-path "$(swift build --build-system nati
 
 The runner uses disposable homes and links the prebuilt `CanvasApp`. It checks actual `view.render` pixels and object order in normal and full-content modes, snapshot metadata, native hit testing, both stacking commands, arrow and ink transitions, and unfilled-interior pass-through. It never rebuilds the app. This is not WindowServer proof. Capture the real overlapping note and rectangle locally and in both remote viewers before and after restacking.
 
+### Move tool input isolation
+
+Use an isolated guest instance with a terminal and a second tile. Press M with the canvas holding the keyboard. Drag the terminal by its live body. Require a changed tile frame, unchanged terminal input, and keyboard focus on the canvas.
+
+Shift-click the second tile and drag either body. One ⌘Z must restore both frames. Escape during a held drag must restore the preview without committing it. After release, Select must be active. With Move on, scroll over each body and require board pan rather than content scroll.
+
+Check hidden-terminal focus separately. Focus the terminal in Select, then pan it far enough offscreen to become a card. Press M and pan it back into view. The terminal must not regain the keyboard. Escape must return to Select without sending a byte to the terminal.
+
+Repeat the body, multi-selection, group, and undo cases on a guest-local scratch host with a second viewer. Read committed frames from the host and capture both viewers by exact PID and window ID.
+
+
 ### Seeing the window
 
 Verify what the screen shows with real pixels: the window itself, or `scripts/dev.sh shot` (with yabai; see "Optional: a machine shared with other agents"), a WindowServer capture of the window. `shot` captures by window id, including on an unviewed Space, without moving or activating the window. Confirm that changed content appears in the capture; hidden surfaces can throttle their rendering.

@@ -13,8 +13,9 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
   Clicking "→ name" opens a menu of the board's terminals (agents first) to check or uncheck; it is kept across restarts. ⌃⌥⇧⌘V pastes the mentions, for an agent without an integration, into the terminal the user is typing in, else into that target; ⌘Z brings the pasted tokens back. A prompt from the composer to a terminal without an integration carries the mentions' context pasted ahead of it.
   Each token shows the number its mention has in the context the agent gets ([1], [2]… in the order the tokens stand), and the user's words after a token are their note about it, so "[2] drop this row" in a prompt means "drop the row the second mention points at". Clicking a token selects what it points at and brings it into view; code lines and note blocks are scrolled to and flashed. A token whose page navigated since says "page changed". Deleting a token, or a second Hyper-click on something staged, takes it out (a notice says so); tile context menus have a Mention item (⇧⌘M). When you are blocked on a question or approval, the composer shows your question and the user's text there is the answer.
 - **Help › Get Started** walks a new user through a first mention on a practice note: Hyper-click it (or ⇧⌘M), then send it with a prompt; each step turns green when done. It opens by itself only on a first launch, until closed; a user who never set up Hyper can reopen it there.
-- **Drawing toolbar** at the top: select (V), rectangle (R), ellipse (O), arrow (A), text (T), ink (P), colors, fill.
+- **Drawing toolbar** at the top: select (V), move (M: drag a tile from anywhere on it, a terminal's body too), rectangle (R), ellipse (O), arrow (A), text (T), ink (P), colors, fill.
   The default ink (Black) is drawn dark over light pages and images and light over the dark board; other colors stay as chosen.
+  Move keeps the keyboard on the canvas and routes scroll to the board. V or Escape returns to Select and cancels a held drag.
 
 ## Reading a board
 

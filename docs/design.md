@@ -66,6 +66,7 @@ With `--own-terminals` (its Linux unit, `easld@.service`, sets it) easld starts 
 | Right-click | Context menu |
 | Shift-click | Add/remove from selection (a title bar, drawing or group label; inside a tile ⇧-click extends the tile's own text or line selection and selects just that tile) |
 | Drag on empty board | Marquee select (box or lasso, a setting): the tiles and drawings it encloses, the groups whose whole region it encloses, and the arrows whose two ends are bound to what it selects (`SelectionScope.marquee`), wherever their route bends |
+| Drag on a tile with the Move tool (M) | Move it and the rest of the selection through the title-bar move pipeline, including live terminal, page, and code bodies. The canvas keeps the keyboard, and scroll pans the board instead of scrolling tile content. Shift-click extends the selection. The tool stays on for consecutive moves. V or Escape returns to Select and cancels a held drag. Empty board still marquee-selects |
 | Hyper-click (Caps Lock → ⌃⌥⇧⌘ via Karabiner) | Stage/unstage a mention; on a group's title or empty interior, the whole group (the innermost, named by its title: its members with their text and the arrows among them) |
 | Hyper-drag on empty board | Marquee mention (one group mention); inside a group too, once the pointer moves 4 pt (less is a click on the group) |
 | Hold Hyper | Outline what would be mentioned under the cursor (a group's whole region over its title or empty interior) |

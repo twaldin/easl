@@ -1262,6 +1262,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     @objc func leaveTile(_ sender: Any?) { canvas.focusedTile.map(canvas.leaveTile) }
 
     @objc func selectTool(_ sender: Any?) { drawing?.tool = .select }
+    @objc func moveTool(_ sender: Any?) { drawing?.tool = .move }
     @objc func rectangleTool(_ sender: Any?) { drawing?.tool = .rect }
     @objc func ellipseTool(_ sender: Any?) { drawing?.tool = .ellipse }
     @objc func arrowTool(_ sender: Any?) { drawing?.tool = .arrow }
@@ -1273,7 +1274,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let selection = canvas.selection
         if remote != nil, let action = item.action, Self.localOnly.contains(action) { return false }
         switch item.action {
-        case #selector(selectTool(_:)), #selector(rectangleTool(_:)), #selector(ellipseTool(_:)),
+        case #selector(selectTool(_:)), #selector(moveTool(_:)), #selector(rectangleTool(_:)), #selector(ellipseTool(_:)),
              #selector(arrowTool(_:)), #selector(textTool(_:)), #selector(penTool(_:)):
             guard let drawing, drawing.editor == nil else { return false }
             let id = item.identifier?.rawValue ?? ""
@@ -1594,8 +1595,9 @@ final class CanvasWindow: NSWindow {
     func handleScroll(_ event: NSEvent, at point: NSPoint) -> Bool {
         let step = ScrollGesture.Step(event)
         if step == .began || step == nil { scrollSequence &+= 1 }
-        guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
-              let canvas = canvas(at: point) else { return false }
+        guard let canvas = (windowController as? CanvasWindowController)?.canvas,
+              canvas.movesTiles() || event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+              self.canvas(at: point) != nil else { return false }
         canvas.scrollWheel(with: event)
         return true
     }

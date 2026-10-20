@@ -436,6 +436,8 @@ final class CanvasTerminalView: TerminalView {
     /// something took it meanwhile. One at a time: focusing any terminal forgets it.
     private static weak var refocusTarget: CanvasTerminalView?
 
+    static func forgetRefocus() { refocusTarget = nil }
+
     /// Redraws, for `easl metrics` (`terminal.draw`) and DevPerf spans: a terminal nobody is
     /// watching should show few (`IdleRedraw`). Counted here, handed to Metrics once a second.
     override func surfaceDidDraw() {

@@ -78,7 +78,7 @@ struct KeyboardShortcutsTests {
         for (id, key) in [("newWindowForTab", "t"), ("openRemote", "o"), ("reviewBranch", "r")] {
             #expect(shortcuts.binding(for: id) == ShortcutBinding(key: key, modifiers: [.control, .option, .command]))
         }
-        for (id, key) in [("selectTool", "v"), ("rectangleTool", "r"), ("ellipseTool", "o"),
+        for (id, key) in [("selectTool", "v"), ("moveTool", "m"), ("rectangleTool", "r"), ("ellipseTool", "o"),
                           ("arrowTool", "a"), ("textTool", "t"), ("penTool", "p")] {
             #expect(shortcuts.binding(for: id) == ShortcutBinding(key: key, modifiers: []))
             try shortcuts.set(nil, for: id)

@@ -1900,6 +1900,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         submenu("Drawing", [
             item("Select", #selector(CanvasWindowController.selectTool(_:))),
+            item("Move", #selector(CanvasWindowController.moveTool(_:))),
             item("Rectangle", #selector(CanvasWindowController.rectangleTool(_:))),
             item("Ellipse", #selector(CanvasWindowController.ellipseTool(_:))),
             item("Arrow", #selector(CanvasWindowController.arrowTool(_:))),
