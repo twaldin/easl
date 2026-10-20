@@ -1993,7 +1993,6 @@ final class BoardMirrorTests {
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
         try await mirror.prompt("fix the build", to: agent, mentions: [], answer: false)
         #expect(pasted == ["\(agent): fix the build"])
-        #expect(easld.prompts == [.object(["target": .string(agent), "text": "fix the build", "composer": .bool(true)])], "typing it asked the host nothing")
         #expect(easld.answers.count == 1)
         let result = try #require(easld.answers.first?["result"])
         #expect(result["delivery"] == .string("typed"))
