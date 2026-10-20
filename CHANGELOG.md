@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Respect native app activity for terminal redraws and automatic update idleness when the HID clock is stale; add per-stage remote echo measurements.
+- Open saved boards with attached arrow previews while obstacle routing finishes in the background; edits and explicit exports still settle their final routes.
 - Remote PNG and JPEG tiles request display-sized previews from the host and load more detail on zoom. Update the Mac app and easld together for `image.preview`.
 - Remote board and terminal SSH connections compress text, code, and metadata.
 - Development observers can retain the first complete native window frame without sending input or changing the canvas.

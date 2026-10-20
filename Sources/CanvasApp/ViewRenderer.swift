@@ -18,9 +18,11 @@ extension CanvasView {
         let excluded = request.exclude
         let origin = CanvasDocumentView.origin
 
-        // Routes as the next frame draws them (a new `avoid` arrow's, not its provisional line):
+        // Export settled routes even while the opening view still shows attached previews:
         // an arrow's outline can decide the region.
-        board.settleArrows?()
+        if let drawing = shapeLayer as? ShapeLayer {
+            drawing.settleArrows(includingSnapshot: true)
+        }
         // Targets first: with `full` their rendered content decides the region.
         var renders: [ObjectID: TileRender] = [:]
         var outlines: [ObjectID: Frame] = [:]
@@ -112,7 +114,9 @@ extension CanvasView {
                 record(group, Frame(x: rect.minX - origin.x, y: rect.minY - origin.y, w: rect.width, h: rect.height))
             }
 
-            board.settleArrows?()
+            if let drawing = shapeLayer as? ShapeLayer {
+                drawing.settleArrows(includingSnapshot: true)
+            }
             let stacked = board.objects.values.filter { renders[$0.id] != nil || $0.type == .shape || $0.type == .arrow }
                 .sorted { ($0.z, $0.id) < ($1.z, $1.id) }
             @MainActor func paint(_ object: CanvasObject) {
