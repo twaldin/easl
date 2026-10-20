@@ -205,7 +205,7 @@ struct ArrowBindingLifecycleTests {
     @Test func deletingABoundObjectLeavesTheArrowEndWhereItWasAndItsOtherEndStillFollows() async throws {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = BoardStore(directory: root.appendingPathComponent("boards"))
-        let board = await store.load(root: root)
+        let board = try await store.load(root: root)
         let left = board.create(type: .shape, props: .object(["kind": .string("rect")]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         let right = board.create(type: .shape, props: .object(["kind": .string("rect")]), frame: Frame(x: 400, y: 0, w: 200, h: 100))
         // Drawn right to left: its direction must survive losing the source.

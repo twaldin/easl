@@ -52,10 +52,10 @@ struct LegacyMigrationTests {
     func install(_ name: LegacyMigration.Name, tag: String) throws -> String {
         let support = migration.support(name)
         let snapshot = support.appendingPathComponent("boards/brd_1/snapshots/obj_9-20260928-101010.png").path
-        let board = #"{"id":"brd_1","objects":[{"id":"obj_9","props":{"path":"\#(snapshot.replacingOccurrences(of: "/", with: "\\/"))"},"type":"image"}],"root":"\/Users\/me\/src\/\#(tag)"}"#
+        let board = #"{"id":"brd_1","revision":1,"objects":[{"id":"obj_9","props":{"path":"\#(snapshot.replacingOccurrences(of: "/", with: "\\/"))"},"type":"image","frame":{"x":0,"y":0,"w":200,"h":100},"z":1,"rev":1,"createdBy":{"kind":"user"},"createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-01T00:00:00Z"}],"root":"\/Users\/me\/src\/\#(tag)"}"#
         try write(board, support.appendingPathComponent("boards/brd_1.json"))
         try write("PNG \(tag)", URL(fileURLWithPath: snapshot))
-        try write(#"{"id":"brd_2","objects":[],"root":"\/Users\/me\/src\/\#(tag)\/wt"}"#, support.appendingPathComponent("boards/pre-repo-migration/brd_2.json"))
+        try write(#"{"id":"brd_2","revision":1,"objects":[],"root":"\/Users\/me\/src\/\#(tag)\/wt"}"#, support.appendingPathComponent("boards/pre-repo-migration/brd_2.json"))
         try write(#"["/Users/me/src/\#(tag)"]"#, support.appendingPathComponent("open-boards.json"))
         try write("{}", support.appendingPathComponent("agent-reports/obj_1/5-42-\(tag).json"))
         try write("def arrange(canvas): pass  # \(tag)\n", url(".\(name.slug)/compositions/grid.py"))
@@ -82,6 +82,37 @@ struct LegacyMigrationTests {
     }
 
     func settings(_ defaults: Domains) throws -> [String: Any] { try #require(defaults.domains[Self.fresh.bundle]) }
+
+    @Test(arguments: ["unknown", "newer", "truncated"], [false, true])
+    func unreadableBoardsStayAtTheirOriginalLocation(_ kind: String, target: Bool) throws {
+        defer { try? FileManager.default.removeItem(at: home) }
+        if target { try install(Self.canvas, tag: "source") }
+        let source = migration.support(Self.canvas)
+        let sourceBefore = target ? try tree(source) : [:]
+        let from = migration.support(target ? Self.fresh : Self.canvas)
+        let file = from.appendingPathComponent("boards/brd_future.json")
+        let original: String
+        switch kind {
+        case "unknown":
+            original = #"{"format":3,"id":"brd_future","root":"/tmp","revision":7,"objects":[{"type":"hologram"}]}"#
+        case "newer":
+            original = #"{"format":99,"id":"brd_future","root":"/tmp","revision":7,"objects":[]}"#
+        default:
+            original = #"{"format":3,"id":"brd_future","objects":["#
+        }
+        try write(original, file)
+        let defaults = Domains()
+        defaults.domains[Self.canvas.bundle] = Self.canvas04
+        let log = migration.run(defaults: defaults, now: Self.now)
+        #expect((try? read(file)) == original)
+        if target {
+            #expect(try tree(source) == sourceBefore)
+        } else {
+            #expect(!FileManager.default.fileExists(atPath: migration.support(Self.fresh).path))
+        }
+        #expect(defaults.domains[Self.fresh.bundle]?[Self.canvas.marker] == nil)
+        #expect(log.contains { $0.contains(file.path) })
+    }
 
     @Test func aFreshInstallMovesNothingAndRecordsThatOnce() throws {
         defer { try? FileManager.default.removeItem(at: home) }

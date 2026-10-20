@@ -35,7 +35,7 @@ final class LayoutApiTests {
         lines[49] = String(repeating: "y", count: 120)
         try lines.joined(separator: "\n").write(to: root.appendingPathComponent("src.txt"), atomically: true, encoding: .utf8)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        board = await registry.open(root: root)
+        board = try await registry.open(root: root)
         let router = ApiRouter(registry: registry)
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
             await router.handle(request, connection: connection)

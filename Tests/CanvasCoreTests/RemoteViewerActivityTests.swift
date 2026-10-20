@@ -17,7 +17,7 @@ final class RemoteViewerActivityTests {
     init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
-        host = await registry.open(root: dir.appendingPathComponent("root"))
+        host = try await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry, remoteActivity: activity)
         self.router = router
         let reports = reports, oldServer = oldServer

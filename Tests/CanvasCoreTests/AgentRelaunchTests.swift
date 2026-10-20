@@ -36,7 +36,7 @@ final class AgentRelaunchTests {
 
     func launch() async throws -> Launch {
         let registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60), agentReports: spool)
-        let board = await registry.open(root: root)
+        let board = try await registry.open(root: root)
         let router = ApiRouter(registry: registry)
         router.submitToTerminal = { [unowned self] _, _, text in
             typed.append(text)
