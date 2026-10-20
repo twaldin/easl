@@ -31,7 +31,7 @@ func receiptRequest(f *fixture, params map[string]any) map[string]any {
 func receiptParams(f *fixture, target, id string) map[string]any {
 	return map[string]any{
 		"target": target, "text": "inspect this prompt", "composer": true,
-		"submission": map[string]any{"id": id, "epoch": f.result("system.ping", map[string]any{"promptReceipts": true})["promptEpoch"], "createdAt": time.Now().UTC().Format(time.RFC3339Nano)},
+		"submission": map[string]any{"id": id, "epoch": f.result("agent.prompt_epoch", map[string]any{})["promptEpoch"], "createdAt": time.Now().UTC().Format(time.RFC3339Nano)},
 	}
 }
 
@@ -75,9 +75,9 @@ func attachReceiptClient(t *testing.T, f *fixture) *receiptClient {
 
 func TestPromptReceiptsPingEpochIsStableAndRouterScoped(t *testing.T) {
 	f := newFixture(t)
-	first := f.result("system.ping", map[string]any{"promptReceipts": true})["promptEpoch"]
-	second := f.result("system.ping", map[string]any{"promptReceipts": true})["promptEpoch"]
-	other := newFixture(t).result("system.ping", map[string]any{"promptReceipts": true})["promptEpoch"]
+	first := f.result("agent.prompt_epoch", map[string]any{})["promptEpoch"]
+	second := f.result("agent.prompt_epoch", map[string]any{})["promptEpoch"]
+	other := newFixture(t).result("agent.prompt_epoch", map[string]any{})["promptEpoch"]
 	if first == "" || first == nil || first != second || first == other {
 		t.Fatalf("epochs: %v %v %v", first, second, other)
 	}

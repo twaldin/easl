@@ -72,7 +72,7 @@ final class PromptSubmissionTests {
     }
 
     func params(_ tile: ObjectID, text: String = "review this", createdAt: Date = Date(), epoch: String? = nil) async throws -> [String: JSONValue] {
-        let currentEpoch = try #require(try await call("system.ping", ["promptReceipts": .bool(true)])["result"]?["promptEpoch"]?.string)
+        let currentEpoch = try #require(try await call("agent.prompt_epoch")["result"]?["promptEpoch"]?.string)
         return [
             "target": .string(tile), "text": .string(text), "composer": .bool(true),
             "submission": .object([
@@ -91,9 +91,9 @@ final class PromptSubmissionTests {
     @Test func pingAdvertisesOneEpochWithoutChangingLegacyPing() async throws {
         let legacy = try await call("system.ping")
         #expect(legacy["result"] == .object(["version": .number(Double(ApiRouter.schemaVersion)), "app": .string("easl")]))
-        let first = try #require(try await call("system.ping", ["promptReceipts": .bool(true)])["result"]?["promptEpoch"]?.string)
+        let first = try #require(try await call("agent.prompt_epoch")["result"]?["promptEpoch"]?.string)
         #expect(UUID(uuidString: first) != nil)
-        #expect(try await call("system.ping", ["promptReceipts": .bool(true)])["result"]?["promptEpoch"] == .string(first))
+        #expect(try await call("agent.prompt_epoch")["result"]?["promptEpoch"] == .string(first))
     }
 
     @Test func duplicateAndReconcileReturnExactSuccessAfterTargetAndMentionDeletion() async throws {
