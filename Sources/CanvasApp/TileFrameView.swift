@@ -445,6 +445,7 @@ final class TileFrameView: NSView {
     }
 
     func endPinching() {
+        if !isNearViewport { pinchHeader = .stale(pinchHeader.view) }
         guard titleBar.superview == nil, pinchHeader.view?.superview === self else { return }
         pinchHeader.view?.removeFromSuperview()
         pinchHeader.view?.layer?.contents = nil
