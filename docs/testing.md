@@ -454,6 +454,7 @@ Inside a claimed GUI guest, link the native routing smoke against the real testi
 
 The smoke checks attached and hit-testable opening previews, initial API bounds, and exact background versus main-thread paths and labels.
 It also checks parallel first previews, cancelled and zero-delta drags, unchanged-route retirement, older opening work against a newer edit, moved endpoints, new arrows, export bounds, appearance-only updates, and changed outlines.
+Held shapes and unfilled group members route at their displayed geometry; group flow responds to membership changes without a frame change.
 It creates disposable boards without terminal workers. Pair it with a displayed 1,000-object opening trace to verify that immediate `board.get` polling does not run obstacle routing on the main thread.
 
 ### Remote boards

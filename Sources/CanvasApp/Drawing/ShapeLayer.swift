@@ -112,12 +112,14 @@ final class ShapeLayer: NSView {
         var blocks: Bool
         var flow: String?
         var outline: String?
+        var members: Set<ObjectID>?
 
         init(_ object: CanvasObject) {
             frame = object.frame
             blocks = BoardGeometry.blocksRoutes(object)
             flow = object.type == .group ? object.props["flow"]?.string : nil
             outline = object.type == .shape ? object.props["kind"]?.string : nil
+            members = object.type == .group ? GroupSpec(object.props).map { Set($0.members) } : nil
         }
     }
 
@@ -481,11 +483,16 @@ final class ShapeLayer: NSView {
         var obstacles = canvas.tiles.map { id, tile in ConnectorRouter.Obstacle(id: id, rect: canvasRect(tile.frame)) }
         for (id, item) in items where canvas.tiles[id] == nil {
             guard let object = board.objects[id], BoardGeometry.blocksRoutes(object) else { continue }
-            obstacles.append(.init(id: id, rect: canvasRect(item.frame)))
+            let rect = item.shape == nil ? item.frame : (outline(of: id)?.bounds ?? item.frame)
+            obstacles.append(.init(id: id, rect: canvasRect(rect)))
         }
         obstacles.sort { $0.id < $1.id }
-        // Groups as shown: a tile held mid-drag has moved but its groups commit only on drop.
-        let shown = Dictionary(obstacles.map { ($0.id, $0.rect) }, uniquingKeysWith: { first, _ in first })
+        // Groups follow held members, including unfilled shapes that do not block routes.
+        var shown = Dictionary(obstacles.map { ($0.id, $0.rect) }, uniquingKeysWith: { first, _ in first })
+        for id in dragPreview.ids {
+            guard items[id]?.shape != nil, let rect = outline(of: id)?.bounds else { continue }
+            shown[id] = canvasRect(rect)
+        }
         let regions = BoardGeometry(objects: board.objects, labelSizes: [:]).regions(shown: shown)
         let trigger = routingTrigger
         routingTrigger = nil

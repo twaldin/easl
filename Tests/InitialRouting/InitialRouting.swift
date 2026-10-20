@@ -80,6 +80,9 @@ private enum InitialRouting {
         try await editingDuringOpening(root)
         try await exportingDuringOpening(root)
         try await stableAfterOpening(root)
+        try await heldShapeObstacles(root)
+        try await heldUnfilledGroupMember(root)
+        try await unchangedFrameFlowMembership(root)
         print("INITIAL_ROUTING_COMPLETE")
     }
 
@@ -327,6 +330,110 @@ private enum InitialRouting {
         try require(!DrawingGeometry.path(try path(fixture), crosses: fixture.wall.frame.rect), "The settled route must avoid the wall")
         try require(fixture.board.reported(fixture.arrow).frame == bounds(try path(fixture)), "Settled API geometry must match the drawn route")
         print("PASS opening previews draw, attach, hit-test and report without settling; final paths and labels match main routing")
+    }
+
+    private static func heldShapeObstacles(_ root: URL) async throws {
+        let fixture = try fixture(root, "held-shape-obstacles")
+        let committed = Frame(x: 250, y: 1600, w: 200, h: 300)
+        _ = try fixture.board.update(fixture.wall.id, frame: committed)
+        let previous = mainRouting(fixture.board)
+        let opened = OpenBoard(fixture.board)
+        defer { opened.close() }
+        try await awaitRouting(fixture.board, matching: previous)
+        let geometry = fixture.board.geometry
+        var shown = geometry.objects
+        shown[fixture.wall.id]!.frame = fixture.wall.frame
+        let held = BoardGeometry(objects: shown, labelSizes: geometry.labelSizes, settled: previous).routing()
+        try require(DrawingGeometry.path(previous.paths[fixture.arrow.id]!, crosses: fixture.wall.frame.rect), "The held wall must move across the previously clear drawn route")
+        try require(held.paths[fixture.arrow.id] != previous.paths[fixture.arrow.id], "The shown wall must require a different settled route")
+        try require(!DrawingGeometry.path(held.paths[fixture.arrow.id]!, crosses: fixture.wall.frame.rect), "The held-pose reference must avoid the shown wall")
+        opened.canvas.onSelectionDrag?([fixture.wall.id], NSSize(width: 0, height: -1700))
+        try await awaitRouting(fixture.board, matching: held) {
+            try require(fixture.board.objects[fixture.wall.id]?.frame == committed, "Routing a held wall must not commit its shown frame")
+        }
+        try require(!DrawingGeometry.path(try path(fixture), crosses: fixture.wall.frame.rect), "A paused shape drag must route around the wall where it is drawn")
+        print("PASS held shape obstacles route at their shown pose before model frames commit")
+    }
+
+    private static func heldUnfilledGroupMember(_ root: URL) async throws {
+        let fixture = try fixture(root, "held-unfilled-group-member")
+        let committed = Frame(x: 250, y: 200, w: 200, h: 100)
+        _ = try fixture.board.update(fixture.wall.id, frame: committed, props: .object(["fill": .string("none")]))
+        let group = fixture.board.create(type: .group, props: .object([
+            "members": .array([.string(fixture.wall.id)]), "title": .string("Held region"),
+        ]))
+        try require(!BoardGeometry.blocksRoutes(fixture.board.objects[fixture.wall.id]!), "The held member must be an unfilled, nonblocking shape")
+        let previous = mainRouting(fixture.board)
+        let opened = OpenBoard(fixture.board)
+        defer { opened.close() }
+        try await awaitRouting(fixture.board, matching: previous)
+        let geometry = fixture.board.geometry
+        let label = previous.labels[fixture.arrow.id]!.rect
+        let beforeTitle = ConnectorRouter.Region(id: group.id, frame: group.frame.rect, members: [fixture.wall.id]).title
+        let offset = NSSize(width: label.midX - beforeTitle.midX, height: label.midY - beforeTitle.midY)
+        let shownMember = committed.rect.offsetBy(dx: offset.width, dy: offset.height)
+        var shown = geometry.objects
+        shown[fixture.wall.id]!.frame = Frame(shownMember)
+        let staleRegion = BoardGeometry(objects: shown, labelSizes: geometry.labelSizes, settled: previous).routing()
+        let fitted = GroupSpec(group.props)!.frame(around: [shownMember])!
+        shown[group.id]!.frame = Frame(fitted)
+        let expected = BoardGeometry(objects: shown, labelSizes: geometry.labelSizes, settled: previous).routing()
+        let title = ConnectorRouter.Region(id: group.id, frame: fitted, members: [fixture.wall.id]).title
+        try require(Frame(fitted) != group.frame && label.intersects(title), "Holding the unfilled member must move its group title over the previous caption")
+        try require(expected.labels[fixture.arrow.id] != staleRegion.labels[fixture.arrow.id], "The shown group title must move the caption, even though its member does not block routes")
+        try require(!expected.labels[fixture.arrow.id]!.rect.intersects(title), "The held-region reference must place the caption clear of the shown title")
+        opened.canvas.onSelectionDrag?([fixture.wall.id], offset)
+        try await awaitRouting(fixture.board, matching: expected) {
+            try require(fixture.board.objects[fixture.wall.id]?.frame == committed, "Holding an unfilled member must leave its committed frame unchanged")
+            try require(fixture.board.objects[group.id]?.frame == group.frame, "A held group's shown region must route before its model frame commits")
+        }
+        let origin = CanvasDocumentView.origin
+        guard let drawnLabel = opened.drawing.items[fixture.arrow.id]?.labelRect else {
+            throw CheckFailure(message: "The held arrow must retain its drawn caption")
+        }
+        try require(!drawnLabel.intersects(title.offsetBy(dx: origin.x, dy: origin.y)), "The drawn caption must remain clear of the held unfilled member's shown group title")
+        print("PASS held unfilled shapes refit shown group regions before their model frames commit")
+    }
+
+    private static func unchangedFrameFlowMembership(_ root: URL) async throws {
+        let fixture = try fixture(root, "unchanged-frame-flow-membership")
+        _ = try fixture.board.update(fixture.source.id, props: ShapeSpec(kind: .rect, fill: .solid).props)
+        _ = try fixture.board.update(fixture.target.id, frame: Frame(x: 400, y: 300, w: 100, h: 100))
+        _ = try fixture.board.update(fixture.other.id, frame: Frame(x: 1800, y: 1600, w: 100, h: 100))
+        _ = try fixture.board.update(fixture.wall.id, frame: Frame(x: -100, y: -100, w: 900, h: 700),
+                                     props: .object(["fill": .string("none")]))
+        let group = fixture.board.create(type: .group, props: .object([
+            "members": .array([.string(fixture.wall.id)]), "flow": .string("down"), "title": .string("Flow"),
+        ]))
+        let previous = mainRouting(fixture.board)
+        let opened = OpenBoard(fixture.board)
+        defer { opened.close() }
+        try await awaitRouting(fixture.board, matching: previous)
+        try require(abs(try path(fixture).first!.x - (fixture.source.frame.rect.maxX + DrawingGeometry.arrowGap)) < 0.5, "Before membership, the arrow must visibly leave its source to the right")
+        _ = try fixture.board.update(group.id, props: .object([
+            "members": .array([.string(fixture.wall.id), .string(fixture.source.id)]),
+        ]))
+        try require(fixture.board.objects[group.id]?.frame == group.frame, "Adding an interior endpoint must leave the actual group frame unchanged")
+        let added = mainRouting(fixture.board, continuingFrom: previous)
+        try require(added.paths[fixture.arrow.id] != previous.paths[fixture.arrow.id], "Adding the source to a downward-flow group must visibly change its route")
+        try require(abs(added.paths[fixture.arrow.id]!.first!.y - (fixture.source.frame.rect.maxY + DrawingGeometry.arrowGap)) < 0.5, "The membership reference must leave the source downstream")
+        try await awaitRouting(fixture.board, matching: added) {
+            try require(fixture.board.objects[group.id]?.frame == group.frame, "The group frame must remain unchanged while the added member's routes settle")
+        }
+        try require(abs(try path(fixture).first!.y - (fixture.source.frame.rect.maxY + DrawingGeometry.arrowGap)) < 0.5, "Adding group membership must visibly switch the drawn source port to the downward flow")
+        print("PASS adding flow-group membership changes drawn routes while the group frame stays unchanged")
+        _ = try fixture.board.update(group.id, props: .object([
+            "members": .array([.string(fixture.wall.id)]),
+        ]))
+        try require(fixture.board.objects[group.id]?.frame == group.frame, "Removing an interior endpoint must leave the actual group frame unchanged")
+        let removed = mainRouting(fixture.board, continuingFrom: added)
+        try require(removed.paths[fixture.arrow.id] != added.paths[fixture.arrow.id], "Removing the source from the downward-flow group must visibly change its route")
+        try require(abs(removed.paths[fixture.arrow.id]!.first!.x - (fixture.source.frame.rect.maxX + DrawingGeometry.arrowGap)) < 0.5, "The removal reference must restore the rightward source port")
+        try await awaitRouting(fixture.board, matching: removed) {
+            try require(fixture.board.objects[group.id]?.frame == group.frame, "The group frame must remain unchanged while the removed member's routes settle")
+        }
+        try require(abs(try path(fixture).first!.x - (fixture.source.frame.rect.maxX + DrawingGeometry.arrowGap)) < 0.5, "Removing group membership must visibly restore the drawn rightward source port")
+        print("PASS removing flow-group membership changes drawn routes while the group frame stays unchanged")
     }
 
     private static func stableAfterOpening(_ root: URL) async throws {
