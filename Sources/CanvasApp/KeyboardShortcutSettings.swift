@@ -224,8 +224,13 @@ final class KeyboardShortcutSettingsController: NSWindowController, NSWindowDele
             return true
         }
         guard let binding = AppShortcuts.binding(for: event) else { return true }
-        let unshifted = ShortcutBinding(key: event.characters(byApplyingModifiers: []) ?? binding.key, modifiers: binding.modifiers)
-        if let reason = binding.rejectionReason ?? unshifted.rejectionReason {
+        var rejection = binding.rejectionReason
+        if rejection == nil, let key = event.characters(byApplyingModifiers: []),
+           key.unicodeScalars.count == 1, let scalar = key.unicodeScalars.first,
+           !CharacterSet.controlCharacters.contains(scalar) {
+            rejection = ShortcutBinding(key: key, modifiers: binding.modifiers).rejectionReason
+        }
+        if let reason = rejection {
             status.stringValue = reason
             NSSound.beep()
             return true
