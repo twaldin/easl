@@ -125,6 +125,7 @@ public struct HostFiles: Sendable {
     private let channelRoute: HostRoute
     private let channelMaster: HostMaster?
     private let fileReads: HostFileReads?
+    private let imagePreviews: HostImagePreviews?
     private var readPriority: HostReadPriority?
 
     @MainActor
@@ -137,14 +138,16 @@ public struct HostFiles: Sendable {
         fileReads = reader.fileReads
         channelRoute = master.route
         channelMaster = master
+        imagePreviews = HostImagePreviews { host.connection() }
     }
 
-    init(hostName: String, route: HostRoute, temps: [String], fileReads: HostFileReads? = nil) {
+    init(hostName: String, route: HostRoute, temps: [String], fileReads: HostFileReads? = nil, imagePreviews: HostImagePreviews? = nil) {
         self.hostName = hostName
         self.route = route
         self.temps = temps
         master = nil
         self.fileReads = fileReads
+        self.imagePreviews = imagePreviews
         channelRoute = route
         channelMaster = nil
     }
@@ -157,6 +160,14 @@ public struct HostFiles: Sendable {
         var files = self
         files.readPriority = priority
         return files
+    }
+
+    public func imagePreview(object: String, maxPixels: Int, priority: HostReadPriority? = nil) async throws -> HostImagePreview? {
+        guard HostImagePreview.pixelRange.contains(maxPixels), !object.isEmpty else {
+            throw EaslConnection.Failure("invalid_params", "image.preview requires an id and maxPixels from 64 through 2048")
+        }
+        guard let imagePreviews else { throw HostFileError.unavailable("this host has no image preview endpoint") }
+        return try await imagePreviews.read(object: object, maxPixels: maxPixels, priority: priority ?? readPriority ?? .visible)
     }
 
     public func read(_ request: HostFileRequest, priority: HostReadPriority? = nil) async throws -> HostFile {

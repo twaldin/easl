@@ -4,6 +4,10 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Remote boards leave offscreen image tiles idle instead of fetching their originals for zoomed-out cards.
+- Remote PNG and JPEG tiles request display-sized previews from the host and load more detail on zoom. Update the Mac app and easld together for `image.preview`.
+- Remote board and terminal SSH connections compress text, code, and metadata.
+- Development observers can retain the first complete native window frame without sending input or changing the canvas.
 - Development browser measurements separate native first-visible response, decoded assignment, and settled sharp assignment. Correct the 0.3.0 click-latency interpretation and retain codec quality 1 without changing production codec or refresh behavior.
 - Add a Move tool (M) to the drawing toolbar: drag tiles from their bodies without clicking or focusing their content. Scroll pans the board. V or Escape returns to Select, and Escape during a drag cancels it.
 - Composer prompts reconcile lost replies without resending; uncertain delivery stays visible instead of becoming an unsent draft.

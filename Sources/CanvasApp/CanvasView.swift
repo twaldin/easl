@@ -605,7 +605,10 @@ final class CanvasView: NSScrollView {
         // a code, note, or HTML tile starts as its card rather than building its live view for
         // the liveness pass to swap out. Terminals and browsers start live: they run a session
         // or a page an agent may be driving.
-        if !(content is TerminalTile), !(content is BrowserTile), !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
+        if !(content is TerminalTile), !(content is BrowserTile), !magnifying {
+            let presentation = presentation(of: tile, scale: magnification)
+            if presentation != .live { tile.startAsCard(presentation) }
+        }
         if tile.superview == nil { document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay) }
         tiles[id] = tile
         tile.zoomedOut = RenderMath.isZoomedOut(magnification: magnification, zoom: tile.zoom)
@@ -2522,7 +2525,7 @@ final class CanvasView: NSScrollView {
             let scale = magnification
             for tile in tiles.values {
                 if closed, !(tile.content is NoteTile || tile.content is CodeTile || tile.content is TerminalTile || tile.content is QuestionTile || tile.content is ChangesTile) { continue }
-                tile.setLive(shouldBeLive(tile, scale: scale))
+                tile.setPresentation(presentation(of: tile, scale: scale))
                 tile.zoomedOut = RenderMath.isZoomedOut(magnification: scale, zoom: tile.zoom)
             }
             // A web page's viewport follows its view's device-pixel size (`BrowserTile.webViewFrame`).
@@ -2543,6 +2546,13 @@ final class CanvasView: NSScrollView {
         let margin = tile.isLive ? Self.cardMargin : Self.liveMargin
         let readable = scale * tile.zoom >= tile.content.liveZoom * (tile.isLive ? Self.cardHysteresis : 1)
         return readable && tile.frame.intersects(documentVisibleRect.insetBy(dx: -margin, dy: -margin))
+    }
+
+    private func presentation(of tile: TileFrameView, scale: CGFloat) -> TileFrameView.Presentation {
+        if remote != nil, tile.content is ImageTile, !tile.frame.intersects(documentVisibleRect) {
+            return .dormant
+        }
+        return shouldBeLive(tile, scale: scale) ? .live : .card
     }
 
     // MARK: Hit testing for mentions

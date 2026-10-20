@@ -1,0 +1,249 @@
+{
+  "scenario": "image-preview-raster",
+  "description": "Raster previews preserve natural and output dimensions, source version paths, full-resolution selection, and invalid-raster errors on both hosts.",
+  "recordedOn": "Swift 6.4 native image.preview, guest-local scratch",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      },
+      "ignored": {
+        "response.error.message": "Host-specific decoder diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      },
+      "ignored": {
+        "response.error.message": "Host-specific decoder diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 400,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "path": "raster.png"
+        },
+        "type": "image"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 400,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "path": "raster.png"
+            },
+            "rev": "<rev:1>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 400,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "path": "raster.png"
+            },
+            "rev": "<rev:1>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Host-specific decoder diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "image.preview",
+      "method": "image.preview",
+      "request": {
+        "id": "<obj:1>",
+        "maxPixels": 64
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "height": 32,
+          "kind": "preview",
+          "naturalHeight": 64,
+          "naturalWidth": 128,
+          "version": {
+            "path": "<root>/raster.png",
+            "root": "<root>"
+          },
+          "width": 64
+        }
+      },
+      "ignored": {
+        "response.error.message": "Host-specific decoder diagnostics are not the error-code contract.",
+        "response.result.data": "Native ImageIO and Go PNG encoders differ; pixel and alpha behavior is checked by each host test suite.",
+        "response.result.version.stamp": "Descriptor device, inode, and nanosecond timestamps vary by filesystem and recording."
+      }
+    },
+    {
+      "step": "image.preview",
+      "method": "image.preview",
+      "request": {
+        "id": "<obj:1>",
+        "maxPixels": 128
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "kind": "original"
+        }
+      },
+      "ignored": {
+        "response.error.message": "Host-specific decoder diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "path": "broken.png"
+        }
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 400,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "path": "broken.png"
+            },
+            "rev": "<rev:2>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 200,
+              "w": 400,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "path": "broken.png"
+            },
+            "rev": "<rev:2>",
+            "type": "image",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Host-specific decoder diagnostics are not the error-code contract."
+      }
+    },
+    {
+      "step": "image.preview",
+      "method": "image.preview",
+      "request": {
+        "id": "<obj:1>",
+        "maxPixels": 64
+      },
+      "response": {
+        "error": {
+          "code": "unreadable"
+        },
+        "id": "r6",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Host-specific decoder diagnostics are not the error-code contract."
+      }
+    }
+  ]
+}

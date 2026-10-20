@@ -44,6 +44,13 @@ def _snake_case_hints(cls: type[_Api]) -> type[_Api]:
     return cls
 
 
+class HostFileVersion(TypedDict):
+    root: Required[str]
+    path: Required[str]
+    stamp: Required[str]
+
+ImagePreview = Union[dict[str, Any], dict[str, Any]]
+
 ViewerId = str
 
 class RemoteUpdateSession(TypedDict):
@@ -518,6 +525,16 @@ class MetricsCounter(TypedDict):
     last10m: Required["MetricsTally"]
 
 @_snake_case_hints
+class ImageApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def preview(self, *, id: "Id", max_pixels: int) -> dict[str, Any]:
+        """Read an image object's file under HostFiles.boardImage authorization and its 4194304-byte limit. Return original for unsupported formats, animated PNG (acTL before IDAT), EXIF orientation other than 1, natural long edge no larger than maxPixels, more than 16000000 natural pixels, or PNG output no smaller than the source. Invalid PNG/JPEG raster data is unreadable. Preview preserves alpha and aspect ratio without upscaling: long edge maxPixels, short edge max(1, round(naturalShort * maxPixels / naturalLong)). Version uses the stable read descriptor's exact nanosecond metadata. File errors are refused, not_found, too_large, unreadable or unavailable; request/type errors are invalid_params. Original explicitly selects original-file transport, not an error fallback."""
+        params = {"id": id, "maxPixels": max_pixels}
+        return self._call("image.preview", params, [])
+
+@_snake_case_hints
 class SurfaceApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -934,6 +951,7 @@ class TextApi:
 
 class GeneratedApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self.image = ImageApi(call)
         self.surface = SurfaceApi(call)
         self.system = SystemApi(call)
         self.agent = AgentApi(call)
@@ -952,7 +970,7 @@ class GeneratedApi:
         self.browser = BrowserApi(call)
         self.text = TextApi(call)
 
-METHODS = ["surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","agent.prompt_epoch","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.stale","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"]
+METHODS = ["image.preview","surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","agent.prompt_epoch","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.stale","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

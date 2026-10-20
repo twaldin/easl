@@ -80,6 +80,8 @@ func (r *Router) dispatch(method string, p map[string]any, from Conn) (any, erro
 		return replay.JSON(b), nil
 	case "object.get":
 		return r.objectGet(p)
+	case "image.preview":
+		return r.imagePreview(p)
 	case "object.create":
 		return r.create(p, from)
 	case "object.update":

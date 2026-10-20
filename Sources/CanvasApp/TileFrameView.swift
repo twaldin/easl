@@ -8,6 +8,10 @@ import CanvasCore
 final class TileFrameView: NSView {
     static let titleHeight = CGFloat(RenderMath.tileTitleHeight)
 
+    enum Presentation {
+        case live, card, dormant
+    }
+
     private(set) var objectID: ObjectID
     let content: any TileContent
     /// Holds the content at the tile's `zoom`: its frame is the body, its bounds the body divided
@@ -27,7 +31,8 @@ final class TileFrameView: NSView {
     private let card = CardImageView()
     private var cardTitle = NSTextField(labelWithString: "")
     private let cardTint = CardTint()
-    private(set) var isLive = true
+    private var presentation: Presentation = .live
+    var isLive: Bool { presentation == .live }
     private var hostBoardClosed = false
     /// Stacking order among tiles (the object's `z`).
     private(set) var z: Double = 0
@@ -496,18 +501,21 @@ final class TileFrameView: NSView {
     /// (a full 2× capture would be ~11× the memory, held for every card on the board).
     static let cardPixelsPerPoint: CGFloat = 0.6
 
-    /// Zoomed-out or offscreen: freeze to a card and let the content release its resources. The
-    /// live content stays up until its card has arrived, so a swap never shows a blank or
-    /// title-only tile; going live, the card stays until the content is ready (`revealWhenReady`).
-    func setLive(_ live: Bool) {
-        guard live != isLive else { return }
-        isLive = live
+    /// Keep live content visible until its replacement card has arrived.
+    func setPresentation(_ presentation: Presentation) {
+        guard presentation != self.presentation else { return }
+        self.presentation = presentation
         invalidateCard()
-        if live {
+        switch presentation {
+        case .live:
             showContent(true)
             revealWhenReady()
-        } else {
+        case .card:
             requestCard()
+        case .dormant:
+            showContent(false)
+            card.isHidden = card.image == nil
+            cardTitle.isHidden = card.image != nil
         }
         updateTint()
     }
@@ -580,18 +588,13 @@ final class TileFrameView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealLimit) { reveal() }
     }
 
-    /// A new tile where it wouldn't be live (zoomed out or offscreen) starts as its card, the
-    /// title until the card is drawn: its content never shows, so it never loads or lays out
-    /// its live view (a batch of dozens of tiles would otherwise build every one live and only
-    /// then swap it for its card). Called before the tile joins the canvas; the card is
-    /// requested once it is in the window (web content renders in it).
-    func startAsCard() {
+    func startAsCard(_ presentation: Presentation) {
         guard isLive else { return }
-        isLive = false
+        self.presentation = presentation
         invalidateCard()
         cardTitle.isHidden = false
         showContent(false)
-        startCardDue = true
+        startCardDue = presentation == .card
         updateTint()
     }
 
@@ -615,10 +618,11 @@ final class TileFrameView: NSView {
         if window.occlusionState.contains(.visible) { syncTitle() }
         guard startCardDue else { return }
         startCardDue = false
-        if !isLive { requestCard() }
+        if presentation == .card { requestCard() }
     }
 
     private func requestCard() {
+        guard presentation != .dormant else { return }
         invalidateCard()
         syncTitle()
         if hostBoardClosed {
