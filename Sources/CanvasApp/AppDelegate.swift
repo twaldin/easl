@@ -1807,14 +1807,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         submenu("easl", [
             item("Settings…", #selector(showSettings(_:))),
             .separator(),
+            // easl.sh/latest.json now (`Updater`); it also checks a minute after launch and daily.
             item("Check for Updates…", #selector(checkForUpdates(_:))),
             item("Install Updates Automatically", #selector(toggleAutomaticUpdates(_:))),
             item("Retry Reopening Update Boards", #selector(retryUpdateRestoration(_:))),
             item("Discard Update Board Recovery", #selector(discardUpdateRecovery(_:))),
             .separator(),
+            // Remote easld boards stay attached with their windows closed, for agents' renders
+            // and measures (`toggleBackgroundAttach`).
             item("Keep Remote Boards Attached", #selector(toggleBackgroundAttach(_:))),
             .separator(),
+            // Every browser tile's cookies, storage and caches (`BrowserProfile`), after a sheet.
             item("Clear Browsing Data…", #selector(clearBrowsingData(_:))),
+            // Safari web extensions in browser tiles (`BrowserExtensions`), filled as it opens.
             BrowserExtensions.menuItem(),
             .separator(),
             item("Quit easl", #selector(NSApplication.terminate(_:))),
@@ -1836,7 +1841,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Open HTML Tile in Browser", #selector(openHTMLTileInBrowser(_:))),
             item("Open Page in Browser", #selector(openPageInBrowser(_:))),
             item("Save Note as Markdown…", #selector(saveNoteAsMarkdown(_:))),
+            // The focused or selected browser tile's page, frozen as an image tile beside it.
             item("Snapshot Page to Image", #selector(snapshotPage(_:))),
+            // The focused or selected browser tile's page, through the print panel.
             item("Print Page…", #selector(printPage(_:))),
             .separator(),
             item("Close", #selector(NSWindow.performClose(_:))),
@@ -1885,6 +1892,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Send to Back", #selector(sendToBack(_:))),
             zoom,
             .separator(),
+            // The focused terminal's, else the selected one's (the context menu's toggle).
             item("Follow Files", #selector(toggleFollowFiles(_:))),
             item("Copy Object ID", #selector(copyObjectIDs(_:))),
             .separator(),
@@ -1898,6 +1906,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Text", #selector(CanvasWindowController.textTool(_:))),
             item("Draw", #selector(CanvasWindowController.penTool(_:))),
         ])
+        // The focused code tile's, else the selected one's, at its selection or the first name on
+        // its first line (CodeTile.navigate). ⌃⌘ chords: no shell sees ⌘, and Ghostty binds none.
         submenu("Code", [
             item("Go to Definition", #selector(goToDefinition(_:))),
             item("Open Definition in New Tile", #selector(openDefinitionInNewTile(_:))),
@@ -1924,19 +1934,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .separator(),
             item("Clear Attention Markers", #selector(clearAttentionMarkers(_:))),
             item("Reload Page", #selector(reloadPage(_:))),
+            // Show or Hide (`CanvasWindowController.validateMenuItem`), docked under the address bar.
             item("Show Web Inspector", #selector(toggleWebInspector(_:))),
+            // Presenting: toolbar, tray, selection rings, author marks, code headers, markers.
             item("Hide Board Chrome", #selector(toggleCanvasChrome(_:))),
             lasso,
             item("Exit Group", #selector(exitGroup(_:))),
             .separator(),
+            // `app.metrics` at a glance, redrawn each second while shown.
             item("Performance HUD", #selector(togglePerformanceHUD(_:))),
         ])
+        // AppKit lists the board windows and tabs here (and the tab commands) itself.
         NSApp.windowsMenu = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:))),
             item("Zoom", #selector(NSWindow.performZoom(_:))),
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))),
         ])
+        // The Help menu gets AppKit's menu search (⌘?), which finds every item above, the
+        // first-run walk-through (`GetStartedPanel`), and the legend of what the canvas shows
+        // (`BasicsPanel`), ⌥⌘/ beside that search's ⌘?.
         NSApp.helpMenu = submenu("Help", [
             item("Get Started", #selector(toggleGetStarted(_:))),
             item("easl Basics", #selector(toggleBasics(_:))),

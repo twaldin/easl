@@ -1488,7 +1488,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             }
             return true
         }
-        if let action = Self.navigationAction(for: event), let item, AppShortcuts.isEnabled(item) {
+        if let action, let item, let id = item.identifier?.rawValue, Self.navigationActions.contains(id), AppShortcuts.isEnabled(item) {
             return NSApp.sendAction(action, to: nil, from: item)
         }
         if let heading = Self.tileHeading(for: event) {
@@ -1515,7 +1515,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return true
         }
         let remap = Self.keyChord(for: event).flatMap { TerminalConfig.shared.remaps[$0] }
-        let custom = AppShortcuts.action(for: event).map { AppShortcuts.current.binding(for: $0.id) != $0.defaultBinding } ?? false
+        let custom = item?.identifier.flatMap { id in ShortcutAction.all.first { $0.id == id.rawValue } }
+            .map { AppShortcuts.current.binding(for: $0.id) != $0.defaultBinding } ?? false
         if remap == nil || custom, let item, let action, !Self.terminalMenuActions.contains(action),
            !modifiers.subtracting(.shift).isEmpty, AppShortcuts.isEnabled(item) {
             return NSApp.sendAction(action, to: item.target, from: item)

@@ -42,6 +42,7 @@ final class CanvasApplication: NSApplication {
         super.sendEvent(event)
     }
 
+    /// Replayed actions follow the exact replay window's responder chain before AppKit's.
     override func target(forAction action: Selector, to target: Any?, from sender: Any?) -> Any? {
         if target == nil, DevInput.enabled,
            let window = Self.replayWindow ?? (keyWindow == nil ? CanvasWindowController.frontmost?.window : nil) {

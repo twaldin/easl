@@ -99,23 +99,13 @@ struct KeyboardShortcutsTests {
         }
     }
 
-    @Test func shiftedPunctuationAndUppercaseUseCanonicalKeys() throws {
-        let brace = ShortcutBinding(key: "}", modifiers: [.command, .shift])
-        #expect(brace.key == "]")
-        #expect(brace == ShortcutBinding(key: "]", modifiers: [.command, .shift]))
-        #expect(ShortcutBinding(key: "B", modifiers: [.command, .shift]) == ShortcutBinding(key: "b", modifiers: [.command, .shift]))
-        #expect(ShortcutBinding(key: "+") == ShortcutBinding(key: "=", modifiers: [.command, .shift]))
-        #expect(ShortcutBinding(key: "\u{7f}") == ShortcutBinding(key: "\u{8}"))
-        #expect(brace.display == "⇧⌘]")
-        #expect(ShortcutBinding(key: "\u{f703}", modifiers: .option).display == "⌥→")
-        #expect(ShortcutBinding(key: "\u{f704}", modifiers: .control).display == "⌃F1")
+    @Test func nativePunctuationKeepsItsKeyAndModifiersWhenSaved() throws {
         var shortcuts = KeyboardShortcuts()
-        let before = shortcuts
-        let conflict = try #require(shortcuts.conflict(for: brace, excluding: "newNote"))
-        #expect(conflict.id == "bringToFront")
-        #expect(throws: KeyboardShortcuts.Error.conflict(conflict)) { try shortcuts.set(brace, for: "newNote") }
-        #expect(shortcuts == before)
-        #expect(KeyboardShortcuts.Error.conflict(conflict).localizedDescription.contains(conflict.title))
+        try shortcuts.set(ShortcutBinding(key: "&", modifiers: .command), for: "newNote")
+        let reloaded = try JSONDecoder().decode(KeyboardShortcuts.self, from: JSONEncoder().encode(shortcuts))
+        let binding = try #require(reloaded.binding(for: "newNote"))
+        #expect(binding.key == "&")
+        #expect(binding.modifiers == .command)
     }
 
     @Test func conflictRefusalIsAtomicAndSwapMovesThePreviousBinding() throws {
@@ -205,6 +195,7 @@ struct KeyboardShortcutsTests {
                        ShortcutBinding(key: "q", modifiers: [.command, .control]),
                        ShortcutBinding(key: "q", modifiers: [.command, .shift]),
                        ShortcutBinding(key: "h"), ShortcutBinding(key: "h", modifiers: [.command, .option]),
+                       ShortcutBinding(key: "`"), ShortcutBinding(key: "?", modifiers: [.command, .shift]),
                        ShortcutBinding(key: "\r"), ShortcutBinding(key: "\n"),
                        ShortcutBinding(key: "l"), ShortcutBinding(key: ""), ShortcutBinding(key: "two"),
                        ShortcutBinding(key: "\u{0}"), ShortcutBinding(key: "x", modifiers: .init(rawValue: 16))]
@@ -293,7 +284,7 @@ struct KeyboardShortcutsTests {
             "newNote": record("x", [.control, .option, .command]),
             "newTerminal": record("x", [.control, .option, .command]),
             "saveHTMLTile": record("}", [.command, .shift]),
-            "saveNoteAsMarkdown": record("]", [.command, .shift]),
+            "saveNoteAsMarkdown": record("}", [.command, .shift]),
         ])
         #expect(duplicates == KeyboardShortcuts())
         let cascading = try decode(["newNote": record("t"), "saveHTMLTile": record("n")])

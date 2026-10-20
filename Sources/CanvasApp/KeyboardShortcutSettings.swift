@@ -6,7 +6,6 @@ enum AppShortcuts {
     static private(set) var current = KeyboardShortcuts()
     static let didChange = Notification.Name("easl.keyboardShortcutsChanged")
     static let actionIDs = Set(ShortcutAction.all.map(\.id))
-    private static let shifted = ["1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&", "8": "*", "9": "(", "0": ")", "-": "_", "=": "+", "[": "{", "]": "}", ";": ":", "'": "\"", ",": "<", ".": ">", "/": "?", "`": "~", "\\": "|"]
 
     static func configure(_ shortcuts: KeyboardShortcuts) {
         current = shortcuts
@@ -28,8 +27,8 @@ enum AppShortcuts {
             item.keyEquivalentModifierMask = []
             return
         }
-        // AppKit requires the shifted character as well as the Shift mask.
-        item.keyEquivalent = binding.modifiers.contains(.shift) ? shifted[binding.key] ?? binding.key.uppercased() : binding.key
+        // NSEvent supplies shifted punctuation; AppKit also needs uppercase letters.
+        item.keyEquivalent = binding.modifiers.contains(.shift) ? binding.key.uppercased() : binding.key
         item.keyEquivalentModifierMask = flags(binding.modifiers)
     }
 
@@ -65,8 +64,8 @@ enum AppShortcuts {
     static func action(for event: NSEvent) -> ShortcutAction? {
         guard let binding = binding(for: event) else { return nil }
         if let action = ShortcutAction.all.first(where: { current.binding(for: $0.id) == binding }) { return action }
-        // Keep the existing plus alias for Zoom In without masking an explicit shifted binding.
-        if binding.key == "=", binding.modifiers.contains(.shift),
+        // Keep the existing plus alias for Zoom In without masking an explicit binding.
+        if binding.key == "+",
            current.binding(for: "zoomIn") == ShortcutBinding(key: "=", modifiers: binding.modifiers.subtracting(.shift)) {
             return ShortcutAction.all.first { $0.id == "zoomIn" }
         }
@@ -225,7 +224,8 @@ final class KeyboardShortcutSettingsController: NSWindowController, NSWindowDele
             return true
         }
         guard let binding = AppShortcuts.binding(for: event) else { return true }
-        if let reason = binding.rejectionReason {
+        let unshifted = ShortcutBinding(key: event.characters(byApplyingModifiers: []) ?? binding.key, modifiers: binding.modifiers)
+        if let reason = binding.rejectionReason ?? unshifted.rejectionReason {
             status.stringValue = reason
             NSSound.beep()
             return true

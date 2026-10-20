@@ -15,18 +15,9 @@ public struct ShortcutBinding: Codable, Hashable, Sendable {
     public let key: String
     public let modifiers: ShortcutModifiers
 
-    private static let shifted = ["~": "`", "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6",
-                                  "&": "7", "*": "8", "(": "9", ")": "0", "_": "-", "+": "=", "{": "[",
-                                  "}": "]", "|": "\\", ":": ";", "\"": "'", "<": ",", ">": ".", "?": "/"]
-
     public init(key: String, modifiers: ShortcutModifiers = .command) {
-        if let plain = Self.shifted[key] {
-            self.key = plain
-            self.modifiers = modifiers.union(.shift)
-        } else {
-            self.key = key == "\u{7f}" ? "\u{8}" : key == "\n" ? "\r" : key.lowercased()
-            self.modifiers = modifiers
-        }
+        self.key = key == "\u{7f}" ? "\u{8}" : key == "\n" ? "\r" : key.lowercased()
+        self.modifiers = modifiers
     }
 
     private enum CodingKeys: String, CodingKey { case key, modifiers }
@@ -74,6 +65,12 @@ public struct ShortcutBinding: Codable, Hashable, Sendable {
         }
         if key == "h", modifiers == .command || modifiers == [.command, .option] {
             return "This shortcut is reserved by macOS for hiding apps."
+        }
+        if modifiers.contains(.command), key == "`" || key == "~" && modifiers.contains(.shift) {
+            return "This shortcut is reserved by macOS for cycling windows."
+        }
+        if modifiers.contains(.command), key == "?" || key == "/" && modifiers.contains(.shift) {
+            return "This shortcut is reserved by macOS for Help menu search."
         }
         if key == "l", modifiers == .command {
             return "Command-L is reserved for the browser address field."
@@ -152,8 +149,8 @@ public struct ShortcutAction: Equatable, Sendable {
         .init("groupSelection", "Group", "Object", "g"),
         .init("ungroupSelection", "Ungroup", "Object", "g", [.command, .shift]),
         .init("enterGroup", "Enter Group", "Object"),
-        .init("bringToFront", "Bring to Front", "Object", "]", [.command, .shift]),
-        .init("sendToBack", "Send to Back", "Object", "[", [.command, .shift]),
+        .init("bringToFront", "Bring to Front", "Object", "}", [.command, .shift]),
+        .init("sendToBack", "Send to Back", "Object", "{", [.command, .shift]),
         .init("zoomContentIn", "Zoom Content In", "Object", "=", [.control, .command]),
         .init("zoomContentOut", "Zoom Content Out", "Object", "-", [.control, .command]),
         .init("zoomContent", "Reset Content Zoom", "Object", "0", [.control, .command]),

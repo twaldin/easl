@@ -2,7 +2,7 @@
 
 **easl › Settings… › Keyboard Shortcuts** lists bindable actions by menu. Settings opens with ⌘, by default. Bindings belong to this Mac's easl settings, not to a board.
 
-Choose **Record** on an action, then press the shortcut. Escape cancels recording. **Clear** removes a binding. **Reset** restores that action's default. **Restore Defaults** resets every action.
+Choose **Record** on an action, then press the shortcut. Escape cancels recording. **Clear** removes a binding. **Reset** restores that action's default. **Restore Defaults** resets every action. Symbols keep the character macOS reports for the active keyboard layout, without US Shift substitutions.
 
 A conflict names the action that already uses the shortcut. **Swap** exchanges the two actions' current bindings. If the action being edited is unbound, the other action becomes unbound. **Cancel** keeps both unchanged. Reset uses the same conflict check. Reserved system shortcuts cannot be recorded. Plain letters and Shift-only letters are drawing tools, not global shortcuts.
 
