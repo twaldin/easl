@@ -49,5 +49,16 @@ private enum ComposerInput {
         undo.undo()
         require(bar.draft.prompt == "[1]" && board.tray.count == 1, "a second undo restores the mention again")
         print("PASS native token delete, undo, redo, and repeated undo")
+        bar.text.selectAll(nil)
+        bar.text.deleteBackward(nil)
+        bar.text.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0),
+                               replacementRange: NSRange(location: NSNotFound, length: 0))
+        require(bar.text.hasMarkedText(), "Japanese preedit remains marked until commit")
+        let visibleLabels = bar.subviews.compactMap { $0 as? NSTextField }
+            .filter { !$0.isHidden && !$0.stringValue.isEmpty }
+        require(visibleLabels.isEmpty, "the placeholder must not overlap Japanese marked text")
+        bar.text.insertText("日本", replacementRange: bar.text.markedRange())
+        require(bar.draft.text == "日本", "committing Japanese composition keeps its text")
+        print("PASS Japanese marked text hides the placeholder and commits without loss")
     }
 }
