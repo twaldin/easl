@@ -193,6 +193,7 @@ final class KeyboardShortcutSettingsController: NSWindowController, NSWindowDele
     private func button(_ title: String, action: Selector, id: String) -> NSButton {
         let button = NSButton(title: title, target: self, action: action)
         button.identifier = NSUserInterfaceItemIdentifier(id)
+        button.setContentHuggingPriority(.required, for: .horizontal)
         return button
     }
 
