@@ -86,6 +86,7 @@ class Run:
         self.home = self.scratch / 'v'
         self.root = Path(os.path.abspath(args.fixtures)) / str(count)
         self.host = self.scratch / 'h'
+        self.socket = (self.host if mode == 'remote' else self.home) / 'easl.sock'
         self.server = None
         self.pid = None
         self.env = dict(os.environ, EASL_DEV_HOME=str(self.home), EASL_DEV_APP=str(app),
@@ -100,7 +101,7 @@ class Run:
         return command(REPO / 'scripts/dev.sh', *args, env=self.env)
 
     def call(self, method, params=None):
-        return rpc(self.home / 'easl.sock', method, dict(params or {}, board=self.bid))
+        return rpc(self.socket, method, dict(params or {}, board=self.bid))
 
     def log(self):
         return (self.home / 'app.log').read_text(errors='replace')
@@ -177,7 +178,7 @@ class Run:
         terminals = [obj['id'] for obj in board['objects'] if obj['type'] == 'terminal']
         streams = {}
         for oid in terminals:
-            result = rpc(self.home / 'easl.sock', 'agent.read', {'target': oid, 'lines': 10})
+            result = rpc(self.socket, 'agent.read', {'target': oid, 'lines': 10})
             assert 'sequence=' in json.dumps(result), 'Terminal did not produce the fixture stream: ' + oid
             streams[oid] = result
         (self.output / 'streams.json').write_text(json.dumps(streams, indent=2))
