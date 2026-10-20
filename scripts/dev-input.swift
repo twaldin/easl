@@ -35,6 +35,7 @@
 import Foundation
 
 var args = Array(CommandLine.arguments.dropFirst())
+let hasWindow = args.contains("--window")
 func option(_ name: String) -> String? {
     guard let index = args.firstIndex(of: name), index + 1 < args.count else { return nil }
     let value = args[index + 1]
@@ -43,6 +44,10 @@ func option(_ name: String) -> String? {
 }
 let mods = option("--mods")
 let window = option("--window")
+guard !hasWindow || window.flatMap(Int.init) != nil else {
+    FileHandle.standardError.write(Data("dev-input: --window requires an integer window ID\n".utf8))
+    exit(2)
+}
 let clicks = option("--clicks")
 let repeatCount = option("--repeat")
 let interval = option("--interval")
