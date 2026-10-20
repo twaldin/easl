@@ -33,8 +33,9 @@ kind,x,y, prints viewer-local epoch milliseconds taken immediately before postin
 canvas.dev.input, and exits. Its hash, method and stdout are retained. Launch the
 viewer with EASL_DEV_INPUT=1 EASL_DEV_SURFACE_TRACE=1. Gate B is the first matching
 same-stream refresh assignment at the click's last queued sequence, not native
-presentation or a quality score. No next input is sent before B completes or its
-deadline fails. Every screenshot and full receipt has a unique path, including
+presentation or a quality score. JPEG and PNG have no idle refresh: B is not
+applicable. No next input is sent before B completes, is inapplicable or fails
+its deadline. Every screenshot and full receipt has a unique path, including
 before, intermediate and settled captures. Summary percentiles describe only the
 completed subset; failed/missing/censored rows remain in the denominator. Clock
 values are viewer-local epoch milliseconds; capture completion is a sampled
@@ -212,9 +213,17 @@ def endpoints(events, stream, started, deadline_ms):
     return watermark, last_input, covering, refresh
 
 
-def sharp_gate(covering, refresh, last_input, started):
-    if covering and covering.get("format") in ("jpeg", "png"):
-        return {"status": "not_applicable", "reason": "no_idle_refresh", "format": covering["format"]}
+def last_assigned_format(events, stream, started, deadline_ms):
+    assigned = [e for e in events if e["stage"] == "image.assigned" and e["stream"] == stream
+                and started <= e["ts_ms"] <= deadline_ms and e.get("format")]
+    latest = max(assigned, key=lambda e: e["ts_ms"], default={})
+    return latest.get("format")
+
+
+def sharp_gate(covering, refresh, last_input, started, image_format=None):
+    image_format = image_format or (covering or {}).get("format")
+    if image_format in ("jpeg", "png"):
+        return {"status": "not_applicable", "reason": "no_idle_refresh", "format": image_format}
     if refresh is None:
         return {"status": "deadline_failure"}
     return {"status": "complete", "latency_ms": refresh["ts_ms"] - last_input,
@@ -264,9 +273,8 @@ def diagnostics(rows):
         batches[batch] = batches.get(batch, 0) + 1
         phase = row["gate_a"].get("phase", "unknown")
         phases[phase] = phases.get(phase, 0) + 1
-        covering = row.get("internal_covering_assignment") or {}
-        format = covering.get("format", "direct" if row["mode"] == "direct" else "unknown")
-        formats[format] = formats.get(format, 0) + 1
+        image_format = row.get("assigned_format") or ("direct" if row["mode"] == "direct" else "unknown")
+        formats[image_format] = formats.get(image_format, 0) + 1
     return {"input_request_counts": batches, "response_phases": phases, "assigned_formats": formats}
 
 
@@ -299,6 +307,7 @@ def run(config, args):
     save(directory / "config.json", config)
     metadata = {"label": args.label, "block": args.block, "action": args.action, "mode": config["mode"],
                 "requested": count, "input_helper": config["input_helper"], "input_helper_sha256": digest(config["input_helper"]),
+                "observer_sha256": digest(__file__),
                 "input_method": "supplied helper epoch timestamp immediately before canvas.dev.input notification",
                 "clock": "viewer-local epoch milliseconds", "marker_tolerance": 16, "started_ms": epoch_ms()}
     save(directory / "metadata.json", metadata)
@@ -328,7 +337,7 @@ def run(config, args):
                     row["pause_ended_ms"] = epoch_ms()
                 before = observer.capture(f"{sample:03d}-before")
                 row["before"] = before
-                candidates = [(50, 50, 75), (210, 180, 195), (50, 210, 75)]
+                candidates = [(50, 50, 75), (210, 180, 195)]
                 color = next(c for c in candidates if distance(c, before["pixel"]) > 32
                              and (previous_target is None or distance(c, previous_target) > 32))
                 row["target"] = color
@@ -366,7 +375,8 @@ def run(config, args):
                         row["trace"].extend(trace.poll())
                         watermark, last_input, covering, refresh = endpoints(row["trace"], config["stream"], started, deadline_ms)
                         row.update(input_watermark=watermark, internal_covering_assignment=covering, internal_refresh_assignment=refresh)
-                        row["gate_b"] = sharp_gate(covering, refresh, last_input, started)
+                        image_format = last_assigned_format(row["trace"], config["stream"], started, deadline_ms)
+                        row["gate_b"] = sharp_gate(covering, refresh, last_input, started, image_format)
                     if first_marker is not None:
                         if not trace or row["gate_b"]["status"] in ("complete", "not_applicable"):
                             break
@@ -375,7 +385,8 @@ def run(config, args):
                     row["trace"].extend(trace.poll())
                     watermark, last_input, covering, refresh = endpoints(row["trace"], config["stream"], started, deadline_ms)
                     row.update(input_watermark=watermark, internal_covering_assignment=covering, internal_refresh_assignment=refresh)
-                    row["gate_b"] = sharp_gate(covering, refresh, last_input, started)
+                    row["assigned_format"] = last_assigned_format(row["trace"], config["stream"], started, deadline_ms)
+                    row["gate_b"] = sharp_gate(covering, refresh, last_input, started, row["assigned_format"])
                     row["input_batch_shape"] = input_batch_shape(row["trace"], config["stream"], started, deadline_ms)
                     if watermark is None:
                         row["gate_b"]["reason"] = "missing_input_watermark"
