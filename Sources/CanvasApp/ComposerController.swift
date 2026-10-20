@@ -260,8 +260,6 @@ final class ComposerController {
                         if !recorded {
                             recorded = true
                             self?.state.reached(outgoing.draft)
-                            self?.reconciledDelivery = true
-                            self?.refreshDeliveryStatus()
                             self?.scheduleSave()
                         }
                         return .delivered(delivery.terminal)

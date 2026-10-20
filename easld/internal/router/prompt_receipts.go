@@ -137,8 +137,8 @@ func (r *Router) prompt(p map[string]any) (any, error) {
 		result, err = r.executePrompt(p)
 	}
 	if err == nil {
-		if nf, bad := nonFinite(result); bad {
-			err = invalid("%s", nf.Debug())
+		if _, bad := nonFinite(result); bad {
+			result = promptDelivery("unknown")
 		}
 	}
 	if err != nil {
