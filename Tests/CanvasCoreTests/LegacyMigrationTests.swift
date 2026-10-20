@@ -83,10 +83,13 @@ struct LegacyMigrationTests {
 
     func settings(_ defaults: Domains) throws -> [String: Any] { try #require(defaults.domains[Self.fresh.bundle]) }
 
-    @Test(arguments: ["unknown", "newer", "truncated"])
-    func unreadableBoardsStayAtTheirOriginalLocation(_ kind: String) throws {
+    @Test(arguments: ["unknown", "newer", "truncated"], [false, true])
+    func unreadableBoardsStayAtTheirOriginalLocation(_ kind: String, target: Bool) throws {
         defer { try? FileManager.default.removeItem(at: home) }
-        let from = migration.support(Self.canvas)
+        if target { try install(Self.canvas, tag: "source") }
+        let source = migration.support(Self.canvas)
+        let sourceBefore = target ? try tree(source) : [:]
+        let from = migration.support(target ? Self.fresh : Self.canvas)
         let file = from.appendingPathComponent("boards/brd_future.json")
         let original: String
         switch kind {
@@ -102,7 +105,11 @@ struct LegacyMigrationTests {
         defaults.domains[Self.canvas.bundle] = Self.canvas04
         let log = migration.run(defaults: defaults, now: Self.now)
         #expect((try? read(file)) == original)
-        #expect(!FileManager.default.fileExists(atPath: migration.support(Self.fresh).path))
+        if target {
+            #expect(try tree(source) == sourceBefore)
+        } else {
+            #expect(!FileManager.default.fileExists(atPath: migration.support(Self.fresh).path))
+        }
         #expect(defaults.domains[Self.fresh.bundle]?[Self.canvas.marker] == nil)
         #expect(log.contains { $0.contains(file.path) })
     }

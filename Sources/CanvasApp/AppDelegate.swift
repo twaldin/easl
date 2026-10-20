@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pasteMaintenance: TerminalPaste.Maintenance?
     private var localRestore: Task<Void, Never>?
     private var boardOpenAlerts: [String: NSAlert] = [:]
-    private var failedLocalRestores: [String] = []
+    private var failedLocalRestores: [(id: BoardID, root: String)] = []
     private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
         guard let self,
@@ -432,7 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             reportBoardOpenFailure(error)
             throw error
         }
-        failedLocalRestores.removeAll { $0 == root.path }
+        failedLocalRestores.removeAll { $0.id == board.id || board.repo?.merged?.contains($0.id) == true }
         guard !terminating, !board.isClosed else { return board }
         let visit = await offPool { GitWorktree.containing(root.standardizedFileURL.path).map(WorktreeVisit.init) }
         guard canShowWindow(of: board) else { return board }
@@ -453,7 +453,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @discardableResult
     private func restoreLocalBoard(root: URL, select: Bool) async -> Board? {
         let board = await openForUser(root: root, select: select)
-        if board == nil, !failedLocalRestores.contains(root.path) { failedLocalRestores.append(root.path) }
+        if board == nil, !failedLocalRestores.contains(where: { $0.root == root.path }) {
+            let id = await offPool { BoardStore.boardID(for: root) }
+            if registry.board(id: id) == nil { failedLocalRestores.append((id, root.path)) }
+        }
         return board
     }
 
@@ -1558,7 +1561,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let roots = shown.sorted { lhs, rhs in
             (order.firstIndex { $0 === lhs.window } ?? .max) < (order.firstIndex { $0 === rhs.window } ?? .max)
         }.map(\.board.root.path)
-        return roots + failedLocalRestores.filter { !roots.contains($0) }
+        return roots + failedLocalRestores.map(\.root).filter { !roots.contains($0) }
     }
 
     private func writeOpenBoards(_ shown: [CanvasWindowController]) throws {
