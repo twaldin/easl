@@ -140,6 +140,16 @@ extension LayoutApiTests {
         #expect(ArrowSpec(try board.object(arrow.id).props)?.from.objectID == nil)
     }
 
+    @Test func archivedEndpointArrowsDoNotProduceLayoutHints() {
+        let question = archivedQuestion(frame: Frame(x: 0, y: 0, w: 200, h: 100))
+        for index in 0...BoardGeometry.sameColorLimit {
+            _ = board.create(type: .arrow, props: ArrowSpec(
+                from: .object(question.id), to: .point(CGPoint(x: 500, y: index * 40)), label: "Answer"
+            ).props)
+        }
+        #expect(board.geometry.layoutCheck().hints.isEmpty)
+    }
+
     @Test func unsupportedArchivePropsDoNotHideNoteGeometry() async throws {
         _ = board.create(type: .note, props: .object(["markdown": "one", "archived": .bool(true), "hidden": .bool(true)]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         _ = board.create(type: .note, props: .object(["markdown": "two"]), frame: Frame(x: 100, y: 0, w: 200, h: 100))
