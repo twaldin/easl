@@ -165,6 +165,10 @@ final class ImageTile: NSView, TileContent {
                                 return
                             } catch {
                                 try Task.checkCancellation()
+                                if let failure = error as? EaslConnection.Failure,
+                                   !failure.isHostResponse || failure.code == "unavailable" || failure.code == "timeout" {
+                                    throw failure
+                                }
                                 let metadata = HostFileRequest(source: .directory(root), policy: .boardImage(path), bytes: false)
                                 do {
                                     baseline = .version(try await files.read(metadata, priority: priority).version)

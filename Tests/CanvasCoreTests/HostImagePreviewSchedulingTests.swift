@@ -64,6 +64,13 @@ private final class PreviewQueuePeer: Sendable {
         #expect(call.connection.send(.object(["id": call.id, "ok": .bool(true), "result": result])))
     }
 
+    func fail(_ object: String, code: String, message: String, data: JSONValue? = nil) throws {
+        let call = try #require(calls.withLock { $0.first { $0.object == object } })
+        var error: [String: JSONValue] = ["code": .string(code), "message": .string(message)]
+        if let data { error["data"] = data }
+        #expect(call.connection.send(.object(["id": call.id, "ok": .bool(false), "error": .object(error)])))
+    }
+
     func markReplyConsumed(_ object: String) throws {
         let call = try #require(calls.withLock { $0.first { $0.object == object } })
         #expect(call.connection.send(.object(["event": "preview.reply-consumed", "board": "brd_preview", "data": .null])))
@@ -89,6 +96,83 @@ struct HostImagePreviewSchedulingTests {
         }
         for await _ in began { break }
         return task
+    }
+
+    @Test func hostErrorsRemainDistinctFromTransientTransportAndDeadlineFailures() async throws {
+        let peer = try PreviewQueuePeer()
+        let pool = peer.pool()
+        for (index, code) in ["unavailable", "timeout", "invalid_params"].enumerated() {
+            let object = "host-error-\(index)"
+            let read = await start(object, pool: pool)
+            defer { read.cancel() }
+            try await peer.waitForCalls(index + 1)
+            try peer.fail(object, code: code, message: "host rejected preview")
+            do {
+                _ = try await read.value
+                Issue.record("a host preview error succeeded")
+            } catch let failure as EaslConnection.Failure {
+                #expect(failure.code == code)
+                #expect(failure.message == "host rejected preview")
+                #expect(failure.isHostResponse)
+            }
+        }
+        let unreadable = await start("unreadable", pool: pool)
+        defer { unreadable.cancel() }
+        try await peer.waitForCalls(4)
+        try peer.fail("unreadable", code: "unreadable", message: "invalid image")
+        await #expect(throws: HostFileError.unreadable) { try await unreadable.value }
+        let refused = await start("refused", pool: pool)
+        defer { refused.cancel() }
+        try await peer.waitForCalls(5)
+        try peer.fail("refused", code: "refused", message: "outside board")
+        await #expect(throws: HostFileError.refused) { try await refused.value }
+        let tooLarge = await start("too-large", pool: pool)
+        defer { tooLarge.cancel() }
+        try await peer.waitForCalls(6)
+        try peer.fail("too-large", code: "too_large", message: "image limit", data: .object(["limit": 1234]))
+        await #expect(throws: HostFileError.tooLarge(limit: 1234)) { try await tooLarge.value }
+        #expect(peer.links.withLock { $0.count } == 1)
+        let recovered = await start("recovered", pool: pool)
+        defer { recovered.cancel() }
+        try await peer.waitForCalls(7)
+        try peer.finish("recovered")
+        #expect(try await recovered.value == nil)
+        #expect(peer.links.withLock { $0.count } == 1)
+    }
+
+    @Test func aDroppedPreviewConnectionIsNotAHostContentFailure() async throws {
+        let peer = try PreviewQueuePeer()
+        let pool = peer.pool()
+        let read = await start("disconnected", pool: pool)
+        defer { read.cancel() }
+        try await peer.waitForCalls(1)
+        peer.server.stop()
+        do {
+            _ = try await read.value
+            Issue.record("a disconnected preview succeeded")
+        } catch let failure as EaslConnection.Failure {
+            #expect(failure.code == "unavailable")
+            #expect(!failure.isHostResponse)
+        }
+    }
+
+    @Test func anExpiredAdmissionDeadlineIsTransientAndDoesNotOpenAConnection() async throws {
+        let peer = try PreviewQueuePeer()
+        let pool = peer.pool()
+        do {
+            _ = try await pool.read(object: "expired", maxPixels: 64, priority: .visible, deadline: .now - .seconds(1))
+            Issue.record("an expired preview admission succeeded")
+        } catch let failure as EaslConnection.Failure {
+            #expect(failure.code == "timeout")
+            #expect(!failure.isHostResponse)
+        }
+        #expect(peer.objects.isEmpty)
+        #expect(peer.links.withLock { $0.isEmpty })
+        let next = await start("next", pool: pool)
+        defer { next.cancel() }
+        try await peer.waitForCalls(1)
+        try peer.finish("next")
+        #expect(try await next.value == nil)
     }
 
     @Test func oneWireRequestAdmitsPriorityThenFIFOAndReusesTheConnection() async throws {
@@ -129,7 +213,13 @@ struct HostImagePreviewSchedulingTests {
         await #expect(throws: CancellationError.self) { try await cancelled.value }
         let expired = await start("expired", pool: pool, priority: .interactive, deadline: .now + .milliseconds(100))
         defer { expired.cancel() }
-        await #expect(throws: HostFileError.unavailable("host image preview timed out")) { try await expired.value }
+        do {
+            _ = try await expired.value
+            Issue.record("a queued image preview exceeded its deadline")
+        } catch let failure as EaslConnection.Failure {
+            #expect(failure.code == "timeout")
+            #expect(!failure.isHostResponse)
+        }
         #expect(peer.objects == ["active"])
         #expect(peer.links.withLock { $0.count } == 1)
         let next = await start("next", pool: pool, priority: .background)
@@ -190,8 +280,9 @@ struct HostImagePreviewSchedulingTests {
         do {
             _ = try await expires.value
             Issue.record("an unanswered image preview succeeded")
-        } catch let error as HostFileError {
-            guard case .unavailable = error else { throw error }
+        } catch let failure as EaslConnection.Failure {
+            #expect(failure.code == "timeout")
+            #expect(!failure.isHostResponse)
         }
         #expect(ContinuousClock.now < deadline + .milliseconds(500))
         let next = await start("next", pool: pool)
@@ -233,7 +324,12 @@ struct HostImagePreviewSchedulingTests {
         defer { release.signal() }
         let didEnter = await offPool { entered.wait(timeout: .now() + 5) == .success }
         try #require(didEnter)
-        let marker = Task { await events.first { $0.name == "preview.reply-consumed" } }
+        let marker = Task {
+            for await event in events {
+                if event.name == "preview.reply-consumed" { return true }
+            }
+            return false
+        }
         let timeout = Task {
             try? await Task.sleep(for: .seconds(5))
             marker.cancel()
@@ -241,7 +337,7 @@ struct HostImagePreviewSchedulingTests {
         defer { timeout.cancel(); marker.cancel() }
         try peer.finish("cancelled")
         try peer.markReplyConsumed("cancelled")
-        try #require(await marker.value != nil)
+        try #require(await marker.value)
         cancelled.cancel()
         release.signal()
         #expect(await holding.value)

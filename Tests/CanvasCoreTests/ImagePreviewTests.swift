@@ -274,12 +274,27 @@ struct HostImagePreviewTests {
         let files = peer.files()
         for (code, expected) in [("refused", HostFileError.refused), ("not_found", .notFound(commit: nil)),
                                  ("too_large", .tooLarge(limit: SourceExcerpt.maxFileBytes)), ("unreadable", .unreadable),
-                                 ("unavailable", .unavailable("failed")), ("unknown_method", .unavailable("failed"))] {
+                                 ("unknown_method", .unavailable("failed"))] {
             peer.reply.withLock { $0 = .failure(EaslConnection.Failure(code, "failed")) }
             await #expect(throws: expected) { try await files.imagePreview(object: "obj_error", maxPixels: 64) }
         }
+        peer.reply.withLock { $0 = .failure(EaslConnection.Failure("unavailable", "file changed during preview")) }
+        do {
+            _ = try await files.imagePreview(object: "obj_changed", maxPixels: 64)
+            Issue.record("a host preview error selected original bytes")
+        } catch let failure as EaslConnection.Failure {
+            #expect(failure.code == "unavailable")
+            #expect(failure.message == "file changed during preview")
+            #expect(failure.isHostResponse)
+        }
         peer.server.stop()
-        await #expect(throws: HostFileError.self) { try await files.imagePreview(object: "obj_disconnected", maxPixels: 64) }
+        do {
+            _ = try await files.imagePreview(object: "obj_disconnected", maxPixels: 64)
+            Issue.record("a disconnected preview selected original bytes")
+        } catch let failure as EaslConnection.Failure {
+            #expect(failure.code == "unavailable")
+            #expect(!failure.isHostResponse)
+        }
         let noEndpoint = HostFiles(hostName: "custom", route: HostRoute(target: "unused", controlPath: "/unused"), temps: [])
         await #expect(throws: HostFileError.self) { try await noEndpoint.imagePreview(object: "obj_custom", maxPixels: 64) }
     }

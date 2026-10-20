@@ -127,7 +127,7 @@ actor HostImagePreviews {
             }
         }
         let remaining = ContinuousClock.now.duration(to: deadline)
-        guard remaining > .zero else { throw HostFileError.unavailable("host image preview timed out") }
+        guard remaining > .zero else { throw EaslConnection.Failure("timeout", "host image preview timed out") }
         let link: EaslConnection
         if let connection {
             link = connection
@@ -143,16 +143,15 @@ actor HostImagePreviews {
             connection = nil
             throw CancellationError()
         } catch let failure as EaslConnection.Failure {
-            if failure.code == "timeout" {
+            if !failure.isHostResponse, failure.code == "timeout" {
                 link.close()
                 connection = nil
             }
-            if failure.code == "invalid_params" { throw failure }
+            if !failure.isHostResponse || failure.code == "invalid_params" || failure.code == "unavailable" || failure.code == "timeout" { throw failure }
             throw HostFileError(code: failure.code, message: failure.message, limit: HostImagePreview.integer(failure.data?["limit"]))
         }
         preview = try await offPool { Result { try HostImagePreview.decode(reply, maxPixels: maxPixels) } }.get()
         try Task.checkCancellation()
-        guard ContinuousClock.now < deadline else { throw HostFileError.unavailable("host image preview timed out") }
         return preview
     }
 
@@ -171,7 +170,7 @@ actor HostImagePreviews {
                     let timeout = Task { [weak self] in
                         do { try await Task.sleep(until: deadline, clock: .continuous) }
                         catch { return }
-                        await self?.fail(id, error: HostFileError.unavailable("host image preview timed out"))
+                        await self?.fail(id, error: EaslConnection.Failure("timeout", "host image preview timed out"))
                     }
                     let waiter = Waiter(id: id, priority: priority, continuation: continuation, timeout: timeout)
                     let index = waiting.firstIndex { $0.priority.rawValue < priority.rawValue } ?? waiting.endIndex
