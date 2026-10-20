@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Refuse unreadable or newer-format local boards instead of opening empty replacements; preserve recovery copies and keep their files unchanged through restore, migration, close, and quit.
+
 ## 0.3.0
 
 Deckbox-hosted boards on easld now work fully from a Mac. Browser relay, host-backed HTML and video, shared stacking, and whole-board rendering complete the remote-board work deferred from 0.2.8.
