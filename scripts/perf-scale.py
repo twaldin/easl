@@ -56,12 +56,15 @@ def wait_for(predicate, seconds=90):
     raise TimeoutError('Readiness deadline expired')
 
 
-def cpu(pid):
-    value = command('/bin/ps', '-o', 'time=', '-p', pid).strip()
-    seconds = 0
-    for part in value.replace('-', ':').split(':'):
-        seconds = seconds * 60 + float(part)
-    return seconds
+def cpu_times(pids):
+    result = {}
+    for line in command('/bin/ps', '-o', 'pid=,time=', '-p', ','.join(map(str, sorted(pids)))).splitlines():
+        pid, value = line.split()
+        seconds = 0
+        for part in value.split(':'):
+            seconds = seconds * 60 + float(part)
+        result[int(pid)] = seconds
+    return result
 
 
 def memory(pid):
@@ -186,18 +189,28 @@ class Run:
             assert 'sequence=' in json.dumps(result), 'Terminal did not produce the fixture stream: ' + oid
             streams[oid] = result
         (self.output / 'streams.json').write_text(json.dumps(streams, indent=2))
-        pan, zoom = self.gesture('pan'), self.gesture('zoom')
         quiet = self.root / '.perf-board-quiet'
         quiet.touch()
         time.sleep(5)
         self.dev('input', 'mainmenu', 'View/Actual Size')
         time.sleep(2)
-        c0, start = cpu(self.pid), time.monotonic()
-        time.sleep(10)
-        idle_cpu = (cpu(self.pid) - c0) / (time.monotonic() - start) * 100
-        rss = memory(self.pid)
         process = rpc(self.home / 'easl.sock', 'app.metrics').get('process', {})
+        family = {self.pid} | {helper['pid'] for helper in process.get('helpers', [])}
+        pids = family | ({self.server.pid} if self.server else set())
+        start = time.monotonic()
+        c0 = cpu_times(pids)
+        time.sleep(10)
+        c1 = cpu_times(pids)
+        elapsed = time.monotonic() - start
+        idle_cpu = (c1[self.pid] - c0[self.pid]) / elapsed * 100
+        process = rpc(self.home / 'easl.sock', 'app.metrics').get('process', {})
+        current_family = {self.pid} | {helper['pid'] for helper in process.get('helpers', [])}
+        changed_pids = sorted((set(c0) - set(c1)) | (current_family - family))
+        family_cpu = None if changed_pids else sum(c1[pid] - c0[pid] for pid in family & c0.keys() & c1.keys()) / elapsed * 100
+        daemon_cpu = (c1[self.server.pid] - c0[self.server.pid]) / elapsed * 100 if self.server else None
+        rss = memory(self.pid)
         quiet.unlink()
+        pan, zoom = self.gesture('pan'), self.gesture('zoom')
         ids = [obj['id'] for obj in board['objects']]
         before = self.call('view.get')
         start = time.monotonic()
@@ -217,14 +230,19 @@ class Run:
                 'native_bounds': self.native_bounds, 'capture_id': self.native_receipt['capture_id'],
                 'pan': pan, 'zoom': zoom, 'idle_cpu_percent': idle_cpu, 'app_rss_MiB': rss,
                 'process_memory': process,
+                'idle_app_and_helpers_cpu_percent': family_cpu, 'idle_daemon_cpu_percent': daemon_cpu,
+                'idle_cpu_seconds': elapsed, 'idle_cpu_changed_pids': changed_pids,
+                'idle_cpu_samples': {'before': c0, 'after': c1},
+                'process_memory_after_render': rpc(self.home / 'easl.sock', 'app.metrics').get('process', {}),
                 'render_ms': render_ms, 'render_states': states, 'render_missing': missing,
                 'terminals': len(terminals), 'pid': self.pid, 'scratch': str(self.scratch)}
 
     def close(self):
         errors = []
-        if self.mode == 'remote' and self.server and self.server.poll() is None and self.bid:
+        if self.bid and ((self.mode == 'remote' and self.server and self.server.poll() is None)
+                         or (self.mode == 'local' and self.pid and self.socket.exists())):
             try:
-                rpc(self.host / 'easl.sock', 'board.close', {'board': self.bid, 'endSessions': True})
+                rpc(self.socket, 'board.close', {'board': self.bid, 'endSessions': True})
             except Exception as error:
                 errors.append(str(error))
         try:

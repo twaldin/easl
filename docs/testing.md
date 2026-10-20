@@ -333,13 +333,17 @@ Run `perf-scale.py` only inside a claimed GUI guest. Compile the window lookup h
 
 The remote mode requires the guest-loopback `easl-guest` SSH wrapper from the guest recipe. It starts only the specified scratch easld. Each run launches an empty viewer, pins the development idle policy active, then times opening the fixture board. Local calls use `board.open`; remote calls use the native remote-board opener and wait for the host's delegated `view.get`. The separate `harness_launch_ms` includes development-bundle preparation and is not intrinsic app-launch latency.
 
-Rows record API readiness, a native startup capture and its elapsed-time upper bound, ten-second pan and zoom gestures, quiet app CPU, app RSS, and a whole-board render. Inspect the startup pixels before treating their upper bound as evidence of a full draw. API readiness alone is not a first-draw measurement. Native captures include capture overhead and run before the gesture measurements.
+Rows record API readiness, a native startup capture and its elapsed-time upper bound, quiet CPU, app RSS, process footprints, ten-second pan and zoom gestures, and a whole-board render. Inspect the startup pixels before treating their upper bound as evidence of a full draw. API readiness alone is not a first-draw measurement. Native captures include capture overhead and run before the gesture measurements.
 
-The gestures reverse direction every 60 steps with `input scroll|magnify --oscillate 60 --repeat 601 --interval 16.666667`. `DevInput.motion` records the observed pan and magnification range so a gesture over unchanged or clamped content fails the runner.
+Idle CPU is a ten-second CPU-time delta before the gestures, with all eight streams paused. Rows distinguish the app, the app plus its observed helpers, and the scratch daemon. The helper aggregate is unavailable if the observed PID set changes during the window; the raw per-PID samples remain. Daemon CPU excludes backend workers. Memory snapshots cover the quiet phase and the end of the whole-board render.
+
+The gestures reverse direction every 60 steps with `input scroll|magnify --oscillate 60 --repeat 601 --interval 16.666667`. `DevInput.motion` records the observed pan and magnification range; a gesture without observable movement fails the runner.
 
 `DevPerfFrames` reports callback-gap p50, p95, and p99, missed display timestamps, and `stalls50` for each phase. Quantiles are 0.01 ms histogram upper bounds below 100 ms. `overflow100` counts larger gaps, whose quantiles use the phase maximum. Zero samples means no valid frame distribution. These callbacks are not GPU presentation timestamps. The original `DevPerf` and `DevPerfWake` lines retain their formats.
 
 Rows retain render failures, placeholders, omitted objects, and gesture failures rather than treating fast failures as successful measurements. Output includes the original fixture, raw logs, stream replies, startup capture receipts, render object records, and PNGs. Compare the native bounds as well as fixture bytes before attributing a difference to the app.
+
+The title-control optimization leaves tile bodies in the canvas coordinate hierarchy and detaches only title controls outside the viewport margin. Local HTML snapshots and renders share a three-page admission limit with measurements, including pages being cleared for reuse. Remote HTML pages remain unpooled and keep their host-bound file and network rules.
 
 
 ### Remote boards
