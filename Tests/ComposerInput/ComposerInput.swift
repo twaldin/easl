@@ -75,9 +75,10 @@ private enum ComposerInput {
         FileHandle.standardOutput.write(Data("CHECK undo token whose tile was deleted\n".utf8))
         undo.undo()
         try await Task.sleep(for: .milliseconds(50))
+        require(bar.draft.isEmpty && board.tray.isEmpty, "undo cannot restore a mention of a deleted tile")
         if undo.canRedo { undo.redo() }
         try await Task.sleep(for: .milliseconds(50))
-        require(bar.draft.isEmpty && board.tray.isEmpty, "undo cannot restore a mention of a deleted tile")
+        require(bar.draft.isEmpty && board.tray.isEmpty, "redo keeps the missing-tile mention absent")
         print("PASS undo and redo after the referenced tile is deleted")
     }
 }
