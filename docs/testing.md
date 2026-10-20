@@ -275,6 +275,30 @@ python3 Tests/RemoteClosedBoard/run.py --checkout "$PWD" --viewer-home "$EASL_DE
   --root "$FIXTURE" --fixture-directory "$FIXTURE" --out "$FIXTURE/proof"
 ```
 
+### Composer token editing
+
+Run the native AppKit regression in a claimed GUI guest. It links the production composer
+and drives deletion, undo, redo, and another undo of a staged code token. The draft and tray
+must agree after every action. It also checks that Japanese marked text hides the placeholder
+and commits without losing text. Existing core tests do not exercise these native text-view paths.
+
+```sh
+swift build --build-system native -j 2 --product Easl
+python3 Tests/ComposerInput/run.py \
+	--bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+Use the native build's path, not an older native cache beside the default build backend's
+products. The runner never rebuilds the app and supplies a disposable home.
+
+For a window-level check, stage a mention on a local or remote board, focus the composer,
+select and delete the token, then undo, redo, and undo again. The token and its staged mention
+must return together without changing the words around them or losing redo.
+
+Repeat after deleting the token's tile before undo. The missing mention must stay absent,
+and undo must not crash. Normalizing a missing reference expires obsolete native redo.
+The native regression also checks that a draft typed before deferred normalization survives it.
+
 ### Performance probes
 
 `EASL_DEV_PERF=1` (set by `dev.sh` and `perf-replica.sh`) turns on `DevPerf` (`Sources/CanvasApp/DevPerf.swift`). Every input burst becomes a span with a `gesture` phase and a 1.5 s `settle` phase (the liveness pass, card and live flips, and the redraws they cause). `input perf [ms]` is an idle span (default 5000 ms), which also works while the window is minimized. `input idle on|off|auto` controls both terminal redraw throttling and the automatic-update idle gate. `on` supplies 600 idle seconds, enough for the ten-minute update threshold and the one-minute redraw threshold. `off` supplies zero, and `auto` resumes sampling input across the Mac's login session. The pinned value remains until `idle off` or `idle auto`; replayed keys do not clear it. Do not use `idle on` on an instance with automatic installation enabled unless you intend to allow installation. A span's `counts` carry `terminal.draw`, the redraws. At the end of a span `app.log` gets one line per phase:
