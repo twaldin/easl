@@ -123,10 +123,14 @@ private enum ComposerDelivery {
                     "a slow second target must not repeat or reorder the first prompt in recall history")
     }
 
-    static func main() async {
+    static func main() {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
-        app.finishLaunching()
+        Task { @MainActor in await runCases() }
+        app.run()
+    }
+
+    static func runCases() async {
         let cases: [(String, @MainActor () async throws -> Void)] = [
             ("current receipt overrides old warning", currentReceiptOverridesPreviousWarning),
             ("dismissal retains unknown outgoing", dismissPreviousWarningWithoutResending),
@@ -138,6 +142,7 @@ private enum ComposerDelivery {
             do { try await test(); print("PASS \(name)") }
             catch { failures += 1; print("FAIL \(name): \(error)") }
         }
+        print("COMPOSER_DELIVERY_COMPLETE")
         exit(failures == 0 ? 0 : 1)
     }
 }

@@ -48,7 +48,12 @@ def main():
         environment = dict(os.environ, EASL_HOME=temporary, CFFIXED_USER_HOME=temporary,
                            XDG_CONFIG_HOME=temporary, EASL_NO_ACTIVATE="1")
         environment.pop("EASL_ROOT", None)
-        subprocess.run([str(executable)], cwd=root, env=environment, check=True)
+        result = subprocess.run([str(executable)], cwd=root, env=environment, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+        print(result.stdout, end="", flush=True)
+        result.check_returncode()
+        if "COMPOSER_DELIVERY_COMPLETE" not in result.stdout.splitlines():
+            raise RuntimeError("composer delivery regressions exited before completing all cases")
 
 
 if __name__ == "__main__":
