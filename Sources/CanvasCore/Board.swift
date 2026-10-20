@@ -591,7 +591,9 @@ public final class Board {
         markMentionsEdited(from: before, to: object)
         onEvent?(.objectUpdated(object))
         if object.type == .question { questionWritten(before: before, after: object) }
-        if before.frame != object.frame { refitGroups(containing: id, actor: credited, caller: caller, visited: refitting) }
+        if before.frame != object.frame || before.isHidden != object.isHidden {
+            refitGroups(containing: id, actor: credited, caller: caller, visited: refitting)
+        }
         return object
     }
 
@@ -863,7 +865,7 @@ public final class Board {
     /// `placementGap` below or right of it and is no less in view (wholly, partly, not at all)
     /// than the slot beside the caller; otherwise the caller rule above applies.
     public func place(width: Double, height: Double, near caller: ObjectID?, shrinkingTo minimum: (w: Double, h: Double)? = nil, stacking: Bool = false) -> Frame {
-        guard let caller, let anchor = objects[caller] else {
+        guard let caller, let anchor = objects[caller], !anchor.isHidden else {
             let view = viewport() ?? Frame(x: 0, y: 0, w: 0, h: 0)
             return place(Frame(x: view.x + view.w / 2 - width / 2, y: view.y + view.h / 2 - height / 2, w: width, h: height))
         }
@@ -880,7 +882,7 @@ public final class Board {
     private func latestAnswer(of caller: ObjectID) -> CanvasObject? {
         let since = Date().addingTimeInterval(-Self.answerStackWindow)
         return objects.values
-            .filter { $0.createdBy == .agent(tile: caller) && $0.createdAt >= since && RenderMath.isTile($0.type) && $0.props["followOf"] == nil }
+            .filter { !$0.isHidden && $0.createdBy == .agent(tile: caller) && $0.createdAt >= since && RenderMath.isTile($0.type) && $0.props["followOf"] == nil }
             .max { ($0.createdAt, $0.z) < ($1.createdAt, $1.z) }
     }
 
@@ -961,7 +963,8 @@ public final class Board {
     private func freeSlot(width w: Double, height h: Double, anchor: Frame, beside: Bool, minimum: (w: Double, h: Double)?,
                           order: [Layout.Side] = [.right, .below, .left, .above], ignoring: Set<ObjectID> = [], within: Double? = nil) -> Frame? {
         let gap = Self.placementGap
-        let blocked = objects.values.filter { $0.type != .arrow && $0.type != .shape && !ignoring.contains($0.id) }
+        let blocked = objects.values.filter { !$0.isHidden && $0.type != .arrow && $0.type != .shape && !ignoring.contains($0.id)
+            && ($0.type != .group || ($0.frame.w > 0 && $0.frame.h > 0)) }
             .map { Frame(x: $0.frame.x - gap, y: $0.frame.y - gap, w: $0.frame.w + 2 * gap, h: $0.frame.h + 2 * gap) }
         let screen = viewport().flatMap { view in
             view.intersects(anchor) && view.w > 2 * gap && view.h > 2 * gap ? Frame(x: view.x + gap, y: view.y + gap, w: view.w - 2 * gap, h: view.h - 2 * gap) : nil

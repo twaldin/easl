@@ -529,9 +529,12 @@ func groupMembers(props map[string]any) ([]string, bool) {
 
 // enclosed is Board.enclosed(by:): objects other than arrows lying wholly inside object.
 func enclosed(object model.Object, b BoardView) []model.Object {
+	if object.Hidden() || (object.Type == model.Group && (object.Frame.W <= 0 || object.Frame.H <= 0)) {
+		return nil
+	}
 	var out []model.Object
 	for _, o := range sortedObjects(b) {
-		if o.ID != object.ID && o.Type != model.Arrow && object.Frame.Contains(o.Frame) {
+		if !o.Hidden() && (o.Type != model.Group || (o.Frame.W > 0 && o.Frame.H > 0)) && o.ID != object.ID && o.Type != model.Arrow && object.Frame.Contains(o.Frame) {
 			out = append(out, o)
 		}
 	}
@@ -544,6 +547,9 @@ func rectContainsPoint(f model.Frame, x, y float64) bool {
 
 // arrowsEnclosed is Board.arrows(enclosedBy:): arrows with both ends inside object.
 func arrowsEnclosed(object model.Object, b BoardView) []arrowSpec {
+	if object.Hidden() {
+		return nil
+	}
 	inside := map[string]bool{}
 	for _, o := range enclosed(object, b) {
 		inside[o.ID] = true
@@ -583,7 +589,7 @@ func host(object model.Object, b BoardView) (model.Object, model.Frame, bool, bo
 	region := object.Frame
 	var under []model.Object
 	for _, o := range sortedObjects(b) {
-		if o.Type != model.Arrow && o.Type != model.Group && o.ID != object.ID && o.Z < object.Z {
+		if !o.Hidden() && o.Type != model.Arrow && o.Type != model.Group && o.ID != object.ID && o.Z < object.Z {
 			under = append(under, o)
 		}
 	}

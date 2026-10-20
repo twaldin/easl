@@ -41,12 +41,17 @@ public struct GroupSpec: Equatable, Sendable {
 }
 
 extension Board {
-    /// The frame a group has for its current members: arrows (whose frames don't follow their
-    /// routes) and missing members don't count. Nil when no member is left.
+    /// The frame around visible geometric members. Archiving the last one collapses the group.
+    /// Groups with no extant non-arrow members keep their stored frame.
     func fittedFrame(ofGroup group: CanvasObject) -> Frame? {
         guard group.type == .group, let spec = GroupSpec(group.props) else { return nil }
-        let rects = spec.members.compactMap { objects[$0] }.filter { $0.type != .arrow && $0.id != group.id }.map(\.frame.rect)
-        return spec.frame(around: rects).map(Frame.init)
+        let members = spec.members.compactMap { objects[$0] }.filter { $0.type != .arrow && $0.id != group.id }
+        let rects = members.filter { !$0.isHidden && ($0.type != .group || ($0.frame.w > 0 && $0.frame.h > 0)) }.map(\.frame.rect)
+        if let frame = spec.frame(around: rects) { return Frame(frame) }
+        if members.contains(where: { $0.isHidden || ($0.type == .group && ($0.frame.w == 0 || $0.frame.h == 0)) }) {
+            return Frame(x: group.frame.x, y: group.frame.y, w: 0, h: 0)
+        }
+        return nil
     }
 
     /// Re-bounds every group that lists `id`, recursively for nested groups, as part of the

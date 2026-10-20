@@ -260,6 +260,11 @@ final class ShapeLayer: NSView {
             guard object.type != .arrow else { return }
             let key = RoutingKey(object)
             guard routedAs[object.id] != key else { return }
+            if routedAs[object.id]?.blocks != key.blocks {
+                for id in arrowsBound[object.id] ?? [] {
+                    if let item = items[id] { invalidate(item) }
+                }
+            }
             routedAs[object.id] = key
             scheduleRouting(trigger: object.id)
             reroute(boundTo: object.id)
@@ -647,6 +652,7 @@ final class ShapeLayer: NSView {
     /// (`CodeTile.lineY`), a diagram node's box as drawn, anything else by its outline. Lines or
     /// nodes of other tiles bind the whole tile.
     func end(of id: ObjectID, lines: LineRange?, node: String? = nil) -> DrawingGeometry.ArrowEnd? {
+        guard board.objects[id]?.isHidden != true else { return nil }
         // The title bar is 1×; the body below it shows the content at the tile's zoom.
         if let lines, let tile = canvas.tiles[id], let code = tile.content as? CodeTile {
             let zoom = tile.zoom, title = TileFrameView.titleHeight
@@ -662,6 +668,7 @@ final class ShapeLayer: NSView {
 
     /// Where an arrow bound to the whole of `id` attaches, as currently shown (tiles mid-drag included).
     func outline(of id: ObjectID) -> DrawingGeometry.Outline? {
+        guard board.objects[id]?.isHidden != true else { return nil }
         if let tile = canvas.tiles[id] { return .rect(tile.frame) }
         if let item = items[id], item.shape != nil {
             let offset = dragPreview.ids.contains(id) ? dragPreview.offset : .zero
@@ -670,6 +677,11 @@ final class ShapeLayer: NSView {
         }
         guard let object = board.objects[id], object.type != .arrow else { return nil }
         return .rect(Self.docRect(object.frame))
+    }
+
+    private func suppressed(_ item: DrawnItem) -> Bool {
+        guard let spec = item.arrow?.spec else { return false }
+        return spec.hasHiddenEndpoint(in: board.objects)
     }
 
     // MARK: Painting
@@ -712,6 +724,7 @@ final class ShapeLayer: NSView {
             restacks = true
         }
         view.z = item.object.z
+        view.isHidden = suppressed(item)
         let offset = dragPreview.ids.contains(id) && item.shape != nil ? dragPreview.offset : .zero
         view.frame = item.bounds.offsetBy(dx: offset.width, dy: offset.height)
         view.needsDisplay = true
@@ -719,7 +732,7 @@ final class ShapeLayer: NSView {
     }
 
     fileprivate func drawItem(_ id: ObjectID, in context: CGContext, viewOrigin: NSPoint) {
-        guard let item = items[id], editor?.editing != id else { return }
+        guard let item = items[id], !suppressed(item), editor?.editing != id else { return }
         let offset = dragPreview.ids.contains(id) && item.shape != nil ? dragPreview.offset : .zero
         context.saveGState()
         defer { context.restoreGState() }
@@ -742,7 +755,7 @@ final class ShapeLayer: NSView {
     }
 
     func renderItem(_ id: ObjectID, in context: CGContext, docRect: NSRect, excluding excluded: RenderExclusion) -> NSRect? {
-        guard let item = items[id], !excluded.hides(item.object), item.bounds.intersects(docRect) else { return nil }
+        guard let item = items[id], !suppressed(item), !excluded.hides(item.object), item.bounds.intersects(docRect) else { return nil }
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineCap(.round)
@@ -758,7 +771,7 @@ final class ShapeLayer: NSView {
     func item(at point: NSPoint) -> DrawnItem? {
         let tolerance = self.tolerance
         for id in ordered.reversed() {
-            guard let item = items[id], item.bounds.contains(point), item.hits(point, tolerance: tolerance) else { continue }
+            guard let item = items[id], !suppressed(item), item.bounds.contains(point), item.hits(point, tolerance: tolerance) else { continue }
             if canvas.tiles.values.contains(where: { tile in
                 !tile.isHidden && tile.frame.contains(point) && (tile.z, tile.objectID) > (item.object.z, id)
             }) { return nil }
@@ -771,7 +784,7 @@ final class ShapeLayer: NSView {
     /// selection ring or a fit never takes the route it is about to leave.
     func outlineRect(_ id: ObjectID) -> NSRect? {
         followNow(id)
-        guard let item = items[id] else { return nil }
+        guard let item = items[id], !suppressed(item) else { return nil }
         if item.arrow != nil {
             let union = item.labelRect.map { item.frame.union($0) } ?? item.frame
             return union.insetBy(dx: -4, dy: -4)

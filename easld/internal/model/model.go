@@ -226,6 +226,11 @@ type Object struct {
 	Unknown map[string]any
 }
 
+func (o Object) Hidden() bool {
+	archived, _ := o.Props["archived"].(bool)
+	return o.Type == Question && archived
+}
+
 // ObjectKeys are the keys of a CanvasObject.
 var ObjectKeys = map[string]bool{
 	"id": true, "type": true, "frame": true, "z": true, "rev": true, "parent": true, "createdBy": true,

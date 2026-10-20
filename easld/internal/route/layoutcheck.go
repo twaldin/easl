@@ -189,7 +189,7 @@ func (g Geometry) LayoutCheck(scope map[string]bool, rows map[string]CodeRows) R
 	labelled := 0
 	colors := map[string]bool{}
 	for _, o := range g.Objects {
-		if o.Type != model.Arrow {
+		if o.Type != model.Arrow || len(routes[o.ID]) == 0 {
 			continue
 		}
 		spec, ok := ParseArrow(o.Props)
