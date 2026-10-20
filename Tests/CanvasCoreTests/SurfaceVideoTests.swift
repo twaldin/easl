@@ -65,6 +65,38 @@ struct SurfaceVideoTests {
         #expect(try center(black) == originalPixel)
     }
 
+    @Test func independentKeyframesReplacePredictionWithUnchangedDimensions() throws {
+        let firstEncoder = SurfaceVideoEncoder()
+        let secondEncoder = SurfaceVideoEncoder()
+        let decoder = SurfaceVideoDecoder()
+        let first = try #require(try firstEncoder.encode(image(), width: 64, height: 64))
+        let second = try #require(try secondEncoder.encode(image(red: true), width: 64, height: 64))
+        let following = try #require(try secondEncoder.encode(image(), width: 64, height: 64))
+        #expect(first.data[4] == 1 && second.data[4] == 1 && following.data[4] == 0)
+        #expect(try center(decoder.decode(first.data, width: 64, height: 64)).allSatisfy { $0 < 30 })
+        let red = try center(decoder.decode(second.data, width: 64, height: 64))
+        #expect(red[0] > 220 && red[1] < 30 && red[2] < 30)
+        #expect(try center(decoder.decode(following.data, width: 64, height: 64)).allSatisfy { $0 < 30 })
+    }
+
+    @Test func alternatingMotionAndSharpReferencesShowTheCurrentImage() throws {
+        let encoder = SurfaceVideoEncoder()
+        let decoder = SurfaceVideoDecoder()
+        for (red, sharp, motion) in [(false, false, false), (true, true, false),
+                                     (true, false, true), (false, true, false)] {
+            let frame = try #require(try encoder.encode(image(red: red), width: 64, height: 64,
+                                                       refresh: sharp, motion: motion))
+            #expect(frame.data[4] == 1)
+            let pixel = try center(decoder.decode(frame.data, width: frame.width, height: frame.height))
+            if red { #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30) }
+            else { #expect(pixel.allSatisfy { $0 < 30 }) }
+        }
+        let following = try #require(try encoder.encode(image(red: true), width: 64, height: 64))
+        #expect(following.data[4] == 0)
+        let red = try center(decoder.decode(following.data, width: following.width, height: following.height))
+        #expect(red[0] > 220 && red[1] < 30 && red[2] < 30)
+    }
+
     @Test func budgetCappedCaptureRastersProduceVisibleSharpReferences() throws {
         for (width, height, expectedWidth, expectedHeight) in [
             (2530, 1581, 2530, 1580),
@@ -238,9 +270,13 @@ struct SurfaceVideoTests {
         let decoder = SurfaceVideoDecoder()
         let original = try #require(try encoder.encode(image(), width: 64, height: 64)).data
         _ = try decoder.decode(original, width: 64, height: 64)
+        let earlierPredicted = try #require(try encoder.encode(image(), width: 64, height: 64)).data
         let resized = try #require(try encoder.encode(image(width: 96, height: 80), width: 96, height: 80)).data
+        _ = try decoder.decode(resized, width: 96, height: 80)
         let predicted = try #require(try encoder.encode(image(width: 96, height: 80), width: 96, height: 80)).data
         #expect(predicted[4] == 0)
+        #expect(earlierPredicted[4] == 0)
+        #expect(throws: (any Error).self) { try decoder.decode(earlierPredicted, width: 64, height: 64) }
         #expect(throws: (any Error).self) { try decoder.decode(predicted, width: 96, height: 80) }
         let recovered = try decoder.decode(resized, width: 96, height: 80)
         #expect(recovered.width == 96 && recovered.height == 80)

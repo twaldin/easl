@@ -413,21 +413,29 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
 }
 
 public final class SurfaceVideoDecoder: @unchecked Sendable {
+    private struct Configuration {
+        let session: VTDecompressionSession
+        let format: CMVideoFormatDescription
+        let sps: Data
+        let pps: Data
+
+        func matches(_ packet: VideoPacket) -> Bool {
+            sps == packet.sps && pps == packet.pps
+        }
+    }
+
     private let lock = NSLock()
-    private var session: VTDecompressionSession?
-    private var format: CMVideoFormatDescription?
-    private var sps = Data()
-    private var pps = Data()
+    private var configuration: Configuration?
+    private var cached: Configuration?
 
     public init() {}
-    deinit { if let session { VTDecompressionSessionInvalidate(session) } }
+    deinit { clear() }
 
     private func clear() {
-        if let session { VTDecompressionSessionInvalidate(session) }
-        session = nil
-        format = nil
-        sps = Data()
-        pps = Data()
+        if let configuration { VTDecompressionSessionInvalidate(configuration.session) }
+        if let cached { VTDecompressionSessionInvalidate(cached.session) }
+        configuration = nil
+        cached = nil
     }
 
     public func decode(_ data: Data, width: Int, height: Int) throws -> CGImage {
@@ -436,21 +444,27 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
         do {
             try videoDimensions(width, height)
             let packet = try VideoPacket(data)
-            let changed = packet.sps != sps || packet.pps != pps
-            guard packet.keyframe || (session != nil && !changed) else { throw SurfaceVideoError.missingKeyframe }
-            if changed || session == nil || packet.keyframe {
-                let nextFormat = try packet.format(width: width, height: height)
-                clear()
-                try videoCheck(VTDecompressionSessionCreate(allocator: nil, formatDescription: nextFormat,
-                    decoderSpecification: [kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: true] as CFDictionary,
-                    imageBufferAttributes: [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
-                        kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary,
-                    outputCallback: nil, decompressionSessionOut: &session))
-                format = nextFormat
-                sps = packet.sps
-                pps = packet.pps
+            let changed = configuration?.matches(packet) != true
+            guard packet.keyframe || !changed else { throw SurfaceVideoError.missingKeyframe }
+            if changed {
+                if cached?.matches(packet) == true {
+                    swap(&configuration, &cached)
+                } else {
+                    let nextFormat = try packet.format(width: width, height: height)
+                    var nextSession: VTDecompressionSession?
+                    try videoCheck(VTDecompressionSessionCreate(allocator: nil, formatDescription: nextFormat,
+                        decoderSpecification: [kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: true] as CFDictionary,
+                        imageBufferAttributes: [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+                            kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary,
+                        outputCallback: nil, decompressionSessionOut: &nextSession))
+                    guard let nextSession else { throw SurfaceVideoError.missingOutput }
+                    if let cached { VTDecompressionSessionInvalidate(cached.session) }
+                    cached = configuration
+                    configuration = Configuration(session: nextSession, format: nextFormat, sps: packet.sps, pps: packet.pps)
+                }
             }
-            guard let session, let format else { throw SurfaceVideoError.missingOutput }
+            guard let configuration else { throw SurfaceVideoError.missingOutput }
+            let session = configuration.session, format = configuration.format
             let dimensions = CMVideoFormatDescriptionGetDimensions(format)
             guard Int(dimensions.width) == width, Int(dimensions.height) == height else {
                 throw SurfaceVideoError.invalidDimensions

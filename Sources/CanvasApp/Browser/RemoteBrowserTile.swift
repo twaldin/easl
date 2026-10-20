@@ -574,6 +574,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                     return
                 } catch {
                     guard generation == self.streamEpoch, self.streamID == stream else { return }
+                    guard self.assemblingRefinement == progress.frame else { continue }
                     self.endLink()
                     self.setLinkStatus("Refresh transfer failed")
                     self.startLink()
