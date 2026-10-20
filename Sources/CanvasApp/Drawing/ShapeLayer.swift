@@ -6,14 +6,14 @@ final class ShapeLayer: NSView {
     enum Tool: String, CaseIterable {
         case select, rect, ellipse, arrow, text, ink
 
-        var key: String {
+        var actionID: String {
             switch self {
-            case .select: "v"
-            case .rect: "r"
-            case .ellipse: "o"
-            case .arrow: "a"
-            case .text: "t"
-            case .ink: "p"
+            case .select: "selectTool"
+            case .rect: "rectangleTool"
+            case .ellipse: "ellipseTool"
+            case .arrow: "arrowTool"
+            case .text: "textTool"
+            case .ink: "penTool"
             }
         }
 

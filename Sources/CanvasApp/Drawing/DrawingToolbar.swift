@@ -27,7 +27,7 @@ final class DrawingToolbar: NSVisualEffectView {
         stack.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
         stack.translatesAutoresizingMaskIntoConstraints = false
         for tool in ShapeLayer.Tool.allCases {
-            let button = Self.button(symbol: tool.symbol, tooltip: "\(tool.title) (\(tool.key.uppercased()))")
+            let button = Self.button(symbol: tool.symbol, tooltip: tool.title)
             button.setButtonType(.pushOnPushOff)
             button.target = self
             button.action = #selector(pickTool(_:))
@@ -63,6 +63,7 @@ final class DrawingToolbar: NSVisualEffectView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         layer.onToolChange = { [weak self] in self?.refresh() }
+        NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: AppShortcuts.didChange, object: nil)
         refresh()
     }
 
@@ -91,8 +92,10 @@ final class DrawingToolbar: NSVisualEffectView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     /// The active tool sits on an accent pill, so a drawing tool left on is hard to miss.
-    private func refresh() {
+    @objc private func refresh() {
         for (tool, button) in toolButtons {
+            let shortcut = AppShortcuts.current.binding(for: tool.actionID)?.display
+            button.toolTip = shortcut.map { "\(tool.title) (\($0))" } ?? tool.title
             let active = tool == shapeLayer.tool
             button.state = active ? .on : .off
             button.contentTintColor = active ? .white : .secondaryLabelColor

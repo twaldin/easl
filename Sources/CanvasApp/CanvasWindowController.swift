@@ -33,7 +33,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// others are ordered out). What menu commands and ⌘Z act on, also while a panel such as
     /// easl Basics is key or the app isn't active (replayed input).
     static var frontmost: CanvasWindowController? {
-        NSApp.orderedWindows.lazy.compactMap { window -> CanvasWindowController? in
+        if let controller = CanvasApplication.replayWindow?.windowController as? CanvasWindowController,
+           controller.isBoardOpen { return controller }
+        return NSApp.orderedWindows.lazy.compactMap { window -> CanvasWindowController? in
             guard window.isVisible, window.tabGroup.map({ $0.selectedWindow === window }) ?? true else { return nil }
             guard let controller = window.windowController as? CanvasWindowController, controller.isBoardOpen else { return nil }
             return controller
@@ -1259,11 +1261,29 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// View ▸ Leave Tile (⌘Esc): the one way out of a terminal, whose Esc belongs to its program.
     @objc func leaveTile(_ sender: Any?) { canvas.focusedTile.map(canvas.leaveTile) }
 
+    @objc func selectTool(_ sender: Any?) { drawing?.tool = .select }
+    @objc func rectangleTool(_ sender: Any?) { drawing?.tool = .rect }
+    @objc func ellipseTool(_ sender: Any?) { drawing?.tool = .ellipse }
+    @objc func arrowTool(_ sender: Any?) { drawing?.tool = .arrow }
+    @objc func textTool(_ sender: Any?) { drawing?.tool = .text }
+    @objc func penTool(_ sender: Any?) { drawing?.tool = .ink }
+
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if hostBoardClosed, let action = item.action, !Self.closedBoardActions.contains(action) { return false }
         let selection = canvas.selection
         if remote != nil, let action = item.action, Self.localOnly.contains(action) { return false }
         switch item.action {
+        case #selector(selectTool(_:)), #selector(rectangleTool(_:)), #selector(ellipseTool(_:)),
+             #selector(arrowTool(_:)), #selector(textTool(_:)), #selector(penTool(_:)):
+            guard let drawing, drawing.editor == nil else { return false }
+            let id = item.identifier?.rawValue ?? ""
+            if AppShortcuts.current.binding(for: id)?.modifiers.subtracting(.shift).isEmpty == true,
+               let event = NSApp.currentEvent, event.type == .keyDown, AppShortcuts.action(for: event)?.id == id {
+                guard window?.attachedSheet == nil, event.window === window else { return false }
+                if canvas.selectedChangesTile != nil, ChangesTile.isOwnKey(event) { return false }
+                return drawing.canvasHasKeyboard
+            }
+            return true
         case #selector(undoCanvas(_:)):
             item.title = undoTitle(redo: false)
             return textUndoManager?.canUndo == true || canvasUndoApplies && board.history.canUndo
@@ -1353,7 +1373,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private static let closedBoardActions: Set<Selector> = [
         #selector(zoomToFit(_:)), #selector(zoomToActual(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:)),
-        #selector(leaveTile(_:)), #selector(goToNextNeedsYou(_:)), #selector(AppDelegate.openBoard(_:)),
+        #selector(leaveTile(_:)), #selector(goToNextNeedsYou(_:)), #selector(AppDelegate.openBoard(_:)), #selector(AppDelegate.newWindowForTab(_:)),
         #selector(NSText.copy(_:)), #selector(NSText.selectAll(_:)),
     ]
 
@@ -1363,25 +1383,17 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         return text.undoManager
     }
 
-    /// The View menu's navigation shortcuts, matched on the key's characters: ⌘P, ⌘9, ⌘0, ⌘= (and
-    /// ⌘+), ⌘-, ⌘[ and ⌘] (Back, Forward), and ⌘Esc (Leave Tile, before a terminal's Ghostty
-    /// keybinds could claim it). Nil for anything else, which stays with the focused view.
+    /// Navigation takes priority over focused tile bindings, using the current registry.
     static func navigationAction(for event: NSEvent) -> Selector? {
-        guard event.type == .keyDown else { return nil }
-        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
-        if event.keyCode == 53, modifiers == .command { return #selector(leaveTile(_:)) }
-        switch (event.charactersIgnoringModifiers, modifiers) {
-        case ("p", .command): return #selector(showNavigator(_:))
-        case ("9", .command): return #selector(zoomToFit(_:))
-        case ("0", .command): return #selector(zoomToActual(_:))
-        case ("=", .command), ("+", .command), ("+", [.command, .shift]): return #selector(zoomIn(_:))
-        case ("-", .command): return #selector(zoomOut(_:))
-        // Ghostty's ⌘[ / ⌘] (go to split) have no splits here; a page keeps its own back.
-        case ("[", .command): return #selector(navigateBack(_:))
-        case ("]", .command): return #selector(navigateForward(_:))
-        default: return nil
-        }
+        guard let action = AppShortcuts.action(for: event),
+              navigationActions.contains(action.id) else { return nil }
+        return NSSelectorFromString(action.id + ":")
     }
+
+    private static let navigationActions: Set<String> = [
+        "showNavigator", "zoomToFit", "zoomToActual", "zoomIn", "zoomOut",
+        "navigateBack", "navigateForward", "leaveTile",
+    ]
 
     /// ⌥⌘-arrow, by key code (the characters an arrow reports vary with modifiers). Ghostty's
     /// ⌥⌘-arrow (go to split) has no splits to go to here, and shells never see ⌘.
@@ -1433,93 +1445,91 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     /// The main-menu item `event` is the key equivalent of.
     static func menuItem(for event: NSEvent, in menu: NSMenu?) -> NSMenuItem? {
-        keyChord(for: event).flatMap { menuItem(for: $0, in: menu) }
+        if let action = AppShortcuts.action(for: event), let item = menuItem(id: action.id, in: menu) { return item }
+        guard let binding = AppShortcuts.binding(for: event) else { return nil }
+        return menuItem(for: binding, in: menu)
     }
 
-    private static func menuItem(for chord: GhosttyConfig.KeyChord, in menu: NSMenu?) -> NSMenuItem? {
+    private static func menuItem(id: String, in menu: NSMenu?) -> NSMenuItem? {
         for item in menu?.items ?? [] {
-            if let found = menuItem(for: chord, in: item.submenu) { return found }
-            if !item.keyEquivalent.isEmpty, chord == GhosttyConfig.KeyChord(menuKey: item.keyEquivalent, modifiers: modifiers(item.keyEquivalentModifierMask)) { return item }
+            if item.identifier?.rawValue == id { return item }
+            if let found = menuItem(id: id, in: item.submenu) { return found }
         }
         return nil
     }
 
-    /// Board shortcuts taken ahead of the focused view (see `CanvasWindow`). ⌘W closes the
-    /// selection or the focused terminal and, with neither, goes on to the window's own close;
-    /// ⌘F finds in a code tile and otherwise stays with the terminal or page. Hyper-V pastes the
-    /// tray's mentions; a focused terminal would otherwise send the chord to its program as an
-    /// encoded key (zsh prints it at the prompt). In a focused terminal, the user's Ghostty
-    /// bindings of new window, tab or split open a terminal beside it and close surface closes it
-    /// (`TerminalConfig.remaps`), and easl's menu shortcuts other than `terminalMenuActions`
-    /// beat Ghostty's own bindings (its defaults bind ⌘T, ⌘N, ⌘Q, ⌘⇧[ and ⌘⇧] to tab, window and
-    /// app actions the embedded library can't perform, so the key would do nothing).
+    private static func menuItem(for binding: ShortcutBinding, in menu: NSMenu?) -> NSMenuItem? {
+        for item in menu?.items ?? [] {
+            if let found = menuItem(for: binding, in: item.submenu) { return found }
+            guard !item.keyEquivalent.isEmpty else { continue }
+            var modifiers: ShortcutModifiers = []
+            let flags = item.keyEquivalentModifierMask
+            if flags.contains(.command) { modifiers.insert(.command) }
+            if flags.contains(.shift) { modifiers.insert(.shift) }
+            if flags.contains(.option) { modifiers.insert(.option) }
+            if flags.contains(.control) { modifiers.insert(.control) }
+            if binding == ShortcutBinding(key: item.keyEquivalent, modifiers: modifiers) { return item }
+        }
+        return nil
+    }
+
+    /// Enabled menu shortcuts precede terminal remaps. Editing stays with the focused editor.
     func handleKeyEquivalent(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown, window?.attachedSheet == nil else { return false }
+        let item = Self.menuItem(for: event, in: NSApp.mainMenu)
+        let action = item?.action
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
         if hostBoardClosed {
-            if let action = Self.navigationAction(for: event), Self.closedBoardActions.contains(action) {
-                perform(action, with: self)
-                return true
+            if let item, let action, Self.closedBoardActions.contains(action), AppShortcuts.isEnabled(item) {
+                return NSApp.sendAction(action, to: item.target, from: item)
             }
-            let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
-            if flags == .command, let key = event.charactersIgnoringModifiers, key == "a" || key == "c" {
-                let action = key == "a" ? #selector(NSText.selectAll(_:)) : #selector(NSText.copy(_:))
-                if let responder = window?.firstResponder,
-                   responder is CodeRowsView || responder is QuestionTile || (responder as? NSTextView)?.isEditable == false,
-                   responder.responds(to: action) {
-                    responder.perform(action, with: nil)
-                }
-                return true
+            if let item, AppShortcuts.isEnabled(item) {
+                return NSApp.mainMenu?.performKeyEquivalent(with: event) == true
             }
-            if Self.menuItem(for: event, in: NSApp.mainMenu) != nil {
-                _ = NSApp.mainMenu?.performKeyEquivalent(with: event)
-                return true
-            }
-            if flags.isEmpty || flags == .shift {
+            if modifiers.isEmpty || modifiers == .shift {
                 if [53, 115, 116, 119, 121, 123, 124, 125, 126].contains(event.keyCode) { return false }
             }
             return true
         }
-        if let action = Self.navigationAction(for: event) {
-            perform(action, with: self)
-            return true
+        if let action, let item, let id = item.identifier?.rawValue, Self.navigationActions.contains(id), AppShortcuts.isEnabled(item) {
+            return NSApp.sendAction(action, to: nil, from: item)
         }
         if let heading = Self.tileHeading(for: event) {
             canvas.moveToNeighbor(heading)
             return true
         }
-        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
-        if event.type == .keyDown, modifiers == [.command, .shift, .option, .control], event.charactersIgnoringModifiers?.lowercased() == "v", window?.attachedSheet == nil {
-            pasteMentions(nil)
+        if action == #selector(NSWindow.performClose(_:)), canvas.closeSelectionOrFocused() { return true }
+        if action == #selector(AppDelegate.findInPage(_:)), canvas.findInCodeTile() { return true }
+        if modifiers == .command, event.charactersIgnoringModifiers == "l", canvas.focusBrowserAddress() { return true }
+        if let action, action == #selector(pasteMentions(_:)) {
+            if let item, AppShortcuts.isEnabled(item) { _ = NSApp.sendAction(action, to: nil, from: item) }
             return true
         }
-        guard event.type == .keyDown, window?.attachedSheet == nil else { return false }
-        if modifiers == .command {
-            switch event.charactersIgnoringModifiers {
-            case "w": if canvas.closeSelectionOrFocused() { return true }
-            case "f": if canvas.findInCodeTile() { return true }
-            case "l": if canvas.focusBrowserAddress() { return true }
-            // ⌘I (Write Prompt) ahead of the focused view: a page's editor would take it for
-            // italics, and the composer is reached from anywhere.
-            case "i":
-                focusComposer(nil)
-                return true
-            default: break
-            }
+        if let item, let action, AppShortcuts.isEnabled(item), action == #selector(focusComposer(_:)) {
+            return NSApp.sendAction(action, to: nil, from: item)
         }
         guard let terminal = canvas.focusedTerminal else { return false }
-        // ⌘Z / ⇧⌘Z right after a Hyper-V paste into this terminal: the chips come back.
-        if modifiers.subtracting(.shift) == .command, event.charactersIgnoringModifiers?.lowercased() == "z", canvasUndoApplies(redo: modifiers.contains(.shift)) {
-            undo(redo: modifiers.contains(.shift))
+        if action == #selector(AppDelegate.undoCanvas(_:)), canvasUndoApplies(redo: false) {
+            undo(redo: false)
             return true
         }
-        if let chord = Self.keyChord(for: event), let action = TerminalConfig.shared.remaps[chord] {
-            switch action {
+        if action == #selector(AppDelegate.redoCanvas(_:)), canvasUndoApplies(redo: true) {
+            undo(redo: true)
+            return true
+        }
+        let remap = Self.keyChord(for: event).flatMap { TerminalConfig.shared.remaps[$0] }
+        let custom = item?.identifier.flatMap { id in ShortcutAction.all.first { $0.id == id.rawValue } }
+            .map { AppShortcuts.current.binding(for: $0.id) != $0.defaultBinding } ?? false
+        if remap == nil || custom, let item, let action, !Self.terminalMenuActions.contains(action),
+           !modifiers.subtracting(.shift).isEmpty, AppShortcuts.isEnabled(item) {
+            return NSApp.sendAction(action, to: item.target, from: item)
+        }
+        if let remap {
+            switch remap {
             case .newTerminal: canvas.createTerminal(beside: terminal)
             case .closeTerminal: canvas.delete([terminal])
             }
             return true
-        }
-        if let item = Self.menuItem(for: event, in: NSApp.mainMenu), let action = item.action, !Self.terminalMenuActions.contains(action) {
-            return NSApp.mainMenu?.performKeyEquivalent(with: event) == true
         }
         return false
     }
