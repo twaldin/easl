@@ -233,14 +233,12 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
     public static let settle: TimeInterval = 1
     public private(set) var captureDelay: TimeInterval = 0.1
 
-    private static let inputSettle: TimeInterval = 0.4
     private var video = SurfaceVideoEncoder()
     private let refresh: SurfaceImageRefresh
     private var unacknowledgedReferenceRevision: UInt64?
     private var observed: SurfaceImageIdentity?
     private var sharp: SurfaceImageIdentity?
     private var refreshArmed = false
-    private var refreshFromInput = false
     private var imageVersion: UInt64 = 0
     private var refreshEpoch: UInt64 = 0
     private var motionVersion: UInt64?
@@ -295,7 +293,6 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
         }
         let change = identity.change(from: observed)
         observed = identity
-        if inputActive { refreshFromInput = true }
         let resumeMotion: Bool
         if case .large = change { resumeMotion = inputActive }
         else { resumeMotion = false }
@@ -304,7 +301,6 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
             imageVersion &+= 1
             refreshEpoch &+= 1
             changedAt = now
-            refreshFromInput = inputActive
             refreshArmed = true
         case .small:
             imageVersion &+= 1
@@ -314,7 +310,6 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
         if !refreshArmed, case .large = identity.change(from: sharp) {
             refreshEpoch &+= 1
             changedAt = now
-            refreshFromInput = inputActive
             refreshArmed = true
         }
         let key = SurfaceImageRefresh.Key(epoch: refreshEpoch, inputRevision: revision.value)
@@ -324,8 +319,7 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
             unacknowledgedReferenceRevision = nil
             motionVersion = nil
         }
-        let quietPeriod = refreshFromInput ? Self.inputSettle : Self.settle
-        let due = max(changedAt, lastInput) + quietPeriod
+        let due = max(changedAt, lastInput) + Self.settle
         if mode == .video, !inputActive, now >= due {
             if let encoded = try refresh.take(key: key, revision: revision) {
                 guard revision.value == key.inputRevision else { return nil }

@@ -4,7 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
-- Development: browser measurements separate native response, decoded assignment, and sharp settling. Codec sweeps retain quality 1; a 400 ms input-only quiet period remains conditional on matched qualification.
+- Development browser measurements separate native first-visible response, decoded assignment, and settled sharp assignment. Correct the 0.3.0 click-latency interpretation and retain codec quality 1 without changing production codec or refresh behavior.
 - Composer prompts reconcile lost replies without resending; uncertain delivery stays visible instead of becoming an unsent draft.
 - Undo and redo of deleted composer mentions no longer crash the app. Mentions whose tiles still exist keep their editor undo history.
 - Japanese and other input-method composition no longer draws the composer's placeholder over the text being composed.

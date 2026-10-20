@@ -23,7 +23,7 @@ The CI `easld` job installs real zmx 0.8.1 for two regressions. `TestSpawnFirstA
 
 `swift run -j 2 CanvasCoreTests --no-parallel --filter SurfaceImage` selects the stream encoder and decoder suites. Coverage includes sharp prediction through small input, independent motion after large input, renewed settling, cancellation recovery, malformed packets, declared dimensions, and native padding crop. `swift run -j 2 CanvasCoreTests --no-parallel --filter SurfaceRefreshTransfer` covers stop-and-wait 16 KiB chunk transfer, receipt validation, complete assembly, and discarded partial transfers. Decoder integration uses the actual codec.
 
-Production streams use independent sharp refresh codecs, one outstanding 16 KiB chunk, and a 1-second quiet period. There is no refinement profile negotiation or cached sharp restore across motion. The candidate under qualification uses 400 ms only for input-triggered refresh epochs and preserves the 1-second autonomous period. Frame credit, cancellation, revision fences, and chunk receipts remain unchanged.
+Production streams retain the 0.3.0 behavior: independent sharp refresh codecs, one outstanding 16 KiB chunk, and a 1-second quiet period. No shorter delay, larger window, refinement profile, or cached sharp-reference restore is shipped. Frame credit, cancellation, revision fences, and chunk receipts are unchanged.
 
 The real-page quality requirements are 200 documentation caret transitions and 30 for each other page, with every decoded frame acknowledged. After input and motion, maximum RGB error must remain at most 8 and mean at most 1 on the sharp return. A requirement is not evidence that a particular build passed.
 
@@ -49,7 +49,7 @@ What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` t
 
 ### Browser response and sharp-settle gates
 
-`scripts/perf-browser-gates.py` observes an existing counter-and-marker page in an isolated native viewer. Its module help documents the fixture and JSON config. Supply the viewer's exact PID, window, current stream, and measured viewport geometry. Use the same native input helper, route, page, and compiler for before and after, retaining source and bundle hashes. The bounded local qualification compares the candidate against the preserved 0.3.0 baseline without further deckbox measurement.
+`scripts/perf-browser-gates.py` observes an existing counter-and-marker page in an isolated native viewer. Its module help documents the fixture and JSON config. Supply the viewer's exact PID, window, current stream, and measured viewport geometry. Use the same native input helper, route, page, and compiler for before and after, retaining source and bundle hashes.
 
 Report two endpoints separately:
 
@@ -58,7 +58,9 @@ Report two endpoints separately:
 - **Gate B, settled sharp:** the last queued input's same-viewer mach timestamp to the first `refresh:true` image assigned for exactly that input sequence on the same stream. This endpoint is report-only, including the 1.5-second median and 2.5-second p95 targets. A `DevInput.surface` trace separately reports the first input-covering decoded-and-assigned image and its format. JPEG and PNG have no idle refresh, so Gate B is not applicable for those modes. Neither assignment endpoint proves native presentation or the separate RGB quality gate.
   Resolve the no-refresh format only from an assignment matching the selected input watermark; a later input's JPEG cannot excuse an absent sharp image.
 
-The relay landing gate uses first input-covering decoded-and-assigned latency, not Gate A's native display time. It requires p95 at most 450 ms and median at most 110% of the matched baseline, together with improved sharp settling. Report Gate A independently. The retained matched 60-per-arm 0.3.0 baseline measured decoded assignment at median 142.104 ms and p95 364.735 ms, and settled sharp assignment at median 3,206.593 ms and p95 5,554.611 ms. No landed candidate column is claimed here.
+The relay landing gate uses first input-covering decoded-and-assigned latency, not Gate A's native display time. It requires p95 at most 450 ms and median at most 110% of the matched baseline, together with improved sharp settling. Report Gate A independently. The retained matched 60-per-arm 0.3.0 baseline measured decoded assignment at median 142.104 ms and p95 364.735 ms, and settled sharp assignment at median 3,206.593 ms and p95 5,554.611 ms. Production codec and refresh behavior are unchanged, so these are baseline observations, not a measured improvement.
+
+The 400 ms, 64 KiB experiment failed the first-response gate at p95 496.617 ms. The single guest-local 60-click-per-arm comparison of a 400 ms input delay and the original one-chunk window selected JPEG on the unshaped fast link for every click. It measured no sharp settling and did not qualify the H.264 delay change. Decoded-assignment median rose from 25.713 ms to 29.552 ms, exceeding the 10% allowance. No performance change was adopted.
 
 The 0.3.0 release's original 243 / 2,901 ms relay-click row came from strict RGB8 image completion, not first-visible response. Its 30-action mixed observer is not pure Gate B. Keep those historical observations separate from both assignment endpoints and the own-window SCStream observer.
 
