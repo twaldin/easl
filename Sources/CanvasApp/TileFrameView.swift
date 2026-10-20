@@ -1,5 +1,6 @@
 import AppKit
 import CanvasCore
+import QuartzCore
 
 /// Shared chrome around every tile: title bar (drag moves the selection), lifecycle badge, content
 /// zoom control, close button, resize grip, and the zoomed-out card (tinted by agent lifecycle).
@@ -17,6 +18,9 @@ final class TileFrameView: NSView {
     private let zoomControl = TileZoomControl()
     private let machineControl = DrawingMachineControl()
     private let titleBar = NSView()
+    private static let pinchHeaderActions: [String: any CAAction] = [
+        "bounds": NSNull(), "position": NSNull(), "contents": NSNull(), "contentsScale": NSNull(),
+    ]
     private enum PinchHeader {
         case stale(NSView?)
         case queued(NSView?)
@@ -255,7 +259,10 @@ final class TileFrameView: NSView {
     private func layoutParts() {
         let width = bounds.width
         titleBar.frame = NSRect(x: 0, y: 0, width: width, height: Self.titleHeight)
-        if titleBar.superview == nil { pinchHeader.view?.frame = titleBar.frame }
+        if titleBar.superview == nil, let view = pinchHeader.view {
+            view.frame = titleBar.frame
+            view.layer?.frame = view.bounds
+        }
         badge.frame = NSRect(x: 10, y: (Self.titleHeight - 10) / 2, width: 10, height: 10)
         closeButton.frame = TileTitleBar.closeFrame(width: width)
         layoutTitle()
@@ -394,11 +401,12 @@ final class TileFrameView: NSView {
                 view = cachedView
             } else {
                 view = NSView(frame: self.titleBar.frame)
+                view.layer = CALayer()
+                view.layer?.actions = Self.pinchHeaderActions
                 view.wantsLayer = true
-                view.layerContentsRedrawPolicy = .never
-                view.layerContentsPlacement = .scaleAxesIndependently
             }
             view.frame = self.titleBar.frame
+            view.layer?.frame = view.bounds
             view.layer?.contentsScale = scale
             self.pinchHeader = .ready(view, image, scale: scale)
         }
