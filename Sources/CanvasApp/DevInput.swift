@@ -26,7 +26,7 @@ enum DevInput {
         return value
     }()
 
-    static func traceSurface(stage: String, stream: String, seq: Int, input: Int? = nil, refresh: Bool? = nil, firstSeq: Int? = nil, format: String? = nil, offset: Int? = nil) {
+    static func traceSurface(stage: String, stream: String, seq: Int, input: Int? = nil, refresh: Bool? = nil, firstSeq: Int? = nil, format: String? = nil) {
         guard surfaceTrace else { return }
         let ticks = mach_absolute_time()
         var fields: [String: Any] = [
@@ -39,7 +39,6 @@ enum DevInput {
         if let refresh { fields["refresh"] = refresh }
         if let firstSeq { fields["first_seq"] = firstSeq }
         if let format { fields["format"] = format }
-        if let offset { fields["offset"] = offset }
         guard let data = try? JSONSerialization.data(withJSONObject: fields),
               let json = String(data: data, encoding: .utf8) else { return }
         print("DevInput.surface \(json)")

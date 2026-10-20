@@ -48,7 +48,7 @@ Candidate `18ed11b` was measured in two headless macOS guests on home's network,
 | Typing | 119 / 149 | 252 / 491 |
 | Scroll | 107 / 141 | 244 / 621 |
 
-All 180 browser observations completed. These are strict RGB8 image-completion observations, not first-visible response or intrinsic input-to-pixel latency. The original 30-action mixed observer cannot be relabeled as pure Gate B sharp assignment. The capture pipeline alone measured 104 / 132 ms; intrinsic local latency is not resolved. The relay uses the candidate's H.264-negotiating path with adaptive fallback. Network, codec and scheduling contributions were not isolated. Relay-click outliers remain in the distribution; this is not a controlled attribution to an app change.
+All 180 browser observations completed. These are strict RGB8 image-completion observations, not first-visible response or intrinsic input-to-pixel latency. The original 30-action mixed observer cannot be relabeled as pure settled-sharp assignment. The capture pipeline alone measured 104 / 132 ms; intrinsic local latency is not resolved. The relay uses the candidate's H.264-negotiating path with adaptive fallback. Network, codec and scheduling contributions were not isolated. Relay-click outliers remain in the distribution; this is not a controlled attribution to an app change.
 
 A separate matched 60-per-arm baseline series for 0.3.0 measured first input-covering decoded-and-assigned images at 142.104 / 364.735 ms and settled sharp assignment at 3,206.593 / 5,554.611 ms. Neither assignment endpoint proves native presentation. In particular, the historical 243 / 2,901 ms click row is not first-visible latency.
 

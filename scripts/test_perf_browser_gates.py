@@ -252,10 +252,14 @@ class BrowserGateTests(unittest.TestCase):
     def test_cua_target_match_cannot_rescue_missing_native_observation(self):
         class MissingNativeObserver:
             def __init__(self, config, directory):
-                self.pixel, self.native_events = [0, 0, 0], []
+                self.pixel, self.native_events, self.target = [0, 0, 0], [], None
             def start(self): return {}
-            def capture(self, label): return {"pixel": [50, 50, 75], "ended_ms": gates.monotonic_ms()}
-            def arm(self, label, target): return {}
+            def capture(self, label):
+                return {"pixel": list(self.target) if self.target is not None else [50, 50, 75],
+                        "ended_ms": gates.monotonic_ms()}
+            def arm(self, label, target):
+                self.target = target
+                return {}
             def point(self, *args, **kwargs): return (1, 1)
             def poll(self): return None
             def check(self): pass
