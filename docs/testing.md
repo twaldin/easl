@@ -331,7 +331,9 @@ Run `perf-scale.py` only inside a claimed GUI guest. Compile the window lookup h
 	  --modes local,remote --easld "$G/easld" --ssh "$G/ssh" --out "$G/scale"
 ```
 
-The remote mode requires the guest-loopback `easl-guest` SSH wrapper from the guest recipe. It starts only the specified scratch easld. Each run records API readiness, a native startup capture and its elapsed-time upper bound, ten-second pan and zoom gestures, quiet app CPU, app RSS, and a whole-board render. Inspect the startup pixels before treating their upper bound as evidence of a full draw. API readiness alone is not a first-draw measurement. Native captures include capture overhead and run before the gesture measurements.
+The remote mode requires the guest-loopback `easl-guest` SSH wrapper from the guest recipe. It starts only the specified scratch easld. Each run launches an empty viewer, pins the development idle policy active, then times opening the fixture board. Local calls use `board.open`; remote calls use the native remote-board opener and wait for the host's delegated `view.get`. The separate `harness_launch_ms` includes development-bundle preparation and is not intrinsic app-launch latency.
+
+Rows record API readiness, a native startup capture and its elapsed-time upper bound, ten-second pan and zoom gestures, quiet app CPU, app RSS, and a whole-board render. Inspect the startup pixels before treating their upper bound as evidence of a full draw. API readiness alone is not a first-draw measurement. Native captures include capture overhead and run before the gesture measurements.
 
 The gestures reverse direction every 60 steps with `input scroll|magnify --oscillate 60 --repeat 601 --interval 16.666667`. `DevInput.motion` records the observed pan and magnification range so a gesture over unchanged or clamped content fails the runner.
 

@@ -120,34 +120,38 @@ class Run:
             rpc(self.host / 'easl.sock', 'board.open', {'root': str(self.root)})
             self.home.mkdir(parents=True)
             (self.home / 'get-started.json').write_text('{"dismissed":true}')
-        started = time.monotonic()
-        self.dev('start', self.scratch / 'empty' if self.mode == 'remote' else self.root)
+        launched = time.monotonic()
+        self.dev('start', self.scratch / 'empty')
         self.pid = int((self.home / 'pid').read_text())
+        self.harness_launch_ms = (time.monotonic() - launched) * 1000
+        self.dev('input', 'idle', 'off')
+        self.dev('input', 'perf', '900000')
+        started = time.monotonic()
         if self.mode == 'remote':
-            started = time.monotonic()
             self.dev('input', 'remote', 'easl-guest', self.bid, self.host)
+        else:
+            rpc(self.socket, 'board.open', {'root': str(self.root)})
         try:
-            board = wait_for(lambda: self.try_board())
+            board = wait_for(lambda: self.read_ready('board.get'))
         except TimeoutError as error:
             raise TimeoutError(str(error) + ': ' + getattr(self, 'readiness_error', 'no reply')) from error
         self.api_ready_ms = (time.monotonic() - started) * 1000
         assert len(board['objects']) == self.count, 'Fixture object count changed'
-        wait_for(lambda: self.call('view.get')['visible'])
+        wait_for(lambda: (self.read_ready('view.get') or {}).get('visible'))
         windows = wait_for(lambda: json.loads(command(self.args.window_helper, self.pid)))
         window = max(windows, key=lambda item: item['kCGWindowBounds']['Width'] * item['kCGWindowBounds']['Height'])
         self.native_bounds = window['kCGWindowBounds']
         self.native_receipt = native.capture(self.home, window['kCGWindowNumber'], self.output / 'startup.png')
         self.startup_capture_ms = (time.monotonic() - started) * 1000
         time.sleep(5)
-        self.dev('input', 'idle', 'off')
         self.dev('input', 'perf', '1')
         time.sleep(0.2)
         self.output.joinpath('launch.log').write_text(self.log())
         return board
 
-    def try_board(self):
+    def read_ready(self, method):
         try:
-            return self.call('board.get')
+            return self.call(method)
         except (OSError, RuntimeError) as error:
             self.readiness_error = str(error)
             return None
@@ -209,6 +213,7 @@ class Run:
         (self.output / 'render.json').write_text(json.dumps(rendered, indent=2))
         assert self.call('view.get')['viewport'] == before['viewport'], 'Render moved the viewport'
         return {'api_ready_ms': self.api_ready_ms, 'startup_capture_upper_ms': self.startup_capture_ms,
+                'harness_launch_ms': self.harness_launch_ms,
                 'native_bounds': self.native_bounds, 'capture_id': self.native_receipt['capture_id'],
                 'pan': pan, 'zoom': zoom, 'idle_cpu_percent': idle_cpu, 'app_rss_MiB': rss,
                 'process_memory': process,
