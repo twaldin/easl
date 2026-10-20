@@ -2,7 +2,7 @@
 """Measure exact-size boards in an already-claimed macOS GUI guest.
 
 Requires --app LABEL=FROZEN_RELEASE_APP, --out, and optional --easld/--ssh
-for guest-loopback remote boards. Never runs a VM or changes display focus.
+for guest-loopback remote boards. Activates only its owned app in a VirtualMac guest.
 """
 import argparse
 import base64
@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -27,6 +28,27 @@ native_spec.loader.exec_module(native)
 
 def command(*args, env=None):
     return subprocess.check_output([str(a) for a in args], env=env, text=True, stderr=subprocess.STDOUT)
+
+
+def require_guest():
+    if sys.platform != 'darwin':
+        raise RuntimeError('GUI runs require a claimed VirtualMac guest')
+    model = command('sysctl', '-n', 'hw.model').strip()
+    if not model.startswith('VirtualMac'):
+        raise RuntimeError('GUI runs require a claimed VirtualMac guest, not ' + model)
+    return model
+
+
+def native_json(helper, output, *arguments):
+    result = subprocess.run([str(helper), *map(str, arguments)], capture_output=True, text=True)
+    output.with_suffix(output.suffix + '.stdout').write_text(result.stdout)
+    output.with_suffix(output.suffix + '.stderr').write_text(result.stderr)
+    result.check_returncode()
+    return json.loads(result.stdout)
+
+
+def frame_text(helper, image):
+    return native_json(helper, image.with_suffix('.ocr'), '--drawn', image)
 
 
 def rpc(path, method, params=None):
@@ -84,6 +106,7 @@ def frames(text):
 
 class Run:
     def __init__(self, args, app, count, mode, output):
+        require_guest()
         self.args, self.app, self.count, self.mode, self.output = args, app, count, mode, output
         self.scratch = Path(tempfile.mkdtemp(prefix='eps-', dir='/tmp')).resolve()
         self.home = self.scratch / 'v'
@@ -129,6 +152,8 @@ class Run:
         self.harness_launch_ms = (time.monotonic() - launched) * 1000
         self.dev('input', 'idle', 'off')
         self.dev('input', 'perf', '900000')
+        active = native_json(self.args.window_helper, self.output / 'activation', '--activate', self.pid)
+        assert active['pid'] == self.pid and active['isActive'], 'Owned guest app was not active before timed target open'
         started = time.monotonic()
         if self.mode == 'remote':
             self.dev('input', 'remote', 'easl-guest', self.bid, self.host)
@@ -150,8 +175,11 @@ class Run:
             image = self.output / ('startup-attempt-' + str(len(attempts)) + '.png')
             receipt = native.capture(self.home, window['kCGWindowNumber'], image)
             captured_ms = (time.monotonic() - started) * 1000
-            probe = json.loads(command(self.args.window_helper, '--drawn', image))
-            attempts.append(dict(probe, captured_ms=captured_ms, capture_id=receipt['capture_id']))
+            attempt = {'captured_ms': captured_ms, 'capture_id': receipt['capture_id']}
+            attempts.append(attempt)
+            (self.output / 'startup-attempts.json').write_text(json.dumps(attempts, indent=2))
+            probe = frame_text(self.args.window_helper, image)
+            attempt.update(probe)
             (self.output / 'startup-attempts.json').write_text(json.dumps(attempts, indent=2))
             if probe['drawn']:
                 self.native_receipt = receipt
@@ -257,6 +285,60 @@ class Run:
                 'render_ms': render_ms, 'render_states': states, 'render_missing': missing,
                 'terminals': len(terminals), 'pid': self.pid, 'scratch': str(self.scratch)}
 
+    def owned_processes(self):
+        scopes = {str(path) for path in (self.root, self.root.resolve(), self.scratch, self.scratch.resolve())}
+        processes = {}
+        for line in command('/bin/ps', '-axo', 'pid=,ppid=,command=').splitlines():
+            fields = line.strip().split(None, 2)
+            if len(fields) == 3:
+                pid, parent, argv = fields
+                processes[int(pid)] = {'pid': int(pid), 'parent': int(parent), 'command': argv}
+        cwd = subprocess.run(['lsof', '-a', '-u', str(os.getuid()), '-d', 'cwd', '-Fpn'],
+                             capture_output=True, text=True, check=True)
+        current = None
+        for line in cwd.stdout.splitlines():
+            if line.startswith('p'):
+                current = int(line[1:])
+            elif line.startswith('n') and current in processes:
+                processes[current]['cwd'] = line[1:]
+        owned = []
+        for pid, process in processes.items():
+            if pid == os.getpid():
+                continue
+            directory = process.get('cwd', '')
+            ownership = []
+            if any(directory == scope or directory.startswith(scope + '/') for scope in scopes):
+                ownership.append('owned fixture or run cwd')
+            if any(scope + '/' in process['command'] for scope in scopes):
+                ownership.append('owned fixture or run command')
+            if ownership:
+                owned.append(dict(process, ownership=ownership))
+        return owned
+
+    def stop_owned_processes(self):
+        receipt = {'app_pid': self.pid, 'daemon_pid': self.server.pid if self.server else None, 'passes': []}
+        path = self.output / 'owned-processes.json'
+        for signum in (signal.SIGTERM, signal.SIGTERM, signal.SIGKILL):
+            owned = self.owned_processes()
+            receipt['passes'].append({'signal': signum, 'processes': owned})
+            path.write_text(json.dumps(receipt, indent=2))
+            if not owned:
+                break
+            for process in owned:
+                try:
+                    os.kill(process['pid'], signum)
+                except ProcessLookupError:
+                    pass
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if not self.owned_processes():
+                    break
+                time.sleep(0.1)
+        receipt['remaining'] = self.owned_processes()
+        path.write_text(json.dumps(receipt, indent=2))
+        if receipt['remaining']:
+            raise RuntimeError('Owned fixture/run processes survived cleanup: ' + json.dumps(receipt['remaining']))
+
     def close(self):
         errors = []
         if self.bid and ((self.mode == 'remote' and self.server and self.server.poll() is None)
@@ -272,10 +354,21 @@ class Run:
         if (self.home / 'app.log').exists():
             (self.output / 'app.log').write_text(self.log())
         if self.server:
-            self.server.terminate()
-            self.server.wait(timeout=15)
-            self.server_log.close()
-        native.end_session()
+            try:
+                self.server.terminate()
+                self.server.wait(timeout=15)
+            except Exception as error:
+                errors.append(str(error))
+            finally:
+                self.server_log.close()
+        try:
+            native.end_session()
+        except Exception as error:
+            errors.append(str(error))
+        try:
+            self.stop_owned_processes()
+        except Exception as error:
+            errors.append(str(error))
         quiet = self.root / '.perf-board-quiet'
         quiet.unlink(missing_ok=True)
         if errors:
