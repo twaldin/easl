@@ -17,13 +17,25 @@ final class UserIdleWatch {
     private var pinned = false
     private var timer: DispatchSourceTimer?
     private var monitor: Any?
+    private let sessionIdle: () -> TimeInterval
+    private let uptime: () -> TimeInterval
+    private var lastInput: TimeInterval?
+
+    init(sessionIdle: @escaping () -> TimeInterval = {
+        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+    }, uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.sessionIdle = sessionIdle
+        self.uptime = uptime
+    }
 
     var isIdle: Bool { policy.isIdle }
     private(set) var idleSeconds: TimeInterval = 0
 
-    /// A fresh whole-session sample, including input outside easl since the last timer tick.
+    /// AppKit events can arrive without resetting the session's HID clock.
     func currentIdleSeconds() -> TimeInterval {
-        pinned ? idleSeconds : CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        if pinned { return idleSeconds }
+        let system = sessionIdle()
+        return lastInput.map { min(system, uptime() - $0) } ?? system
     }
     /// Terminals shown and able to draw (`TerminalTile.updateSurfaceVisibility`).
     private(set) var drawable = 0
@@ -68,8 +80,9 @@ final class UserIdleWatch {
     }
 
     private func input() {
-        guard !pinned, policy.isIdle else { return }
-        apply(idleSeconds: 0)
+        lastInput = uptime()
+        guard !pinned else { return }
+        if policy.isIdle { apply(idleSeconds: 0) }
     }
 
     private func apply(idleSeconds: TimeInterval) {

@@ -1,0 +1,12 @@
+#!/usr/bin/python3
+import json
+import os
+from pathlib import Path
+import sys
+root = Path(__file__).resolve().parent
+config = json.loads((root / 'current.json').read_text()) if (root / 'current.json').exists() else {}
+os.environ['ECHO_SSH_CONFIG'] = str(root / 'ssh_config')
+os.environ['ECHO_TRACE_FILE'] = str(Path(config.get('directory', root)) / 'ssh.jsonl')
+os.environ['ECHO_COMPRESSION'] = config.get('compression', 'yes')
+os.environ['ECHO_TRACE_PAYLOAD'] = '1'
+os.execv('/usr/bin/python3', ['python3', str(root / 'ssh-echo-observed.py')] + sys.argv[1:])

@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Keep terminal redraws responsive after native app input when the HID-idle clock is stale, and add per-stage remote echo measurements.
 - Remote PNG and JPEG tiles request display-sized previews from the host and load more detail on zoom. Update the Mac app and easld together for `image.preview`.
 - Remote board and terminal SSH connections compress text, code, and metadata.
 - Development observers can retain the first complete native window frame without sending input or changing the canvas.

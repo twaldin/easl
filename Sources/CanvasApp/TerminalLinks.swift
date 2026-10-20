@@ -592,6 +592,7 @@ final class CanvasTerminalView: TerminalView {
         }
         let waited = (ProcessInfo.processInfo.systemUptime - event.timestamp) * 1000
         let start = Metrics.now()
+        DevTerminalEcho.key(self, event: event)
         super.keyDown(with: event)
         let handled = (Metrics.now() - start) * 1000
         MainMetricsBatch.shared.latency.add(waitMs: waited, handleMs: handled)

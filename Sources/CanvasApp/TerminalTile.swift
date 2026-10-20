@@ -14,7 +14,7 @@ final class TerminalTile: NSView, TileContent {
     let terminal: CanvasTerminalView
     private let board: Board
     private var sessionIdentity: TerminalSessionIdentity?
-    private var surface: TerminalSurface?
+    private(set) var surface: TerminalSurface?
     private let handler = TerminalEvents()
     private let underline = TerminalLinkUnderline()
     /// The header text changed: the name (`props.name`, else the foreground program) and the

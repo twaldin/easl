@@ -1,0 +1,13 @@
+#!/usr/bin/python3
+import json
+import os
+from pathlib import Path
+import sys
+root = Path(__file__).resolve().parent
+config = json.loads((root / 'current.json').read_text()) if (root / 'current.json').exists() else {}
+env = os.environ.copy()
+env['DYLD_INSERT_LIBRARIES'] = str(root / 'host-pty-trace.dylib')
+env['EASL_PTY_TRACE_PATH'] = str(Path(config.get('directory', root)) / 'host.jsonl')
+if config.get('burst'):
+    env['EASL_PTY_TRACE_BURST'] = '1'
+os.execve(str(root / 'zmx'), [str(root / 'zmx')] + sys.argv[1:], env)

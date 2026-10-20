@@ -119,7 +119,7 @@ private struct ProbeError: Error, CustomStringConvertible {
     init(_ description: String) { self.description = description }
 }
 
-private func writeProbeArtifact(_ data: Data, to url: URL) throws {
+func writeProbeArtifact(_ data: Data, to url: URL) throws {
     let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).tmp")
     try data.write(to: temporary, options: .withoutOverwriting)
     defer { try? FileManager.default.removeItem(at: temporary) }

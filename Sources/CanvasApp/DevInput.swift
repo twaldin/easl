@@ -123,6 +123,9 @@ enum DevInput {
         if fields["kind"] == "surface-probe" {
             return DevSurfaceObservation.control(fields)
         }
+        if fields["kind"] == "terminal-echo" {
+            return DevTerminalEcho.control(fields)
+        }
         // `--repeat N --interval ms`: a burst like a trackpad's event stream. The log line reports
         // the longest gap between consecutive steps (the longest stall a person sees as frozen
         // frames) and the mean lateness against the schedule. Steps come from one strict repeating
