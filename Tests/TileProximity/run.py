@@ -21,7 +21,12 @@ def main():
     parser.add_argument('--app', type=Path, required=True)
     parser.add_argument('--window-helper', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
+    case_names = ('saved_browser_preview', 'distant_cold_starts_near', 'cancelled_cold_restarts_near', 'first_fit_500', 'first_fit_1000')
+    parser.add_argument('--cases', default=','.join(case_names), help='Comma-separated native cases; default runs all five')
     args = parser.parse_args()
+    selected_cases = args.cases.split(',')
+    if not selected_cases or any(name not in case_names for name in selected_cases):
+        parser.error('--cases must name the documented native cases')
     if sys.platform != 'darwin':
         parser.error('Run only inside the claimed GUI guest')
     args.out.mkdir(parents=True)
@@ -32,6 +37,8 @@ def main():
     scratch = Path(tempfile.mkdtemp(prefix='etp-', dir='/tmp'))
     home, root = scratch / 'v', scratch / 'board'
     root.mkdir()
+    home.mkdir()
+    (home / 'get-started.json').write_text('{"dismissed":true}')
     environment = dict(os.environ, EASL_DEV_HOME=str(home), EASL_DEV_APP=str(args.app), EASL_DEV_FRAME='0 0 1000 500')
     for key in ('EASL_BOARD_ID', 'EASL_TILE_ID'):
         environment.pop(key, None)
@@ -40,6 +47,8 @@ def main():
     gates = {name: threading.Event() for name in ('cold', 'cancel')}
     records = {'app': str(args.app), 'binary_sha256': hashlib.sha256((args.app / 'Contents/MacOS/Easl').read_bytes()).hexdigest(), 'guest_model': guest_model, 'scratch': str(scratch), 'cases': {}}
     failures = []
+    cleanup_errors = []
+    custom_started = False
     board = None
     pid = None
     capture_number = 0
@@ -99,8 +108,8 @@ def main():
             parameters['board'] = board
         return scale.rpc(home / 'easl.sock', method, parameters)
 
-    def viewport():
-        return call('view.get')['viewport']
+    def viewport(instance=None):
+        return (instance.call('view.get') if instance else call('view.get'))['viewport']
 
     def until(description, observe, predicate, seconds=15):
         deadline = time.monotonic() + seconds
@@ -112,39 +121,42 @@ def main():
                 raise AssertionError(description + ': ' + repr(value))
             time.sleep(0.05)
 
-    def capture(label):
+    def capture(label, instance=None):
         nonlocal capture_number
-        windows = json.loads(scale.command(args.window_helper, pid))
+        capture_home = instance.home if instance else home
+        capture_pid = instance.pid if instance else pid
+        windows = json.loads(scale.command(args.window_helper, capture_pid))
         window = max(windows, key=lambda item: item['kCGWindowBounds']['Width'] * item['kCGWindowBounds']['Height'])
         image = args.out / ('{:03d}-{}.png'.format(capture_number, label))
         capture_number += 1
-        receipt = scale.native.capture(home, window['kCGWindowNumber'], image, accessibility=True)
+        receipt = scale.native.capture(capture_home, window['kCGWindowNumber'], image, accessibility=True)
         text = scale.frame_text(args.window_helper, image)
-        return {'image': str(image), 'capture_id': receipt['capture_id'], 'viewport': viewport(), 'lines': text['lines']}
+        return {'image': str(image), 'capture_id': receipt['capture_id'], 'viewport': viewport(instance), 'lines': text['lines']}
 
     def contains(image, token):
         text = ''.join(''.join(image['lines']).split()).upper()
         return token in text
 
-    def pixel_token(label, token, seconds=15):
-        return until('Native pixels never showed ' + token, lambda: capture(label), lambda image: contains(image, token), seconds)
+    def pixel_token(label, token, seconds=15, instance=None):
+        return until('Native pixels never showed ' + token, lambda: capture(label, instance), lambda image: contains(image, token), seconds)
 
-    def pan_to(x, y):
+    def pan_to(x, y, instance=None):
+        input_event = instance.dev if instance else dev
         for _ in range(4):
-            view = viewport()
+            view = viewport(instance)
             rect, zoom = view['rect'], view['zoom']
             dx, dy = (x - rect['x']) * zoom, (y - rect['y']) * zoom
             if abs(dx) < 2 and abs(dy) < 2:
                 return view
-            dev('input', 'scroll', 20, 220, -dx, -dy, '--mods', 'cmd')
+            input_event('input', 'scroll', 20, 220, -dx, -dy, '--mods', 'cmd')
             time.sleep(0.15)
-        view = viewport()
+        view = viewport(instance)
         assert abs(view['rect']['x'] - x) * view['zoom'] < 3 and abs(view['rect']['y'] - y) * view['zoom'] < 3, view
         return view
 
-    def show(frame):
-        view = viewport()
-        return pan_to(frame['x'] - 80 / view['zoom'], frame['y'] - 90 / view['zoom'])
+    def show(frame, instance=None):
+        view = viewport(instance)
+        return pan_to(frame['x'] - 80 / view['zoom'], frame['y'] - 90 / view['zoom'], instance)
 
     def requests(name):
         with lock:
@@ -219,16 +231,94 @@ def main():
             gates[name].set()
             delete(obj)
 
+    def stop_custom():
+        nonlocal board, pid, custom_started
+        if not custom_started:
+            return
+        if board:
+            try:
+                scale.rpc(home / 'easl.sock', 'board.close', {'board': board, 'endSessions': True})
+                board = None
+            except Exception:
+                cleanup_errors.append(traceback.format_exc())
+        try:
+            dev('stop')
+            custom_started = False
+            pid = None
+        except Exception:
+            cleanup_errors.append(traceback.format_exc())
+        scale.native.end_session()
+
+    def first_fit(count):
+        stop_custom()
+        assert not cleanup_errors, 'The preceding viewer did not cleanly stop'
+        output = args.out / ('fixture-' + str(count))
+        output.mkdir()
+        options = argparse.Namespace(fixtures=scratch / 'fixtures', ssh=None, easld=None, window_helper=args.window_helper)
+        run = scale.Run(options, args.app, count, 'local', output)
+        result = {}
+        records['cases']['first_fit_' + str(count)] = result
+        try:
+            fixture = run.start()
+            terminals = [obj for obj in fixture['objects'] if obj['type'] == 'terminal']
+            assert len(fixture['objects']) == count and len(terminals) == 8
+            streams = {}
+            for terminal in terminals:
+                streams[terminal['id']] = scale.rpc(run.socket, 'agent.read', {'target': terminal['id'], 'lines': 10})
+                assert 'sequence=' in json.dumps(streams[terminal['id']]), 'Fixture terminal did not produce output'
+            (output / 'streams.json').write_text(json.dumps(streams, indent=2))
+            run.dev('input', 'mainmenu', 'View/Actual Size')
+            rect = viewport(run)['rect']
+            frame = {'x': rect['x'] + 60, 'y': rect['y'] + 90, 'w': 2400, 'h': 1200}
+            browser = run.call('object.create', {'type': 'browser', 'props': {'title': 'Loaded scale browser', 'url': url + '/live?size=' + str(count)}, 'frame': frame})['object']
+            result['browser'] = browser
+            result['live'] = pixel_token('fit-' + str(count) + '-live', 'KEEPALPHA', instance=run)
+            time.sleep(1.5)
+            metrics = lambda: scale.rpc(run.home / 'easl.sock', 'app.metrics')
+            browser_cards = lambda value: value.get('counters', {}).get('card.latency.BrowserTile', {}).get('total', {}).get('n', 0)
+            result['metrics_before'] = metrics()
+            completed_before = browser_cards(result['metrics_before'])
+            (output / 'fixture-plus-browser.json').write_text(json.dumps(run.call('board.get'), indent=2))
+            run.dev('input', 'mainmenu', 'View/Zoom to Fit')
+            result['first_fit'] = capture('fit-' + str(count) + '-first-fit', run)
+            result['metrics_after_browser_card'] = until('Outgoing browser card did not complete', metrics,
+                                                         lambda value: browser_cards(value) > completed_before, seconds=90)
+            for _ in range(3):
+                zoom = viewport(run)['zoom']
+                if 0.22 <= zoom <= 0.26:
+                    break
+                amount = (0.24 / zoom) ** 0.25 - 1
+                offset = len(run.log())
+                run.dev('input', 'magnify', 20, 220, amount, '--repeat', 4, '--interval', 100, '--realtime')
+                delivery = until('Readable card pinch did not finish', lambda: run.log()[offset:],
+                                 lambda text: 'DevInput.delivery: scheduled 4 ' in text and 'realtime 1' in text)
+                result.setdefault('completed_pinches', []).append(delivery)
+            assert 0.20 <= viewport(run)['zoom'] < 0.27, viewport(run)
+            result['card_returned'] = show(frame, run)
+            result['after'] = capture('fit-' + str(count) + '-completed-browser-card', run)
+            assert contains(result['after'], 'KEEPALPHA'), 'First Zoom to Fit lost the loaded browser preview body after card completion'
+        finally:
+            try:
+                run.close()
+            except Exception:
+                cleanup_errors.append(traceback.format_exc())
+                raise
+
     try:
-        dev('start', root)
-        pid = int((home / 'pid').read_text())
-        records['pid'] = pid
-        dev('input', 'idle', 'off')
-        active = scale.native_json(args.window_helper, args.out / 'activation', '--activate', pid)
-        assert active['pid'] == pid and active['isActive']
-        board = scale.rpc(home / 'easl.sock', 'board.open', {'root': str(root), 'select': True})['board']
-        create('shape', {'kind': 'rect', 'text': 'Far anchor'}, {'x': 80000, 'y': 80000, 'w': 100, 'h': 100})
-        for name, exercise in [('saved_browser_preview', browser_preview), ('distant_cold_starts_near', lambda: cold_preview('cold', 'NEARBETA', False)), ('cancelled_cold_restarts_near', lambda: cold_preview('cancel', 'AGAINDELTA', True))]:
+        exercises = [('saved_browser_preview', browser_preview), ('distant_cold_starts_near', lambda: cold_preview('cold', 'NEARBETA', False)), ('cancelled_cold_restarts_near', lambda: cold_preview('cancel', 'AGAINDELTA', True)), ('first_fit_500', lambda: first_fit(500)), ('first_fit_1000', lambda: first_fit(1000))]
+        if any(name in selected_cases for name in case_names[:3]):
+            custom_started = True
+            dev('start', root)
+            pid = int((home / 'pid').read_text())
+            records['pid'] = pid
+            dev('input', 'idle', 'off')
+            active = scale.native_json(args.window_helper, args.out / 'activation', '--activate', pid)
+            assert active['pid'] == pid and active['isActive']
+            board = scale.rpc(home / 'easl.sock', 'board.open', {'root': str(root), 'select': True})['board']
+            create('shape', {'kind': 'rect', 'text': 'Far anchor'}, {'x': 80000, 'y': 80000, 'w': 100, 'h': 100})
+        for name, exercise in exercises:
+            if name not in selected_cases:
+                continue
             try:
                 exercise()
                 records['cases'].setdefault(name, {})['ok'] = True
@@ -239,30 +329,22 @@ def main():
                 records['cases'][name]['error'] = error
                 failures.append(name)
                 print('FAIL ' + name + '\n' + error, flush=True)
+            if cleanup_errors:
+                break
     finally:
         for gate in gates.values():
             gate.set()
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=5)
-        cleanup_errors = []
-        if board:
-            try:
-                scale.rpc(home / 'easl.sock', 'board.close', {'board': board, 'endSessions': True})
-            except Exception:
-                cleanup_errors.append(traceback.format_exc())
-        if pid:
-            try:
-                dev('stop')
-            except Exception:
-                cleanup_errors.append(traceback.format_exc())
+        stop_custom()
         scale.native.end_session()
         if (home / 'app.log').exists():
             shutil.copy2(home / 'app.log', args.out / 'app.log')
         records['failures'] = failures
         records['cleanup_errors'] = cleanup_errors
-        required = ('saved_browser_preview', 'distant_cold_starts_near', 'cancelled_cold_restarts_near')
-        records['ok'] = all(records['cases'].get(name, {}).get('ok') for name in required) and not cleanup_errors and not server_thread.is_alive()
+        records['selected_cases'] = selected_cases
+        records['ok'] = all(records['cases'].get(name, {}).get('ok') for name in selected_cases) and not cleanup_errors and not server_thread.is_alive()
         (args.out / 'result.json').write_text(json.dumps(records, indent=2))
         if not cleanup_errors:
             shutil.rmtree(scratch)
