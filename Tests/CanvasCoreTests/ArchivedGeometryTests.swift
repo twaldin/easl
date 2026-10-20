@@ -30,7 +30,7 @@ extension LayoutApiTests {
 
     @Test func automaticPlacementReusesArchivedQuestionSpace() async throws {
         _ = archivedQuestion(frame: Frame(x: -100, y: -50, w: 200, h: 100))
-        let note = try await result("object.create", .object(["type": "note", "props": .object(["markdown": "note"])]))
+        let note = try await result("object.create", .object(["type": "note", "props": .object(["markdown": "note"]), "frame": .object(["w": 200, "h": 100])]))
         let frame = try #require(note["object"]?["frame"]).decode(Frame.self)
         #expect(frame.x == -frame.w / 2)
         #expect(frame.y == -frame.h / 2)
