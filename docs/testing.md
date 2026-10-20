@@ -468,7 +468,6 @@ python3 Tests/BrowserParking/run.py --checkout "$PWD" --app "$G/fix.app" \
 ```
 
 It serves a guest-loopback page, stores unique heap-only JavaScript state, pans beyond the 600-point margin, reads the page while offscreen, and returns before the two-minute release deadline. It requires unchanged document identity and one document request, then checks fresh native body/title pixels after a DOM update. Saved preview pixels alone cannot pass.
-
 #### Native initial routing regression
 
 Inside a claimed GUI guest, link the native routing smoke against the real testing-enabled app:
