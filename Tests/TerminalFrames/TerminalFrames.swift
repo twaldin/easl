@@ -1,5 +1,5 @@
 import AppKit
-import GhosttyTerminal
+@testable import GhosttyTerminal
 import IOSurface
 
 @MainActor
@@ -76,6 +76,19 @@ private enum TerminalFrames {
         try await wait("first paint did not publish completed red pixels") {
             view.frames.contains { Int($0.red) - Int(max($0.green, $0.blue)) > 80 }
         }
+        try await Task.sleep(for: .milliseconds(100))
+        let beforeDraw = view.frames.count
+        view.surface?.draw()
+        try await wait("explicit draw did not publish a completed frame for unchanged red cells") {
+            view.frames.dropFirst(beforeDraw).contains { Int($0.red) - Int(max($0.green, $0.blue)) > 80 }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        let beforeDisplay = view.frames.count
+        view.layer?.contents = nil
+        view.layer?.setNeedsDisplay()
+        try await wait("layer invalidation did not restore unchanged red pixels") {
+            view.frames.dropFirst(beforeDisplay).contains { Int($0.red) - Int(max($0.green, $0.blue)) > 80 }
+        }
         let beforeResize = view.frames.count
         window.setContentSize(NSSize(width: 640, height: 400))
         session.receive("\u{1b}[48;2;16;16;240m\u{1b}[2J\u{1b}[H")
@@ -104,6 +117,7 @@ private enum TerminalFrames {
         try await Task.sleep(for: .milliseconds(100))
         precondition(view.frames.count == afterFree, "a retired surface delivered a completion")
         precondition(view.invalidFrames == 0, "a completion did not carry readable pixels")
-        print("PASS completed first paint, resized pixels and scale, replacement, and retired-surface completion isolation")
+        print("PASS completed first paint, explicit redraw, layer invalidation, resized pixels and scale, replacement, and retired-surface completion isolation")
+        print("TERMINAL_FRAMES_COMPLETE")
     }
 }

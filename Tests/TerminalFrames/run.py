@@ -48,7 +48,13 @@ def main():
         environment = os.environ.copy()
         environment.update(EASL_HOME=temporary, CFFIXED_USER_HOME=temporary,
                            XDG_CONFIG_HOME=temporary, EASL_NO_ACTIVATE="1")
-        subprocess.run([str(executable)], cwd=root, env=environment, check=True)
+        environment.pop("EASL_ROOT", None)
+        result = subprocess.run([str(executable)], cwd=root, env=environment, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+        print(result.stdout, end="", flush=True)
+        result.check_returncode()
+        if "TERMINAL_FRAMES_COMPLETE" not in result.stdout.splitlines():
+            raise RuntimeError("terminal frame regressions exited before completing all cases")
 
 
 if __name__ == "__main__":

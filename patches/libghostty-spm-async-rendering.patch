@@ -1,7 +1,7 @@
-diff --git a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift
+diff --git a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift
 index 9b56c155..a5ff3a3e 100644
---- a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift
-+++ b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift
+--- a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift
++++ b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Lifecycle.swift
 @@ -7,13 +7,56 @@
  
  #if !canImport(UIKit) && canImport(AppKit)
@@ -59,10 +59,10 @@ index 9b56c155..a5ff3a3e 100644
          func setupTrackingArea() {
              let options: NSTrackingArea.Options = [
                  .mouseEnteredAndExited,
-diff --git a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
+diff --git a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
 index 5e7ba3a5..0c73af0b 100644
---- a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
-+++ b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
+--- a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
++++ b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
 @@ -22,6 +22,8 @@
          var keyEcho: KeyEchoState = .init()
          var pointer: PointerSelectionState = .init()
@@ -101,10 +101,10 @@ index 5e7ba3a5..0c73af0b 100644
              NotificationCenter.default.removeObserver(self)
          }
      }
-diff --git a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
+diff --git a/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift b/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
 index 4e0d7975..441693c3 100644
---- a/Vendor/libghostty-spm/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
-+++ b/Vendor/libghostty-spm/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
+--- a/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
++++ b/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
 @@ -62,8 +62,12 @@ final class TerminalSurfaceCoordinator {
      var onMetricsUpdate: (() -> Void)?
      var onCellSizeDidChange: (() -> Void)?

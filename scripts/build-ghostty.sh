@@ -35,7 +35,7 @@ done
     cd "$scratch/wrapper"
     Script/apply-patches.sh "$scratch/ghostty"
     git -C "$scratch/ghostty" apply "$repo/patches/ghostty-async-rendering.patch"
-    ZIG_BUILD_EXTRA_ARGS=-j2 Script/build-platform.sh "$scratch/ghostty" macos "$scratch/artifacts"
+    ZIG_OPTIMIZE=ReleaseFast ZIG_BUILD_EXTRA_ARGS=-j2 Script/build-platform.sh "$scratch/ghostty" macos "$scratch/artifacts"
 )
 
 mkdir -p "$(dirname "$output")"

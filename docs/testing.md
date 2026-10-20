@@ -472,6 +472,18 @@ Compare WindowServer crops of the same terminal lines against main after ⌘-scr
 then after a pinch and ⌘0. Use whole-device-pixel body sizes at 100% board and content zoom.
 Fractional body sizes can still stretch Ghostty's drawable. An in-process render is not pixel proof.
 
+### Completed terminal frame regression
+
+Run in a claimed macOS GUI guest with Metal available. The harness reads actual IOSurface pixels
+inside the completed-frame callback. It checks first paint, explicit redraw and layer invalidation
+without changed cells, resize dimensions and backing scale, surface replacement, and queued work
+at teardown. Run at both 1x and 2x; this does not replace WindowServer capture proof.
+
+```sh
+swift build --build-system native -j 2 --product Easl
+python3 Tests/TerminalFrames/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
 ### Default board directory regression
 
 The native regression links the compiled app and invokes the shared picker action with local,

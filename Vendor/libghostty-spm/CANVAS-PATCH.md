@@ -81,7 +81,11 @@ scripts/build-ghostty.sh /tmp/GhosttyKit.xcframework
 The script fetches exact source revisions, applies both patch stacks, builds with two jobs, and
 packages the universal macOS archive with its header and provenance. The `Native Ghostty artifact`
 workflow runs the same command. `Tests/TerminalFrames/run.py` checks completed pixels through
-first paint, resize, surface replacement, and teardown.
+first paint, unchanged-cell redraws, resize, surface replacement, and teardown.
+
+Provenance checks detect changes to the checked-in files; they are not independent source-to-binary
+attestation. The native workflow rebuilds the pinned inputs, but byte-for-byte reproducibility is
+not established across Xcode/SDK versions or build directories.
 
 ### Private clipboard writes
 
