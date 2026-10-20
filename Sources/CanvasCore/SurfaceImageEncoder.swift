@@ -214,6 +214,7 @@ private final class SurfaceImageRefresh: @unchecked Sendable {
         case .failure: state = .idle
         }
         lock.unlock()
+        guard revision.value == key.inputRevision else { return nil }
         return try result.get()
     }
 
@@ -225,19 +226,17 @@ private final class SurfaceImageRefresh: @unchecked Sendable {
     }
 }
 
-/// Callers serialize captures, publish returned frames in order, and acknowledge each frame the viewer presents.
+/// Callers serialize captures and wait for presentation credit before using a returned reference.
 public final class SurfaceImageEncoder: @unchecked Sendable {
     public static let motionBytes = 16 << 20
     public static let refinementBytes = 576 * 1024
     public static let settle: TimeInterval = 1
     public private(set) var captureDelay: TimeInterval = 0.1
 
-    private static let inputSettle: TimeInterval = 0.3
-    private let refinement: SurfaceRefinement
-    private var video: SurfaceVideoEncoder
+    private static let inputSettle: TimeInterval = 0.4
+    private var video = SurfaceVideoEncoder()
     private let refresh: SurfaceImageRefresh
-    /// Fences codec work through presentation, including jobs discarded before returning a frame.
-    private var unacknowledgedRevision: UInt64?
+    private var unacknowledgedReferenceRevision: UInt64?
     private var observed: SurfaceImageIdentity?
     private var sharp: SurfaceImageIdentity?
     private var refreshArmed = false
@@ -249,19 +248,14 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
     private var lastJPEG: Data?
     private var lastJPEGCanvas: CGSize?
 
-    public convenience init(refinement: SurfaceRefinement = .retained) {
-        self.init(refreshQueue: DispatchQueue(label: "easl.surface.refresh", qos: .utility), refinement: refinement)
+    public convenience init() {
+        self.init(refreshQueue: DispatchQueue(label: "easl.surface.refresh", qos: .utility))
     }
 
-    init(refreshQueue: DispatchQueue, refinement: SurfaceRefinement = .retained) {
-        self.refinement = refinement
-        video = SurfaceVideoEncoder(refinement: refinement)
-        refresh = SurfaceImageRefresh(queue: refreshQueue)
-    }
+    init(refreshQueue: DispatchQueue) { refresh = SurfaceImageRefresh(queue: refreshQueue) }
 
-    /// The viewer presented the last returned frame, and so every frame published before it.
-    public func acknowledgeFrame() {
-        unacknowledgedRevision = nil
+    public func acknowledgeRefinement() {
+        unacknowledgedReferenceRevision = nil
     }
 
     public func capture(_ image: CGImage, width: Int, height: Int, mode: SurfaceLinkMode,
@@ -272,9 +266,10 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
         guard let source = Self.sized(image, width: width, height: height) else { throw SurfaceImageEncodingError.invalidImage }
         let canvas = CGSize(width: width, height: height)
         if mode == .jpeg {
-            if refresh.synchronize(nil) || unacknowledgedRevision != nil || lastJPEG == nil {
-                video = SurfaceVideoEncoder(refinement: refinement)
-                unacknowledgedRevision = nil
+            refresh.synchronize(nil)
+            if unacknowledgedReferenceRevision != nil || lastJPEG == nil {
+                video = SurfaceVideoEncoder()
+                unacknowledgedReferenceRevision = nil
             }
             observed = nil
             sharp = nil
@@ -292,11 +287,10 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
                                         canvas: canvas, refresh: false)
         }
         guard let identity = SurfaceImageIdentity(source) else { throw SurfaceImageEncodingError.invalidImage }
-        let inputRevision = revision.value
-        if let unacknowledgedRevision, unacknowledgedRevision != inputRevision {
+        if let unacknowledgedReferenceRevision, unacknowledgedReferenceRevision != revision.value {
             refresh.synchronize(nil)
-            video = SurfaceVideoEncoder(refinement: refinement)
-            self.unacknowledgedRevision = nil
+            video = SurfaceVideoEncoder()
+            self.unacknowledgedReferenceRevision = nil
             motionVersion = nil
         }
         let change = identity.change(from: observed)
@@ -323,19 +317,18 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
             refreshFromInput = inputActive
             refreshArmed = true
         }
-        let key = SurfaceImageRefresh.Key(epoch: refreshEpoch, inputRevision: inputRevision)
+        let key = SurfaceImageRefresh.Key(epoch: refreshEpoch, inputRevision: revision.value)
         if refresh.synchronize(inputActive || mode != .video ? nil : key) {
             // Detach an in-flight codec rather than waiting for its canceled callback on the input path.
-            video = SurfaceVideoEncoder(refinement: refinement)
-            unacknowledgedRevision = nil
+            video = SurfaceVideoEncoder()
+            unacknowledgedReferenceRevision = nil
             motionVersion = nil
         }
-        let quietPeriod = refinement == .retained && refreshFromInput ? Self.inputSettle : Self.settle
+        let quietPeriod = refreshFromInput ? Self.inputSettle : Self.settle
         let due = max(changedAt, lastInput) + quietPeriod
         if mode == .video, !inputActive, now >= due {
             if let encoded = try refresh.take(key: key, revision: revision) {
-                unacknowledgedRevision = inputRevision
-                guard revision.value == inputRevision else { return nil }
+                guard revision.value == key.inputRevision else { return nil }
                 motionVersion = encoded.imageVersion == imageVersion ? imageVersion : nil
                 sharp = encoded.identity
                 refreshArmed = false
@@ -348,17 +341,17 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
                                         key: key, revision: revision, encoder: video)
             captureDelay = pending ? 1.0 / 30 : 1
             if pending {
-                unacknowledgedRevision = inputRevision
+                unacknowledgedReferenceRevision = key.inputRevision
                 return nil
             }
         }
         if motionVersion != imageVersion || forceState {
             guard let encoded = try video.encode(source, width: width, height: height, motion: resumeMotion) else { return nil }
-            unacknowledgedRevision = inputRevision
             if encoded.refresh {
                 refresh.markDelivered(key: key)
                 sharp = identity
                 refreshArmed = false
+                unacknowledgedReferenceRevision = key.inputRevision
             }
             motionVersion = imageVersion
             lastJPEG = nil

@@ -110,10 +110,11 @@ struct SurfaceImageEncoderTests {
 
     @discardableResult
     private func expectSharp(_ frame: SurfaceImageEncoding, source: Fixture,
-                             video: SurfaceVideoDecoder = SurfaceVideoDecoder()) throws -> (image: CGImage, maximum: Int, mean: Double) {
+                             video: SurfaceVideoDecoder = SurfaceVideoDecoder()) throws -> (maximum: Int, mean: Double) {
         #expect(frame.format == .h264)
         #expect(frame.refresh)
         #expect(frame.data.count <= 576 * 1024)
+        #expect(Array(frame.data.prefix(6)) == [69, 83, 86, 49, 1, 4])
         #expect(frame.width == max(16, (source.image.width + 1) / 2 * 2))
         #expect(frame.height == max(16, (source.image.height + 1) / 2 * 2))
         let image = try decode(frame, video: video)
@@ -128,7 +129,7 @@ struct SurfaceImageEncoderTests {
         }
         let mean = Double(total) / Double(actual.count / 4 * 3)
         print("Sharp RGB report max=\(maximum) mean=\(mean)")
-        return (image, maximum, mean)
+        return (maximum, mean)
     }
 
     @Test func jpegPreservesTheOddCanvasAndInputPixelsWithoutIdleRefinement() throws {
@@ -183,11 +184,10 @@ struct SurfaceImageEncoderTests {
         let motion = try #require(try capture(encoder, source, at: 0, revision: revision))
         #expect(motion.format == .h264 && !motion.refresh)
         _ = try decode(motion, video: video)
-        #expect(try capture(encoder, source, at: SurfaceImageEncoder.settle - 0.01, revision: revision) == nil)
+        #expect(try capture(encoder, source, at: 0.99, revision: revision) == nil)
+        #expect(try capture(encoder, source, at: 1, revision: revision) == nil)
         work.finish()
-        #expect(try capture(encoder, source, at: SurfaceImageEncoder.settle, revision: revision) == nil)
-        work.finish()
-        let sharp = try #require(try capture(encoder, source, at: SurfaceImageEncoder.settle + 0.1, revision: revision))
+        let sharp = try #require(try capture(encoder, source, at: 1.1, revision: revision))
         #expect(sharp.canvas == CGSize(width: 129, height: 97))
         try expectSharp(sharp, source: source, video: video)
         for time in [1.2, 1.5, 100] {
@@ -203,77 +203,71 @@ struct SurfaceImageEncoderTests {
         #expect(visible[0] > visible[1] && visible[0] > visible[2])
     }
 
-    @Test(arguments: [SurfaceRefinement.independent, .retained], [false, true])
-    func quietPeriodDistinguishesInputFromAutonomousChanges(refinement: SurfaceRefinement, input: Bool) throws {
+    @Test(arguments: [false, true])
+    func quietPeriodDistinguishesInputFromAutonomousChanges(input: Bool) throws {
         let work = RefreshQueue()
-        let encoder = SurfaceImageEncoder(refreshQueue: work.queue, refinement: refinement)
+        work.pause()
+        let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
         let source = try fixture()
         let motion = try #require(try capture(encoder, source, at: 0, revision: revision, input: input))
         _ = try decode(motion)
-        encoder.acknowledgeFrame()
-        let settle: TimeInterval = refinement == .retained && input ? 0.3 : 1
-        #expect(try capture(encoder, source, at: settle - 0.01, revision: revision) == nil)
+        let quiet: TimeInterval = input ? 0.4 : 1
+        #expect(try capture(encoder, source, at: quiet - 0.01, revision: revision) == nil)
         work.finish()
-        #expect(try capture(encoder, source, at: settle, revision: revision) == nil)
+        #expect(try capture(encoder, source, at: quiet, revision: revision) == nil)
         work.finish()
-        let sharp = try #require(try capture(encoder, source, at: settle + 0.01, revision: revision))
-        #expect(sharp.refresh)
-        let visible = try pixels(decode(sharp))
-        #expect(visible[0] < 30 && visible[1] < 30 && visible[2] < 30)
+        let sharp = try #require(try capture(encoder, source, at: quiet + 0.01, revision: revision))
+        try expectSharp(sharp, source: source)
     }
 
-    private enum CodecReplacement: CaseIterable, Sendable {
-        case jpeg, pendingRefresh, unacknowledgedFrame
-    }
-
-    @Test(arguments: CodecReplacement.allCases)
-    private func independentRecoverySurvivesCodecReplacement(replacement: CodecReplacement) throws {
+    @Test func inputWithoutPixelChangesShortensTheExistingRefreshEpoch() throws {
         let work = RefreshQueue()
-        let encoder = SurfaceImageEncoder(refreshQueue: work.queue, refinement: .independent)
+        let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
-        let original = try fixture()
-        let first = try #require(try capture(encoder, original, at: 0, revision: revision))
-        _ = try decode(first)
-        switch replacement {
-        case .jpeg:
-            encoder.acknowledgeFrame()
-            let jpeg = try #require(try capture(encoder, original, at: 1, revision: revision, mode: .jpeg))
-            #expect(jpeg.format == .jpeg && !jpeg.refresh)
-            #expect(try decode(jpeg).width == original.image.width)
-        case .pendingRefresh:
-            encoder.acknowledgeFrame()
-            work.pause()
-            #expect(try capture(encoder, original, at: 1, revision: revision) == nil)
-        case .unacknowledgedFrame:
-            revision.advance()
+        let source = try fixture()
+        _ = try #require(try capture(encoder, source, at: 0, revision: revision))
+        revision.advance()
+        #expect(try capture(encoder, source, at: 0.1, revision: revision, input: true, lastInput: 0.1) == nil)
+        #expect(try capture(encoder, source, at: 0.49, revision: revision, lastInput: 0.1) == nil)
+        work.finish()
+        #expect(try capture(encoder, source, at: 0.5, revision: revision, lastInput: 0.1) == nil)
+        work.finish()
+        let sharp = try #require(try capture(encoder, source, at: 0.51, revision: revision, lastInput: 0.1))
+        try expectSharp(sharp, source: source)
+    }
+
+    @Test(arguments: [false, true])
+    func newAutonomousEpochRestoresOneSecondQuietAfterInput(cumulative: Bool) throws {
+        let work = RefreshQueue()
+        let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
+        let revision = SurfaceInputRevision()
+        let decoder = SurfaceVideoDecoder()
+        let source = try fixture()
+        let first = try #require(try capture(encoder, source, at: 0, revision: revision, input: true))
+        _ = try decode(first, video: decoder)
+        #expect(try capture(encoder, source, at: 0.4, revision: revision) == nil)
+        work.finish()
+        let initialSharp = try #require(try capture(encoder, source, at: 0.41, revision: revision))
+        try expectSharp(initialSharp, source: source, video: decoder)
+        encoder.acknowledgeRefinement()
+        if cumulative {
+            let small = try #require(try capture(encoder, fixture(filledPixels: 100), at: 1.9, revision: revision))
+            #expect(!small.refresh)
+            _ = try decode(small, video: decoder)
         }
-        for (time, source) in [(2.0, try fixture(redLeftHalf: true)), (4.0, try fixture(shift: 2))] {
-            let motion = try #require(try capture(encoder, source, at: time, revision: revision,
-                                                 input: true, lastInput: time))
-            #expect(!motion.refresh)
-            let singleConfiguration = SurfaceVideoDecoder()
-            _ = try decode(motion, video: singleConfiguration)
-            encoder.acknowledgeFrame()
-            work.finish()
-            for quiet in [0.3, 0.99] {
-                #expect(try capture(encoder, source, at: time + quiet, revision: revision, lastInput: time) == nil)
-                work.finish()
-            }
-            #expect(try capture(encoder, source, at: time + 1, revision: revision, lastInput: time) == nil)
-            work.finish()
-            let sharp = try #require(try capture(encoder, source, at: time + 1.01, revision: revision, lastInput: time))
-            #expect(sharp.refresh)
-            for consumer in [singleConfiguration, SurfaceVideoDecoder()] {
-                let visible = try pixels(decode(sharp, video: consumer))
-                for channel in 0..<3 {
-                    if source.pixels[channel] == 255 { #expect(visible[channel] > 220) }
-                    else { #expect(visible[channel] < 30) }
-                }
-            }
-            encoder.acknowledgeFrame()
-            revision.advance()
-        }
+        let changed = try fixture(redLeftHalf: !cumulative, filledPixels: cumulative ? 200 : 0)
+        let motion = try #require(try capture(encoder, changed, at: 2, revision: revision))
+        #expect(!motion.refresh)
+        _ = try decode(motion, video: decoder)
+        #expect(try capture(encoder, changed, at: 2.4, revision: revision) == nil)
+        work.finish()
+        #expect(try capture(encoder, changed, at: 2.99, revision: revision) == nil)
+        work.finish()
+        #expect(try capture(encoder, changed, at: 3, revision: revision) == nil)
+        work.finish()
+        let sharp = try #require(try capture(encoder, changed, at: 3.01, revision: revision))
+        try expectSharp(sharp, source: changed, video: decoder)
     }
 
     @Test func negotiatedPerStreamSizingDefinesTheNativeSharpCanvas() throws {
@@ -312,7 +306,6 @@ struct SurfaceImageEncoderTests {
         let original = try fixture()
         let first = try #require(try capture(encoder, original, at: 0, revision: revision))
         _ = try decode(first, video: video)
-        encoder.acknowledgeFrame()
         #expect(try capture(encoder, original, at: 1, revision: revision) == nil)
         revision.advance()
         let changed = try fixture(redLeftHalf: true)
@@ -321,7 +314,6 @@ struct SurfaceImageEncoderTests {
         #expect(motion.data[4] == 1)
         let visible = try pixels(decode(motion, video: video))
         #expect(visible[0] >= 220 && visible[1] <= 30 && visible[2] <= 30)
-        encoder.acknowledgeFrame()
         #expect(try capture(encoder, changed, at: 1.49, revision: revision, lastInput: 1.1) == nil)
         #expect(try capture(encoder, changed, at: 1.51, revision: revision, lastInput: 1.1) == nil)
         work.finish()
@@ -335,9 +327,7 @@ struct SurfaceImageEncoderTests {
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
         let original = try fixture()
-        let first = try #require(try capture(encoder, original, at: 0, revision: revision))
-        _ = try decode(first)
-        encoder.acknowledgeFrame()
+        _ = try #require(try capture(encoder, original, at: 0, revision: revision))
         #expect(try capture(encoder, original, at: 1, revision: revision) == nil)
         work.finish()
         let changed = try fixture(shift: 1)
@@ -354,9 +344,7 @@ struct SurfaceImageEncoderTests {
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
         let source = try fixture()
-        let first = try #require(try capture(encoder, source, at: 0, revision: revision))
-        _ = try decode(first)
-        encoder.acknowledgeFrame()
+        _ = try #require(try capture(encoder, source, at: 0, revision: revision))
         #expect(try capture(encoder, source, at: 1, revision: revision) == nil)
         work.finish()
         revision.advance()
@@ -379,7 +367,6 @@ struct SurfaceImageEncoderTests {
         let source = try fixture()
         let first = try #require(try capture(encoder, source, at: 0, revision: revision))
         _ = try decode(first, video: video)
-        encoder.acknowledgeFrame()
         #expect(try capture(encoder, source, at: 1, revision: revision) == nil)
         work.finish()
         let sharp = try #require(try capture(encoder, source, at: 1.1, revision: revision))
@@ -396,7 +383,7 @@ struct SurfaceImageEncoderTests {
         }
     }
 
-    @Test func acknowledgedSharpReferenceStaysPredictiveThroughInputAndMotion() throws {
+    @Test func acknowledgedSharpReferenceRemainsPredictiveWhenInputResumes() throws {
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
@@ -408,7 +395,7 @@ struct SurfaceImageEncoderTests {
         work.finish()
         let sharp = try #require(try capture(encoder, original, at: 1.1, revision: revision))
         try expectSharp(sharp, source: original, video: decoder)
-        encoder.acknowledgeFrame()
+        encoder.acknowledgeRefinement()
         revision.advance()
         let changed = try fixture(marker: 7)
         let motion = try #require(try capture(encoder, changed, at: 1.2, revision: revision, input: true, lastInput: 1.2))
@@ -417,45 +404,6 @@ struct SurfaceImageEncoderTests {
         let actual = try pixels(decode(motion, video: decoder))
         let marker = (97 / 2 * 129 + 7) * 4
         #expect(Int(actual[marker + 2]) - Int(actual[marker]) > 40)
-        encoder.acknowledgeFrame()
-        revision.advance()
-        let moved = try fixture(redLeftHalf: true)
-        let restarted = try #require(try capture(encoder, moved, at: 1.3, revision: revision, input: true, lastInput: 1.3))
-        #expect(!restarted.refresh && restarted.data[4] == 1)
-        _ = try decode(restarted, video: decoder)
-        encoder.acknowledgeFrame()
-        #expect(try capture(encoder, moved, at: 1.61, revision: revision, lastInput: 1.3) == nil)
-        work.finish()
-        let refined = try #require(try capture(encoder, moved, at: 1.7, revision: revision, lastInput: 1.3))
-        #expect(refined.data[4] == 0)
-        #expect(throws: (any Error).self) { try decode(refined) }
-        let presented = try expectSharp(refined, source: moved, video: decoder)
-        let restored = try pixels(presented.image)
-        let left = (moved.image.height / 2 * moved.image.width + moved.image.width / 4) * 4
-        #expect(restored[left] > 220 && restored[left + 1] < 30 && restored[left + 2] < 30)
-    }
-
-    @Test func inputAfterAnUnacknowledgedNativeUpdateSettlesIndependently() throws {
-        let work = RefreshQueue()
-        let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
-        let revision = SurfaceInputRevision()
-        let original = try fixture()
-        _ = try #require(try capture(encoder, original, at: 0, revision: revision))
-        #expect(try capture(encoder, original, at: 1, revision: revision) == nil)
-        work.finish()
-        let sharp = try #require(try capture(encoder, original, at: 1.1, revision: revision))
-        try expectSharp(sharp, source: original)
-        encoder.acknowledgeFrame()
-        let update = try #require(try capture(encoder, fixture(marker: 7), at: 1.2, revision: revision))
-        #expect(!update.refresh && update.data[4] == 0)
-        revision.advance()
-        let moved = try fixture(redLeftHalf: true)
-        let motion = try #require(try capture(encoder, moved, at: 1.3, revision: revision, input: true, lastInput: 1.3))
-        #expect(!motion.refresh && motion.data[4] == 1)
-        #expect(try capture(encoder, moved, at: 1.61, revision: revision, lastInput: 1.3) == nil)
-        work.finish()
-        let settled = try #require(try capture(encoder, moved, at: 1.7, revision: revision, lastInput: 1.3))
-        try expectSharp(settled, source: moved)
     }
 
     @Test func largeInputAfterSharpRestartsIndependentMotionAndSettlesAgain() throws {
@@ -470,7 +418,7 @@ struct SurfaceImageEncoderTests {
         work.finish()
         let sharp = try #require(try capture(encoder, original, at: 1.1, revision: revision))
         _ = try decode(sharp, video: decoder)
-        encoder.acknowledgeFrame()
+        encoder.acknowledgeRefinement()
         revision.advance()
         let changed = try realFixture("dense-table-caret-off.png")
         let motion = try #require(try capture(encoder, changed, at: 1.2, revision: revision, input: true, lastInput: 1.2))
@@ -498,14 +446,14 @@ struct SurfaceImageEncoderTests {
         _ = try decode(first, video: video)
         for index in 1...4 {
             let tick = try fixture(marker: index)
-            let motion = try #require(try capture(encoder, tick, at: Double(index) * SurfaceImageEncoder.settle / 5, revision: revision))
+            let motion = try #require(try capture(encoder, tick, at: Double(index) * 0.2, revision: revision))
             #expect(motion.format == .h264 && !motion.refresh)
             _ = try decode(motion, video: video)
         }
         let snapshot = try fixture(marker: 5)
-        #expect(try capture(encoder, snapshot, at: SurfaceImageEncoder.settle, revision: revision) == nil)
+        #expect(try capture(encoder, snapshot, at: 1, revision: revision) == nil)
         for index in 6...10 {
-            #expect(try capture(encoder, fixture(marker: index), at: Double(index) * SurfaceImageEncoder.settle / 5, revision: revision) == nil)
+            #expect(try capture(encoder, fixture(marker: index), at: Double(index) * 0.2, revision: revision) == nil)
         }
         work.finish()
         let current = try fixture(marker: 10)
@@ -528,44 +476,37 @@ struct SurfaceImageEncoderTests {
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
-        let decoder = SurfaceVideoDecoder()
         let source = try fixture()
         let first = try #require(try capture(encoder, source, at: 0, revision: revision))
         #expect(first.format == .h264 && !first.refresh)
-        _ = try decode(first, video: decoder)
         #expect(try capture(encoder, source, at: 1, revision: revision) == nil)
         work.finish()
         let initialSharp = try #require(try capture(encoder, source, at: 1.1, revision: revision))
-        try expectSharp(initialSharp, source: source, video: decoder)
+        try expectSharp(initialSharp, source: source)
 
         work.pause()
         for index in 1...5 {
             let changed = try fixture(filledPixels: index * 100)
-            let motion = try #require(try capture(encoder, changed, at: 1.25, revision: revision))
+            let motion = try #require(try capture(encoder, changed, at: 1.25 + Double(index) * 0.25, revision: revision))
             #expect(motion.format == .h264 && !motion.refresh)
-            _ = try decode(motion, video: decoder)
         }
-        let freezeAt = 1.25 + SurfaceImageEncoder.settle + 0.01
-        #expect(try capture(encoder, fixture(filledPixels: 600), at: freezeAt, revision: revision) == nil)
-        for index in 7...15 {
+        for index in 6...15 {
             let changed = try fixture(filledPixels: index * 100)
-            #expect(try capture(encoder, changed, at: freezeAt + Double(index - 6) * 0.125, revision: revision) == nil)
+            #expect(try capture(encoder, changed, at: 1.25 + Double(index) * 0.25, revision: revision) == nil)
         }
         work.finish()
         let final = try fixture(filledPixels: 1500)
         let frozen = try fixture(filledPixels: 600)
         let pendingSharp = try #require(try capture(encoder, final, at: 5.25, revision: revision))
-        try expectSharp(pendingSharp, source: frozen, video: decoder)
+        try expectSharp(pendingSharp, source: frozen)
 
         let motion = try #require(try capture(encoder, final, at: 5.5, revision: revision))
         #expect(motion.format == .h264 && !motion.refresh)
-        _ = try decode(motion, video: decoder)
-        #expect(try capture(encoder, final, at: 5.5 + SurfaceImageEncoder.settle - 0.01, revision: revision) == nil)
+        #expect(try capture(encoder, final, at: 6.49, revision: revision) == nil)
+        #expect(try capture(encoder, final, at: 6.5, revision: revision) == nil)
         work.finish()
-        #expect(try capture(encoder, final, at: 5.5 + SurfaceImageEncoder.settle + 0.01, revision: revision) == nil)
-        work.finish()
-        let sharp = try #require(try capture(encoder, final, at: 5.5 + SurfaceImageEncoder.settle + 0.02, revision: revision))
-        try expectSharp(sharp, source: final, video: decoder)
+        let sharp = try #require(try capture(encoder, final, at: 6.75, revision: revision))
+        try expectSharp(sharp, source: final)
         #expect(try capture(encoder, final, at: 10, revision: revision) == nil)
         work.finish()
         #expect(try capture(encoder, final, at: 11, revision: revision) == nil)
@@ -604,26 +545,24 @@ struct SurfaceImageEncoderTests {
         work.pause()
         for index in 1...5 {
             let changed = try fixture(filledPixels: index * 100)
-            let motion = try #require(try capture(encoder, changed, at: 1.25, revision: revision))
+            let motion = try #require(try capture(encoder, changed, at: 1.25 + Double(index) * 0.25, revision: revision))
             #expect(motion.format == .h264 && !motion.refresh)
         }
-        let freezeAt = 1.25 + SurfaceImageEncoder.settle + 0.01
-        #expect(try capture(encoder, fixture(filledPixels: 600), at: freezeAt, revision: revision) == nil)
+        #expect(try capture(encoder, fixture(filledPixels: 600), at: 2.75, revision: revision) == nil)
         revision.advance()
-        let inputAt = freezeAt + 0.1
         let current = try fixture(filledPixels: 700)
-        let motion = try #require(try capture(encoder, current, at: inputAt, revision: revision, input: true, lastInput: inputAt))
+        let motion = try #require(try capture(encoder, current, at: 3, revision: revision, input: true, lastInput: 3))
         #expect(motion.format == .h264 && !motion.refresh)
-        #expect(try capture(encoder, current, at: inputAt + SurfaceImageEncoder.settle + 0.01, revision: revision, lastInput: inputAt) == nil)
+        #expect(try capture(encoder, current, at: 3.39, revision: revision, lastInput: 3) == nil)
+        #expect(try capture(encoder, current, at: 3.41, revision: revision, lastInput: 3) == nil)
         work.finish()
-        let sharp = try #require(try capture(encoder, current, at: inputAt + SurfaceImageEncoder.settle + 0.02, revision: revision, lastInput: inputAt))
+        let sharp = try #require(try capture(encoder, current, at: 3.5, revision: revision, lastInput: 3))
         try expectSharp(sharp, source: current)
-        #expect(try capture(encoder, current, at: 10, revision: revision, lastInput: inputAt) == nil)
+        #expect(try capture(encoder, current, at: 10, revision: revision, lastInput: 3) == nil)
     }
 
-    @Test
-    func repeatingLargeChangesDoNotProduceRefreshStorms() throws {
-        let interval = SurfaceImageEncoder.settle * 0.75
+    @Test(arguments: [0.45, 0.5])
+    func repeatingLargeChangesDoNotProduceRefreshStorms(interval: TimeInterval) throws {
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
@@ -636,14 +575,13 @@ struct SurfaceImageEncoderTests {
             let motion = try #require(try capture(encoder, final, at: lastChange, revision: revision))
             #expect(motion.format == .h264 && !motion.refresh)
             #expect(motion.data.count <= 48 * 1024)
-            #expect(try capture(encoder, final, at: lastChange + interval / 2, revision: revision) == nil)
+            #expect(try capture(encoder, final, at: lastChange + 0.35, revision: revision) == nil)
             work.finish()
         }
-        #expect(try capture(encoder, final, at: lastChange + SurfaceImageEncoder.settle - 0.01, revision: revision) == nil)
+        #expect(try capture(encoder, final, at: lastChange + 0.99, revision: revision) == nil)
+        #expect(try capture(encoder, final, at: lastChange + 1.01, revision: revision) == nil)
         work.finish()
-        #expect(try capture(encoder, final, at: lastChange + SurfaceImageEncoder.settle + 0.01, revision: revision) == nil)
-        work.finish()
-        let sharp = try #require(try capture(encoder, final, at: lastChange + SurfaceImageEncoder.settle + 0.1, revision: revision))
+        let sharp = try #require(try capture(encoder, final, at: lastChange + 1.1, revision: revision))
         try expectSharp(sharp, source: final)
         #expect(try capture(encoder, final, at: 100, revision: revision) == nil)
     }

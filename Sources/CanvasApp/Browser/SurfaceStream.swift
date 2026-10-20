@@ -17,7 +17,6 @@ final class SurfaceStream {
     let surface: BrowserSurface
     let scale: Double
     let format: SurfaceFormat
-    private let refinement: SurfaceRefinement
     private var flow: SurfaceFrameFlow
     /// The highest seq accepted into the queue.
     private(set) var accepted = 0
@@ -28,7 +27,7 @@ final class SurfaceStream {
     /// The last frame's delivered input and full page state.
     private(set) var fence = 0
     private var lastSent: SurfaceEvent.Frame?
-    private let encoder: SurfaceImageEncoder
+    private let encoder = SurfaceImageEncoder()
     private let inputRevision = SurfaceInputRevision()
     private let delivery = DispatchQueue(label: "easl.surface.frames", qos: .userInitiated)
     private var refinementTransfer: SurfaceRefreshTransmission?
@@ -53,7 +52,7 @@ final class SurfaceStream {
     private var pendingEvents: [EventLine] = []
     private var pendingEventBytes = 0
 
-    init(id: String, peer: any SurfacePeer, board: BoardID, surface: BrowserSurface, scale: Double, format: SurfaceFormat, refinement: SurfaceRefinement) {
+    init(id: String, peer: any SurfacePeer, board: BoardID, surface: BrowserSurface, scale: Double, format: SurfaceFormat) {
         self.id = id
         self.peer = peer
         owner = peer.owner
@@ -61,8 +60,6 @@ final class SurfaceStream {
         self.surface = surface
         self.scale = scale
         self.format = format
-        self.refinement = refinement
-        encoder = SurfaceImageEncoder(refinement: refinement)
         flow = SurfaceFrameFlow(adaptive: format == .h264)
         RemoteUpdateActivity.shared.begin(session: id, kind: .browser, board: board, tile: surface.tile?.objectID)
     }
@@ -97,10 +94,6 @@ final class SurfaceStream {
         return try result.get()
     }
 
-    func discardRefinement() {
-        inputRevision.advance()
-    }
-
     /// The outstanding frame acknowledged grants exactly one more; an older ack changes nothing.
     func ack(_ frame: Int) throws {
         switch flow.acknowledge(frame, at: ProcessInfo.processInfo.systemUptime) {
@@ -109,7 +102,7 @@ final class SurfaceStream {
         case .stale:
             return
         case .granted:
-            encoder.acknowledgeFrame()
+            if lastSent?.refresh == true { encoder.acknowledgeRefinement() }
             refinementTransfer = nil
             if !started {
                 started = true
@@ -206,7 +199,7 @@ final class SurfaceStream {
         Metrics.shared.record("surface.frame", bytes: frame.data.count)
         if frame.refresh {
             do {
-                var transfer = try SurfaceRefreshTransmission(frame: frame, refinement: refinement)
+                var transfer = try SurfaceRefreshTransmission(frame: frame)
                 let parts = transfer.start()
                 refinementTransfer = transfer
                 parts.forEach(deliver)

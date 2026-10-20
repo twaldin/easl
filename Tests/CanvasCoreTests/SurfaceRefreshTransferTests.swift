@@ -22,113 +22,47 @@ struct SurfaceRefreshTransferTests {
         return part
     }
 
-    @Test func cumulativeReceiptsReleaseOnlyNewlyAcknowledgedCredit() throws {
-        var transmission = try SurfaceRefreshTransmission(frame: refresh(bytes: 200000))
+    @Test func onlyThePrecedingChunkReceiptReleasesTheNextChunk() throws {
+        var transmission = try SurfaceRefreshTransmission(frame: refresh(bytes: 65537))
         #expect(throws: SurfaceRefreshTransferError.invalidOffset) { try transmission.progress(offset: 0) }
         let first = transmission.start()
-        #expect(first.map(\.offset) == Array(stride(from: 0, to: 131072, by: 16384)))
-        #expect(first.allSatisfy { $0.data.count == 16384 && $0.total == 200000 })
+        #expect(first.map(\.offset) == [0])
+        #expect(first.map(\.data.count) == [16384])
+        #expect(first.map(\.total) == [65537])
         #expect(transmission.start().isEmpty)
-        for offset in [-16384, -1, 1, 131072, 147456, Int.max] {
+        for offset in [-16384, 1, 16384, 32768, Int.max] {
             #expect(throws: SurfaceRefreshTransferError.invalidOffset) { try transmission.progress(offset: offset) }
         }
-        #expect(try transmission.progress(offset: 16384).map(\.offset) == [131072, 147456])
-        #expect(try transmission.progress(offset: 16384).isEmpty)
+        #expect(try transmission.progress(offset: 0).map(\.offset) == [16384])
         #expect(try transmission.progress(offset: 0).isEmpty)
-        #expect(throws: SurfaceRefreshTransferError.invalidOffset) { try transmission.progress(offset: 163840) }
-        #expect(try transmission.progress(offset: 147456).map(\.offset) == [163840, 180224, 196608])
+        #expect(throws: SurfaceRefreshTransferError.invalidOffset) { try transmission.progress(offset: 32768) }
+        #expect(try transmission.progress(offset: 16384).map(\.offset) == [32768])
+        #expect(try transmission.progress(offset: 0).isEmpty)
+        #expect(try transmission.progress(offset: 32768).map(\.offset) == [49152])
+        #expect(try transmission.progress(offset: 16384).isEmpty)
+        #expect(try transmission.progress(offset: 49152).map(\.data) == [Data([25])])
+        #expect(try transmission.progress(offset: 65536).isEmpty)
         #expect(try transmission.progress(offset: 49152).isEmpty)
-        #expect(try transmission.progress(offset: 147456).isEmpty)
     }
 
-    @Test(arguments: [589824, 589823, 131073])
-    func batchedReceiptsAssembleEveryByteWithAtMost128KiBOutstanding(bytes: Int) throws {
-        let original = refresh(bytes: bytes)
+    @Test func aFullTransferAssemblesWithOneOutstandingChunkAndDuplicateReceipts() throws {
+        let original = refresh(bytes: 589824)
         var transmission = try SurfaceRefreshTransmission(frame: original)
         var assembly = SurfaceRefreshAssembly()
         var pending = transmission.start()
-        var sentBytes = pending.reduce(0) { $0 + $1.data.count }
-        var receivedBytes = 0
         var completed: SurfaceEvent.Frame?
         var offsets: [Int] = []
-        var batch = 0
-        while !pending.isEmpty {
-            #expect(sentBytes - receivedBytes <= 131072)
-            #expect(pending.count <= 8)
-            let count = min([1, 7, 2, 8][batch % 4], pending.count)
-            let received = Array(pending.prefix(count))
-            pending.removeFirst(count)
-            for next in received {
-                #expect(next.offset == receivedBytes)
-                offsets.append(try #require(next.offset))
-                receivedBytes += next.data.count
-                completed = try assembly.append(frame: next)
-                if receivedBytes < bytes { #expect(completed == nil) }
-            }
-            let offset = try #require(received.last?.offset)
-            let released = try transmission.progress(offset: offset)
-            sentBytes += released.reduce(0) { $0 + $1.data.count }
-            pending += released
-            #expect(try transmission.progress(offset: offset).isEmpty)
-            #expect(try transmission.progress(offset: 0).isEmpty)
-            batch += 1
-        }
-        #expect(sentBytes == bytes && receivedBytes == bytes)
-        #expect(offsets == Array(stride(from: 0, to: bytes, by: 16384)))
-        #expect(completed == original)
-    }
-
-    @Test(arguments: [1, 16384, 16385, 589823, 589824])
-    func independentReceiptsNeverQueueMoreThanOne16KiBChunk(bytes: Int) throws {
-        let original = refresh(bytes: bytes)
-        var transmission = try SurfaceRefreshTransmission(frame: original, refinement: .independent)
-        var assembly = SurfaceRefreshAssembly()
-        #expect(throws: SurfaceRefreshTransferError.invalidOffset) { try transmission.progress(offset: 0) }
-        var pending = transmission.start()
-        var sentBytes = pending.reduce(0) { $0 + $1.data.count }
-        var acknowledgedBytes = 0
-        var completed: SurfaceEvent.Frame?
         while !pending.isEmpty {
             #expect(pending.count == 1)
-            let next = try #require(pending.first)
-            let offset = try #require(next.offset)
-            #expect(offset == acknowledgedBytes)
-            #expect(next.data.count == min(16384, bytes - offset))
-            #expect(sentBytes - acknowledgedBytes == next.data.count)
-            #expect(sentBytes - acknowledgedBytes <= 16384)
-            #expect(transmission.start().isEmpty)
-            #expect(throws: SurfaceRefreshTransferError.invalidOffset) {
-                try transmission.progress(offset: offset + 16384)
-            }
-            if offset > 0 { #expect(try transmission.progress(offset: offset - 16384).isEmpty) }
+            let next = pending.removeFirst()
+            offsets.append(try #require(next.offset))
             completed = try assembly.append(frame: next)
-            acknowledgedBytes += next.data.count
-            if acknowledgedBytes < bytes { #expect(completed == nil) }
-            pending = try transmission.progress(offset: offset)
-            #expect(pending.count <= 1)
-            #expect(try transmission.progress(offset: offset).isEmpty)
-            #expect(try transmission.progress(offset: 0).isEmpty)
-            sentBytes += pending.reduce(0) { $0 + $1.data.count }
+            pending += try transmission.progress(offset: try #require(next.offset))
+            #expect(try transmission.progress(offset: try #require(next.offset)).isEmpty)
         }
-        #expect(sentBytes == bytes && acknowledgedBytes == bytes)
+        #expect(offsets.count == 36)
+        #expect(offsets.first == 0 && offsets.last == 573440)
         #expect(completed == original)
-        #expect(transmission.start().isEmpty)
-    }
-
-    @Test func aShortFinalPartCompletesAfterTheInitialWindow() throws {
-        let original = refresh(bytes: 131073)
-        var transmission = try SurfaceRefreshTransmission(frame: original)
-        var assembly = SurfaceRefreshAssembly()
-        for frame in transmission.start() {
-            #expect(try assembly.append(frame: frame) == nil)
-        }
-        let final = try transmission.progress(offset: 114688)
-        #expect(final.map(\.offset) == [131072])
-        #expect(final.map(\.data) == [Data([50])])
-        #expect(try assembly.append(frame: #require(final.first)) == original)
-        #expect(try transmission.progress(offset: 131072).isEmpty)
-        #expect(try transmission.progress(offset: 114688).isEmpty)
-        #expect(transmission.start().isEmpty)
     }
 
     @Test func assemblyReturnsOnlyTheCompleteLogicalFrame() throws {
@@ -247,7 +181,6 @@ struct SurfaceRefreshTransferTests {
         let old = refresh()
         var newer = refresh(bytes: 16385, seq: 8)
         newer.supersedes = 7
-        newer.input = old.input + 1
         var assembly = SurfaceRefreshAssembly()
         #expect(try assembly.append(frame: part(old, offset: 0)) == nil)
         #expect(try assembly.append(frame: part(newer, offset: 0)) == nil)

@@ -4,7 +4,7 @@ import Foundation
 /// existing page and drives it with native input. A request is parsed whole here, so nothing
 /// acts on a batch until every event in it is valid.
 public enum SurfaceRequest: Sendable, Equatable {
-    case stream(tile: ObjectID, scale: Double, format: SurfaceFormat, refinement: SurfaceRefinement)
+    case stream(tile: ObjectID, scale: Double, format: SurfaceFormat)
     case ack(stream: String, frame: Int)
     case progress(stream: String, frame: Int, offset: Int)
     case input(stream: String, events: [SurfaceInputEvent])
@@ -32,11 +32,7 @@ public enum SurfaceRequest: Sendable, Equatable {
                 guard let parsed = SurfaceFormat(rawValue: name) else { throw Self.invalid("format must be jpeg, png or h264") }
                 return parsed
             } ?? .jpeg
-            let refinement = try p.string("refinement", optional: true).map { name in
-                guard let parsed = SurfaceRefinement(rawValue: name) else { throw Self.invalid("refinement must be independent or retained") }
-                return parsed
-            } ?? .independent
-            self = .stream(tile: tile, scale: scale, format: format, refinement: refinement)
+            self = .stream(tile: tile, scale: scale, format: format)
         case "surface.ack":
             self = .ack(stream: try p.stream(), frame: try p.integer("frame", 0...Self.maxInteger))
         case "surface.progress":
@@ -76,10 +72,6 @@ public enum SurfaceRequest: Sendable, Equatable {
 public enum SurfaceFormat: String, Sendable, Equatable {
     case jpeg, png
     case h264 = "h264"
-}
-
-public enum SurfaceRefinement: String, Sendable, Equatable {
-    case independent, retained
 }
 
 /// One `SurfaceInputEvent`: its sequence number on its stream and what it does.

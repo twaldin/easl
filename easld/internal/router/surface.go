@@ -152,15 +152,6 @@ func checkSurface(method string, p map[string]any) error {
 				return invalid("format must be jpeg, png or h264")
 			}
 		}
-		if v, present := p["refinement"]; present {
-			refinement, ok := v.(string)
-			if !ok {
-				return invalid("refinement must be a string")
-			}
-			if refinement != "independent" && refinement != "retained" {
-				return invalid("refinement must be independent or retained")
-			}
-		}
 		return nil
 	case "surface.ack":
 		if err := surfaceStreamID(p); err != nil {

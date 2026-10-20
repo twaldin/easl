@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "41bab2e3c9f0661e"
+const SchemaHash = "08ac190683a695c3"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -39,7 +39,7 @@ type ParamSpec struct {
 // Methods is each method's ParamSpec: what the server checks every request against, and names in its `invalid_params` errors.
 var Methods = map[string]ParamSpec{
 	"surface.stream": {
-		Accepted: []string{"id", "scale", "format", "refinement"},
+		Accepted: []string{"id", "scale", "format"},
 		Required: []string{"id"},
 	},
 	"surface.ack": {
@@ -362,7 +362,7 @@ type SurfaceSize struct {
 // SurfaceInputEvent is a union of JSON objects (variants: "mouse", "scroll", "key", "text", "compose", "unmark", "focus", "command", "command", "navigate"); decode it as a generic map.
 type SurfaceInputEvent = map[string]any
 
-// SurfaceFrame: Private in-memory surface frame. JPEG and explicit PNG retain full images up to 16 MiB. Native h264 streams measure the first three decoded motion acknowledgements, then use one full-size quality-0.8 JPEG encode on fast links or bounded predicted ESV1 video on constrained links, regardless of topology. H264 motion is bounded to 48 KiB. After a quiet period without input or a change to more than 1% of consecutive-capture pixels, a stream may send one native-size high-quality H264 refresh bounded to 576 KiB. The independent refinement profile is the default: it waits 1 second, sends independently decodable refresh IDRs, and restarts restored configurations with an IDR. Explicit retained refinement permits 300 ms input-triggered settling and prediction from an acknowledged cached sharp reference. Autonomous large or cumulative changes retain the original 1-second quiet period so periodic pages do not keep launching refinements. Small later changes can predict from the active sharp reference. Large active input resumes warm motion with an independent keyframe. Periodic keyframe scheduling is disabled. Every sharp IDR uses refresh transport and never retries at motion quality. Cumulative changes beyond 1% rearm settling. Real-page RGB gates are in docs/testing.md. Refresh uses ordered 16 KiB chunks. Independent refinement permits one outstanding chunk per receipt; retained refinement permits a 128 KiB unreceipted payload window. Validated surface.progress receipts cumulatively advance that selected window, never frame credit. Chunks share one frame sequence and metadata and assemble into one complete ESV1 packet before decoding. They are not images or pixel regions. surface.ack follows complete decode and presentation. Input cancels refresh without waiting. The next frame declares the canceled range and independently resets prediction. Source writers skip untouched canceled refresh lines. Easld removes only queued same-board and same-stream refresh chunks in that range. Partial lines finish intact. Up to one chunk and its envelope with independent refinement, or eight with retained refinement, may already be committed. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay.
+// SurfaceFrame: Private in-memory surface frame. JPEG and explicit PNG retain full images up to 16 MiB. Native h264 streams measure the first three decoded motion acknowledgements, then use one full-size quality-0.8 JPEG encode on fast links or bounded predicted ESV1 video on constrained links, regardless of topology. H264 motion is bounded to 48 KiB. After one second without input or a change to more than 1% of consecutive-capture pixels, a stream may send one native-size high-quality H264 refresh bounded to 576 KiB. Small later changes predict from that sharp reference. Large active input resumes warm motion with an independent keyframe. Periodic keyframe scheduling is disabled. Every sharp IDR uses refresh transport and never retries at motion quality. Cumulative changes beyond 1% rearm settling. Real-page RGB gates are in docs/testing.md. Refresh uses ordered 16 KiB chunks with one outstanding chunk. Each validated surface.progress receipt releases at most one next chunk, never frame credit. Chunks share one frame sequence and metadata and assemble into one complete ESV1 packet before decoding. They are not images or pixel regions. surface.ack follows complete decode and presentation. Input cancels refresh without waiting. The next frame declares the canceled range and independently resets prediction. Source writers skip untouched canceled refresh lines. Easld removes only queued same-board and same-stream refresh chunks in that range. Partial lines finish intact. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay.
 type SurfaceFrame struct {
 	Stream SurfaceStream `json:"stream"`
 	Seq    int           `json:"seq"`

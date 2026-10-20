@@ -111,39 +111,6 @@ func liveSurface(t *testing.T, f *fixture, v *surfaceViewer, drawer *diagramPeer
 	}
 }
 
-func TestSurfaceRefinementIsValidatedBeforeOpening(t *testing.T) {
-	f := newFixture(t)
-	drawer := attachDrawer(t, f, "mch_home")
-	page := surfaceTile(f, "mch_home")
-	viewer := newSurfaceViewer(t, f, allSurfaceEvents...)
-	for _, value := range []any{nil, true, 1.0, []any{}, map[string]any{}, "", "Retained", "other"} {
-		reply := f.as(viewer, "surface.stream", map[string]any{"id": page, "refinement": value})
-		if code, _ := errorOf(reply); code != "invalid_params" {
-			t.Fatalf("refinement %v opened a stream: %v", value, reply)
-		}
-	}
-	if len(drawer.incoming) != 0 {
-		t.Fatal("invalid refinement reached the drawing Mac")
-	}
-	for i, profile := range []string{"", "independent", "retained"} {
-		params := map[string]any{"id": page}
-		if profile != "" {
-			params["refinement"] = profile
-		}
-		stream := []string{"str_default", "str_independent", "str_retained"}[i]
-		opened := f.onSurface(viewer, "surface.stream", params)
-		answerSurface(f, drawer, diagramMessage(t, drawer.incoming), map[string]any{"stream": stream})
-		if reply := surfaceReply(t, opened); reply["ok"] != true {
-			t.Fatalf("profile %q failed to open: %v", profile, reply)
-		}
-		acked := f.onSurface(viewer, "surface.ack", map[string]any{"stream": stream, "frame": 0.0})
-		answerSurface(f, drawer, diagramMessage(t, drawer.incoming), map[string]any{})
-		if reply := surfaceReply(t, acked); reply["ok"] != true {
-			t.Fatalf("profile %q did not register an owned stream: %v", profile, reply)
-		}
-	}
-}
-
 func expectSurfaceStop(t *testing.T, drawer *diagramPeer, stream string) {
 	t.Helper()
 	if request := diagramMessage(t, drawer.incoming); request["method"] != "surface.stop" || !reflect.DeepEqual(request["params"], map[string]any{"stream": stream}) {

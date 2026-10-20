@@ -220,7 +220,7 @@ final class DelegatedCalls {
     /// A stream opens only on a browser tile of this board as this viewer has it; its other calls
     /// name a stream, which the window checks belongs to the call's link.
     private func surface(_ request: SurfaceRequest, _ call: EaslConnection.Call) async throws -> JSONValue {
-        if case .stream(let id, _, _, _) = request, board.objects[id]?.type != .browser {
+        if case .stream(let id, _, _) = request, board.objects[id]?.type != .browser {
             throw ApiRouter.Failure("not_found", "browser tile \(id) isn't on this board's viewer")
         }
         return try await window.surface(request, call.origin, call.surfaceEvents)

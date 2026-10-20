@@ -562,7 +562,7 @@ public final class ApiRouter {
 
     private func serveSurface(_ request: SurfaceRequest, _ connection: SocketServer.Connection) async throws -> JSONValue {
         guard let surface else { throw Failure("unavailable", "browser surfaces need the easl app") }
-        if case .stream(let tile, _, _, _) = request {
+        if case .stream(let tile, _, _) = request {
             let board = try board(forObject: tile)
             guard board.objects[tile]?.type == .browser else { throw Failure("not_found", "\(tile) is not a browser tile") }
             guard registry.subscribes(connection, to: "surface.frame", on: board.id) else {

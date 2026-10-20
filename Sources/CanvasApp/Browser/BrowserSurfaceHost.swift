@@ -29,8 +29,8 @@ final class BrowserSurfaceHost: NSObject {
 
     func handle(_ request: SurfaceRequest, from peer: some SurfacePeer) async throws -> JSONValue {
         switch request {
-        case .stream(let id, let scale, let format, let refinement):
-            return try await open(id, scale: scale, format: format, refinement: refinement, for: peer)
+        case .stream(let id, let scale, let format):
+            return try await open(id, scale: scale, format: format, for: peer)
         case .ack(let stream, let frame):
             try owned(stream, by: peer).ack(frame)
             return .object([:])
@@ -53,7 +53,7 @@ final class BrowserSurfaceHost: NSObject {
     /// once its page is driven: a remount, an assignment that moved, a closed board or a dropped
     /// link while it waited opens nothing. A viewer that can't hear frames gets no stream, which
     /// would wait at frame 0 for good.
-    private func open(_ id: ObjectID, scale: Double, format: SurfaceFormat, refinement: SurfaceRefinement, for peer: some SurfacePeer) async throws -> JSONValue {
+    private func open(_ id: ObjectID, scale: Double, format: SurfaceFormat, for peer: some SurfacePeer) async throws -> JSONValue {
         let (board, tile) = try peer.tile(id)
         guard peer.hears("surface.frame", on: board) else {
             throw ApiRouter.Failure("invalid_params", "subscribe this connection to surface.frame on board \(board) (events.subscribe) before surface.stream")
@@ -71,7 +71,7 @@ final class BrowserSurfaceHost: NSObject {
         let size = webView.bounds.size
         let surface = surface(for: tile)
         let stream = SurfaceStream(id: IDs.make("str"), peer: peer, board: board, surface: surface,
-                                   scale: min(scale, BrowserSurface.fittedScale(for: size)), format: format, refinement: refinement)
+                                   scale: min(scale, BrowserSurface.fittedScale(for: size)), format: format)
         streams[stream.id] = stream
         surface.add(stream)
         watch()
@@ -348,10 +348,7 @@ final class BrowserSurface {
                         forceState: stream.pageStateChanged(frame), at: ProcessInfo.processInfo.systemUptime)
                     nextDelay = min(nextDelay, delay)
                     guard let encoded else { continue }
-                    if encoded.refresh, stream.accepted != accepted {
-                        stream.discardRefinement()
-                        continue
-                    }
+                    guard !encoded.refresh || stream.accepted == accepted else { continue }
                     frame.format = encoded.format
                     frame.data = encoded.data
                     frame.width = encoded.width
