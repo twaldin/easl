@@ -421,12 +421,14 @@ struct SurfaceImageEncoderTests {
         work.pause()
         for index in 1...5 {
             let changed = try fixture(filledPixels: index * 100)
-            let motion = try #require(try capture(encoder, changed, at: 1.25 + Double(index) * 0.125, revision: revision))
+            let motion = try #require(try capture(encoder, changed, at: 1.25, revision: revision))
             #expect(motion.format == .h264 && !motion.refresh)
         }
-        for index in 6...15 {
+        let freezeAt = 1.25 + SurfaceImageEncoder.settle + 0.01
+        #expect(try capture(encoder, fixture(filledPixels: 600), at: freezeAt, revision: revision) == nil)
+        for index in 7...15 {
             let changed = try fixture(filledPixels: index * 100)
-            #expect(try capture(encoder, changed, at: 1.25 + Double(index) * 0.125, revision: revision) == nil)
+            #expect(try capture(encoder, changed, at: freezeAt + Double(index - 6) * 0.125, revision: revision) == nil)
         }
         work.finish()
         let final = try fixture(filledPixels: 1500)
@@ -436,11 +438,11 @@ struct SurfaceImageEncoderTests {
 
         let motion = try #require(try capture(encoder, final, at: 5.5, revision: revision))
         #expect(motion.format == .h264 && !motion.refresh)
-        #expect(try capture(encoder, final, at: 5.89, revision: revision) == nil)
+        #expect(try capture(encoder, final, at: 5.5 + SurfaceImageEncoder.settle - 0.01, revision: revision) == nil)
         work.finish()
-        #expect(try capture(encoder, final, at: 5.91, revision: revision) == nil)
+        #expect(try capture(encoder, final, at: 5.5 + SurfaceImageEncoder.settle + 0.01, revision: revision) == nil)
         work.finish()
-        let sharp = try #require(try capture(encoder, final, at: 6, revision: revision))
+        let sharp = try #require(try capture(encoder, final, at: 5.5 + SurfaceImageEncoder.settle + 0.02, revision: revision))
         try expectSharp(sharp, source: final)
         #expect(try capture(encoder, final, at: 10, revision: revision) == nil)
         work.finish()
@@ -480,20 +482,21 @@ struct SurfaceImageEncoderTests {
         work.pause()
         for index in 1...5 {
             let changed = try fixture(filledPixels: index * 100)
-            let motion = try #require(try capture(encoder, changed, at: 1.25 + Double(index) * 0.125, revision: revision))
+            let motion = try #require(try capture(encoder, changed, at: 1.25, revision: revision))
             #expect(motion.format == .h264 && !motion.refresh)
         }
-        #expect(try capture(encoder, fixture(filledPixels: 600), at: 2.75, revision: revision) == nil)
+        let freezeAt = 1.25 + SurfaceImageEncoder.settle + 0.01
+        #expect(try capture(encoder, fixture(filledPixels: 600), at: freezeAt, revision: revision) == nil)
         revision.advance()
+        let inputAt = freezeAt + 0.1
         let current = try fixture(filledPixels: 700)
-        let motion = try #require(try capture(encoder, current, at: 3, revision: revision, input: true, lastInput: 3))
+        let motion = try #require(try capture(encoder, current, at: inputAt, revision: revision, input: true, lastInput: inputAt))
         #expect(motion.format == .h264 && !motion.refresh)
-        #expect(try capture(encoder, current, at: 3.39, revision: revision, lastInput: 3) == nil)
-        #expect(try capture(encoder, current, at: 3.41, revision: revision, lastInput: 3) == nil)
+        #expect(try capture(encoder, current, at: inputAt + SurfaceImageEncoder.settle + 0.01, revision: revision, lastInput: inputAt) == nil)
         work.finish()
-        let sharp = try #require(try capture(encoder, current, at: 3.5, revision: revision, lastInput: 3))
+        let sharp = try #require(try capture(encoder, current, at: inputAt + SurfaceImageEncoder.settle + 0.02, revision: revision, lastInput: inputAt))
         try expectSharp(sharp, source: current)
-        #expect(try capture(encoder, current, at: 10, revision: revision, lastInput: 3) == nil)
+        #expect(try capture(encoder, current, at: 10, revision: revision, lastInput: inputAt) == nil)
     }
 
     @Test

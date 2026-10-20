@@ -367,7 +367,7 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
                 let bytes = Data(bytes: base, count: stride * height)
                 guard let provider = CGDataProvider(data: bytes as CFData),
                       let cg = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: stride,
-                                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: [.byteOrder32Little, CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)],
+                                       space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: [.byteOrder32Little, CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)],
                                        provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { throw ProbeError("cannot retain native evidence") }
                 let data = NSMutableData()
                 guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { throw ProbeError("cannot create native PNG") }
