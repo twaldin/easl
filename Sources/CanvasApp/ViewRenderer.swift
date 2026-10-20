@@ -22,8 +22,6 @@ extension CanvasView {
         // an arrow's outline can decide the region.
         if let drawing = shapeLayer as? ShapeLayer {
             drawing.settleArrows(includingSnapshot: true)
-        } else {
-            board.settleArrows?()
         }
         // Targets first: with `full` their rendered content decides the region.
         var renders: [ObjectID: TileRender] = [:]
@@ -118,8 +116,6 @@ extension CanvasView {
 
             if let drawing = shapeLayer as? ShapeLayer {
                 drawing.settleArrows(includingSnapshot: true)
-            } else {
-                board.settleArrows?()
             }
             let stacked = board.objects.values.filter { renders[$0.id] != nil || $0.type == .shape || $0.type == .arrow }
                 .sorted { ($0.z, $0.id) < ($1.z, $1.id) }

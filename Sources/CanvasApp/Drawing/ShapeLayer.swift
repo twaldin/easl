@@ -84,10 +84,10 @@ final class ShapeLayer: NSView {
     /// placed with the rest); it runs once per burst of changes, off the main thread (see
     /// `scheduleRouting`).
     private var routingStale = false
-    /// Snapshot arrows may draw and report attached previews while opening; edits settle first.
     private enum ProvisionalRoute: Equatable, Sendable {
         case snapshot, edit
     }
+    /// Snapshot arrows may draw attached previews; edits must settle first.
     private var provisional: [ObjectID: ProvisionalRoute] = [:]
     /// Bumped by every change the board's routing depends on, so a routing that finishes after
     /// more changes knows its inputs are older.
@@ -172,6 +172,10 @@ final class ShapeLayer: NSView {
         for object in objects where object.type != .arrow {
             refresh(object)
             routedAs[object.id] = RoutingKey(object)
+        }
+        for object in objects where object.type == .arrow {
+            guard let spec = ArrowSpec(object.props) else { continue }
+            for id in [spec.from.objectID, spec.to.objectID].compactMap({ $0 }) { arrowsBound[id, default: []].insert(object.id) }
         }
         for object in objects where object.type == .arrow {
             refresh(object)
@@ -555,10 +559,12 @@ final class ShapeLayer: NSView {
                 items[id] = routed
                 invalidate(routed)
             }
-            // Arrows provisional when the routing started are settled now (routed, or left on
-            // their last route when an end is gone), unless they changed again since.
+            // Unchanged geometry still retires a pending arrow, but only from the same origin.
             for (id, origin) in inputs.provisional where !changedSince.contains(id) && provisional[id] == origin {
                 provisional.removeValue(forKey: id)
+            }
+            if !routingStale, changedSince.contains(where: { provisional[$0] == .snapshot }) {
+                scheduleRouting(trigger: nil)
             }
         }
     }
