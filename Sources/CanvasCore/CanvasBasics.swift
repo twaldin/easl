@@ -82,9 +82,13 @@ public enum CanvasBasics {
             Item(term: "⌘= · ⌘-", text: "zoom in and out, 10% to 100%. Zoomed far out, tiles become cards (a picture, tinted by the agent's state); zoom in to use them."),
             Item(term: "⌃⌘= · ⌃⌘- · ⌃⌘0", text: "zoom the content of the selected tile (or the one you're typing in) in, out, or back to 100% (Object › Content Zoom), in place: the tile keeps its size and its text reflows (a terminal gets fewer, bigger columns). A tile shows its zoom by its ✕: click the % for 100%, hover for − and +. Drag a corner to resize a tile; ⌥-drag keeps its proportions."),
         ]),
-        Section(title: "Keyboard", items: [
+        Section(title: "Keyboard defaults", items: [
+            Item(term: "⌘,", text: "open Settings › Keyboard Shortcuts to record, clear or reset a menu shortcut. The menus show your current bindings; the keys in this legend are defaults."),
             Item(term: "⌘P", text: "go to a tile, file or symbol, or a heading in a note."),
             Item(term: "⌘T", text: "new terminal; then run omp, claude, codex, gemini or opencode."),
+            Item(term: "⌘N · ⇧⌘B · ⇧⌘H", text: "new note · new browser tile · new HTML tile."),
+            Item(term: "⌘O · ⇧⌘O", text: "open a file as a code tile · open a board."),
+            Item(term: "⌃⌥⌘T · ⌃⌥⌘O · ⌃⌥⌘R", text: "new board tab · open a remote board · review a branch. ⇧⌘R reviews uncommitted changes."),
             Item(term: "Return · Esc · Tab", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the board, then clears the selection, then closes Get Started. In a terminal or a web page Esc goes to the program or page (a game's pause, a dialog): ⌘Esc leaves any tile. Tab never types into a tile: with Get Started open it walks its buttons (Space presses one)."),
             Item(term: "⌘W · ⌘G", text: "close the selection · group it."),
             Item(term: "⌥⌘/", text: "open or close this legend (Help › easl Basics)."),

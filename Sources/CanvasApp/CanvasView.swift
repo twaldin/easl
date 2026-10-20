@@ -84,9 +84,9 @@ final class CanvasDocumentView: NSView {
             _ = canvas?.onTab?(modifiers == .shift)
             return
         }
-        switch event.keyCode {
-        case 53: cancelOperation(nil)
-        case 51, 117: deleteBackward(nil)
+        switch (event.keyCode, plain) {
+        case (53, true): cancelOperation(nil)
+        case (51, true), (117, true): deleteBackward(nil)
         default:
             // A selected changes tile's keys say to press Return first (they act once it has the keyboard).
             if canvas?.selectedChangesTile?.keyWhileSelected(event) == true { return }
@@ -1528,8 +1528,7 @@ final class CanvasView: NSScrollView {
         if focusedTile == id {
             // How to get out of a terminal or page, whose Esc belongs to its program (View ▸ Leave Tile).
             let leave = MenuAction.item("Leave Tile") { [weak self] in self?.leaveTile(id) }
-            leave.keyEquivalent = "\u{1b}"
-            leave.keyEquivalentModifierMask = .command
+            AppShortcuts.apply(to: leave, id: "leaveTile")
             menu.addItem(leave)
             menu.addItem(.separator())
         }
@@ -1578,13 +1577,13 @@ final class CanvasView: NSScrollView {
     /// when nothing selected zooms.
     private func contentZoomMenu() -> NSMenuItem? {
         guard let current = zoomTargetLevels else { return nil }
-        func shortcut(_ item: NSMenuItem, _ key: String) -> NSMenuItem {
-            (item.keyEquivalent, item.keyEquivalentModifierMask) = (key, [.control, .command])
+        func shortcut(_ item: NSMenuItem, _ id: String) -> NSMenuItem {
+            AppShortcuts.apply(to: item, id: id)
             return item
         }
         let submenu = NSMenu()
-        submenu.addItem(shortcut(MenuAction.item("Zoom Content In", enabled: canStepZoom(bigger: true)) { [weak self] in self?.stepZoom(bigger: true) }, "="))
-        submenu.addItem(shortcut(MenuAction.item("Zoom Content Out", enabled: canStepZoom(bigger: false)) { [weak self] in self?.stepZoom(bigger: false) }, "-"))
+        submenu.addItem(shortcut(MenuAction.item("Zoom Content In", enabled: canStepZoom(bigger: true)) { [weak self] in self?.stepZoom(bigger: true) }, "zoomContentIn"))
+        submenu.addItem(shortcut(MenuAction.item("Zoom Content Out", enabled: canStepZoom(bigger: false)) { [weak self] in self?.stepZoom(bigger: false) }, "zoomContentOut"))
         submenu.addItem(.separator())
         for preset in ObjectZoom.presets {
             let item = MenuAction.item(ObjectZoom.percent(preset)) { [weak self] in self?.setZoom(preset) }
@@ -1592,7 +1591,7 @@ final class CanvasView: NSScrollView {
             submenu.addItem(item)
         }
         submenu.addItem(.separator())
-        submenu.addItem(shortcut(MenuAction.item("Reset Content Zoom", enabled: current != [1]) { [weak self] in self?.setZoom(1) }, "0"))
+        submenu.addItem(shortcut(MenuAction.item("Reset Content Zoom", enabled: current != [1]) { [weak self] in self?.setZoom(1) }, "zoomContent"))
         let title = current.count == 1 && current != [1] ? "Content Zoom (\(ObjectZoom.percent(current.first!)))" : "Content Zoom"
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.submenu = submenu
@@ -2159,8 +2158,7 @@ final class CanvasView: NSScrollView {
                 self?.toggleMention(target ?? .object(id))
             }
         }
-        item.keyEquivalent = "m"
-        item.keyEquivalentModifierMask = [.shift, .command]
+        AppShortcuts.apply(to: item, id: "mentionCurrent")
         return item
     }
 

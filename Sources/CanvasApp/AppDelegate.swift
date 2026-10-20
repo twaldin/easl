@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The remote easld boards to attach again (`RemoteReopen`), whether or not they are attached now.
     private let reopenList = RemoteReopen.Store(url: AppPaths.remoteBoards)
     private let settings = UISettings.Store(url: AppPaths.uiSettings)
+    private lazy var shortcutSettings = KeyboardShortcutSettingsController()
     /// easl › Keep Remote Boards Attached (`UISettings.backgroundAttach`).
     private var backgroundAttach = true
     private var automaticUpdates = false
@@ -62,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DevPerf.begin("launch", phase: "restore", window: nil)
         localRestore = Task { @MainActor in await restoreBoardsAtLaunch() }
         NSApp.mainMenu = Self.makeMenu()
+        AppShortcuts.configure(ClientFiles.sync { settings.load().keyboardShortcuts })
         registry.drawingMachine = ClientIdentity.thisMac.drawingMachine
         MainMetricsBatch.shared.start()
         UserIdleWatch.shared.start()
@@ -1781,6 +1783,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.openRemoteBoard(host: host, board: board)
         }
     }
+    @objc func showSettings(_ sender: Any?) { shortcutSettings.present() }
 
     static func makeMenu() -> NSMenu {
         let main = NSMenu()
@@ -1793,189 +1796,167 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             main.addItem(item)
             return menu
         }
-        func item(_ title: String, _ action: Selector?, _ key: String, _ modifiers: NSEvent.ModifierFlags = .command) -> NSMenuItem {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
-            item.keyEquivalentModifierMask = modifiers
+        func item(_ title: String, _ action: Selector, bindable: Bool = true) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            if bindable {
+                let id = String(NSStringFromSelector(action).dropLast())
+                AppShortcuts.apply(to: item, id: id)
+            }
             return item
         }
         submenu("easl", [
+            item("Settings…", #selector(showSettings(_:))),
+            .separator(),
             // easl.sh/latest.json now (`Updater`); it also checks a minute after launch and daily.
-            item("Check for Updates…", #selector(checkForUpdates(_:)), ""),
-            item("Install Updates Automatically", #selector(toggleAutomaticUpdates(_:)), ""),
-            item("Retry Reopening Update Boards", #selector(retryUpdateRestoration(_:)), ""),
-            item("Discard Update Board Recovery", #selector(discardUpdateRecovery(_:)), ""),
+            item("Check for Updates…", #selector(checkForUpdates(_:))),
+            item("Install Updates Automatically", #selector(toggleAutomaticUpdates(_:))),
+            item("Retry Reopening Update Boards", #selector(retryUpdateRestoration(_:))),
+            item("Discard Update Board Recovery", #selector(discardUpdateRecovery(_:))),
             .separator(),
             // Remote easld boards stay attached with their windows closed, for agents' renders
             // and measures (`toggleBackgroundAttach`).
-            item("Keep Remote Boards Attached", #selector(toggleBackgroundAttach(_:)), ""),
+            item("Keep Remote Boards Attached", #selector(toggleBackgroundAttach(_:))),
             .separator(),
             // Every browser tile's cookies, storage and caches (`BrowserProfile`), after a sheet.
-            item("Clear Browsing Data…", #selector(clearBrowsingData(_:)), ""),
+            item("Clear Browsing Data…", #selector(clearBrowsingData(_:))),
             // Safari web extensions in browser tiles (`BrowserExtensions`), filled as it opens.
             BrowserExtensions.menuItem(),
             .separator(),
-            item("Quit easl", #selector(NSApplication.terminate(_:)), "q"),
+            item("Quit easl", #selector(NSApplication.terminate(_:))),
         ])
         submenu("File", [
-            item("New Terminal", #selector(newTerminal(_:)), "t"),
-            item("New Note", #selector(newNote(_:)), "n"),
-            // Shifted items use the uppercase key: a lowercase key with a Shift mask also matches
-            // the plain ⌘ key (⌘O opened Open Board, ⌘B New Browser Tile).
-            item("New Browser Tile…", #selector(newBrowserTile(_:)), "B", [.command, .shift]),
-            item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
-            item("Open Board…", #selector(openBoard(_:)), "O", [.command, .shift]),
-            item("Open Remote…", #selector(openRemote(_:)), ""),
-            item("New HTML Tile", #selector(newHtmlTile(_:)), "H", [.command, .shift]),
-            item("Review Changes", #selector(reviewChanges(_:)), "R", [.command, .shift]),
-            item("Review Branch", #selector(reviewBranch(_:)), ""),
+            item("New Terminal", #selector(newTerminal(_:))),
+            item("New Note", #selector(newNote(_:))),
+            item("New Browser Tile…", #selector(newBrowserTile(_:))),
+            item("Open File as Code Tile…", #selector(openCodeTile(_:))),
+            item("Open Board…", #selector(openBoard(_:))),
+            item("New Board Tab…", #selector(newWindowForTab(_:))),
+            item("Open Remote…", #selector(openRemote(_:))),
+            item("New HTML Tile", #selector(newHtmlTile(_:))),
+            item("Review Changes", #selector(reviewChanges(_:))),
+            item("Review Branch", #selector(reviewBranch(_:))),
             .separator(),
-            item("Export Selection as PNG…", #selector(saveAsPNG(_:)), "E", [.command, .shift]),
-            item("Save HTML Tile as HTML…", #selector(saveHTMLTile(_:)), ""),
-            item("Open HTML Tile in Browser", #selector(openHTMLTileInBrowser(_:)), ""),
-            item("Open Page in Browser", #selector(openPageInBrowser(_:)), ""),
-            item("Save Note as Markdown…", #selector(saveNoteAsMarkdown(_:)), ""),
+            item("Export Selection as PNG…", #selector(saveAsPNG(_:))),
+            item("Save HTML Tile as HTML…", #selector(saveHTMLTile(_:))),
+            item("Open HTML Tile in Browser", #selector(openHTMLTileInBrowser(_:))),
+            item("Open Page in Browser", #selector(openPageInBrowser(_:))),
+            item("Save Note as Markdown…", #selector(saveNoteAsMarkdown(_:))),
             // The focused or selected browser tile's page, frozen as an image tile beside it.
-            item("Snapshot Page to Image", #selector(snapshotPage(_:)), ""),
-            // The focused or selected browser tile's page, through the print panel (⌘P is Go to…).
-            item("Print Page…", #selector(printPage(_:)), ""),
+            item("Snapshot Page to Image", #selector(snapshotPage(_:))),
+            // The focused or selected browser tile's page, through the print panel.
+            item("Print Page…", #selector(printPage(_:))),
             .separator(),
-            // The board window takes ⌘W first to close the selection or the focused terminal
-            // (CanvasWindowController.handleKeyEquivalent); with neither, the tab or window closes.
-            item("Close", #selector(NSWindow.performClose(_:)), "w"),
+            item("Close", #selector(NSWindow.performClose(_:))),
         ])
         submenu("Edit", [
-            item("Undo", #selector(undoCanvas(_:)), "z"),
-            item("Redo", #selector(redoCanvas(_:)), "Z", [.command, .shift]),
+            item("Undo", #selector(undoCanvas(_:))),
+            item("Redo", #selector(redoCanvas(_:))),
             .separator(),
-            item("Copy", #selector(NSText.copy(_:)), "c"),
-            item("Copy as Image", #selector(copyAsImage(_:)), "C", [.command, .shift]),
-            item("Copy Note as Markdown", #selector(copyNoteAsMarkdown(_:)), ""),
-            item("Paste", #selector(NSText.paste(_:)), "v"),
-            item("Select All", #selector(NSText.selectAll(_:)), "a"),
-            item("Delete Selection", #selector(deleteSelection(_:)), "\u{8}"),
+            item("Copy", #selector(NSText.copy(_:))),
+            item("Copy as Image", #selector(copyAsImage(_:))),
+            item("Copy Note as Markdown", #selector(copyNoteAsMarkdown(_:))),
+            item("Paste", #selector(NSText.paste(_:))),
+            item("Select All", #selector(NSText.selectAll(_:))),
+            item("Delete Selection", #selector(deleteSelection(_:))),
             .separator(),
-            // The focused or selected browser tile's find bar. A page with the keyboard sees ⌘F
-            // first (a web app's own find); a code tile's ⌘F is the board window's
-            // (CanvasWindowController.handleKeyEquivalent) and a terminal's is its own.
-            item("Find in Page…", #selector(findInPage(_:)), "f"),
+            item("Find in Page…", #selector(findInPage(_:))),
             .separator(),
-            // Hyper-V: no shell, TUI, or Ghostty default binding uses all four modifiers.
-            item("Paste Mentions into Terminal", #selector(pasteMentions(_:)), "v", [.control, .option, .shift, .command]),
-            // ⇧⌘M: no shell or TUI sees ⌘, Ghostty binds nothing to it, and the board window
-            // takes it ahead of a focused terminal (CanvasWindowController.handleKeyEquivalent).
-            item("Mention", #selector(mentionCurrent(_:)), "M", [.command, .shift]),
-            // The tray from the keyboard: take chips off, pick the terminal they go to. ⌥⇧⌘M
-            // beside Mention's ⇧⌘M: no shell sees ⌘, and neither macOS nor Ghostty binds it.
-            item("Remove Last Mention", #selector(removeLastMention(_:)), "M", [.command, .shift, .option]),
+            item("Paste Mentions into Terminal", #selector(pasteMentions(_:))),
+            item("Mention", #selector(mentionCurrent(_:))),
+            item("Remove Last Mention", #selector(removeLastMention(_:))),
             TrayMenu.item("Remove Mention"),
-            item("Clear Mentions", #selector(clearMentions(_:)), ""),
+            item("Clear Mentions", #selector(clearMentions(_:))),
             TrayMenu.item("Send Mentions To"),
-            // ⌘I as Cursor's composer: no shell sees ⌘, Ghostty binds nothing to it, and the
-            // board window takes it ahead of a focused terminal or page
-            // (CanvasWindowController.handleKeyEquivalent).
-            item("Write Prompt", #selector(focusComposer(_:)), "i"),
+            item("Write Prompt", #selector(focusComposer(_:))),
         ])
-        // Content Zoom: how big a tile's content draws inside its frame, in place (View ▸ Zoom
-        // In/Out, ⌘= / ⌘-, zoom the board); the selection, else the tile holding the keyboard
-        // (`CanvasView.zoomTargets`). ⌃⌘ chords: ⌥⌘= / ⌥⌘- are macOS Zoom's (Accessibility),
-        // which the people who need bigger text use; Ghostty's ⌃⌘= (equalize splits) has no
-        // splits here, and a focused terminal's menu shortcuts beat its bindings
-        // (CanvasWindowController.handleKeyEquivalent).
         let zoom = NSMenuItem(title: "Content Zoom", action: nil, keyEquivalent: "")
         zoom.submenu = NSMenu(title: "Content Zoom")
-        zoom.submenu?.addItem(item("Zoom Content In", #selector(zoomContentIn(_:)), "=", [.control, .command]))
-        zoom.submenu?.addItem(item("Zoom Content Out", #selector(zoomContentOut(_:)), "-", [.control, .command]))
+        zoom.submenu?.addItem(item("Zoom Content In", #selector(zoomContentIn(_:))))
+        zoom.submenu?.addItem(item("Zoom Content Out", #selector(zoomContentOut(_:))))
         zoom.submenu?.addItem(.separator())
         for preset in ObjectZoom.presets {
-            let item = item(ObjectZoom.percent(preset), #selector(zoomContent(_:)), "")
+            let item = item(ObjectZoom.percent(preset), #selector(zoomContent(_:)), bindable: false)
             item.tag = Int((preset * 100).rounded())
             zoom.submenu?.addItem(item)
         }
         zoom.submenu?.addItem(.separator())
-        let actual = item("Reset Content Zoom", #selector(zoomContent(_:)), "0", [.control, .command])
+        let actual = item("Reset Content Zoom", #selector(zoomContent(_:)))
         actual.tag = 100
         zoom.submenu?.addItem(actual)
         submenu("Object", [
-            item("Group", #selector(groupSelection(_:)), "g"),
-            item("Ungroup", #selector(ungroupSelection(_:)), "G", [.command, .shift]),
-            item("Enter Group", #selector(enterGroup(_:)), ""),
+            item("Group", #selector(groupSelection(_:))),
+            item("Ungroup", #selector(ungroupSelection(_:))),
+            item("Enter Group", #selector(enterGroup(_:))),
             .separator(),
-            // "}" and "{": ⇧⌘] and ⇧⌘[ as the key produces them. "]" and "[" with a Shift mask
-            // matched the plain ⌘] and ⌘[ (Forward and Back) and never the shifted chords.
-            item("Bring to Front", #selector(bringToFront(_:)), "}", [.command, .shift]),
-            item("Send to Back", #selector(sendToBack(_:)), "{", [.command, .shift]),
+            item("Bring to Front", #selector(bringToFront(_:))),
+            item("Send to Back", #selector(sendToBack(_:))),
             zoom,
             .separator(),
             // The focused terminal's, else the selected one's (the context menu's toggle).
-            item("Follow Files", #selector(toggleFollowFiles(_:)), ""),
-            item("Copy Object ID", #selector(copyObjectIDs(_:)), ""),
+            item("Follow Files", #selector(toggleFollowFiles(_:))),
+            item("Copy Object ID", #selector(copyObjectIDs(_:))),
             .separator(),
-            // ⌘W itself is File ▸ Close's (the board window takes it first for the selection).
-            item("Close Selection", #selector(deleteSelection(_:)), ""),
+            item("Close Selection", #selector(deleteSelection(_:)), bindable: false),
+        ])
+        submenu("Drawing", [
+            item("Select", #selector(CanvasWindowController.selectTool(_:))),
+            item("Rectangle", #selector(CanvasWindowController.rectangleTool(_:))),
+            item("Ellipse", #selector(CanvasWindowController.ellipseTool(_:))),
+            item("Arrow", #selector(CanvasWindowController.arrowTool(_:))),
+            item("Text", #selector(CanvasWindowController.textTool(_:))),
+            item("Draw", #selector(CanvasWindowController.penTool(_:))),
         ])
         // The focused code tile's, else the selected one's, at its selection or the first name on
         // its first line (CodeTile.navigate). ⌃⌘ chords: no shell sees ⌘, and Ghostty binds none.
         submenu("Code", [
-            item("Go to Definition", #selector(goToDefinition(_:)), "j", [.control, .command]),
-            item("Open Definition in New Tile", #selector(openDefinitionInNewTile(_:)), "j", [.control, .option, .command]),
-            item("Find References", #selector(findReferences(_:)), "r", [.control, .command]),
-            item("Outline", #selector(showOutline(_:)), "o", [.control, .command]),
+            item("Go to Definition", #selector(goToDefinition(_:))),
+            item("Open Definition in New Tile", #selector(openDefinitionInNewTile(_:))),
+            item("Find References", #selector(findReferences(_:))),
+            item("Outline", #selector(showOutline(_:))),
         ])
-        let lasso = item("Lasso Selection", #selector(toggleLassoSelection(_:)), "")
+        let lasso = item("Lasso Selection", #selector(toggleLassoSelection(_:)))
         lasso.state = CanvasView.lassoSelection ? .on : .off
         submenu("View", [
-            // ⌘P, not ⌘K: Ghostty binds ⌘K (clear screen) and terminal tiles take it first.
-            item("Go to…", #selector(showNavigator(_:)), "p"),
-            // ⌘J: no shell sees ⌘, and Ghostty binds nothing to it.
-            item("Go to Next Needs-You", #selector(goToNextNeedsYou(_:)), "j"),
-            // ⌘Esc: Esc belongs to a terminal's program, so this is the way out of one (and of
-            // any tile); the board window takes it before Ghostty's keybinds. No shell sees ⌘.
-            item("Leave Tile", #selector(leaveTile(_:)), "\u{1b}"),
-            // ⌘[ / ⌘] as in Xcode, PyCharm and Safari: the board window takes them ahead of a
-            // terminal (Ghostty's go to split has no splits here); a page with the keyboard goes
-            // back itself. Send to Back and Bring to Front are ⇧⌘[ / ⇧⌘].
-            item("Back", #selector(navigateBack(_:)), "["),
-            item("Forward", #selector(navigateForward(_:)), "]"),
+            item("Go to…", #selector(showNavigator(_:))),
+            item("Go to Next Needs-You", #selector(goToNextNeedsYou(_:))),
+            item("Leave Tile", #selector(leaveTile(_:))),
+            item("Back", #selector(navigateBack(_:))),
+            item("Forward", #selector(navigateForward(_:))),
             .separator(),
-            item("Actual Size", #selector(zoomToActual(_:)), "0"),
-            item("Zoom In", #selector(zoomIn(_:)), "="),
-            item("Zoom Out", #selector(zoomOut(_:)), "-"),
-            item("Zoom to Fit", #selector(zoomToFit(_:)), "9"),
+            item("Actual Size", #selector(zoomToActual(_:))),
+            item("Zoom In", #selector(zoomIn(_:))),
+            item("Zoom Out", #selector(zoomOut(_:))),
+            item("Zoom to Fit", #selector(zoomToFit(_:))),
             .separator(),
-            // The app's own text (tray, tile title bars), separate from the board's zoom (⌘= ⌘-)
-            // and a tile's content zoom (⌃⌘=). ⌥⌘ so no terminal's font-size key or zoom claims them.
-            item("Increase Chrome Text Size", #selector(increaseChromeText(_:)), "=", [.option, .command]),
-            item("Decrease Chrome Text Size", #selector(decreaseChromeText(_:)), "-", [.option, .command]),
-            item("Reset Chrome Text Size", #selector(resetChromeText(_:)), "0", [.option, .command]),
+            item("Increase Chrome Text Size", #selector(increaseChromeText(_:))),
+            item("Decrease Chrome Text Size", #selector(decreaseChromeText(_:))),
+            item("Reset Chrome Text Size", #selector(resetChromeText(_:))),
             .separator(),
-            item("Clear Attention Markers", #selector(clearAttentionMarkers(_:)), ""),
-            // ⌘R and ⌥⌘I as in Safari: the focused or selected browser tile's page. Disabled
-            // otherwise, so the key goes on to whoever has the keyboard.
-            item("Reload Page", #selector(reloadPage(_:)), "r"),
+            item("Clear Attention Markers", #selector(clearAttentionMarkers(_:))),
+            item("Reload Page", #selector(reloadPage(_:))),
             // Show or Hide (`CanvasWindowController.validateMenuItem`), docked under the address bar.
-            item("Show Web Inspector", #selector(toggleWebInspector(_:)), "i", [.option, .command]),
+            item("Show Web Inspector", #selector(toggleWebInspector(_:))),
             // Presenting: toolbar, tray, selection rings, author marks, code headers, markers.
-            // ⌥⌘T as AppKit's Show/Hide Toolbar; Ghostty binds nothing to it.
-            item("Hide Board Chrome", #selector(toggleCanvasChrome(_:)), "t", [.option, .command]),
+            item("Hide Board Chrome", #selector(toggleCanvasChrome(_:))),
             lasso,
-            item("Exit Group", #selector(exitGroup(_:)), ""),
+            item("Exit Group", #selector(exitGroup(_:))),
             .separator(),
             // `app.metrics` at a glance, redrawn each second while shown.
-            item("Performance HUD", #selector(togglePerformanceHUD(_:)), ""),
+            item("Performance HUD", #selector(togglePerformanceHUD(_:))),
         ])
         // AppKit lists the board windows and tabs here (and the tab commands) itself.
         NSApp.windowsMenu = submenu("Window", [
-            item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
-            item("Zoom", #selector(NSWindow.performZoom(_:)), ""),
+            item("Minimize", #selector(NSWindow.performMiniaturize(_:))),
+            item("Zoom", #selector(NSWindow.performZoom(_:))),
             .separator(),
-            item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), ""),
+            item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))),
         ])
         // The Help menu gets AppKit's menu search (⌘?), which finds every item above, the
         // first-run walk-through (`GetStartedPanel`), and the legend of what the canvas shows
         // (`BasicsPanel`), ⌥⌘/ beside that search's ⌘?.
         NSApp.helpMenu = submenu("Help", [
-            item("Get Started", #selector(toggleGetStarted(_:)), ""),
-            item("easl Basics", #selector(toggleBasics(_:)), "/", [.option, .command]),
+            item("Get Started", #selector(toggleGetStarted(_:))),
+            item("easl Basics", #selector(toggleBasics(_:))),
         ])
         return main
     }
@@ -1999,7 +1980,8 @@ extension AppDelegate: NSMenuItemValidation {
             return localRestore == nil
         case #selector(retryUpdateRestoration(_:)), #selector(discardUpdateRecovery(_:)):
             return updateRestoreFailure != nil && localRestore == nil && updateRestoration == nil
-        case #selector(openRemote(_:)), #selector(checkForUpdates(_:)): return true
+        case #selector(openBoard(_:)), #selector(newWindowForTab(_:)), #selector(openRemote(_:)),
+             #selector(checkForUpdates(_:)), #selector(showSettings(_:)): return true
         default: return keyController?.validateMenuItem(item) ?? false
         }
     }

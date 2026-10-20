@@ -9,6 +9,7 @@ Each version's section is its GitHub release's notes.
 - Undo and redo of deleted composer mentions no longer crash the app. Mentions whose tiles still exist keep their editor undo history.
 - Japanese and other input-method composition no longer draws the composer's placeholder over the text being composed.
 - Refuse unreadable or newer-format local boards instead of opening empty replacements; preserve recovery copies and keep their files unchanged through restore, migration, close, and quit.
+- Add Settings › Keyboard Shortcuts with persistent bindings, conflict swaps, per-action reset, and defaults for New Board Tab, Open Remote, and Review Branch.
 
 ## 0.3.0
 
