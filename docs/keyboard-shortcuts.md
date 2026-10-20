@@ -79,4 +79,4 @@ Other listed actions start unbound and can be recorded in Settings. This include
 
 **New Board Tab…** opens the same folder picker as **Open Board…** and the tab bar's + button. A board is a directory, so choosing an existing board brings it forward instead of making a duplicate. Diagram and question tiles have no manual creation menu. Agents create diagrams through the API and questions through `easl ask`.
 
-The three new defaults use ⌃⌥⌘ chords rather than Ghostty's new-window, tab, or split defaults. System-reserved keys are refused. Existing chrome-text zoom shortcuts remain unchanged even though macOS Accessibility Zoom can use the same keys when enabled.
+New Board Tab, Open Remote, and Review Branch use ⌃⌥⌘ chords rather than Ghostty's new-window, tab, or split defaults. System-reserved keys are refused. Existing chrome-text zoom shortcuts remain unchanged even though macOS Accessibility Zoom can use the same keys when enabled.
