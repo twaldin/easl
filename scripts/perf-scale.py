@@ -57,6 +57,14 @@ def frame_text(helper, image):
     return native_json(helper, image.with_suffix('.ocr'), '--drawn', image)
 
 
+class RPCError(RuntimeError):
+    def __init__(self, response):
+        self.response = response
+        error = response.get('error')
+        self.code = error.get('code') if isinstance(error, dict) else None
+        super().__init__(json.dumps(response))
+
+
 def rpc(path, method, params=None, timeout=120):
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(timeout)
@@ -70,7 +78,7 @@ def rpc(path, method, params=None, timeout=120):
                 response = json.loads(line)
                 if response.get('id') == 1:
                     if response.get('ok') is not True or 'error' in response:
-                        raise RuntimeError(json.dumps(response))
+                        raise RPCError(response)
                     return response['result']
 
 
@@ -82,6 +90,35 @@ def wait_for(predicate, seconds=90):
             return value
         time.sleep(0.05)
     raise TimeoutError('Readiness deadline expired')
+
+
+def wait_for_streams(path, terminals, stream_path, seconds=90):
+    streams = {}
+    pending = set(terminals)
+    deadline = time.monotonic() + seconds
+    stream_path.write_text(json.dumps(streams, indent=2))
+    while pending:
+        for oid in terminals:
+            if oid not in pending:
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Fixture stream readiness expired: ' + json.dumps({key: streams.get(key) for key in sorted(pending)}))
+            try:
+                result = rpc(path, 'agent.read', {'target': oid, 'lines': 10}, timeout=remaining)
+            except RPCError as error:
+                if error.code != 'unavailable':
+                    raise
+                result = {'error': error.response['error']}
+            streams[oid] = result
+            stream_path.write_text(json.dumps(streams, indent=2))
+            if time.monotonic() >= deadline:
+                raise TimeoutError('Fixture stream readiness expired: ' + json.dumps({key: streams.get(key) for key in sorted(pending)}))
+            if re.search(r'\bworker=[0-7] sequence=[0-9]{20} status=running\b', result.get('text', '')):
+                pending.remove(oid)
+        if pending:
+            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+    return streams
 
 
 def cpu_times(pids):
@@ -176,27 +213,7 @@ class Run:
         wait_for(lambda: (self.read_ready('view.get') or {}).get('visible'))
         self.terminals = [obj['id'] for obj in board['objects'] if obj['type'] == 'terminal']
         assert len(self.terminals) == 8, 'Fixture must contain eight outputting terminals'
-        streams = {}
-        pending = set(self.terminals)
-        stream_deadline = time.monotonic() + 90
-        stream_path = self.output / 'streams.json'
-        stream_path.write_text(json.dumps(streams, indent=2))
-        while pending:
-            for oid in self.terminals:
-                if oid not in pending:
-                    continue
-                remaining = stream_deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError('Fixture stream readiness expired: ' + ', '.join(sorted(pending)))
-                result = rpc(self.socket, 'agent.read', {'target': oid, 'lines': 10}, timeout=remaining)
-                streams[oid] = result
-                stream_path.write_text(json.dumps(streams, indent=2))
-                if time.monotonic() >= stream_deadline:
-                    raise TimeoutError('Fixture stream readiness expired: ' + ', '.join(sorted(pending)))
-                if re.search(r'\bworker=[0-7] sequence=[0-9]{20} status=running\b', result['text']):
-                    pending.remove(oid)
-            if pending:
-                time.sleep(min(0.05, max(0, stream_deadline - time.monotonic())))
+        wait_for_streams(self.socket, self.terminals, self.output / 'streams.json')
         windows = wait_for(lambda: json.loads(command(self.args.window_helper, self.pid)))
         window = max(windows, key=lambda item: item['kCGWindowBounds']['Width'] * item['kCGWindowBounds']['Height'])
         self.native_bounds = window['kCGWindowBounds']
