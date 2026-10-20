@@ -470,7 +470,7 @@ final class ImageTile: NSView, TileContent {
         self.object = object
         if previous.props["path"] != object.props["path"] {
             stopWatching()
-            if case .host = source, !live {
+            if case .host = source, !live || window == nil {
                 suspend()
             } else {
                 reload()
