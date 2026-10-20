@@ -23,7 +23,7 @@ final class AgentControlTests {
     init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
-        board = await registry.open(root: dir.appendingPathComponent("root"))
+        board = try await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry)
         self.router = router
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
@@ -121,7 +121,7 @@ final class AgentControlTests {
     @Test func aClosedBoardsTilesComeFromItsFileWithTheirSessionsLiveness() async throws {
         let otherRoot = dir.appendingPathComponent("lindy")
         try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
-        let other = await registry.open(root: otherRoot)
+        let other = try await registry.open(root: otherRoot)
         let reviewer = terminal(on: other, name: "reviewer"), shell = terminal(on: other)
         try other.reportLifecycle(tile: reviewer, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp", pid: Int(Self.alive))
         try other.reportSession(tile: reviewer, kind: "omp", sessionId: "s1", sessionPath: nil, model: "openai/gpt-5.2", thinking: "medium")
@@ -146,7 +146,7 @@ final class AgentControlTests {
         #expect(byTile[here]?["open"] == .bool(true) && byTile[here]?["live"] == .bool(false))
 
         // Opened again, they are its open board's.
-        _ = await registry.open(root: otherRoot)
+        _ = try await registry.open(root: otherRoot)
         let reopened = try await listed()
         #expect(reopened[reviewer]?["open"] == .bool(true) && reopened.count == 3)
     }
@@ -596,7 +596,7 @@ final class AgentControlTests {
         _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s1"])
         #expect(try await call("agent.restart", ["target": "worker", "mode": "resume"])["ok"] == .bool(true))
         try registry.close(board.id)
-        let reopened = await registry.open(root: dir.appendingPathComponent("root"))
+        let reopened = try await registry.open(root: dir.appendingPathComponent("root"))
         router.firstReportGrace = 0.05
         let reply = try await call("agent.wait", ["target": "worker", "timeoutMs": 1000])
         #expect(reply["error"]?["code"] == "unavailable", "\(reply)")

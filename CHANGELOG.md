@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Add Settings › Keyboard Shortcuts with persistent bindings, conflict swaps, per-action reset, and defaults for New Board Tab, Open Remote, and Review Branch.
+- Refuse unreadable or newer-format local boards instead of opening empty replacements; preserve recovery copies and keep their files unchanged through restore, migration, close, and quit.
 
 ## 0.3.0
 

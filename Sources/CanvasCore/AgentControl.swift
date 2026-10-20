@@ -93,8 +93,6 @@ struct StoredTerminals: Sendable {
     /// hasn't changed since. Reads and decodes files: call it off the main actor.
     static func read(directory: URL, cache: [String: StoredTerminals]) -> [String: StoredTerminals] {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
         var read: [String: StoredTerminals] = [:]
         for file in files where file.pathExtension == "json" {
             guard let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else { continue }
@@ -102,7 +100,7 @@ struct StoredTerminals: Sendable {
                 read[file.lastPathComponent] = cached
                 continue
             }
-            guard let data = try? Data(contentsOf: file), let snapshot = try? decoder.decode(BoardSnapshot.self, from: data) else { continue }
+            guard let snapshot = try? BoardFile.read(file) else { continue }
             read[file.lastPathComponent] = StoredTerminals(modified: modified, board: snapshot.id, root: snapshot.root,
                                                            terminals: snapshot.objects.filter { $0.type == .terminal })
         }

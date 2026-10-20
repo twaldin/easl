@@ -84,7 +84,7 @@ extension ApiRouterTests {
         try FileManager.default.removeItem(at: blocked)
         #expect(try await call(client, "board.close", [:])["result"]?["board"] == .string(board.id))
         #expect(try await subscriber.next() == .object(["event": "board.closed", "board": .string(board.id), "data": .object([:])]))
-        #expect(await registry.open(root: board.root).objects[note.id]?.props["markdown"] == "must survive")
+        #expect(try await registry.open(root: board.root).objects[note.id]?.props["markdown"] == "must survive")
     }
 
     @Test func failedReopenListWriteLeavesTheBoardOpen() async throws {
@@ -103,7 +103,7 @@ extension ApiRouterTests {
         try FileManager.default.removeItem(at: blocked)
         try registry.close(board.id) { try Data("[]".utf8).write(to: blocked, options: .atomic) }
         #expect(try String(contentsOf: blocked, encoding: .utf8) == "[]")
-        #expect(await registry.open(root: board.root).objects[note.id]?.props["markdown"] == "saved before eviction")
+        #expect(try await registry.open(root: board.root).objects[note.id]?.props["markdown"] == "saved before eviction")
     }
 
     @Test func closedBoardCannotOverwriteItsReopenedReplacement() async throws {
@@ -138,7 +138,7 @@ extension ApiRouterTests {
         #expect(try await call(client, "board.list", [:])["result"]?["boards"]?.array?.first { $0["board"] == .string(board.id) }?["open"] == .bool(false))
         #expect(try await call(client, "agent.report", ["tile": .string(tile), "kind": "omp", "state": "idle", "seq": 1])["ok"] == .bool(true))
         #expect(board.objects[tile]?.props["lifecycle"]?["state"] == "idle")
-        #expect(await registry.open(root: board.root) === board)
+        #expect(try await registry.open(root: board.root) === board)
         #expect(try await subscriber.next() == .object(["event": "board.opened", "board": .string(board.id), "data": .object([:])]))
         #expect(try await call(client, "board.get", ["board": .string(board.id)])["result"]?["closed"] == nil)
         #expect(try await call(client, "board.list", [:])["result"]?["boards"]?.array?.first { $0["board"] == .string(board.id) }?["open"] == .bool(true))
@@ -252,7 +252,7 @@ extension ApiRouterTests {
         let response = try await call(client, "agent.prompt", ["target": .string(tile), "text": "must not be lost on a detached board"])
         #expect(response["error"]?["code"] == "not_found")
         #expect(board.messages[tile] == nil)
-        let active = await registry.open(root: board.root)
+        let active = try await registry.open(root: board.root)
         #expect(active.messages[tile] == nil)
     }
 
@@ -276,7 +276,7 @@ extension QuestionTests {
         board.scheduleQuestionExpiry(now: future)
         #expect(board.expireQuestions(now: future) == [])
         #expect(board.objects[question.id]?.props["status"] == "open")
-        let reopened = await registry.open(root: board.root)
+        let reopened = try await registry.open(root: board.root)
         #expect(reopened.expireQuestions(now: future) == [question.id])
         #expect(reopened.objects[question.id]?.props["status"] == "expired")
     }
@@ -319,7 +319,7 @@ extension AgentControlTests {
         let mention = try board.stage(.object(worker))
         let otherRoot = dir.appendingPathComponent("other")
         try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
-        let other = await registry.open(root: otherRoot)
+        let other = try await registry.open(root: otherRoot)
         router.closeBoard = { [unowned self] _, _ in
             let requests: [(String, [String: JSONValue])] = [
                 ("object.create", ["board": .string(board.id), "type": "terminal", "props": .object(["name": "intruder"])]),

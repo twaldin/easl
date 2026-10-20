@@ -134,7 +134,7 @@ struct ActivityTests {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards")))
-        let board = await registry.open(root: dir.appendingPathComponent("root"))
+        let board = try await registry.open(root: dir.appendingPathComponent("root"))
         board.create(type: .note, props: .object(["markdown": .string("x")]))
 
         let first = board.activity.query(since: nil, limit: 100).entries.first

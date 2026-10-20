@@ -48,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var terminationSignal: DispatchSourceSignal?
     private var pasteMaintenance: TerminalPaste.Maintenance?
     private var localRestore: Task<Void, Never>?
+    private var boardOpenAlerts: [String: NSAlert] = [:]
+    private var failedLocalRestores: [(id: BoardID, root: String)] = []
     private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
         guard let self,
@@ -113,8 +115,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await self?.localRestore?.value
                 guard let self, var controller = self.controllers[board] else { return }
                 if !controller.isBoardOpen || controller.window.map(self.isHoldingClose) == true {
-                    let reopened = await self.open(root: controller.board.root, select: false)
-                    guard let open = self.controllers[reopened.id] else { return }
+                    guard let reopened = await self.openForUser(root: controller.board.root, select: false),
+                          let open = self.controllers[reopened.id] else { return }
                     controller = open
                 }
                 guard !self.terminating, let window = controller.window, self.bringForward(window) else { return }
@@ -208,8 +210,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         router.viewState = { [weak self] board in self?.controllers[board.id]?.canvas.viewState }
         router.showOpenedLink = { [weak self] board, opened, source in self?.controllers[board.id]?.canvas.showOpenedLink(opened, openedFrom: source) }
         router.openBoard = { [weak self, registry] root, select in
-            if let self { return await self.open(root: root, select: select) }
-            return await registry.open(root: root)
+            if let self { return try await self.open(root: root, select: select) }
+            return try await registry.open(root: root)
         }
         router.closeBoard = { [weak self] board, endSessions in
             guard let self else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
@@ -319,16 +321,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if backgroundAttach { await attachInBackground(excluding: restoring) }
             beginUpdateRestoration([(updateRecovery, updateSnapshot)])
         } else {
-            let initial = await open(root: initialRoot, select: !suppressLaunchActivation)
+            let initial = await restoreLocalBoard(root: initialRoot, select: !suppressLaunchActivation)
             for root in saved {
                 guard !terminating else { return }
                 guard await offPool({ BoardStore.isDirectory(root.path) }) else { continue }
                 let id = await offPool { BoardStore.boardID(for: root) }
                 guard controllers[id] == nil else { continue }
-                await open(root: root, select: false)
+                await restoreLocalBoard(root: root, select: false)
             }
             guard !terminating else { return }
-            if getStarted, let controller = controllers[initial.id] {
+            if getStarted, let initial, let controller = controllers[initial.id] {
                 DispatchQueue.main.async { controller.showGetStarted() }
             }
             if let migration {
@@ -336,7 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if backgroundAttach { await attachInBackground() }
             guard !terminating else { return }
-            if !suppressLaunchActivation, !CanvasApplication.neverActivate, controllers[initial.id]?.window?.isOnActiveSpace == true {
+            if let initial, !suppressLaunchActivation, !CanvasApplication.neverActivate, controllers[initial.id]?.window?.isOnActiveSpace == true {
                 NSApp.activate(ignoringOtherApps: true)
             }
         }
@@ -414,7 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     root = await offPool { Self.initialRoot() }
                 }
-                await open(root: root)
+                await openForUser(root: root)
             }
         }
         return false
@@ -424,8 +426,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the first). `select` brings its tab forward; the API's `board.open` leaves the user's
     /// current tab showing unless asked.
     @discardableResult
-    func open(root: URL, select: Bool = true, present: Bool = true) async -> Board {
-        let board = await registry.open(root: root)
+    func open(root: URL, select: Bool = true, present: Bool = true) async throws -> Board {
+        let board: Board
+        do {
+            board = try await registry.open(root: root)
+        } catch {
+            reportBoardOpenFailure(error)
+            throw error
+        }
+        failedLocalRestores.removeAll { $0.id == board.id || board.repo?.merged?.contains($0.id) == true }
         guard !terminating, !board.isClosed else { return board }
         let visit = await offPool { GitWorktree.containing(root.standardizedFileURL.path).map(WorktreeVisit.init) }
         guard canShowWindow(of: board) else { return board }
@@ -435,6 +444,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await openingWindow(of: board, visit: visit, select: select, present: present).value
         }
         return board
+    }
+
+    @discardableResult
+    private func openForUser(root: URL, select: Bool = true) async -> Board? {
+        do { return try await open(root: root, select: select) }
+        catch { return nil }
+    }
+
+    @discardableResult
+    private func restoreLocalBoard(root: URL, select: Bool) async -> Board? {
+        let board = await openForUser(root: root, select: select)
+        if board == nil, !failedLocalRestores.contains(where: { $0.root == root.path }) {
+            let id = await offPool { BoardStore.boardID(for: root) }
+            if registry.board(id: id) == nil { failedLocalRestores.append((id, root.path)) }
+        }
+        return board
+    }
+
+    private func reportBoardOpenFailure(_ error: Error) {
+        let reason = (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
+        NSLog("easl: couldn't open board: %@", reason)
+        guard !terminating, boardOpenAlerts[reason] == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = "Couldn't open board"
+        alert.informativeText = reason
+        boardOpenAlerts[reason] = alert
+        if let window = CanvasWindowController.frontmost?.window, window.isVisible {
+            alert.beginSheetModal(for: window) { [weak self] _ in self?.boardOpenAlerts[reason] = nil }
+        } else {
+            let button = alert.addButton(withTitle: "OK")
+            button.target = self
+            button.action = #selector(dismissBoardOpenFailure(_:))
+            alert.layout()
+            alert.window.center()
+            alert.window.orderFront(nil)
+        }
+    }
+
+    @objc private func dismissBoardOpenFailure(_ sender: NSButton) {
+        guard let entry = boardOpenAlerts.first(where: { $0.value.window === sender.window }) else { return }
+        entry.value.window.close()
+        boardOpenAlerts[entry.key] = nil
     }
 
     private func canShowWindow(of board: Board) -> Bool {
@@ -925,7 +976,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         guard await offPool({ BoardStore.isDirectory(root) }) else {
                             throw ApiRouter.Failure("not_found", "Board directory no longer exists: \(root)")
                         }
-                        let board = await open(root: URL(fileURLWithPath: root), select: false, present: false)
+                        let board = try await open(root: URL(fileURLWithPath: root), select: false, present: false)
                         try checkRemoteOpen()
                         guard let prepared = controllers[board.id], prepared.board === board, prepared.isBoardOpen else {
                             throw CancellationError()
@@ -1509,9 +1560,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openBoardRoots(_ shown: [CanvasWindowController]) -> [String] {
         let order = shown.first?.window?.tabbedWindows ?? []
-        return shown.sorted { lhs, rhs in
+        let roots = shown.sorted { lhs, rhs in
             (order.firstIndex { $0 === lhs.window } ?? .max) < (order.firstIndex { $0 === rhs.window } ?? .max)
         }.map(\.board.root.path)
+        return roots + failedLocalRestores.map(\.root).filter { !roots.contains($0) }
     }
 
     private func writeOpenBoards(_ shown: [CanvasWindowController]) throws {
@@ -1715,7 +1767,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.directoryURL = controller?.remote == nil ? (preferred ?? controller?.board.root) : controller?.board.root
             let chosen: (NSApplication.ModalResponse) -> Void = { [weak self, panel] response in
                 guard response == .OK, let url = panel.url else { return }
-                Task { @MainActor in await self?.open(root: url) }
+                Task { @MainActor in await self?.openForUser(root: url) }
             }
             if let controller, controller.isBoardOpen, let window = controller.window {
                 panel.beginSheetModal(for: window, completionHandler: chosen)
