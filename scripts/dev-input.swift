@@ -29,6 +29,7 @@
 //   dev-input <pid> remote <ssh target> <board> [host home]  open another easl's board as a remote board (the
 //                                                    host found over ssh; host home: its support directory)
 //   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the longest gap
+//   scroll/magnify --oscillate N                     reverse direction every N repeated steps
 //   scroll --repeat N --gesture                      the burst as one phased trackpad gesture: began and ended
 //                                                    without movement, the steps between as changed
 import Foundation
@@ -44,6 +45,7 @@ let mods = option("--mods")
 let clicks = option("--clicks")
 let repeatCount = option("--repeat")
 let interval = option("--interval")
+let oscillate = option("--oscillate")
 let hold = args.contains("--hold")
 args.removeAll { $0 == "--hold" }
 let gesture = args.contains("--gesture")
@@ -112,6 +114,7 @@ if hold { info["hold"] = "1" }
 if middle { info["middle"] = "1" }
 if let repeatCount { info["repeat"] = repeatCount }
 if let interval { info["interval"] = interval }
+if let oscillate { info["oscillate"] = oscillate }
 if gesture { info["gesture"] = "1" }
 if lines { info["lines"] = "1" }
 DistributedNotificationCenter.default().postNotificationName(Notification.Name("canvas.dev.input"), object: nil, userInfo: info, deliverImmediately: true)

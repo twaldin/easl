@@ -4,6 +4,7 @@
 
     python3 scripts/perf-board.py <home> <root> [--seed 7] [--arrows 84] [--labels 65] [--terminals]
     python3 scripts/perf-board.py <home> <root> --replica <sanitized.json> [--arrows N] [--labels N]
+    python3 scripts/perf-board.py <home> <root> --objects 500 [--seed 7]
 
 Synthetic (default): the shape of a real agent-driven board (docs/design/next.md, "Performance and
 monitoring"), from a fixed seed: 112 html tiles in 16 grouped columns (pages of 0.5–3 KB, one of
@@ -13,6 +14,16 @@ tiles, a browser on a local page and an image. `--terminals` adds a terminal pri
 and an idle shell. `--replica` instead re-roots a board from scripts/perf-sanitize.py (terminals
 dropped, so the copy runs no commands). `--arrows`/`--labels` keep only that many arrows/labels
 (arrows 0/42/84 and labels on/off probe how routing scales).
+
+`--objects N` (N >= 50) writes exactly N objects, including eight streaming terminals, notes,
+code, images, bounded HTML, cached call diagrams, shapes, groups and arrows. It does not change
+the default synthetic or replica modes. Groups number N // 20, arrows N // 5; the remaining
+N - 8 - groups - arrows objects cycle through note/html/shape/code/image/diagram in that order.
+Each terminal emits a 256-byte line with a sequence counter every 125 ms (2048 bytes/s before
+PTY newline conversion), using python3, not pv. `touch <root>/.perf-board-quiet` pauses all eight
+without closing their sessions; remove that file to resume. One terminal sits above the board's
+top center, in its first-open viewport.
+`--arrows` cannot reduce the arrow count in this mode; `--labels` can still remove labels.
 
 `<root>` (created) is the board's directory; the board file is `<home>/boards/<id>.json`, the id
 easl derives from the root's path, so `scripts/dev.sh start <root>` with `EASL_DEV_HOME=<home>`
@@ -193,6 +204,127 @@ def synthetic(root, seed, terminals):
     return g.objects
 
 
+QUIET_FILE = ".perf-board-quiet"
+STREAM = """import os
+import sys
+import time
+
+sequence = 0
+while True:
+    if os.path.isfile(sys.argv[1]):
+        time.sleep(0.5)
+        continue
+    line = f"worker={sys.argv[2]} sequence={sequence:020d} status=running "
+    print(line.ljust(255, "."), flush=True)
+    sequence += 1
+    time.sleep(0.125)
+"""
+SERVICE = """def handler(event):
+    record = normalize(event)
+    return persist(record)
+
+def normalize(event):
+    return {"name": str(event.get("name", "unknown")), "count": 1}
+
+
+def persist(record):
+    return encode(record)
+
+
+def encode(record):
+    return str(sorted(record.items()))
+"""
+
+
+def scaled(root, seed, count):
+    """Exact-size format-2 objects, with ordered allocation and a local seeded RNG."""
+    if count < 50:
+        raise ValueError("--objects must be at least 50")
+    g = Gen(seed)
+    with open(os.path.join(root, "service.py"), "w") as f:
+        f.write(SERVICE)
+    png(os.path.join(root, "chart.png"))
+
+    aim = {"kind": "calls", "path": "service.py", "symbol": "handler", "direction": "outgoing"}
+    declarations = [("handler", 1, 3, 0), ("normalize", 5, 6, 1),
+                    ("persist", 9, 10, 1), ("encode", 13, 14, 2)]
+    source = SERVICE.splitlines()
+    graph = {
+        "aim": aim, "root": "service.py#handler", "computedAt": DATE,
+        "nodes": [
+            {"id": f"service.py#{name}", "name": name, "kind": "function",
+             "path": "service.py", "line": line, "lines": {"start": line, "end": end},
+             "excerpt": [{"line": line, "text": source[line - 1]}], "level": level}
+            for name, line, end, level in declarations
+        ],
+        "edges": [
+            {"from": f"service.py#{a}", "to": f"service.py#{b}", "lines": [line]}
+            for a, b, line in [("handler", "normalize", 2), ("handler", "persist", 3),
+                               ("persist", "encode", 10)]
+        ],
+    }
+    group_count, arrow_count = count // 20, count // 5
+    tile_count = count - group_count - arrow_count
+    terminal_slots = {i * (tile_count - 1) // 7: i for i in range(8)}
+    columns = 1
+    while columns * columns < group_count:
+        columns += 1
+    members = [[] for _ in range(group_count)]
+    targets = []
+    content_index = 0
+    for slot in range(tile_count):
+        cluster = slot * group_count // tile_count
+        local = slot - (cluster * tile_count + group_count - 1) // group_count
+        x = (cluster % columns) * 3000 + (local % 4) * 720
+        y = (cluster // columns) * 2800 + (local // 4) * 540
+        frame = (x, y, 640, 440)
+        if slot in terminal_slots:
+            worker = terminal_slots[slot]
+            if worker == 0:
+                x = ((columns - 1) * 3000 + 2800) / 2 - 320
+                frame = (x, -540, 640, 440)
+            tile = g.add("terminal", frame, {
+                "cwd": root, "title": f"worker {worker}",
+                "command": ["python3", "-u", "-c", STREAM, os.path.join(root, QUIET_FILE), str(worker)],
+            })
+        else:
+            kind = ("note", "html", "shape", "code", "image", "diagram")[content_index % 6]
+            n = content_index
+            if kind == "note":
+                props = {"title": f"Review {n}", "markdown": f"## {g.words(2, 4)}\n" +
+                         "\n".join(f"- {g.words(5, 10)}" for _ in range(5))}
+            elif kind == "html":
+                props = {"title": f"Metrics {n}", "key": f"perf:scale:{n}",
+                         "html": page(g.rng, 1200 + (n % 4) * 400, n % 3 == 0, n),
+                         "state": {"count": n, "open": n % 2 == 0}}
+            elif kind == "shape":
+                props = {"kind": "rect", "text": f"Stage {n}: {g.words(2, 4)}"}
+                frame = (x, y, 360, 160)
+            elif kind == "code":
+                props = {"path": "service.py", "range": {"start": 1, "end": 14}}
+            elif kind == "image":
+                props = {"path": "chart.png", "title": f"Throughput {n}"}
+                frame = (x, y, 360, 257)
+            else:
+                props = dict(aim, depth=2, title=f"Request pipeline {n}", graph=graph)
+            tile = g.add(kind, frame, props)
+            targets.append(tile)
+            content_index += 1
+        member_cluster = (columns - 1) // 2 if slot == 0 else cluster
+        members[member_cluster].append(tile)
+    for i, cluster_members in enumerate(members):
+        g.group(cluster_members, f"Workstream {i}", flow="right" if i % 2 else "down")
+    for i in range(arrow_count):
+        a = targets[i % len(targets)]
+        b = targets[(i + 1 + i // len(targets)) % len(targets)]
+        props = {"from": {"object": a["id"]}, "to": {"object": b["id"]},
+                 "route": "straight" if i % 4 == 0 else "avoid"}
+        if i % 3 != 0:
+            props["label"] = f"stage {i}: {g.words(1, 3)}"
+        g.add("arrow", (0, 0, 0, 0), props)
+    return g.objects
+
+
 def replica(path):
     source = json.load(open(path))
     objects = source["objects"] if isinstance(source["objects"], list) else list(source["objects"].values())
@@ -222,20 +354,30 @@ def main():
     ap.add_argument("home")
     ap.add_argument("root")
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--replica")
-    ap.add_argument("--arrows", type=int, default=10_000)
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--replica")
+    mode.add_argument("--objects", type=int)
+    ap.add_argument("--arrows", type=int)
     ap.add_argument("--labels", type=int, default=10_000)
     ap.add_argument("--terminals", action="store_true")
     args = ap.parse_args()
+    if args.objects is not None:
+        if args.objects < 50:
+            ap.error("--objects must be at least 50")
+        if args.arrows is not None and args.arrows < args.objects // 5:
+            ap.error("--arrows cannot reduce an exact --objects fixture")
     root = os.path.abspath(args.root)
     os.makedirs(root, exist_ok=True)
     os.makedirs(os.path.join(args.home, "boards"), exist_ok=True)
     fmt = 2
     if args.replica:
         objects, fmt = replica(args.replica)
+    elif args.objects is not None:
+        objects = scaled(root, args.seed, args.objects)
     else:
         objects = synthetic(root, args.seed, args.terminals)
-    objects = trim(objects, args.arrows, args.labels)
+    arrow_limit = args.objects // 5 if args.objects is not None else (10_000 if args.arrows is None else args.arrows)
+    objects = trim(objects, arrow_limit, args.labels)
     bid = board_id(root)
     board = {"id": bid, "root": root, "revision": 1, "objects": objects}
     if fmt is not None:

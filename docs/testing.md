@@ -318,6 +318,28 @@ python3 scripts/perf-loop.py --app base=/tmp/a.app --app fix=/tmp/b.app [--board
 - Every row also has the app's `instructions_G` and `cycles_G` over the scenario (`proc_pid_rusage`'s `ri_instructions`/`ri_cycles`, billions) and, where the scenario knows how many events the app handled (a burst's writes: html and shape updates plus one create; agent-titles: the title changes DevPerf counted in the span, `title_changes`, never the producers' nominal cadence, which load lowers), `instructions_per_event_k`; rows from bundles with DevPerf's `main cpu` also carry `main_cpu_ms` and `longest_cpu_ms`, the stretches by CPU time. Instructions retired are the figure that survives other load on the Mac: a fixed loop retired the same count to 0.05 % with six spinning processes beside it while its CPU time moved 5 %, and CPU time, cycles and every wall-clock stretch (longest, RPC latency) move with contention, frequency and the core the scheduler picks. Each row records the Mac's load at the scenario's start and end (`machine`: CPU idle, free memory, processes above 10 %) and is `loaded` when CPU idle was under 30 % at either sample (`LOAD_BAND`): the table counts such rows, and a decision should repeat them rather than trust them.
 - A real board's geometry without its content: `scripts/perf-sanitize.py <board.json> <out.json>` keeps types, frames, z, numbers, and enum values in their own fields (checked against each field's closed list), renumbers ids found in identity and reference positions (ids, parents, actors, arrow ends, group members), and replaces every other string with filler of the same length, decided by where a value sits, never by how it looks. It fails, naming only lengths and JSON paths, if any input string over 5 characters or word of 6+ letters survives outside the sanitizer's own vocabulary. Run it on the board's machine and copy only its output; `perf-board.py --replica <out.json>` re-roots it into a home. Its tests: `python3 -m unittest discover -s scripts`.
 
+#### Board scale fixtures
+
+`perf-board.py --objects N` generates exactly N objects with seed 7 by default. Use 50, 200, 500, and 1000 for the scale matrix. Every board contains notes, code, images, HTML, cached diagrams, shapes, arrows, groups, and eight terminals. Each terminal prints a 256-byte sequence line every 125 ms. Create `<root>/.perf-board-quiet` to pause output without ending sessions, and remove it to resume.
+
+Run `perf-scale.py` only inside a claimed GUI guest. Compile the window lookup helper once, keep both frozen release bundles for the session, and use the same `--fixtures` directory for both artifacts:
+
+```sh
+	swiftc -O scripts/perf-window.swift -o "$G/perf-window"
+	python3 scripts/perf-scale.py --app base="$G/base.app" --app fix="$G/fix.app" \
+	  --fixtures "$G/fixtures" --window-helper "$G/perf-window" --runs 5 \
+	  --modes local,remote --easld "$G/easld" --ssh "$G/ssh" --out "$G/scale"
+```
+
+The remote mode requires the guest-loopback `easl-guest` SSH wrapper from the guest recipe. It starts only the specified scratch easld. Each run records API readiness, a native startup capture and its elapsed-time upper bound, ten-second pan and zoom gestures, quiet app CPU, app RSS, and a whole-board render. Inspect the startup pixels before treating their upper bound as evidence of a full draw. API readiness alone is not a first-draw measurement. Native captures include capture overhead and run before the gesture measurements.
+
+The gestures reverse direction every 60 steps with `input scroll|magnify --oscillate 60 --repeat 601 --interval 16.666667`. `DevInput.motion` records the observed pan and magnification range so a gesture over unchanged or clamped content fails the runner.
+
+`DevPerfFrames` reports callback-gap p50, p95, and p99, missed display timestamps, and `stalls50` for each phase. Quantiles are 0.01 ms histogram upper bounds below 100 ms. `overflow100` counts larger gaps, whose quantiles use the phase maximum. Zero samples means no valid frame distribution. These callbacks are not GPU presentation timestamps. The original `DevPerf` and `DevPerfWake` lines retain their formats.
+
+Rows retain render failures, placeholders, omitted objects, and gesture failures rather than treating fast failures as successful measurements. Output includes the original fixture, raw logs, stream replies, startup capture receipts, render object records, and PNGs. Compare the native bounds as well as fixture bytes before attributing a difference to the app.
+
+
 ### Remote boards
 
 To test File › Open Remote… against another development instance on this Mac, run a private sshd in a scratch directory without changing `~/.ssh`.

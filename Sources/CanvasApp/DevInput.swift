@@ -103,10 +103,14 @@ enum DevInput {
             var single = fields
             single["repeat"] = nil
             let interval = (Double(fields["interval"] ?? "") ?? 8) / 1000
+            let oscillate = max(0, Int(fields["oscillate"] ?? "") ?? 0)
+            let canvas = CanvasWindowController.frontmost?.canvas
             @MainActor final class Burst {
                 let start = Date()
                 var step = 0, last: Date?, gap = 0.0, gapStep = 0, lateness = 0.0
                 var timer: DispatchSourceTimer?
+                var minX = Double.infinity, maxX = -Double.infinity
+                var minZoom = Double.infinity, maxZoom = -Double.infinity
             }
             let burst = Burst()
             DevPerf.begin("burst of \(count) \(fields["kind"] ?? "")", phase: "gesture", window: CanvasWindowController.frontmost?.window)
@@ -126,13 +130,26 @@ enum DevInput {
                     // A scroll burst is one trackpad gesture: began, changed…, ended.
                     var event = single
                     event["phase"] = step == 0 ? "began" : step == count - 1 ? "ended" : "changed"
+                    if oscillate > 0, (step / oscillate) % 2 == 1 {
+                        for key in ["dx", "dy", "amount"] {
+                            if let value = event[key].flatMap(Double.init) { event[key] = String(-value) }
+                        }
+                    }
                     replay(event)
+                    if let canvas {
+                        let x = Double(canvas.documentVisibleRect.minX), zoom = Double(canvas.magnification)
+                        burst.minX = min(burst.minX, x)
+                        burst.maxX = max(burst.maxX, x)
+                        burst.minZoom = min(burst.minZoom, zoom)
+                        burst.maxZoom = max(burst.maxZoom, zoom)
+                    }
                     guard step == count - 1 else { return }
                     burst.timer?.cancel()
                     burst.timer = nil
                     NSLog("DevInput: burst of %d %@ took %.0f ms (scheduled %.0f ms), longest gap %.1f ms before step %d, mean lateness %.1f ms",
                           count, fields["kind"] ?? "", Date().timeIntervalSince(burst.start) * 1000, interval * 1000 * Double(count - 1),
                           burst.gap, burst.gapStep, burst.lateness / Double(count))
+                    NSLog("DevInput.motion: x %.2f %.2f zoom %.4f %.4f", burst.minX, burst.maxX, burst.minZoom, burst.maxZoom)
                     DevPerf.phase("settle")
                     DispatchQueue.main.asyncAfter(deadline: .now() + DevPerf.settle) { MainActor.assumeIsolated { DevPerf.end() } }
                 }
