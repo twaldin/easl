@@ -6,7 +6,7 @@ Choose **Record** on an action, then press the shortcut. Escape cancels recordin
 
 A conflict names the action that already uses the shortcut. **Swap** exchanges the two actions' current bindings. If the action being edited is unbound, the other action becomes unbound. **Cancel** keeps both unchanged. Reset uses the same conflict check. Reserved system shortcuts cannot be recorded. Plain letters and Shift-only letters are drawing tools, not global shortcuts.
 
-Changes save in `ui-settings.json` and update the menus at once. The menus show the current bindings. With a terminal focused, easl's menu actions take precedence over terminal bindings, except terminal editing actions such as copy, paste, undo, and search. Bare drawing keys work on the canvas and do not replace typing in a terminal or text editor.
+Changes save in `ui-settings.json` and update the menus at once. The menus show the current bindings. With a terminal focused, custom menu shortcuts take precedence over Ghostty's window, tab, and split remaps. Unchanged easl defaults keep those user-configured remaps, including creating a terminal beside the focused terminal in its directory. Other menu shortcuts beat the terminal library's bindings, except terminal editing actions such as copy, paste, undo, and search. Bare drawing keys work on the canvas and do not replace typing in a terminal or text editor.
 
 ## Defaults
 

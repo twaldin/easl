@@ -88,15 +88,11 @@ enum AppShortcuts {
     static func systemReservation(for event: NSEvent) -> String? {
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
         guard let hotkeys = UserDefaults(suiteName: "com.apple.symbolichotkeys")?.dictionary(forKey: "AppleSymbolicHotKeys") else { return nil }
-        var carbonFlags = 0
-        if flags.contains(.command) { carbonFlags |= 1 << 8 }
-        if flags.contains(.shift) { carbonFlags |= 1 << 9 }
-        if flags.contains(.option) { carbonFlags |= 1 << 11 }
-        if flags.contains(.control) { carbonFlags |= 1 << 12 }
         for value in hotkeys.values {
             guard let hotkey = value as? [String: Any], (hotkey["enabled"] as? NSNumber)?.boolValue == true,
                   let definition = hotkey["value"] as? [String: Any], let parameters = definition["parameters"] as? [NSNumber], parameters.count >= 3,
-                  parameters[1].intValue == Int(event.keyCode), parameters[2].intValue == carbonFlags else { continue }
+                  parameters[1].intValue == Int(event.keyCode),
+                  NSEvent.ModifierFlags(rawValue: parameters[2].uintValue).intersection([.command, .shift, .option, .control]) == flags else { continue }
             return "This shortcut is enabled in macOS System Settings. Choose another shortcut or disable the system shortcut first."
         }
         return nil
@@ -274,22 +270,22 @@ final class KeyboardShortcutSettingsController: NSWindowController, NSWindowDele
     }
 
     private func change(_ binding: ShortcutBinding?, for id: String, resetting: Bool = false, swapping: Bool = false) {
-        if !swapping, let binding, let conflict = AppShortcuts.current.conflict(for: binding, excluding: id), let window {
-            let title = ShortcutAction.all.first { $0.id == id }?.title ?? id
-            let alert = NSAlert()
-            alert.messageText = "Shortcut already used by \(conflict.title)"
-            alert.informativeText = "Swap shortcuts for \(title) and \(conflict.title)? \(conflict.title) will receive \(title)'s previous shortcut."
-            alert.addButton(withTitle: "Swap")
-            alert.addButton(withTitle: "Cancel")
-            alert.beginSheetModal(for: window) { [weak self] response in
-                if response == .alertFirstButtonReturn { self?.change(binding, for: id, resetting: resetting, swapping: true) }
-            }
-            return
-        }
         do {
             var candidate = AppShortcuts.current
-            if resetting { try candidate.reset(id, swapping: swapping) }
-            else { try candidate.set(binding, for: id, swapping: swapping) }
+            if resetting { try candidate.reset(id, swapping: true) }
+            else { try candidate.set(binding, for: id, swapping: true) }
+            if !swapping, let binding, let conflict = AppShortcuts.current.conflict(for: binding, excluding: id), let window {
+                let title = ShortcutAction.all.first { $0.id == id }?.title ?? id
+                let alert = NSAlert()
+                alert.messageText = "Shortcut already used by \(conflict.title)"
+                alert.informativeText = "Swap shortcuts for \(title) and \(conflict.title)? \(conflict.title) will receive \(title)'s previous shortcut."
+                alert.addButton(withTitle: "Swap")
+                alert.addButton(withTitle: "Cancel")
+                alert.beginSheetModal(for: window) { [weak self] response in
+                    if response == .alertFirstButtonReturn { self?.change(binding, for: id, resetting: resetting, swapping: true) }
+                }
+                return
+            }
             save(candidate)
         } catch { show(error) }
     }
@@ -316,8 +312,12 @@ final class ShortcutSettingsWindow: NSWindow {
     func captureKeyEvent(_ event: NSEvent) -> Bool {
         guard event.type == .keyDown || event.type == .keyUp else { return false }
         if capturedKey == event.keyCode {
-            if event.type == .keyUp { capturedKey = nil }
-            return true
+            if event.type == .keyUp {
+                capturedKey = nil
+                return true
+            }
+            if event.isARepeat { return true }
+            capturedKey = nil
         }
         guard event.type == .keyDown, capture?(event) == true else { return false }
         capturedKey = event.keyCode

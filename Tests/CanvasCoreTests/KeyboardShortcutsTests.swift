@@ -240,6 +240,19 @@ struct KeyboardShortcutsTests {
         #expect(reloaded.binding(for: "selectTool") == ShortcutBinding(key: "x", modifiers: []))
     }
 
+    @Test func bareDrawingBindingsCannotReplaceCanvasNavigationOrEditingKeys() throws {
+        var shortcuts = KeyboardShortcuts()
+        let before = shortcuts
+        for key in ["\r", "\t", "\u{8}", "\u{1b}", " ", "\u{f700}", "\u{f701}", "\u{f702}", "\u{f703}", "\u{f728}"] {
+            for modifiers in [ShortcutModifiers(), .shift] {
+                #expect(throws: (any Error).self) {
+                    try shortcuts.set(ShortcutBinding(key: key, modifiers: modifiers), for: "rectangleTool")
+                }
+                #expect(shortcuts == before)
+            }
+        }
+    }
+
     private func record(_ key: String, _ modifiers: ShortcutModifiers = .command) throws -> Any {
         ["key": key, "modifiers": try JSONSerialization.jsonObject(with: JSONEncoder().encode(modifiers))]
     }

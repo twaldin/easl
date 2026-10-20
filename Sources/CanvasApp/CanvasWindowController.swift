@@ -33,7 +33,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// others are ordered out). What menu commands and ⌘Z act on, also while a panel such as
     /// easl Basics is key or the app isn't active (replayed input).
     static var frontmost: CanvasWindowController? {
-        NSApp.orderedWindows.lazy.compactMap { window -> CanvasWindowController? in
+        if let controller = CanvasApplication.replayWindow?.windowController as? CanvasWindowController,
+           controller.isBoardOpen { return controller }
+        return NSApp.orderedWindows.lazy.compactMap { window -> CanvasWindowController? in
             guard window.isVisible, window.tabGroup.map({ $0.selectedWindow === window }) ?? true else { return nil }
             guard let controller = window.windowController as? CanvasWindowController, controller.isBoardOpen else { return nil }
             return controller
@@ -1274,6 +1276,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             let id = item.identifier?.rawValue ?? ""
             if AppShortcuts.current.binding(for: id)?.modifiers.subtracting(.shift).isEmpty == true,
                let event = NSApp.currentEvent, event.type == .keyDown {
+                guard window?.attachedSheet == nil, event.window === window else { return false }
                 if canvas.selectedChangesTile != nil, ChangesTile.isOwnKey(event) { return false }
                 return drawing.canvasHasKeyboard
             }
@@ -1367,7 +1370,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private static let closedBoardActions: Set<Selector> = [
         #selector(zoomToFit(_:)), #selector(zoomToActual(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:)),
-        #selector(leaveTile(_:)), #selector(goToNextNeedsYou(_:)), #selector(AppDelegate.openBoard(_:)),
+        #selector(leaveTile(_:)), #selector(goToNextNeedsYou(_:)), #selector(AppDelegate.openBoard(_:)), #selector(AppDelegate.newWindowForTab(_:)),
         #selector(NSText.copy(_:)), #selector(NSText.selectAll(_:)),
     ]
 
@@ -1495,8 +1498,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         if action == #selector(NSWindow.performClose(_:)), canvas.closeSelectionOrFocused() { return true }
         if action == #selector(AppDelegate.findInPage(_:)), canvas.findInCodeTile() { return true }
         if modifiers == .command, event.charactersIgnoringModifiers == "l", canvas.focusBrowserAddress() { return true }
-        if let item, let action, AppShortcuts.isEnabled(item),
-           action == #selector(pasteMentions(_:)) || action == #selector(focusComposer(_:)) {
+        if let action, action == #selector(pasteMentions(_:)) {
+            if let item, AppShortcuts.isEnabled(item) { _ = NSApp.sendAction(action, to: nil, from: item) }
+            return true
+        }
+        if let item, let action, AppShortcuts.isEnabled(item), action == #selector(focusComposer(_:)) {
             return NSApp.sendAction(action, to: nil, from: item)
         }
         guard let terminal = canvas.focusedTerminal else { return false }
@@ -1508,12 +1514,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             undo(redo: true)
             return true
         }
-        if let item, let action, !Self.terminalMenuActions.contains(action),
+        let remap = Self.keyChord(for: event).flatMap { TerminalConfig.shared.remaps[$0] }
+        let custom = AppShortcuts.action(for: event).map { AppShortcuts.current.binding(for: $0.id) != $0.defaultBinding } ?? false
+        if remap == nil || custom, let item, let action, !Self.terminalMenuActions.contains(action),
            !modifiers.subtracting(.shift).isEmpty, AppShortcuts.isEnabled(item) {
             return NSApp.sendAction(action, to: item.target, from: item)
         }
-        if let chord = Self.keyChord(for: event), let action = TerminalConfig.shared.remaps[chord] {
-            switch action {
+        if let remap {
+            switch remap {
             case .newTerminal: canvas.createTerminal(beside: terminal)
             case .closeTerminal: canvas.delete([terminal])
             }

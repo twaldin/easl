@@ -84,9 +84,9 @@ final class CanvasDocumentView: NSView {
             _ = canvas?.onTab?(modifiers == .shift)
             return
         }
-        switch event.keyCode {
-        case 53: cancelOperation(nil)
-        case 51, 117: deleteBackward(nil)
+        switch (event.keyCode, plain) {
+        case (53, true): cancelOperation(nil)
+        case (51, true), (117, true): deleteBackward(nil)
         default:
             // A selected changes tile's keys say to press Return first (they act once it has the keyboard).
             if canvas?.selectedChangesTile?.keyWhileSelected(event) == true { return }

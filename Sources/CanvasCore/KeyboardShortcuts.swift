@@ -191,8 +191,16 @@ public struct ShortcutAction: Equatable, Sendable {
 
     fileprivate func rejectionReason(for binding: ShortcutBinding) -> String? {
         if let reason = binding.rejectionReason { return reason }
-        if group != "Drawing", binding.modifiers.subtracting(.shift).isEmpty {
-            return "Only drawing tools can use a key without Command, Control, or Option."
+        if binding.modifiers.subtracting(.shift).isEmpty {
+            guard group == "Drawing" else {
+                return "Only drawing tools can use a key without Command, Control, or Option."
+            }
+            guard let scalar = binding.key.unicodeScalars.first,
+                  !CharacterSet.whitespacesAndNewlines.contains(scalar),
+                  !CharacterSet.controlCharacters.contains(scalar),
+                  !(0xf700...0xf8ff).contains(scalar.value) else {
+                return "Drawing tools need a printable key. Navigation and editing keys stay with the canvas."
+            }
         }
         return nil
     }

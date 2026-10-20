@@ -11,7 +11,7 @@ extension ShapeLayer {
     /// Tool shortcuts only when the canvas itself has the keyboard, never while a terminal, text
     /// view, or other tile content is first responder.
     var canvasHasKeyboard: Bool {
-        guard let window else { return false }
+        guard let window, window.attachedSheet == nil else { return false }
         let responder = window.firstResponder
         if responder == nil || responder === window { return true }
         return responder === canvas || responder === canvas.contentView || responder === canvas.document

@@ -1911,7 +1911,8 @@ extension AppDelegate: NSMenuItemValidation {
             return localRestore == nil
         case #selector(retryUpdateRestoration(_:)), #selector(discardUpdateRecovery(_:)):
             return updateRestoreFailure != nil && localRestore == nil && updateRestoration == nil
-        case #selector(openRemote(_:)), #selector(checkForUpdates(_:)), #selector(showSettings(_:)): return true
+        case #selector(openBoard(_:)), #selector(newWindowForTab(_:)), #selector(openRemote(_:)),
+             #selector(checkForUpdates(_:)), #selector(showSettings(_:)): return true
         default: return keyController?.validateMenuItem(item) ?? false
         }
     }
