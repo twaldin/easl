@@ -10,7 +10,7 @@ public struct SurfaceRefreshTransmission: Sendable {
     public static let chunkBytes = 16 * 1024
     public static let maximumBytes = 576 * 1024
 
-    private let refinement: SurfaceRefinement
+    private let windowBytes: Int
     private let frame: SurfaceEvent.Frame
     private var sentBytes = 0
     private var acknowledgedBytes = 0
@@ -22,7 +22,7 @@ public struct SurfaceRefreshTransmission: Sendable {
             throw SurfaceRefreshTransferError.invalidFrame
         }
         self.frame = frame
-        self.refinement = refinement
+        windowBytes = (refinement == .independent ? 1 : 8) * Self.chunkBytes
     }
 
     public mutating func start() -> [SurfaceEvent.Frame] {
@@ -41,7 +41,6 @@ public struct SurfaceRefreshTransmission: Sendable {
     }
 
     private mutating func fillWindow() -> [SurfaceEvent.Frame] {
-        let windowBytes = (refinement == .independent ? 1 : 8) * Self.chunkBytes
         let limit = min(acknowledgedBytes + windowBytes, frame.data.count)
         guard sentBytes < limit else { return [] }
         var parts: [SurfaceEvent.Frame] = []
