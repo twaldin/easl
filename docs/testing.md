@@ -348,6 +348,8 @@ python3 scripts/perf-loop.py --app base=/tmp/a.app --app fix=/tmp/b.app [--board
 
 `perf-board.py --objects N` generates exactly N objects with seed 7 by default. Use 50, 200, 500, and 1000 for the scale matrix. Every board contains notes, code, images, HTML, cached diagrams, shapes, arrows, groups, and eight terminals. Each terminal prints a 256-byte sequence line every 125 ms. Create `<root>/.perf-board-quiet` to pause output without ending sessions, and remove it to resume.
 
+HTML pages vary by their own ordinal, independently of the object-type cycle: both static and scripted pages, both initial open states, and four content-size targets. Keep a fixture's bytes fixed across compared bundles; measurements from an older generator are a separate family.
+
 Build both bundles from the same base revision in separate scratch source trees. For the before bundle, copy only `Sources/CanvasApp/DevPerf.swift` and `Sources/CanvasApp/DevInput.swift` from the candidate into the base tree. This adds the same frame log and real-time replay protocol without the product changes. Use the candidate's scripts and replay client for both bundles. Freeze each with `EASL_BUNDLE_APP=<unique-path> scripts/bundle.sh release`; the script builds with `-j 2`. Record the source revisions, per-file hashes, compiler version, build flags, and executable and helper hashes. An uninstrumented main bundle cannot supply this harness's frame or delivery records.
 
 Run `perf-scale.py` only inside a claimed GUI guest. Compile the window lookup helper once, keep both frozen release bundles for the session, and use the same `--fixtures` directory for both artifacts:
@@ -366,6 +368,8 @@ Rows record API readiness, a native startup capture and its elapsed-time upper b
 Idle CPU is a ten-second CPU-time delta before the gestures, with all eight streams paused. Rows distinguish the app, the app plus its observed helpers, and the scratch daemon. The helper aggregate is unavailable if the observed PID set changes during the window; the raw per-PID samples remain. Daemon CPU excludes backend workers. Memory snapshots cover the quiet phase and the end of the whole-board render.
 
 These are post-open quiet observations, not proof that every card on the board has settled. Gestures also use fixed two-second setup waits. Record remaining card activity in profiles, and retain slower or failed observations. Use at least five interleaved observations before attributing a timing difference; a single observation at another board size is diagnostic.
+
+`command()` subprocess calls have a 120-second limit, and native activation/OCR JSON helpers a 30-second limit. A timed-out JSON helper retains its partial stdout and stderr before the failed row enters cleanup.
 
 The pan uses 40 × 20 point steps, reverses every 60 scheduled steps, and must traverse more than one viewport width. The pinch uses 0.01 steps and reverses every 120 steps. Both use `--repeat 601 --interval 16.666667 --realtime`: missed timer ticks coalesce into the corresponding trajectory displacement instead of stretching 601 deliveries beyond ten seconds. `DevInput.delivery` confirms real-time mode and records delivered/coalesced counts. `DevInput.motion` records the observed pan and magnification range; a gesture without sufficient movement fails the runner.
 

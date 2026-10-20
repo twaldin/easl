@@ -1,4 +1,5 @@
 import collections
+from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
@@ -107,6 +108,26 @@ class PerfBoardTests(unittest.TestCase):
                 self.assertEqual(opening_terminal["y"], min(frame["y"] for frame in frames))
                 self.assertLessEqual(opening_terminal["x"], (left + right) / 2)
                 self.assertGreaterEqual(opening_terminal["x"] + opening_terminal["w"], (left + right) / 2)
+
+    def test_scaled_html_varies_script_and_state(self):
+        class Page(HTMLParser):
+            scripted = False
+
+            def handle_starttag(self, tag, attrs):
+                if tag == "script":
+                    self.scripted = True
+
+        for count in SIZES:
+            with self.subTest(count=count):
+                board, _, _ = self.generate(count)
+                pages = [obj["props"] for obj in board["objects"] if obj["type"] == "html"]
+                scripted = set()
+                for props in pages:
+                    page = Page()
+                    page.feed(props["html"])
+                    scripted.add(page.scripted)
+                self.assertEqual(scripted, {False, True})
+                self.assertEqual({props["state"]["open"] for props in pages}, {False, True})
 
     def test_seeded_output_ignores_hash_iteration_order(self):
         _, first, _ = self.generate(200, hash_seed="1")

@@ -299,9 +299,10 @@ def scaled(root, seed, count):
                 props = {"title": f"Review {n}", "markdown": f"## {g.words(2, 4)}\n" +
                          "\n".join(f"- {g.words(5, 10)}" for _ in range(5))}
             elif kind == "html":
+                html_index = n // 6
                 props = {"title": f"Metrics {n}", "key": f"perf:scale:{n}",
-                         "html": page(g.rng, 1200 + (n % 4) * 400, n % 3 == 0, n),
-                         "state": {"count": n, "open": n % 2 == 0}}
+                         "html": page(g.rng, 1200 + (html_index % 4) * 400, html_index % 3 == 0, n),
+                         "state": {"count": n, "open": html_index % 2 == 0}}
             elif kind == "shape":
                 props = {"kind": "rect", "text": f"Stage {n}: {g.words(2, 4)}"}
                 frame = (x, y, 360, 160)

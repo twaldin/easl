@@ -28,7 +28,7 @@ native_spec.loader.exec_module(native)
 
 
 def command(*args, env=None):
-    return subprocess.check_output([str(a) for a in args], env=env, text=True, stderr=subprocess.STDOUT)
+    return subprocess.check_output([str(a) for a in args], env=env, text=True, stderr=subprocess.STDOUT, timeout=120)
 
 
 def require_guest():
@@ -41,9 +41,14 @@ def require_guest():
 
 
 def native_json(helper, output, *arguments):
-    result = subprocess.run([str(helper), *map(str, arguments)], capture_output=True, text=True)
-    output.with_suffix(output.suffix + '.stdout').write_text(result.stdout)
-    output.with_suffix(output.suffix + '.stderr').write_text(result.stderr)
+    try:
+        result = subprocess.run([str(helper), *map(str, arguments)], capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired as error:
+        output.with_suffix(output.suffix + '.stdout').write_bytes(error.stdout or b'')
+        output.with_suffix(output.suffix + '.stderr').write_bytes(error.stderr or b'')
+        raise
+    output.with_suffix(output.suffix + '.stdout').write_bytes(result.stdout)
+    output.with_suffix(output.suffix + '.stderr').write_bytes(result.stderr)
     result.check_returncode()
     return json.loads(result.stdout)
 
