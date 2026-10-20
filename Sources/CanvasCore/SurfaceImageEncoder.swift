@@ -214,7 +214,6 @@ private final class SurfaceImageRefresh: @unchecked Sendable {
         case .failure: state = .idle
         }
         lock.unlock()
-        guard revision.value == key.inputRevision else { return nil }
         return try result.get()
     }
 
