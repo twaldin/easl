@@ -277,7 +277,8 @@ python3 Tests/RemoteClosedBoard/run.py --checkout "$PWD" --viewer-home "$EASL_DE
 
 Run the native AppKit regression in a claimed GUI guest. It links the production composer
 and drives deletion, undo, redo, and another undo of a staged code token. The draft and tray
-must agree after every action. Existing core tests do not exercise the text view's undo manager.
+must agree after every action. It also checks that Japanese marked text hides the placeholder
+and commits without losing text. Existing core tests do not exercise these native text-view paths.
 
 ```sh
 swift build --build-system native -j 2 --product Easl

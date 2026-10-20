@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Undo and redo of deleted composer mentions no longer crash the app or discard the editor's undo history.
+- Japanese and other input-method composition no longer draws the composer's placeholder over the text being composed.
 
 ## 0.3.0
 
