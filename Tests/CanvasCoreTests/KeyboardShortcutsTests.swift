@@ -254,7 +254,7 @@ struct KeyboardShortcutsTests {
     }
 
     private func record(_ key: String, _ modifiers: ShortcutModifiers = .command) throws -> Any {
-        ["key": key, "modifiers": try JSONSerialization.jsonObject(with: JSONEncoder().encode(modifiers))]
+        ["key": key, "modifiers": try JSONSerialization.jsonObject(with: JSONEncoder().encode(modifiers), options: .fragmentsAllowed)]
     }
 
     private func decode(_ records: [String: Any]) throws -> KeyboardShortcuts {

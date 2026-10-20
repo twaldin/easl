@@ -56,12 +56,7 @@ enum AppShortcuts {
         case 51: key = "\u{8}"
         case 53: key = "\u{1b}"
         default:
-            let characters = event.charactersIgnoringModifiers ?? ""
-            if characters.unicodeScalars.contains(where: { $0.value >= 0xf700 && $0.value <= 0xf8ff }) {
-                key = characters
-            } else {
-                key = event.characters(byApplyingModifiers: [])
-            }
+            key = event.charactersIgnoringModifiers ?? event.characters(byApplyingModifiers: [])
         }
         guard let key, !key.isEmpty else { return nil }
         return ShortcutBinding(key: key, modifiers: modifiers)

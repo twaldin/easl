@@ -6,7 +6,7 @@ Choose **Record** on an action, then press the shortcut. Escape cancels recordin
 
 A conflict names the action that already uses the shortcut. **Swap** exchanges the two actions' current bindings. If the action being edited is unbound, the other action becomes unbound. **Cancel** keeps both unchanged. Reset uses the same conflict check. Reserved system shortcuts cannot be recorded. Plain letters and Shift-only letters are drawing tools, not global shortcuts.
 
-Changes save in `ui-settings.json` and update the menus at once. The menus show the current bindings. With a terminal focused, custom menu shortcuts take precedence over Ghostty's window, tab, and split remaps. Unchanged easl defaults keep those user-configured remaps, including creating a terminal beside the focused terminal in its directory. Other menu shortcuts beat the terminal library's bindings, except terminal editing actions such as copy, paste, undo, and search. Bare drawing keys work on the canvas and do not replace typing in a terminal or text editor.
+Changes save in `ui-settings.json` and update the menus at once. The menus show the current bindings. With a terminal focused, custom menu shortcuts take precedence over Ghostty's window, tab, and split remaps. Unchanged easl defaults keep those user-configured remaps, including creating a terminal beside the focused terminal in its directory. Board navigation, Close, browser address focus, Write Prompt, and Paste Mentions retain their existing priority over remaps. Other menu shortcuts beat the terminal library's bindings, except terminal editing actions such as copy, paste, undo, and search. Bare drawing keys work on the canvas and do not replace typing in a terminal or text editor.
 
 ## Defaults
 
@@ -79,4 +79,4 @@ Other listed actions start unbound and can be recorded in Settings. This include
 
 **New Board Tab…** opens the same folder picker as **Open Board…** and the tab bar's + button. A board is a directory, so choosing an existing board brings it forward instead of making a duplicate. Diagram and question tiles have no manual creation menu. Agents create diagrams through the API and questions through `easl ask`.
 
-The three new creation defaults use ⌃⌥⌘ chords rather than Ghostty's new-window, tab, or split defaults. System-reserved keys are refused. Existing chrome-text zoom shortcuts remain unchanged even though macOS Accessibility Zoom can use the same keys when enabled.
+The three new defaults use ⌃⌥⌘ chords rather than Ghostty's new-window, tab, or split defaults. System-reserved keys are refused. Existing chrome-text zoom shortcuts remain unchanged even though macOS Accessibility Zoom can use the same keys when enabled.

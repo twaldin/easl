@@ -1275,7 +1275,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             guard let drawing, drawing.editor == nil else { return false }
             let id = item.identifier?.rawValue ?? ""
             if AppShortcuts.current.binding(for: id)?.modifiers.subtracting(.shift).isEmpty == true,
-               let event = NSApp.currentEvent, event.type == .keyDown {
+               let event = NSApp.currentEvent, event.type == .keyDown, AppShortcuts.action(for: event)?.id == id {
                 guard window?.attachedSheet == nil, event.window === window else { return false }
                 if canvas.selectedChangesTile != nil, ChangesTile.isOwnKey(event) { return false }
                 return drawing.canvasHasKeyboard
