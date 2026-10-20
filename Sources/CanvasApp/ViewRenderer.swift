@@ -155,12 +155,14 @@ extension CanvasView {
 
     /// Canvas-space outline: a tile's frame, a drawn object's painted bounds, a group's region.
     func outline(of id: ObjectID) -> Frame? {
-        guard let object = board.objects[id] else { return nil }
+        guard let object = board.objects[id], !object.isHidden else { return nil }
         let origin = CanvasDocumentView.origin
         let doc: NSRect?
         switch object.type {
         case .group: doc = groupRegion(object)
-        case .shape, .arrow: doc = shapeOutline?(id) ?? CanvasView.docRect(object.frame)
+        case .shape, .arrow:
+            if object.type == .arrow, let spec = ArrowSpec(object.props), spec.hasHiddenEndpoint(in: board.objects) { return nil }
+            doc = shapeOutline?(id) ?? CanvasView.docRect(object.frame)
         default: return object.frame
         }
         return doc.map { Frame(x: $0.minX - origin.x, y: $0.minY - origin.y, w: $0.width, h: $0.height) }

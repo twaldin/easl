@@ -144,6 +144,12 @@ public struct ArrowSpec: Equatable, Sendable {
         route = props["route"]?.string.flatMap(ArrowRouteStyle.init) ?? .straight
     }
 
+    public func hasHiddenEndpoint(in objects: [ObjectID: CanvasObject]) -> Bool {
+        if let id = from.objectID, objects[id]?.isHidden == true { return true }
+        if let id = to.objectID, objects[id]?.isHidden == true { return true }
+        return false
+    }
+
     public var props: JSONValue {
         var props: [String: JSONValue] = ["from": from.json, "to": to.json]
         if let relation { props["relation"] = .string(relation) }

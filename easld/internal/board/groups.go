@@ -11,8 +11,8 @@ import (
 // GroupRefitCause is the activity log's cause of a group's re-fit.
 const GroupRefitCause = "fit to its members"
 
-// fittedFrame is the frame a group has for its current members (arrows and missing members
-// don't count); ok false when it isn't a group or no member is left.
+// fittedFrame fits a group to its visible members, excluding arrows and zero-area groups.
+// An all-hidden group keeps its origin but occupies no area.
 func (b *Board) fittedFrame(group model.Object) (model.Frame, bool) {
 	if group.Type != model.Group {
 		return model.Frame{}, false
@@ -22,16 +22,24 @@ func (b *Board) fittedFrame(group model.Object) (model.Frame, bool) {
 		return model.Frame{}, false
 	}
 	var rects []route.Rect
+	hasHiddenMembers := false
 	for _, id := range spec.Members {
 		m, ok := b.objects[id]
 		if !ok || m.Type == model.Arrow || m.ID == group.ID {
+			continue
+		}
+		if m.Hidden() || (m.Type == model.Group && (m.Frame.W <= 0 || m.Frame.H <= 0)) {
+			hasHiddenMembers = true
 			continue
 		}
 		rects = append(rects, route.RectOf(m.Frame))
 	}
 	r, ok := spec.FrameAround(rects)
 	if !ok {
-		return model.Frame{}, false
+		if !hasHiddenMembers {
+			return model.Frame{}, false
+		}
+		return model.Frame{X: group.Frame.X, Y: group.Frame.Y}, true
 	}
 	return r.Frame(), true
 }

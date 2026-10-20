@@ -6,14 +6,17 @@ import Foundation
 extension Board {
     /// Objects (other than arrows and `object` itself) lying wholly inside `object`'s frame.
     public func enclosed(by object: CanvasObject) -> [CanvasObject] {
-        objects.values
-            .filter { $0.id != object.id && $0.type != .arrow && object.frame.contains($0.frame) }
+        guard !object.isHidden, object.type != .group || (object.frame.w > 0 && object.frame.h > 0) else { return [] }
+        return objects.values
+            .filter { !$0.isHidden && ($0.type != .group || ($0.frame.w > 0 && $0.frame.h > 0))
+                && $0.id != object.id && $0.type != .arrow && object.frame.contains($0.frame) }
             .sorted { $0.id < $1.id }
     }
 
     /// Arrows drawn inside `object`: each end is either a free point inside its frame or bound to
     /// an object it encloses. Arrows bound to `object` itself are its own in/out arrows, not these.
     public func arrows(enclosedBy object: CanvasObject) -> [(arrow: CanvasObject, spec: ArrowSpec)] {
+        guard !object.isHidden else { return [] }
         let inside = Set(enclosed(by: object).map(\.id))
         let region = object.frame.rect
         func within(_ binding: ArrowBinding) -> Bool {
@@ -38,7 +41,21 @@ extension Board {
             return (arrow, spec)
         }
         guard !bound.isEmpty else { return }
-        let paths = arrowPaths(bound.map(\.0.id))
+        var paths = arrowPaths(bound.map(\.0.id))
+        let missing = Set(bound.map(\.0.id)).subtracting(paths.keys)
+        if !missing.isEmpty {
+            var visible = objects
+            func showEndpoint(_ end: ObjectID?) {
+                guard let end, var object = visible[end], object.isHidden else { return }
+                object.props = object.props.merging(.object(["archived": .bool(false)]))
+                visible[end] = object
+            }
+            for (_, spec) in bound where spec.hasHiddenEndpoint(in: objects) {
+                showEndpoint(spec.from.objectID)
+                showEndpoint(spec.to.objectID)
+            }
+            paths.merge(BoardGeometry(objects: visible, labelSizes: [:]).routes(only: missing)) { drawn, _ in drawn }
+        }
         for (arrow, var spec) in bound {
             guard let path = paths[arrow.id] else { continue }
             if spec.from.objectID == id { spec.from = .point(path[0]) }
@@ -54,6 +71,7 @@ extension Board {
         var paths: [ObjectID: [CGPoint]] = [:]
         var missing: Set<ObjectID> = []
         for id in ids {
+            if let arrow = objects[id], let spec = ArrowSpec(arrow.props), spec.hasHiddenEndpoint(in: objects) { continue }
             if let drawn = arrowPath?(id), drawn.count >= 2 { paths[id] = drawn } else { missing.insert(id) }
         }
         if !missing.isEmpty {
