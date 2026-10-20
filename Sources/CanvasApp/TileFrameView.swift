@@ -419,16 +419,12 @@ final class TileFrameView: NSView {
     }
 
     func endPinching() {
-        if titleBar.superview == nil {
-            pinchHeader.view?.removeFromSuperview()
-            pinchHeader.view?.layer?.contents = nil
-            addSubview(titleBar, positioned: .below, relativeTo: zoomView)
-        }
-        if window == nil {
-            pinchHeader = .stale(pinchHeader.view)
-        } else if window?.occlusionState.contains(.visible) == true {
-            syncTitle()
-        }
+        if window == nil, case .ready(let view, _, _) = pinchHeader { pinchHeader = .stale(view) }
+        guard titleBar.superview == nil else { return }
+        pinchHeader.view?.removeFromSuperview()
+        pinchHeader.view?.layer?.contents = nil
+        addSubview(titleBar, positioned: .below, relativeTo: zoomView)
+        if window?.occlusionState.contains(.visible) == true { syncTitle() }
     }
 
     // MARK: Author mark
