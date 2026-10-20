@@ -312,7 +312,7 @@ def main():
         exercises = [('saved_browser_preview', browser_preview), ('distant_cold_starts_near', lambda: cold_preview('cold', 'NEARBETA', False)), ('cancelled_cold_restarts_near', lambda: cold_preview('cancel', 'AGAINDELTA', True)), ('first_fit_500', lambda: first_fit(500)), ('first_fit_1000', lambda: first_fit(1000))]
         if any(name in selected_cases for name in case_names[:3]):
             custom_started = True
-            dev('start', root)
+            dev('start', scratch / 'empty')
             pid = int((home / 'pid').read_text())
             records['pid'] = pid
             dev('input', 'idle', 'off')
