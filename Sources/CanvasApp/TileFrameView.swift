@@ -17,6 +17,19 @@ final class TileFrameView: NSView {
     private let zoomControl = TileZoomControl()
     private let machineControl = DrawingMachineControl()
     private let titleBar = NSView()
+    private enum PinchHeader {
+        case stale(NSView?)
+        case queued(NSView?)
+        case ready(NSView, CGImage, scale: CGFloat)
+
+        var view: NSView? {
+            switch self {
+            case .stale(let view), .queued(let view): view
+            case .ready(let view, _, _): view
+            }
+        }
+    }
+    private var pinchHeader: PinchHeader = .stale(nil)
     private let titleLabel = NSTextField(labelWithString: "")
     /// The agent terminal that made the object (`AuthorMark`), small and muted at the right.
     private let authorLabel = NSTextField(labelWithString: "")
@@ -54,7 +67,11 @@ final class TileFrameView: NSView {
     private(set) var zoom: CGFloat = 1
     /// Whether the tile is selected (the zoom control's − and + show while it is, or hovered).
     var isSelected = false {
-        didSet { if isSelected != oldValue { updateZoomControl() } }
+        didSet {
+            guard isSelected != oldValue else { return }
+            if isSelected { endPinching() }
+            updateZoomControl()
+        }
     }
     private var hovered = false
     private var moving = false
@@ -196,6 +213,7 @@ final class TileFrameView: NSView {
             badge.layer?.borderWidth = increased && lifecycleState != nil ? 1 : 0
             badge.layer?.borderColor = NSColor.labelColor.cgColor
         }
+        invalidatePinchHeader()
     }
 
     /// Layout happens in `layoutParts`.
@@ -237,6 +255,7 @@ final class TileFrameView: NSView {
     private func layoutParts() {
         let width = bounds.width
         titleBar.frame = NSRect(x: 0, y: 0, width: width, height: Self.titleHeight)
+        if titleBar.superview == nil { pinchHeader.view?.frame = titleBar.frame }
         badge.frame = NSRect(x: 10, y: (Self.titleHeight - 10) / 2, width: 10, height: 10)
         closeButton.frame = TileTitleBar.closeFrame(width: width)
         layoutTitle()
@@ -301,6 +320,7 @@ final class TileFrameView: NSView {
         canStartColdCard = near && admitColdCards
         if near {
             if canStartColdCard, window != nil, !isLive, cardWanted, cardTask == nil { requestCard() }
+            preparePinchHeader()
         } else {
             if wasNear, !isLive, !contentLive, cardTask != nil {
                 invalidateCard()
@@ -329,7 +349,81 @@ final class TileFrameView: NSView {
         guard titleLabel.stringValue != title else { return }
         titleLabel.stringValue = title
         cardTitle.stringValue = title
+        invalidatePinchHeader()
         if author != nil { layoutTitle() }
+    }
+
+    private func invalidatePinchHeader() {
+        if case .ready(let view, _, _) = pinchHeader { pinchHeader = .stale(view) }
+    }
+
+    private func preparePinchHeader() {
+        guard case .stale(let view) = pinchHeader, !isLive, zoomedOut, !isSelected, !hovered, canStartColdCard,
+              !(content is TerminalTile), titleBar.superview === self, let window,
+              !titleBar.bounds.isEmpty, titleBar.bounds.width <= window.frame.width,
+              !NSWorkspace.shared.isVoiceOverEnabled,
+              (window.firstResponder as? NSView)?.isDescendant(of: titleBar) != true else { return }
+        pinchHeader = .queued(view)
+        MainTurns.onWake { [weak self] in
+            guard let self, case .queued(let cachedView) = self.pinchHeader else { return }
+            guard !self.isLive, self.zoomedOut, !self.isSelected, !self.hovered, self.canStartColdCard,
+                  self.titleBar.superview === self, let window = self.window,
+                  !self.titleBar.bounds.isEmpty, self.titleBar.bounds.width <= window.frame.width,
+                  !NSWorkspace.shared.isVoiceOverEnabled,
+                  (window.firstResponder as? NSView)?.isDescendant(of: self.titleBar) != true else {
+                self.pinchHeader = .stale(cachedView)
+                return
+            }
+            let rect = self.titleBar.bounds
+            let scale = window.backingScaleFactor
+            guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                pixelsWide: Int((rect.width * scale).rounded(.up)), pixelsHigh: Int((rect.height * scale).rounded(.up)),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+                self.pinchHeader = .stale(cachedView)
+                return
+            }
+            bitmap.size = rect.size
+            self.titleBar.cacheDisplay(in: rect, to: bitmap)
+            guard let image = bitmap.cgImage else {
+                self.pinchHeader = .stale(cachedView)
+                return
+            }
+            let view: NSView
+            if let cachedView {
+                view = cachedView
+            } else {
+                view = NSView(frame: self.titleBar.frame)
+                view.wantsLayer = true
+                view.layerContentsRedrawPolicy = .never
+                view.layerContentsPlacement = .scaleAxesIndependently
+            }
+            view.frame = self.titleBar.frame
+            view.layer?.contentsScale = scale
+            self.pinchHeader = .ready(view, image, scale: scale)
+        }
+    }
+
+    func beginPinching(at scale: CGFloat) {
+        guard !isLive, !isSelected, !hovered, titleBar.superview === self, let window,
+              (window.firstResponder as? NSView)?.isDescendant(of: titleBar) != true,
+              !NSWorkspace.shared.isVoiceOverEnabled,
+              case .ready(let view, let image, let capturedScale) = pinchHeader else { return }
+        guard capturedScale == scale else {
+            pinchHeader = .stale(view)
+            return
+        }
+        view.layer?.contents = image
+        titleBar.removeFromSuperview()
+        addSubview(view, positioned: .below, relativeTo: zoomView)
+    }
+
+    func endPinching() {
+        guard titleBar.superview == nil else { return }
+        pinchHeader.view?.removeFromSuperview()
+        pinchHeader.view?.layer?.contents = nil
+        addSubview(titleBar, positioned: .below, relativeTo: zoomView)
+        if window?.occlusionState.contains(.visible) == true { syncTitle() }
     }
 
     // MARK: Author mark
@@ -386,6 +480,7 @@ final class TileFrameView: NSView {
         titleLabel.frame = frames.title
         authorLabel.isHidden = frames.author == nil
         if let rect = frames.author { authorLabel.frame = rect }
+        invalidatePinchHeader()
     }
 
     // MARK: Content zoom
@@ -419,6 +514,7 @@ final class TileFrameView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         hovered = true
+        endPinching()
         updateZoomControl()
     }
 
@@ -518,6 +614,8 @@ final class TileFrameView: NSView {
         isLive = live
         invalidateCard()
         if live {
+            endPinching()
+            pinchHeader = .stale(pinchHeader.view)
             cardWanted = false
             showContent(true)
             revealWhenReady()
@@ -606,7 +704,7 @@ final class TileFrameView: NSView {
     }
 
     private var cardWanted = false
-    private var isNearViewport = false
+    private(set) var isNearViewport = false
     private var canStartColdCard = false
 
     override func viewDidMoveToWindow() {
@@ -621,6 +719,12 @@ final class TileFrameView: NSView {
             }
         }
         guard let window else {
+            endPinching()
+            pinchHeader = .stale(pinchHeader.view)
+            if hovered {
+                hovered = false
+                updateZoomControl()
+            }
             invalidateCard()
             return
         }
@@ -727,7 +831,7 @@ final class TileFrameView: NSView {
         cardTask = nil
     }
 
-    private var contentLive = true
+    private(set) var contentLive = true
     /// Whether this tile's live content counts in `app.metrics` (`live.<Kind>`): while it is on a
     /// board.
     private var countedLive = false

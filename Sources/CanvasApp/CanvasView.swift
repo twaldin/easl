@@ -690,6 +690,14 @@ final class CanvasView: NSScrollView {
         selection = ids
         for (id, group) in groups { group.isSelected = !chromeHidden && ids.contains(id) }
         for id in added.union(removed) { tiles[id]?.isSelected = !chromeHidden && ids.contains(id) }
+        var attached = false
+        for id in added {
+            if let tile = tiles[id], tile.superview == nil {
+                document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay)
+                attached = true
+            }
+        }
+        if attached { restack() }
         board.activity.selectionChanged(Array(ids), actor: .user, rev: board.revision)
         scheduleActivitySettle()
         refreshRings()
@@ -2485,10 +2493,15 @@ final class CanvasView: NSScrollView {
 
     @objc private func magnifyStarted() {
         magnifying = true
+        let scale = window?.backingScaleFactor ?? 1
+        for tile in tiles.values where tile.superview != nil && tile.isNearViewport {
+            tile.beginPinching(at: scale)
+        }
     }
 
     @objc private func magnifyEnded() {
         magnifying = false
+        for tile in tiles.values { tile.endPinching() }
         scheduleLiveness()
     }
 
@@ -2517,6 +2530,19 @@ final class CanvasView: NSScrollView {
             geometryDirty = false
             objectsMoved()
         }
+        if magnifying, NSWorkspace.shared.isVoiceOverEnabled {
+            for tile in tiles.values { tile.endPinching() }
+        }
+        let nearViewport = documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin)
+        var attached = false
+        for tile in tiles.values where tile.superview == nil {
+            if tile.frame.intersects(nearViewport) || tile.contentLive || tile.content is TerminalTile || selection.contains(tile.objectID) {
+                document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay)
+                if magnifying { tile.beginPinching(at: window?.backingScaleFactor ?? 1) }
+                attached = true
+            }
+        }
+        if attached { restack() }
         // Mid-pinch, LOD flips wait for the gesture to end.
         if !magnifying {
             let closed = remote?.mirror.availability == .closed
@@ -2532,8 +2558,14 @@ final class CanvasView: NSScrollView {
                 for tile in tiles.values { (tile.content as? BrowserTile)?.zoomChanged() }
             }
         }
-        let nearViewport = documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin)
-        for tile in tiles.values { tile.updateProximity(to: nearViewport, admitColdCards: !magnifying) }
+        let responder = window?.firstResponder as? NSView
+        for tile in tiles.values {
+            tile.updateProximity(to: nearViewport, admitColdCards: !magnifying)
+            if tile.superview != nil, !tile.isNearViewport, !tile.contentLive, !(tile.content is TerminalTile),
+               !selection.contains(tile.objectID), responder?.isDescendant(of: tile) != true {
+                tile.removeFromSuperview()
+            }
+        }
         layoutPills()
         updateSeen()
         updateContentInView()
