@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Browser relay starts sharp refinement after 400 ms and pipelines bounded refresh chunks; response measurements separate first-visible input effects from settled sharp assignment.
+- Refuse unreadable or newer-format local boards instead of opening empty replacements; preserve recovery copies and keep their files unchanged through restore, migration, close, and quit.
 
 ## 0.3.0
 

@@ -13,7 +13,7 @@ final class ObjectExpiryTests {
     init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
-        board = await registry.open(root: dir.appendingPathComponent("root"))
+        board = try await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry)
         self.router = router
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
@@ -114,11 +114,11 @@ final class ObjectExpiryTests {
             #expect(self.registry.boards[registered.id] === registered)
             if case .objectDeleted(let id) = event { deleted.append(id) }
         }
-        let reopened = await registry.open(root: root)
+        let reopened = try await registry.open(root: root)
         #expect(deleted == [expired.id])
         #expect(reopened.objects[expired.id] == nil)
         #expect(reopened.objects[kept.id]?.expires == deadline)
-        let restarted = await BoardRegistry(store: registry.store).open(root: root)
+        let restarted = try await BoardRegistry(store: registry.store).open(root: root)
         #expect(restarted.objects[kept.id]?.expires == deadline)
     }
 
@@ -127,7 +127,7 @@ final class ObjectExpiryTests {
         try registry.close(board.id)
         try await Task.sleep(for: .milliseconds(300))
         #expect(board.objects[object.id] == object)
-        let reopened = await registry.open(root: board.root)
+        let reopened = try await registry.open(root: board.root)
         #expect(reopened.objects[object.id] == nil)
         #expect(reopened.objects.count == 0)
     }
@@ -141,7 +141,7 @@ final class ObjectExpiryTests {
         restarted.onEvent = { _, event in
             if case .objectDeleted(let id) = event { deleted.append(id) }
         }
-        let reopened = await restarted.open(root: board.root)
+        let reopened = try await restarted.open(root: board.root)
         defer { try? restarted.close(reopened.id) }
         #expect(deadline > Date())
         #expect(reopened.objects[object.id]?.expires == object.expires)
@@ -553,7 +553,7 @@ extension ObjectExpiryTests {
         try registry.close(board.id)
         #expect(!board.observeRunningTerminalSession(localIdentity))
         #expect(!board.observeRunningTerminalSession(hostedIdentity))
-        let reopened = await registry.open(root: board.root)
+        let reopened = try await registry.open(root: board.root)
         #expect(reopened.terminalSessionIdentity(local.id, continuing: localIdentity) == nil)
         #expect(reopened.terminalSessionIdentity(hosted.id, continuing: hostedIdentity) == nil)
         router.terminalSessions = { TerminalSessions() }
@@ -610,8 +610,12 @@ extension ObjectExpiryTests {
     @Test func staleListingRejectsAReplacedBoardAfterSessionRead() async throws {
         _ = board.create(type: .terminal, props: .object(["name": "original"]))
         router.terminalSessions = {
-            try? self.registry.close(self.board.id)
-            _ = await self.registry.open(root: self.board.root)
+            do {
+                try self.registry.close(self.board.id)
+                _ = try await self.registry.open(root: self.board.root)
+            } catch {
+                Issue.record(error)
+            }
             return TerminalSessions()
         }
         let reply = try await call("board.stale", ["board": .string(board.id)])
