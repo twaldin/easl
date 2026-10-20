@@ -198,26 +198,32 @@ index a5e027a..abaeac7 100644
 +                display_invalidated or
                  swap_chain_rebuilt or
 diff --git a/src/renderer/metal/Frame.zig b/src/renderer/metal/Frame.zig
-index 388b4f9..73480c7 100644
+index 388b4f9..4aee9e5 100644
 --- a/src/renderer/metal/Frame.zig
 +++ b/src/renderer/metal/Frame.zig
 @@ -21,2 +21,3 @@ pub const Options = struct {
      queue: objc.Object,
 +    publication: ?Target.Publication.Frame,
  };
-@@ -50,2 +51,4 @@ pub fn begin(
+@@ -50,2 +51,5 @@ pub fn begin(
              .sync = false,
 +            .presentation_revision = renderer.api.layer.presentationRevision(),
-+            .publication = opts.publication,
++            .publication = if (opts.publication) |frame| frame.state else null,
++            .publication_generation = if (opts.publication) |frame| frame.generation else 0,
          },
-@@ -62,2 +65,4 @@ const CompletionBlock = objc.Block(struct {
+@@ -62,2 +66,5 @@ const CompletionBlock = objc.Block(struct {
      sync: bool,
 +    presentation_revision: u64,
-+    publication: ?Target.Publication.Frame,
++    publication: ?*Target.Publication,
++    publication_generation: u64,
  }, .{
-@@ -79,7 +84,11 @@ fn bufferCompleted(
+@@ -79,7 +86,15 @@ fn bufferCompleted(
  
-+    if (block.publication) |publication| publication.complete(health == .healthy);
++    const publication: ?Target.Publication.Frame = if (block.publication) |state|
++        .{ .state = state, .generation = block.publication_generation }
++    else
++        null;
++    if (publication) |frame| frame.complete(health == .healthy);
 +
      // If the frame is healthy, present it.
      if (health == .healthy) {
@@ -226,10 +232,10 @@ index 388b4f9..73480c7 100644
              block.target.*,
              block.sync,
 +            block.presentation_revision,
-+            block.publication,
++            publication,
          ) catch |err| {
 diff --git a/src/renderer/metal/IOSurfaceLayer.zig b/src/renderer/metal/IOSurfaceLayer.zig
-index 6563c60..4027c52 100644
+index 6563c60..f450b2e 100644
 --- a/src/renderer/metal/IOSurfaceLayer.zig
 +++ b/src/renderer/metal/IOSurfaceLayer.zig
 @@ -11,2 +11,3 @@ const macos = @import("macos");
@@ -360,11 +366,12 @@ index 6563c60..4027c52 100644
 +    if (self.async_rendering) |state| state.retain();
 +    if (publication) |frame| frame.state.retain();
      // NOTE: Since `self.layer` is passed as an `objc.c.id`, it's
-@@ -65,7 +165,13 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
+@@ -65,7 +165,14 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
          .surface = surface,
 +        .async_rendering = self.async_rendering,
 +        .revision = revision,
-+        .publication = publication,
++        .publication = if (publication) |frame| frame.state else null,
++        .publication_generation = if (publication) |frame| frame.generation else 0,
      }, &setSurfaceCallback);
  
 -    // We check if we're on the main thread and run the block directly if so.
@@ -376,27 +383,32 @@ index 6563c60..4027c52 100644
 +        (if (self.async_rendering) |state| state.callback == null else true);
 +    if (run_inline) {
          setSurfaceCallback(&block);
-@@ -93,2 +199,5 @@ const SetSurfaceBlock = objc.Block(struct {
+@@ -93,2 +200,6 @@ const SetSurfaceBlock = objc.Block(struct {
      surface: *IOSurface,
 +    async_rendering: ?*AsyncRendering,
 +    revision: u64,
-+    publication: ?Publication.Frame,
++    publication: ?*Publication,
++    publication_generation: u64,
  }, .{}, void);
-@@ -103,2 +212,13 @@ fn setSurfaceCallback(
+@@ -103,2 +214,17 @@ fn setSurfaceCallback(
      defer surface.release();
 +    defer if (block.async_rendering) |state| state.release();
-+    defer if (block.publication) |frame| frame.state.release();
++    defer if (block.publication) |state| state.release();
 +
 +    const lease: ?Publication.Frame = if (block.async_rendering) |state| claim: {
 +        if (block.revision != state.revision.load(.acquire)) return;
 +        if (state.callback == null) break :claim null;
-+        const frame = block.publication orelse return;
++        const publication = block.publication orelse return;
++        const frame: Publication.Frame = .{
++            .state = publication,
++            .generation = block.publication_generation,
++        };
 +        if (!frame.claim()) return;
 +        break :claim frame;
 +    } else null;
 +    defer if (lease) |frame| frame.finish();
  
-@@ -122,2 +242,10 @@ fn setSurfaceCallback(
+@@ -122,2 +248,10 @@ fn setSurfaceCallback(
      layer.setProperty("contents", surface);
 +    if (lease != null) {
 +        // Setting contents can retire or replace the registration through KVO.
