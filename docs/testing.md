@@ -201,6 +201,8 @@ What it sets up:
 
 Browser tests: `EASL_DEV_DOWNLOADS=<folder>` (passed through by `dev.sh`) saves browser downloads there instead of ~/Downloads, and `EASL_DEV_EXTERNAL_OPEN=log` makes links handed to the default browser or another app (⌥-click, `mailto:`) only log `easl: … → <app>` in `app.log`, so a test never opens a window in the user's browser. A page's open panel runs out of process, where no replayed click or key reaches: `input panel <path>` chooses the file.
 
+To replay input in Settings or a specific board window, add `--window <id>` to `input click`, `input key`, `input shortcut`, or `input text`. The ID must belong to that instance's PID. Without this option, replay still targets the frontmost board. A stale window ID drops the input rather than sending it to another window. Keyboard actions follow the selected window's responder chain, including while another window has focus.
+
 Run `scripts/dev.sh stop` when the test is done, not at the end of the session: it also kills the instance's zmx sessions.
 
 ### Mixed drawing and tile stacking

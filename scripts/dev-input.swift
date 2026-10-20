@@ -28,12 +28,14 @@
 //                                                    upload), which runs out of process where no click reaches
 //   dev-input <pid> remote <ssh target> <board> [host home]  open another easl's board as a remote board (the
 //                                                    host found over ssh; host home: its support directory)
+//   click, text, key, shortcut: --window <id>          target that instance's exact window; stale IDs drop input
 //   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the longest gap
 //   scroll --repeat N --gesture                      the burst as one phased trackpad gesture: began and ended
 //                                                    without movement, the steps between as changed
 import Foundation
 
 var args = Array(CommandLine.arguments.dropFirst())
+let hasWindow = args.contains("--window")
 func option(_ name: String) -> String? {
     guard let index = args.firstIndex(of: name), index + 1 < args.count else { return nil }
     let value = args[index + 1]
@@ -41,6 +43,11 @@ func option(_ name: String) -> String? {
     return value
 }
 let mods = option("--mods")
+let window = option("--window")
+guard !hasWindow || window.flatMap(Int.init) != nil else {
+    FileHandle.standardError.write(Data("dev-input: --window requires an integer window ID\n".utf8))
+    exit(2)
+}
 let clicks = option("--clicks")
 let repeatCount = option("--repeat")
 let interval = option("--interval")
@@ -108,6 +115,7 @@ default:
 }
 if let mods { info["mods"] = mods }
 if let clicks { info["clicks"] = clicks }
+if let window { info["window"] = window }
 if hold { info["hold"] = "1" }
 if middle { info["middle"] = "1" }
 if let repeatCount { info["repeat"] = repeatCount }

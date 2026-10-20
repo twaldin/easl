@@ -4,6 +4,7 @@ import AppKit
 /// activates, so nothing it does can steal focus or switch the user's Space.
 final class CanvasApplication: NSApplication {
     static let neverActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
+    private(set) static var replayWindow: NSWindow?
 
     override func activate(ignoringOtherApps flag: Bool) {
         if !Self.neverActivate { super.activate(ignoringOtherApps: flag) }
@@ -28,17 +29,23 @@ final class CanvasApplication: NSApplication {
         // didn't handle comes back here from WebKit; it is the viewer's, and would otherwise
         // reach this Mac's canvas (Delete deletes tiles) or its menus (⌘W, ⌘Q).
         if SurfaceEventQueue.consumes(event) { return }
-        if DevInput.enabled, keyWindow == nil, event.type == .keyDown || event.type == .keyUp,
-           let window = event.window, window.windowController is CanvasWindowController {
+        let previousWindow = Self.replayWindow
+        if DevInput.enabled { Self.replayWindow = event.window }
+        defer { Self.replayWindow = previousWindow }
+        if let window = (event.window ?? keyWindow) as? ShortcutSettingsWindow,
+           window.captureKeyEvent(event) { return }
+        if DevInput.enabled, event.type == .keyDown || event.type == .keyUp,
+           let window = event.window, window !== keyWindow, window.windowController is CanvasWindowController {
             if event.type == .keyDown, window.performKeyEquivalent(with: event) || mainMenu?.performKeyEquivalent(with: event) == true { return }
             return window.sendEvent(event)
         }
         super.sendEvent(event)
     }
 
-    /// An untargeted action while no window is key: the replayed window's responder chain first.
+    /// Replayed actions follow the exact replay window's responder chain before AppKit's.
     override func target(forAction action: Selector, to target: Any?, from sender: Any?) -> Any? {
-        if target == nil, keyWindow == nil, DevInput.enabled, let window = CanvasWindowController.frontmost?.window {
+        if target == nil, DevInput.enabled,
+           let window = Self.replayWindow ?? (keyWindow == nil ? CanvasWindowController.frontmost?.window : nil) {
             var responder = window.firstResponder
             while let current = responder {
                 if current.responds(to: action) { return current }
