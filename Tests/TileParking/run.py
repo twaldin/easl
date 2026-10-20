@@ -99,6 +99,12 @@ def main():
         run.dev('input', 'scroll', 600, 300, -2000, 0, '--mods', 'cmd')
         time.sleep(.5)
         viewport = run.call('view.get')['viewport']
+        note_render = run.call('view.render', {'target': note['id'], 'scale': 1, 'inline': True, 'timeoutMs': 60000})
+        note_image = args.out / 'offscreen-note.png'
+        note_image.write_bytes(base64.b64decode(note_render.pop('data'), validate=True))
+        note_pixels = scale.frame_text(args.window_helper, note_image)
+        assert contains(note_pixels, 'VISIBLEBODYBETA') and not contains(note_pixels, 'VISIBLEBODYALPHA'), 'Offscreen export must paint the updated body, not stale or empty pixels'
+        assert run.call('view.get')['viewport'] == viewport, 'A targeted offscreen export must not move the viewport'
         ids = [obj['id'] for obj in board['objects']]
         rendered = run.call('view.render', {'target': ids, 'scale': .15, 'inline': True, 'timeoutMs': 60000})
         image = base64.b64decode(rendered.pop('data'), validate=True)
