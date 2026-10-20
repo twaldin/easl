@@ -1,0 +1,132 @@
+{
+  "description": "Archived answered questions remain readable but occupy no space in layout checks, spatial graphs, avoid routing, group bounds, or automatic placement.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "question", "props": { "question": "Proceed?", "options": [{ "id": "yes", "label": "Yes" }], "asker": { "name": "layout-conformance" }, "keep": true }, "frame": { "x": 150, "y": 0, "w": 300, "h": 148 } },
+      "save": "q"
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q.object.id}}", "props": { "status": "answered", "answer": { "option": "yes" } } }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q.object.id}}", "props": { "archived": true } }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "Visible" }, "frame": { "x": 100, "y": 50, "w": 100, "h": 80 } },
+      "save": "note"
+    },
+    {
+      "call": "layout.check",
+      "params": { "board": "{{board}}" },
+      "expect": { "response.result.overlaps": [], "response.result.arrowCrossings": [] }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{note.object.id}}", "as": "graph" },
+      "expect": { "response.result.graph.overlaps": [], "response.result.graph.encloses": [], "response.result.graph.enclosedBy": [] }
+    },
+    {
+      "call": "object.delete",
+      "params": { "id": "{{note.object.id}}" }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "shape", "props": { "kind": "rect" }, "frame": { "x": 125, "y": -25, "w": 350, "h": 200 } },
+      "save": "box"
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{box.object.id}}", "as": "graph" },
+      "expect": { "response.result.graph.encloses": [], "response.result.graph.overlaps": [] }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{q.object.id}}", "as": "graph" },
+      "expect": { "response.result.object.props.status": "answered", "response.result.object.props.archived": true, "response.result.object.props.answer.option": "yes", "response.result.graph.encloses": [], "response.result.graph.enclosedBy": [], "response.result.graph.overlaps": [] }
+    },
+    {
+      "call": "object.delete",
+      "params": { "id": "{{box.object.id}}" }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "arrow", "props": { "from": { "point": [0, 74] }, "to": { "point": [600, 74] }, "route": "avoid" }, "frame": { "x": 0, "y": 0, "w": 0, "h": 0 } },
+      "save": "arrow",
+      "expect": { "response.result.object.frame": { "x": 0, "y": 74, "w": 600, "h": 0 } }
+    },
+    {
+      "call": "layout.check",
+      "params": { "board": "{{board}}" },
+      "expect": { "response.result.overlaps": [], "response.result.arrowCrossings": [], "response.result.labelOverlaps": [] }
+    },
+    {
+      "call": "object.delete",
+      "params": { "id": "{{arrow.object.id}}" }
+    },
+    {
+      "call": "object.find",
+      "params": { "board": "{{board}}", "type": "question", "status": "answered" },
+      "expect": { "response.result.objects.0.id": "{{q.object.id}}", "response.result.objects.0.props.archived": true }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"] }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } },
+      "save": "terminal"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "Slot" }, "frame": { "w": 300, "h": 148 }, "caller": "{{terminal.object.id}}" },
+      "save": "slot"
+    },
+    {
+      "call": "object.delete",
+      "params": { "id": "{{slot.object.id}}" }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q.object.id}}", "frame": "{{slot.object.frame}}" }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "note", "props": { "markdown": "Slot" }, "frame": { "w": 300, "h": 148 }, "caller": "{{terminal.object.id}}" },
+      "save": "replacement",
+      "expect": { "response.result.object.frame": "{{slot.object.frame}}" }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "group", "props": { "members": ["{{q.object.id}}", "{{replacement.object.id}}"] } },
+      "save": "group"
+    },
+    {
+      "call": "object.delete",
+      "params": { "id": "{{replacement.object.id}}" }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{group.object.id}}" },
+      "expect": { "response.result.object.frame.w": 0, "response.result.object.frame.h": 0 }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q.object.id}}", "props": { "archived": false, "keep": true } }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{group.object.id}}" },
+      "expect": { "response.result.object.frame.w": 348, "response.result.object.frame.h": 228 }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q.object.id}}", "props": { "archived": true } }
+    },
+    {
+      "call": "object.get",
+      "params": { "id": "{{group.object.id}}" },
+      "expect": { "response.result.object.frame.w": 0, "response.result.object.frame.h": 0 }
+    }
+  ]
+}

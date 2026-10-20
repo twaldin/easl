@@ -57,6 +57,10 @@ private enum InitialRouting {
         let arrow: CanvasObject
     }
 
+    private enum DragFinish: String, CaseIterable {
+        case cancelled, zeroDelta
+    }
+
     static func main() async throws {
         guard let home = ProcessInfo.processInfo.environment["EASL_HOME"] else {
             fatalError("run.py must provide a disposable EASL_HOME")
@@ -66,10 +70,17 @@ private enum InitialRouting {
         app.finishLaunching()
         let root = URL(fileURLWithPath: home)
         try await opening(root)
+        try await parallelPreviews(root)
+        for finish in DragFinish.allCases {
+            try await openingDragReturnsToOrigin(root, finish: finish)
+        }
+        try await snapshotRetirement(root)
+        try await newerEditDuringOpening(root)
         try await followingDuringOpening(root)
         try await editingDuringOpening(root)
         try await exportingDuringOpening(root)
         try await stableAfterOpening(root)
+        print("INITIAL_ROUTING_COMPLETE")
     }
 
     private static func fixture(_ root: URL, _ name: String) throws -> Fixture {
@@ -94,13 +105,9 @@ private enum InitialRouting {
         return Fixture(board: board, source: source, target: target, other: other, wall: wall, arrow: arrow)
     }
 
-    private static func mainRouting(_ board: Board) throws -> ConnectorRouter.Result {
-        let canvas = CanvasView(board: board, viewport: nil)
-        defer { canvas.discard() }
-        let drawing = ShapeLayer(canvas: canvas)
-        drawing.settleArrows(includingSnapshot: true)
-        guard let result = drawing.routing else { throw CheckFailure(message: "Reference routing is missing") }
-        return result
+    private static func mainRouting(_ board: Board, continuingFrom previous: ConnectorRouter.Result? = nil) -> ConnectorRouter.Result {
+        let geometry = board.geometry
+        return BoardGeometry(objects: geometry.objects, labelSizes: geometry.labelSizes, settled: previous).routing()
     }
 
     private static func path(_ fixture: Fixture) throws -> [CGPoint] {
@@ -110,19 +117,42 @@ private enum InitialRouting {
         return points
     }
 
+    private static func drawnPaths(_ board: Board) throws -> [ObjectID: [CGPoint]] {
+        var paths: [ObjectID: [CGPoint]] = [:]
+        for arrow in board.snapshot.objects where arrow.type == .arrow {
+            guard let path = board.arrowPath?(arrow.id), path.count >= 2 else {
+                throw CheckFailure(message: "Arrow \(arrow.id) has no drawn path")
+            }
+            paths[arrow.id] = path
+        }
+        return paths
+    }
+
+    private static func drawnPathsMatch(_ board: Board, _ expected: [ObjectID: [CGPoint]]) throws -> Bool {
+        let actual = try drawnPaths(board)
+        return actual.mapValues { $0.map(ShapeLayer.docPoint) } == expected.mapValues { $0.map(ShapeLayer.docPoint) }
+    }
+
     private static func bounds(_ path: [CGPoint]) -> Frame {
         let xs = path.map(\.x), ys = path.map(\.y)
         return Frame(x: xs.min()!, y: ys.min()!, w: xs.max()! - xs.min()!, h: ys.max()! - ys.min()!)
     }
 
     private static func awaitRouting(_ board: Board, matching expected: ConnectorRouter.Result,
-                                     whileWaiting check: () throws -> Void = {}) async throws {
+                                     whileWaiting check: @escaping @MainActor () throws -> Void = {}) async throws {
         let deadline = ContinuousClock.now + .seconds(10)
         while true {
-            try check()
-            if let result = board.settledRouting?(), result.paths == expected.paths && result.labels == expected.labels { return }
-            guard ContinuousClock.now < deadline else { throw CheckFailure(message: "Background routes did not settle to the reference paths and labels") }
-            try await Task.sleep(for: .milliseconds(1))
+            var matched = false
+            try await nextTurn {
+                try check()
+                if let result = board.settledRouting?(), result.paths == expected.paths, result.labels == expected.labels {
+                    matched = try drawnPathsMatch(board, expected.paths)
+                }
+            }
+            if matched { return }
+            guard ContinuousClock.now < deadline else {
+                throw CheckFailure(message: "Background routing and every drawn arrow did not settle to the reference paths and labels")
+            }
         }
     }
 
@@ -141,9 +171,146 @@ private enum InitialRouting {
         }
     }
 
+    private static func parallelPreviews(_ root: URL) async throws {
+        for style in ArrowRouteStyle.allCases {
+            let fixture = try fixture(root, "parallel-\(style.rawValue)")
+            _ = try fixture.board.update(fixture.arrow.id, props: .object(["route": .string(style.rawValue)]))
+            let forward = fixture.board.create(type: .arrow,
+                                               props: ArrowSpec(from: .object(fixture.source.id), to: .object(fixture.target.id), route: style).props)
+            let backward = fixture.board.create(type: .arrow,
+                                                props: ArrowSpec(from: .object(fixture.target.id), to: .object(fixture.source.id), route: style).props)
+            let expected = mainRouting(fixture.board)
+            let offsets = DrawingGeometry.parallelOffsets([
+                (fixture.arrow.id, fixture.source.id, fixture.target.id),
+                (forward.id, fixture.source.id, fixture.target.id),
+                (backward.id, fixture.target.id, fixture.source.id),
+            ])
+            let source = DrawingGeometry.ArrowEnd.bound(.ellipse(fixture.source.frame.rect))
+            let target = DrawingGeometry.ArrowEnd.bound(.rect(fixture.target.frame.rect))
+            let previewStyle: ArrowRouteStyle = style == .avoid ? .orthogonal : style
+            var previews = expected.paths
+            for id in [fixture.arrow.id, forward.id] {
+                previews[id] = DrawingGeometry.path(from: source, to: target, style: previewStyle, offset: offsets[id]!)
+            }
+            previews[backward.id] = DrawingGeometry.path(from: target, to: source, style: previewStyle, offset: offsets[backward.id]!)
+            let opened = OpenBoard(fixture.board)
+            defer { opened.close() }
+            try require(try drawnPathsMatch(fixture.board, previews), "Every \(style.rawValue) first preview must use the full parallel-arrow set, independent of hydration order")
+            let starts = try [fixture.arrow.id, forward.id].map { id -> CGPoint in
+                guard let start = fixture.board.arrowPath?(id)?.first else {
+                    throw CheckFailure(message: "A parallel preview has no source port")
+                }
+                return start
+            }
+            try require(starts[0] != starts[1], "Parallel \(style.rawValue) previews must not overlap at their source")
+            opened.drawing.viewWillDraw()
+            _ = fixture.board.reported(fixture.board.snapshot.objects)
+            try require(try drawnPathsMatch(fixture.board, previews), "Drawing and reporting must preserve every correctly offset opening preview")
+            try await awaitRouting(fixture.board, matching: expected)
+        }
+        print("PASS parallel straight, orthogonal and avoid previews use all siblings before their first draw")
+    }
+
+    private static func openingDragReturnsToOrigin(_ root: URL, finish: DragFinish) async throws {
+        let fixture = try fixture(root, "drag-\(finish.rawValue)")
+        let expected = mainRouting(fixture.board)
+        let opened = OpenBoard(fixture.board)
+        defer { opened.close() }
+        let offset = NSSize(width: 180, height: 0)
+        var previews = expected.paths
+        previews[fixture.arrow.id] = DrawingGeometry.path(
+            from: .bound(.ellipse(fixture.source.frame.rect)),
+            to: .bound(.rect(fixture.target.frame.rect.offsetBy(dx: offset.width, dy: offset.height))),
+            style: .orthogonal)
+        try await nextTurn {
+            opened.canvas.onSelectionDrag?([fixture.target.id], offset)
+            try require(try drawnPathsMatch(fixture.board, previews), "An opening drag must immediately attach every drawn arrow to the shown endpoints")
+        }
+        var returned = false
+        try await awaitRouting(fixture.board, matching: expected) {
+            guard !returned, let first = fixture.board.settledRouting?() else { return }
+            try require(first.paths == expected.paths && first.labels == expected.labels, "The first opening result must still describe the pre-drag board")
+            try require(try drawnPathsMatch(fixture.board, previews), "An in-flight opening result must not overwrite a moved snapshot preview")
+            if finish == .zeroDelta {
+                opened.canvas.onSelectionDrag?([fixture.target.id], NSSize(width: -80, height: 0))
+            }
+            opened.canvas.onSelectionDrag?([fixture.target.id], .zero)
+            returned = true
+            try require(fixture.board.objects[fixture.target.id]?.frame == fixture.target.frame, "A \(finish.rawValue) drag must not need a board frame write to retire its preview")
+            try require(DrawingGeometry.path(try path(fixture), crosses: fixture.wall.frame.rect), "The returning opening preview must remain distinguishable from its pending obstacle-avoiding route")
+        }
+        try require(returned, "The \(finish.rawValue) fixture must return to its origin after the in-flight result lands")
+        try require(!DrawingGeometry.path(try path(fixture), crosses: fixture.wall.frame.rect), "A \(finish.rawValue) opening drag must not leave a snapshot crossing the wall indefinitely")
+        print("PASS \(finish.rawValue) opening drag retries and retires every pending preview without a frame write")
+    }
+
+    private static func snapshotRetirement(_ root: URL) async throws {
+        let fixture = try fixture(root, "retirement")
+        _ = try fixture.board.update(fixture.wall.id, frame: Frame(x: 250, y: 1600, w: 200, h: 300))
+        _ = try fixture.board.update(fixture.arrow.id, props: .object(["label": .null]))
+        let expected = mainRouting(fixture.board)
+        let opened = OpenBoard(fixture.board)
+        defer { opened.close() }
+        try require(try drawnPathsMatch(fixture.board, expected.paths), "The retirement fixture must start with previews that already equal every final path")
+        try await awaitRouting(fixture.board, matching: expected)
+        _ = try fixture.board.update(fixture.wall.id, frame: fixture.wall.frame)
+        opened.canvas.onSelectionDrag?([fixture.target.id], NSSize(width: 180, height: 0))
+        let following = try path(fixture)
+        try require(following.last!.x >= 780 - DrawingGeometry.arrowGap, "A settled arrow must follow its dragged target")
+        try require(!DrawingGeometry.path(following, crosses: fixture.wall.frame.rect), "A matching background result must retire its snapshot even when no path or label changed")
+        let beforeReporting = try drawnPaths(fixture.board)
+        _ = fixture.board.reported(fixture.board.snapshot.objects)
+        try require(try drawnPaths(fixture.board) == beforeReporting, "Reporting must not rebuild arrows whose snapshot previews already retired")
+        opened.canvas.onSelectionDrag?([fixture.target.id], .zero)
+        let changed = mainRouting(fixture.board, continuingFrom: expected)
+        try await awaitRouting(fixture.board, matching: changed)
+        print("PASS unchanged background paths retire snapshot previews before later obstacle and endpoint changes")
+    }
+
+    private static func newerEditDuringOpening(_ root: URL) async throws {
+        let fixture = try fixture(root, "newer-edit")
+        let previous = mainRouting(fixture.board)
+        let opened = OpenBoard(fixture.board)
+        defer { opened.close() }
+        let oldPath = previous.paths[fixture.arrow.id]!
+        let segment = zip(oldPath, oldPath.dropFirst()).max {
+            hypot($0.1.x - $0.0.x, $0.1.y - $0.0.y) < hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y)
+        }!
+        let movedWall = Frame(x: (segment.0.x + segment.1.x) / 2 - 60,
+                              y: (segment.0.y + segment.1.y) / 2 - 60, w: 120, h: 120)
+        try require(DrawingGeometry.path(oldPath, crosses: movedWall.rect), "The newer edit must make the old opening route visibly stale")
+        ApiActivity.shared.began("object.update")
+        defer { ApiActivity.shared.ended("object.update") }
+        var edited = fixture.arrow
+        try await nextTurn {
+            edited = try ApiActivity.shared.dispatch {
+                _ = try fixture.board.update(fixture.arrow.id, props: .object([
+                    "to": ArrowBinding.object(fixture.other.id).json,
+                    "label": .string("newer edit"),
+                ]))
+                let restored = try fixture.board.update(fixture.arrow.id, props: .object([
+                    "to": ArrowBinding.object(fixture.target.id).json,
+                    "label": .string("around"),
+                ]))
+                _ = try fixture.board.update(fixture.wall.id, frame: movedWall)
+                return restored
+            }
+        }
+        try await awaitRouting(fixture.board, matching: previous)
+        let expected = mainRouting(fixture.board, continuingFrom: previous)
+        try require(expected.paths[fixture.arrow.id] != previous.paths[fixture.arrow.id], "The newer obstacle must require a different settled path even though the arrow spec returned to its original value")
+        let reported = fixture.board.reported(edited)
+        try require(try drawnPathsMatch(fixture.board, expected.paths), "An older snapshot completion must not retire a newer edit before the API reports every settled arrow")
+        try require(!DrawingGeometry.path(try path(fixture), crosses: movedWall.rect), "A reverted newer edit must still settle around the newer obstacle")
+        try require(reported.frame == bounds(try path(fixture)), "A newer edited arrow must report its settled drawn bounds after the older opening job completes")
+        opened.drawing.viewWillDraw()
+        try require(try drawnPathsMatch(fixture.board, expected.paths), "A later draw must preserve every route settled for the newer edit")
+        print("PASS an older snapshot result cannot retire a newer edit's pending settled geometry")
+    }
+
     private static func opening(_ root: URL) async throws {
         let fixture = try fixture(root, "opening")
-        let expected = try mainRouting(fixture.board)
+        let expected = mainRouting(fixture.board)
         let opened = OpenBoard(fixture.board)
         defer { opened.close() }
         let preview = try path(fixture)
@@ -168,22 +335,23 @@ private enum InitialRouting {
         let fixture = try fixture(root, "stable")
         _ = fixture.board.create(type: .arrow,
                                  props: ArrowSpec(from: .object(fixture.target.id), to: .object(fixture.source.id), label: "return", route: .avoid).props)
-        let expected = try mainRouting(fixture.board)
+        let expected = mainRouting(fixture.board)
         let opened = OpenBoard(fixture.board)
         defer { opened.close() }
         try await awaitRouting(fixture.board, matching: expected)
-        let before = opened.drawing.items.compactMapValues { $0.arrow?.path }
+        let before = try drawnPaths(fixture.board)
         _ = try fixture.board.update(fixture.target.id, props: .object(["color": .string("red")]))
         _ = fixture.board.reported(fixture.board.snapshot.objects)
-        try require(opened.drawing.items.compactMapValues { $0.arrow?.path } == before, "An appearance-only update must not replace settled shared ports with standalone routes")
+        try require(try drawnPaths(fixture.board) == before, "An appearance-only update must not replace settled shared ports with standalone routes")
         _ = try fixture.board.update(fixture.source.id, props: .object(["kind": .string("rect")]))
-        let changed = try mainRouting(fixture.board)
+        let changed = mainRouting(fixture.board, continuingFrom: expected)
         try await awaitRouting(fixture.board, matching: changed)
         print("PASS settled routes survive appearance-only updates and follow changed outlines")
     }
 
     private static func followingDuringOpening(_ root: URL) async throws {
         let fixture = try fixture(root, "following")
+        let previous = mainRouting(fixture.board)
         let opened = OpenBoard(fixture.board)
         defer { opened.close() }
         try await nextTurn {
@@ -192,7 +360,7 @@ private enum InitialRouting {
             try require(try path(fixture).last == CGPoint(x: 1000 - DrawingGeometry.arrowGap, y: 50), "An opening preview must immediately follow its moved target")
             _ = fixture.board.reported(fixture.board.snapshot.objects)
         }
-        let expected = try mainRouting(fixture.board)
+        let expected = mainRouting(fixture.board, continuingFrom: previous)
         try await awaitRouting(fixture.board, matching: expected) {
             try require(try path(fixture).last!.x >= 1000 - DrawingGeometry.arrowGap, "An old background result must never reattach the arrow to its old target frame")
         }
@@ -204,15 +372,16 @@ private enum InitialRouting {
         let opened = OpenBoard(fixture.board)
         defer { opened.close() }
         try await nextTurn {
+            let previous = fixture.board.settledRouting?()
             let edited = try ApiActivity.shared.dispatch {
                 try fixture.board.update(fixture.arrow.id, props: .object([
                     "to": ArrowBinding.object(fixture.other.id).json,
                     "label": .string("edited while opening"),
                 ]))
             }
+            let expected = mainRouting(fixture.board, continuingFrom: previous)
             let reported = fixture.board.reported(edited)
-            let expected = try mainRouting(fixture.board)
-            try require(try path(fixture) == expected.paths[fixture.arrow.id], "An edited arrow must synchronously report its final route, not its opening preview or old binding")
+            try require(try drawnPathsMatch(fixture.board, expected.paths), "An edited arrow must synchronously settle every drawn route, not its opening preview or old binding")
             try require(reported.frame == bounds(try path(fixture)), "The create/update API contract must still report settled drawn bounds")
         }
         for index in 0..<20 {
@@ -220,10 +389,13 @@ private enum InitialRouting {
             try await Task.sleep(for: .milliseconds(5))
             try require(try path(fixture).last!.y >= 400 - DrawingGeometry.arrowGap, "An older background route must not overwrite the edited binding")
         }
+        let previous = fixture.board.settledRouting?()
         let created = fixture.board.create(type: .arrow,
                                            props: ArrowSpec(from: .object(fixture.source.id), to: .object(fixture.other.id), route: .avoid).props)
+        let expected = mainRouting(fixture.board, continuingFrom: previous)
         opened.drawing.viewWillDraw()
         let reported = fixture.board.reported(created)
+        try require(try drawnPathsMatch(fixture.board, expected.paths), "Creating an arrow must settle every drawn path together with shared ports")
         guard let createdPath = fixture.board.arrowPath?(created.id) else { throw CheckFailure(message: "New arrow has no drawn path") }
         try require(reported.frame == bounds(createdPath), "A user-created arrow must still settle before drawing and reporting")
         guard let settledPath = fixture.board.settledRouting?()?.paths[created.id] else {
@@ -236,11 +408,11 @@ private enum InitialRouting {
 
     private static func exportingDuringOpening(_ root: URL) async throws {
         let fixture = try fixture(root, "exporting")
-        let expected = try mainRouting(fixture.board)
+        let expected = mainRouting(fixture.board)
         let opened = OpenBoard(fixture.board)
         defer { opened.close() }
         let output = try await opened.canvas.render(RenderRequest(target: .objects([fixture.arrow.id]), scale: 1, chrome: false), format: .png)
-        try require(try path(fixture) == expected.paths[fixture.arrow.id], "An explicit export during open must settle the initial arrow before choosing its region")
+        try require(try drawnPathsMatch(fixture.board, expected.paths), "An explicit export during open must settle every drawn arrow before choosing its region")
         try require(!output.image.isEmpty && output.objects.contains { $0.id == fixture.arrow.id && $0.state == .rendered }, "The export must contain the rendered arrow")
         let frame = bounds(expected.paths[fixture.arrow.id]!)
         try require(output.canvasRect.x <= frame.x && output.canvasRect.y <= frame.y && output.canvasRect.x + output.canvasRect.w >= frame.x + frame.w && output.canvasRect.y + output.canvasRect.h >= frame.y + frame.h, "The export must not crop the settled detour to provisional bounds")

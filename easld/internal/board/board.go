@@ -721,7 +721,7 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 	if o.Type == model.Question {
 		b.questionWritten(before, o)
 	}
-	if before.Frame != o.Frame {
+	if before.Frame != o.Frame || before.Hidden() != o.Hidden() {
 		b.refitGroups(id, credited, caller, refitting)
 	}
 	return o, nil
@@ -1109,6 +1109,38 @@ func (b *Board) detachArrows(id string, actor Actor, caller string) {
 		ids[i] = x.arrow.ID
 	}
 	paths := b.ArrowPaths(ids)
+	var unhidden map[string]model.Object
+	for _, x := range list {
+		if _, ok := paths[x.arrow.ID]; ok {
+			continue
+		}
+		for _, end := range []route.Binding{x.spec.From, x.spec.To} {
+			o := b.objects[end.Object]
+			if unhidden != nil {
+				o = unhidden[end.Object]
+			}
+			if !o.Hidden() {
+				continue
+			}
+			if unhidden == nil {
+				unhidden = maps.Clone(b.objects)
+			}
+			o.Props = maps.Clone(o.Props)
+			delete(o.Props, "archived")
+			unhidden[o.ID] = o
+		}
+	}
+	if unhidden != nil {
+		labels, _ := b.LabelSizes()
+		drawn := route.Geometry{Objects: unhidden, LabelSizes: labels}.DrawnRouting(nil)
+		for _, id := range ids {
+			if _, ok := paths[id]; !ok {
+				if path, ok := drawn.DrawnPath(id); ok {
+					paths[id] = path
+				}
+			}
+		}
+	}
 	for _, x := range list {
 		path, ok := paths[x.arrow.ID]
 		if !ok || len(path) == 0 {

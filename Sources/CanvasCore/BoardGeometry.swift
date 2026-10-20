@@ -23,6 +23,7 @@ public struct BoardGeometry: Sendable {
     /// shapes. Unfilled rects and ellipses are regions drawn around things; ink, arrows, and
     /// groups never block.
     public static func blocksRoutes(_ object: CanvasObject) -> Bool {
+        guard !object.isHidden else { return false }
         switch object.type {
         case .terminal, .browser, .code, .note, .html, .changes, .image, .video, .diagram, .question: return true
         case .shape:
@@ -79,9 +80,10 @@ public struct BoardGeometry: Sendable {
 
     /// The board's groups as the router sees them: frame, leaf members, and `flow`.
     public var regions: [ConnectorRouter.Region] {
-        objects.values.filter { $0.type == .group }.sorted { $0.id < $1.id }.compactMap { group in
+        objects.values.filter { $0.type == .group && $0.frame.w > 0 && $0.frame.h > 0 }.sorted { $0.id < $1.id }.compactMap { group in
             guard let spec = GroupSpec(group.props) else { return nil }
-            return ConnectorRouter.Region(id: group.id, frame: group.frame.rect, members: Set(Self.leafMembers(of: group.id, in: objects)), flow: spec.flow)
+            return ConnectorRouter.Region(id: group.id, frame: group.frame.rect,
+                                          members: Set(Self.leafMembers(of: group.id, in: objects).filter { objects[$0]?.isHidden != true }), flow: spec.flow)
         }
     }
 
@@ -97,11 +99,12 @@ public struct BoardGeometry: Sendable {
         func frame(ofGroup id: ObjectID, visiting: Set<ObjectID>) -> CGRect? {
             if let known = fitted[id] { return known }
             guard let group = objects[id], let spec = GroupSpec(group.props) else { return nil }
+            guard group.frame.w > 0 && group.frame.h > 0 else { return nil }
             let leaves = Self.leafMembers(of: id, in: objects)
             var result = group.frame.rect
             if leaves.contains(where: moved.contains) {
                 let rects = spec.members.compactMap { member -> CGRect? in
-                    guard member != id, !visiting.contains(member), let object = objects[member], object.type != .arrow else { return nil }
+                    guard member != id, !visiting.contains(member), let object = objects[member], !object.isHidden, object.type != .arrow else { return nil }
                     if object.type == .group { return frame(ofGroup: member, visiting: visiting.union([id])) }
                     return shown[member] ?? object.frame.rect
                 }
@@ -118,12 +121,12 @@ public struct BoardGeometry: Sendable {
     }
 
     /// What a binding attaches to: a point, an object's frame (an ellipse's curve), the row of
-    /// the first of `lines` on a code tile, or a diagram node's box. Nil when the object is gone.
+    /// the first of `lines` on a code tile, or a diagram node's box. Nil when the object is gone or hidden.
     func arrowEnd(_ binding: ArrowBinding, rows: [ObjectID: CodeRows]) -> DrawingGeometry.ArrowEnd? {
         switch binding {
         case .point(let point): return .point(point)
         case .object(let id, let lines, _, let node):
-            guard let object = objects[id] else { return nil }
+            guard let object = objects[id], !object.isHidden else { return nil }
             if let lines, object.type == .code {
                 return .row(object.frame.rect, y: CodeMetrics.lineY(line: lines.start, frame: object.frame, props: object.props, rows: rows[id]))
             }

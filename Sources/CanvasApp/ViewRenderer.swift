@@ -22,8 +22,6 @@ extension CanvasView {
         // an arrow's outline can decide the region.
         if let drawing = shapeLayer as? ShapeLayer {
             drawing.settleArrows(includingSnapshot: true)
-        } else {
-            board.settleArrows?()
         }
         // Targets first: with `full` their rendered content decides the region.
         var renders: [ObjectID: TileRender] = [:]
@@ -118,8 +116,6 @@ extension CanvasView {
 
             if let drawing = shapeLayer as? ShapeLayer {
                 drawing.settleArrows(includingSnapshot: true)
-            } else {
-                board.settleArrows?()
             }
             let stacked = board.objects.values.filter { renders[$0.id] != nil || $0.type == .shape || $0.type == .arrow }
                 .sorted { ($0.z, $0.id) < ($1.z, $1.id) }
@@ -163,12 +159,14 @@ extension CanvasView {
 
     /// Canvas-space outline: a tile's frame, a drawn object's painted bounds, a group's region.
     func outline(of id: ObjectID) -> Frame? {
-        guard let object = board.objects[id] else { return nil }
+        guard let object = board.objects[id], !object.isHidden else { return nil }
         let origin = CanvasDocumentView.origin
         let doc: NSRect?
         switch object.type {
         case .group: doc = groupRegion(object)
-        case .shape, .arrow: doc = shapeOutline?(id) ?? CanvasView.docRect(object.frame)
+        case .shape, .arrow:
+            if object.type == .arrow, let spec = ArrowSpec(object.props), spec.hasHiddenEndpoint(in: board.objects) { return nil }
+            doc = shapeOutline?(id) ?? CanvasView.docRect(object.frame)
         default: return object.frame
         }
         return doc.map { Frame(x: $0.minX - origin.x, y: $0.minY - origin.y, w: $0.width, h: $0.height) }

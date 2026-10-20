@@ -674,7 +674,9 @@ extension BoardGeometry {
     /// Whether an object can overlap others by accident: not arrows, ink, or unfilled rects and
     /// ellipses (annotations drawn over or around things).
     public static func countsForOverlaps(_ object: CanvasObject) -> Bool {
+        guard !object.isHidden else { return false }
         switch object.type {
+        case .group: return object.frame.w > 0 && object.frame.h > 0
         case .arrow: return false
         case .shape:
             guard let spec = ShapeSpec(object.props) else { return true }
@@ -778,7 +780,7 @@ extension BoardGeometry {
         var hints: [String] = []
         // Arrows drawn with a caption (`label`, else `relation`), as `DrawingStyle.arrowLabel`.
         let labelled = objects.values.compactMap { object -> ArrowSpec? in
-            guard object.type == .arrow, let spec = ArrowSpec(object.props), !(spec.label ?? spec.relation ?? "").isEmpty,
+            guard object.type == .arrow, routes[object.id] != nil, let spec = ArrowSpec(object.props), !(spec.label ?? spec.relation ?? "").isEmpty,
                   involved(object.id, [spec.from.objectID, spec.to.objectID].compactMap { $0 }) else { return nil }
             return spec
         }

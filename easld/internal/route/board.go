@@ -39,6 +39,9 @@ func sortedObjects(objects map[string]model.Object, keep func(model.Object) bool
 // BlocksRoutes: whether arrows route around this object and count as crossing it: tiles, text,
 // and filled shapes. Unfilled rects and ellipses, ink, arrows, and groups never block.
 func BlocksRoutes(o model.Object) bool {
+	if o.Hidden() {
+		return false
+	}
 	switch o.Type {
 	case model.Arrow, model.Group:
 		return false
@@ -157,14 +160,18 @@ func (g Geometry) Routing(rows map[string]CodeRows) *Result {
 // Regions is the board's groups as the router sees them: frame, leaf members, and flow.
 func (g Geometry) Regions() []Region {
 	var out []Region
-	for _, o := range sortedObjects(g.Objects, func(o model.Object) bool { return o.Type == model.Group }) {
+	for _, o := range sortedObjects(g.Objects, func(o model.Object) bool {
+		return o.Type == model.Group && o.Frame.W > 0 && o.Frame.H > 0
+	}) {
 		spec, ok := ParseGroup(o.Props)
 		if !ok {
 			continue
 		}
 		members := map[string]bool{}
 		for _, id := range LeafMembers(o.ID, g.Objects) {
-			members[id] = true
+			if !g.Objects[id].Hidden() {
+				members[id] = true
+			}
 		}
 		out = append(out, Region{ID: o.ID, Frame: RectOf(o.Frame), Members: members, Flow: spec.Flow})
 	}
@@ -215,7 +222,7 @@ func (g Geometry) RegionsShown(shown map[string]Rect) []Region {
 			var rects []Rect
 			for _, member := range spec.Members {
 				o, ok := g.Objects[member]
-				if member == id || visiting[member] || !ok || o.Type == model.Arrow {
+				if member == id || visiting[member] || !ok || o.Hidden() || o.Type == model.Arrow || (o.Type == model.Group && (o.Frame.W <= 0 || o.Frame.H <= 0)) {
 					continue
 				}
 				if o.Type == model.Group {
@@ -251,13 +258,13 @@ func (g Geometry) RegionsShown(shown map[string]Rect) []Region {
 
 // arrowEnd is what a binding attaches to: a point, an object's frame (an ellipse's curve), the
 // row of the first of `lines` on a code tile, or a diagram node's box. False when the object is
-// gone.
+// gone or hidden.
 func (g Geometry) arrowEnd(b Binding, rows map[string]CodeRows) (ArrowEnd, bool) {
 	if b.IsPoint() {
 		return PointEnd(b.Point), true
 	}
 	o, ok := g.Objects[b.Object]
-	if !ok {
+	if !ok || o.Hidden() {
 		return ArrowEnd{}, false
 	}
 	if b.Lines != nil && o.Type == model.Code {
@@ -283,6 +290,9 @@ func (g Geometry) arrowEnd(b Binding, rows map[string]CodeRows) (ArrowEnd, bool)
 // CountsForOverlaps: whether an object can overlap others by accident: not arrows, ink, or
 // unfilled rects and ellipses (annotations drawn over or around things).
 func CountsForOverlaps(o model.Object) bool {
+	if o.Hidden() || (o.Type == model.Group && (o.Frame.W <= 0 || o.Frame.H <= 0)) {
+		return false
+	}
 	switch o.Type {
 	case model.Arrow:
 		return false

@@ -102,7 +102,7 @@ func (g Geometry) DrawnRouting(rows map[string]CodeRows) *Result {
 			return PointEnd(Point{docRoundTrip(b.Point.X), docRoundTrip(b.Point.Y)}), true
 		}
 		o, ok := g.Objects[b.Object]
-		if !ok || o.Type == model.Arrow {
+		if !ok || o.Hidden() || o.Type == model.Arrow {
 			return ArrowEnd{}, false
 		}
 		frame := docRect(o.Frame)
