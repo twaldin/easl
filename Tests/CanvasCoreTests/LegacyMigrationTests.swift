@@ -83,6 +83,30 @@ struct LegacyMigrationTests {
 
     func settings(_ defaults: Domains) throws -> [String: Any] { try #require(defaults.domains[Self.fresh.bundle]) }
 
+    @Test(arguments: ["unknown", "newer", "truncated"])
+    func unreadableBoardsStayAtTheirOriginalLocation(_ kind: String) throws {
+        defer { try? FileManager.default.removeItem(at: home) }
+        let from = migration.support(Self.canvas)
+        let file = from.appendingPathComponent("boards/brd_future.json")
+        let original: String
+        switch kind {
+        case "unknown":
+            original = #"{"format":3,"id":"brd_future","root":"/tmp","revision":7,"objects":[{"type":"hologram"}]}"#
+        case "newer":
+            original = #"{"format":99,"id":"brd_future","root":"/tmp","revision":7,"objects":[]}"#
+        default:
+            original = #"{"format":3,"id":"brd_future","objects":["#
+        }
+        try write(original, file)
+        let defaults = Domains()
+        defaults.domains[Self.canvas.bundle] = Self.canvas04
+        let log = migration.run(defaults: defaults, now: Self.now)
+        #expect(try? read(file) == original)
+        #expect(!FileManager.default.fileExists(atPath: migration.support(Self.fresh).path))
+        #expect(defaults.domains[Self.fresh.bundle]?[Self.canvas.marker] == nil)
+        #expect(log.contains { $0.contains(file.path) })
+    }
+
     @Test func aFreshInstallMovesNothingAndRecordsThatOnce() throws {
         defer { try? FileManager.default.removeItem(at: home) }
         let defaults = Domains()
