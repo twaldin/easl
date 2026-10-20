@@ -177,7 +177,7 @@ struct RepoBoardUnreadableMigrationTests {
             _ = try await registry.open(root: folder)
             Issue.record("Unreadable folder source opened an incomplete repository board")
         } catch let error as BoardFile.Unreadable {
-            #expect(error.filename == sourceURL.path)
+            #expect(URL(fileURLWithPath: error.filename).resolvingSymlinksInPath() == sourceURL.resolvingSymlinksInPath())
         }
         #expect(registry.board(id: targetID) == nil)
         #expect(try Data(contentsOf: sourceURL) == bad)
